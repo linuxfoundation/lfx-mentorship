@@ -93,6 +93,7 @@ erDiagram
     program_terms ||--o{ applications : receives
     program_terms ||--o{ enrollments : has
     enrollments ||--o{ tasks : "works on"
+    enrollments }o--o{ program_members : "mentored by (enrollment_mentors)"
     programs ||--o{ invitation_tokens : issues
 
     users {
@@ -147,6 +148,7 @@ Notes:
 - **Search**: PostgreSQL full-text search (`tsvector` + GIN indexes) over programs, skills, and profiles replaces the Elasticsearch cluster and its 8 sync jobs. Data volume (thousands of rows) is far below where a dedicated search engine pays for itself.
 - **Denormalization jobs eliminated**: mentor lists, skill mappings, and counts become queries/views instead of cron-materialized copies.
 - **Funding stats**: `program_funding_stats` is an hourly-refreshed local cache of Crowdfunding data (see Integrations) — the same pattern Crowdfunding uses for Ledger stats.
+- **Mentor assignment**: the `enrollment_mentors` join table links each enrollment to its assigned mentor(s) — the relational equivalent of the legacy mentee-mentor relationships — so task-submission review routes to the right mentor, not just "any mentor on the program".
 - Exact column-level schema is an implementation-phase deliverable; this ERD fixes the entity boundaries.
 
 ## Frontend split: Nuxt public site + Self Serve management
@@ -172,7 +174,7 @@ Identical to Crowdfunding's documented auth architecture:
 
 | Service        | Direction             | Mechanism                                                                                                                                                                                                                                                                    |
 | -------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Crowdfunding   | Mentorship → CF       | **CronJob calls CF API (M2M `access:manage`), caches funding stats (`amountRaised`, etc.) in `program_funding_stats`.** Replaces legacy SNS/SQS eventing and the Snowflake round-trip for serving-path data. If CF is unavailable, Mentorship serves the last cached values. |
+| Crowdfunding   | Mentorship → CF       | **CronJob calls CF API (M2M `access:manage`), caches funding stats (`amountRaised`, etc.) in `program_funding_stats`.** Replaces legacy SNS/SQS eventing and the Snowflake round-trip for serving-path data. If CF is unavailable, Mentorship serves the last cached values. The funding-stats endpoint is a **new Crowdfunding-repo deliverable** (no such M2M route exists in CF today): exposed under `access:manage`, keyed by `cf_initiative_id`, contract defined with the CF team during Build. |
 | Snowflake      | Mentorship → SF       | Fivetran **Postgres** connector (replacing the DynamoDB connector); existing `fivetran_mentorship_*` dbt models repointed. Feeds dashboards and CF analytics. Analytics-plane only — never in the serving path.                                                              |
 | Auth0          | both                  | PKCE (users), client-credentials (M2M), JWKS validation in API middleware                                                                                                                                                                                                    |
 | Mandrill       | Mentorship → Mandrill | All transactional email (invitations, application status, task notifications, program-submission notification to super-admins). **SES is dropped**; existing Mandrill templates are audited and migrated.                                                                    |
