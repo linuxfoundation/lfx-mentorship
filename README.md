@@ -9,11 +9,11 @@ The LFX Mentorship platform — a rewrite of the legacy CommunityBridge Mentorsh
 
 **Pre-implementation.** The architecture proposal is under review:
 
-- Proposal: [linuxfoundation/jobspring#2276](https://github.com/linuxfoundation/jobspring/pull/2276) (`docs/rewrite/` — current system, target architecture, migration plan)
+- Proposal: [docs/rewrite/](docs/rewrite/) — [current system](docs/rewrite/01-current-system.md), [target architecture](docs/rewrite/02-target-architecture.md), [migration plan](docs/rewrite/03-migration-plan.md)
 - Tracking ticket: [linuxfoundation/lfx-self-serve#1526](https://github.com/linuxfoundation/lfx-self-serve/issues/1526)
 - Milestone 1 epic: [linuxfoundation/lfx-self-serve#1477](https://github.com/linuxfoundation/lfx-self-serve/issues/1477) (Mentee public site)
 
-Once the proposal is approved, the rewrite docs move into this repo and implementation begins here.
+Implementation begins here once the proposal is approved.
 
 ## Planned architecture
 
