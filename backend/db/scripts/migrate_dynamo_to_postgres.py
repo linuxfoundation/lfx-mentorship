@@ -108,14 +108,18 @@ def scan_table(client, table_name: str) -> list:
     log.info("Scanning %-55s", table_name + " ...")
     items: list = []
     kwargs: dict = {"TableName": table_name}
+    page = 0
     while True:
         resp = client.scan(**kwargs)
-        items.extend(_deserialize(raw) for raw in resp.get("Items", []))
+        batch = [_deserialize(raw) for raw in resp.get("Items", [])]
+        items.extend(batch)
+        page += 1
+        log.info("  page %d — %d items so far", page, len(items))
         lek = resp.get("LastEvaluatedKey")
         if not lek:
             break
         kwargs["ExclusiveStartKey"] = lek
-    log.info("  → %d items", len(items))
+    log.info("  → %d items total", len(items))
     return items
 
 
@@ -183,7 +187,8 @@ def _to_jsonb(value) -> str | None:
             return float(obj)
         raise TypeError(f"Cannot serialize {type(obj)}")
 
-    return json.dumps(value, default=_default)
+    # PostgreSQL rejects \u0000 inside JSON text columns
+    return json.dumps(value, default=_default).replace("\\u0000", "")
 
 
 def _parse_ts(s) -> datetime | None:
@@ -284,16 +289,31 @@ def migrate_users(cur, users: list) -> set:
     log.info("Migrating users (%d rows) ...", len(users))
     rows = []
     ids: set = set()
+    seen_emails: set = set()
+    seen_lfids: set = set()
     for u in users:
         uid = _as_uuid(u.get("id"))
         if not uid:
             continue
         ids.add(uid)
+        email = (u.get("email") or "").strip() or None
+        lfid = (u.get("lfid") or "").strip() or None
+        # null out duplicate emails/lfids — DynamoDB had no unique enforcement
+        if email is not None:
+            if email in seen_emails:
+                email = None
+            else:
+                seen_emails.add(email)
+        if lfid is not None:
+            if lfid in seen_lfids:
+                lfid = None
+            else:
+                seen_lfids.add(lfid)
         rows.append(
             (
                 uid,
-                (u.get("email") or "").strip() or None,
-                (u.get("lfid") or "").strip() or None,
+                email,
+                lfid,
                 (u.get("name") or "").strip() or None,
                 (u.get("givenName") or "").strip() or None,
                 (u.get("familyName") or "").strip() or None,
@@ -338,6 +358,7 @@ def migrate_user_profiles(cur, profiles: list, known_user_ids: set) -> dict:
     log.info("Migrating user_profiles (%d raw rows) ...", len(profiles))
     rows = []
     profile_map: dict = {}  # profile_id → user_id
+    seen_slugs: set = set()
     skipped = 0
 
     for p in profiles:
@@ -361,13 +382,21 @@ def migrate_user_profiles(cur, profiles: list, known_user_ids: set) -> dict:
             )
             known_user_ids.add(uid)
 
+        slug = (p.get("slug") or "").strip() or None
+        # null out duplicate slugs — DynamoDB had no unique enforcement
+        if slug is not None:
+            if slug in seen_slugs:
+                slug = None
+            else:
+                seen_slugs.add(slug)
+
         profile_map[pid] = uid
         rows.append(
             (
                 pid,
                 uid,
                 (p.get("type") or "apprentice").strip(),
-                (p.get("slug") or "").strip() or None,
+                slug,
                 (p.get("firstName") or "").strip() or None,
                 (p.get("lastName") or "").strip() or None,
                 (p.get("email") or "").strip() or None,
@@ -437,6 +466,7 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
     skill_rows = []
     funding_rows = []
     program_ids: set = set()
+    seen_slugs: set = set()
 
     for p in projects:
         pid = _as_uuid(p.get("projectId"))
@@ -445,11 +475,24 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
         program_ids.add(pid)
 
         amount = _as_float(p.get("amountRaised"))
+
+        # Generate slug from name if missing; ensure uniqueness
+        slug = (p.get("slug") or "").strip() or None
+        if not slug:
+            name = (p.get("name") or "").strip()
+            slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or str(pid)
+        base_slug = slug
+        suffix = 1
+        while slug in seen_slugs:
+            slug = f"{base_slug}-{suffix}"
+            suffix += 1
+        seen_slugs.add(slug)
+
         prog_rows.append(
             (
                 pid,
                 (p.get("name") or "").strip() or None,
-                (p.get("slug") or "").strip() or None,
+                slug,
                 _normalize_program_status(p.get("status")),
                 False,  # is_paid — not captured in DynamoDB; assume false
                 (p.get("description") or "").strip() or None,
@@ -858,6 +901,11 @@ def migrate_mentees(
         page_size=500,
     )
     log.info("  → %d enrollments upserted", len(enroll_rows))
+
+    # Rebuild index from DB — ON CONFLICT keeps the first inserted ID, not the last
+    cur.execute("SELECT program_term_id::text, mentee_user_id::text, id::text FROM enrollments")
+    enrollment_index = {(row[0], row[1]): row[2] for row in cur.fetchall()}
+
     return enrollment_index
 
 

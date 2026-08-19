@@ -26,7 +26,7 @@ $$;
 -- ============================================
 CREATE TABLE IF NOT EXISTS users (
   id          UUID         PRIMARY KEY,
-  email       TEXT         NOT NULL UNIQUE,
+  email       TEXT         UNIQUE,
   lfid        TEXT         UNIQUE,
   name        TEXT,
   given_name  TEXT,
