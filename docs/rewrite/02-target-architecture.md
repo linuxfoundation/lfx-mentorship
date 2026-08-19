@@ -47,7 +47,7 @@ flowchart TB
     API --> S3
     API --> MANDRILL
     API -- "email on program submission" --> SUPER
-    SS -- "access:me tokens<br/>my programs/applications/tasks" --> API
+    SS -- "access:me tokens<br/>my programs/applications/tasks<br/>admin routes if allowlisted" --> API
     CRONS --> PG
     CRONS -- "M2M: funding stats" --> CFAPI
     PG -- "Fivetran (Postgres connector)" --> SF
@@ -162,13 +162,25 @@ Same split as Crowdfunding (public site + `app.lfx.dev` lenses):
 
 Frontend stack mirrors Crowdfunding: Nuxt 4 + Vue 3, TypeScript, Tailwind + PrimeVue, Pinia + Vue Query, Vitest + Playwright.
 
-## Authentication
+## Authentication and authorization
 
-Identical to Crowdfunding's documented auth architecture:
+Identical to Crowdfunding's documented auth architecture. **Authentication** (who is calling) is carried by Auth0 scopes; **authorization** (what they may do) is a role check in the service layer. Scopes alone never grant privileged access.
+
+### Authentication
 
 - **Users**: OAuth2 PKCE via Auth0; tokens in HTTP-only session cookies (never exposed to JS); LFID from the `https://sso.linuxfoundation.org/claims/username` claim.
-- **Scopes** on one resource server: `access:me` (user tokens, `/v1/me/*`) and `access:manage` (M2M, `/v1/internal/*`).
+- **Scopes** on one resource server: `access:me` (user tokens — `/v1/me/*` and `/v1/admin/*`) and `access:manage` (M2M only — `/v1/internal/*`, e.g. the CF funding-stats sync).
 - **Self Serve**: silent secondary auth for the Mentorship audience, token forwarded to the Mentorship API — same mechanism Self Serve already uses for Crowdfunding.
+
+### Authorization
+
+Three tiers, all evaluated server-side against the caller's LFID:
+
+1. **Ownership / membership** — enforced in the service layer: maintainers and mentors via `program_members.member_type`, mentees via `enrollments.mentee_user_id`. A user with `access:me` can only reach their own programs, applications, and tasks.
+2. **Super-admin** — platform-wide approval and management (program submissions, cross-program administration) on `/v1/admin/*`. Authorized by an **LFID allowlist injected at deploy time** (config, not an Auth0 role), checked against the caller's `access:me` principal. This is the pattern Crowdfunding uses for its initiative approver (`ALLOWED_APPROVERS`); it means Self Serve forwards an ordinary user token and the API decides, so no admin-only scope or elevated client is needed.
+3. **Email approval links** — the program-submission notification to super-admins carries an HMAC-signed, expiring link. The signature is the sole authorization for that action and requires no login, matching Crowdfunding's approval-link flow.
+
+Exact route lists and the allowlist's source (secret manager key, per-environment values) are an implementation-phase deliverable.
 
 ## Integrations
 
@@ -179,7 +191,7 @@ Identical to Crowdfunding's documented auth architecture:
 | Auth0          | both                  | PKCE (users), client-credentials (M2M), JWKS validation in API middleware                                                                                                                                                                                                    |
 | Mandrill       | Mentorship → Mandrill | All transactional email (invitations, application status, task notifications, program-submission notification to super-admins). **SES is dropped**; existing Mandrill templates are audited and migrated.                                                                    |
 | S3             | Mentorship → S3       | Program logos, task submission files (presigned URLs, as in CF)                                                                                                                                                                                                              |
-| LFX Self Serve | SS → Mentorship       | User-issued `access:me` tokens against `/v1/me/*`                                                                                                                                                                                                                            |
+| LFX Self Serve | SS → Mentorship       | User-issued `access:me` tokens against `/v1/me/*`, and `/v1/admin/*` for callers on the super-admin allowlist                                                                                                                                                                 |
 
 ## Kubernetes resources
 
