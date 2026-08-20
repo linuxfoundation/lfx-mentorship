@@ -1,0 +1,114 @@
+// Copyright The Linux Foundation and each contributor to LFX.
+// SPDX-License-Identifier: MIT
+.c-editor {
+  @apply w-full overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-xs transition-all;
+
+  &:focus-within {
+    @apply border-neutral-900;
+  }
+
+  &.is-invalid {
+    @apply border-negative-600;
+  }
+
+  &.is-disabled {
+    @apply cursor-not-allowed border-neutral-400 bg-neutral-50 opacity-70;
+  }
+
+  &__fallback {
+    @apply flex items-center px-4 text-sm text-neutral-400;
+  }
+
+  :deep(.p-editor) {
+    @apply flex w-full flex-col border-0 bg-transparent;
+    min-height: inherit;
+  }
+
+  :deep(.p-editor-toolbar),
+  :deep(.ql-toolbar.ql-snow) {
+    @apply flex flex-wrap items-center gap-1 border-0 border-b border-neutral-200 bg-neutral-50 px-2 py-2;
+    flex-shrink: 0;
+  }
+
+  :deep(.p-editor-content) {
+    @apply relative w-full border-0 bg-white;
+    flex: 1 1 auto;
+  }
+
+  :deep(.ql-container.ql-snow) {
+    @apply w-full border-0 text-sm text-neutral-900;
+    height: 100% !important;
+    min-height: 10rem;
+  }
+
+  :deep(.ql-editor) {
+    @apply text-sm leading-5 font-normal;
+    min-height: 10rem;
+
+    &.ql-blank::before {
+      @apply text-neutral-400 not-italic left-3;
+    }
+
+    h1,
+    h2,
+    h3 {
+      @apply font-semibold text-neutral-900;
+    }
+
+    h1 {
+      @apply text-xl;
+    }
+
+    h2 {
+      @apply text-lg;
+    }
+
+    h3 {
+      @apply text-base;
+    }
+
+    blockquote {
+      @apply border-l-4 border-neutral-200 pl-3 text-neutral-600;
+    }
+
+    code {
+      @apply rounded-sm bg-neutral-100 px-1 py-0.5 font-mono;
+      font-size: 0.85em;
+    }
+
+    pre.ql-syntax {
+      @apply rounded-lg bg-neutral-900 p-3 text-xs text-neutral-100 font-mono;
+    }
+  }
+
+  :deep(.ql-snow .ql-picker.ql-header) {
+    width: 7.5rem;
+  }
+
+  :deep(.ql-snow .ql-stroke) {
+    stroke: #64748b;
+  }
+
+  :deep(.ql-snow .ql-fill),
+  :deep(.ql-snow .ql-stroke.ql-fill) {
+    fill: #64748b;
+  }
+
+  :deep(.ql-snow .ql-picker) {
+    color: #64748b;
+  }
+
+  :deep(.ql-snow.ql-toolbar button:hover .ql-stroke),
+  :deep(.ql-snow .ql-toolbar button:hover .ql-stroke),
+  :deep(.ql-snow.ql-toolbar button.ql-active .ql-stroke),
+  :deep(.ql-snow .ql-toolbar button.ql-active .ql-stroke) {
+    stroke: #0094ff;
+  }
+
+  :deep(.ql-snow.ql-toolbar button:hover .ql-fill),
+  :deep(.ql-snow .ql-toolbar button:hover .ql-fill),
+  :deep(.ql-snow.ql-toolbar button.ql-active .ql-fill),
+  :deep(.ql-snow .ql-toolbar button.ql-active .ql-fill) {
+    fill: #0094ff;
+  }
+}
