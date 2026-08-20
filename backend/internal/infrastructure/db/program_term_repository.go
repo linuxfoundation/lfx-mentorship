@@ -192,3 +192,18 @@ func (r *ProgramTermRepository) Delete(ctx context.Context, id string) error {
 	}
 	return nil
 }
+
+// CountOpenTermsByProgram returns the count of terms with status='open' for a program.
+func (r *ProgramTermRepository) CountOpenTermsByProgram(ctx context.Context, programID string) (int, error) {
+	ctx, span := programTermTracer.Start(ctx, "db.program_terms.CountOpenTermsByProgram")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.program_id", programID))
+
+	var count int
+	err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM program_terms WHERE program_id = $1 AND status = 'open'`, programID).Scan(&count)
+	if err != nil {
+		span.RecordError(err)
+		return 0, fmt.Errorf("count open terms: %w", err)
+	}
+	return count, nil
+}

@@ -6,6 +6,7 @@ package handler
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
@@ -31,6 +32,16 @@ func NewProgramTermHandler(svc programTermService) *ProgramTermHandler {
 	return &ProgramTermHandler{svc: svc}
 }
 
+// termWithLabel wraps a ProgramTerm with a computed discovery_label.
+type termWithLabel struct {
+	*models.ProgramTerm
+	DiscoveryLabel string `json:"discovery_label"`
+}
+
+func withLabel(t *models.ProgramTerm) termWithLabel {
+	return termWithLabel{ProgramTerm: t, DiscoveryLabel: t.DiscoveryLabel(time.Now())}
+}
+
 // ListByProgram handles GET /v1/programs/{id}/terms.
 func (h *ProgramTermHandler) ListByProgram(w http.ResponseWriter, r *http.Request) {
 	programID := chi.URLParam(r, "id")
@@ -48,7 +59,11 @@ func (h *ProgramTermHandler) ListByProgram(w http.ResponseWriter, r *http.Reques
 		Error(w, err)
 		return
 	}
-	JSON(w, http.StatusOK, map[string]any{"data": terms, "meta": meta})
+	labeled := make([]termWithLabel, len(terms))
+	for i, t := range terms {
+		labeled[i] = withLabel(t)
+	}
+	JSON(w, http.StatusOK, map[string]any{"data": labeled, "meta": meta})
 }
 
 // GetByID handles GET /v1/program-terms/{id}.
@@ -59,7 +74,7 @@ func (h *ProgramTermHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 		Error(w, err)
 		return
 	}
-	JSON(w, http.StatusOK, term)
+	JSON(w, http.StatusOK, withLabel(term))
 }
 
 // Create handles POST /v1/programs/{id}/terms — requires JWT.

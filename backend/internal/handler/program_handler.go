@@ -24,9 +24,6 @@ type programService interface {
 	AddSkill(ctx context.Context, programID string, input models.ProgramSkillCreateInput) (*models.ProgramSkill, error)
 	DeleteSkill(ctx context.Context, skillID string) error
 	GetFundingStats(ctx context.Context, programID string) (*models.ProgramFundingStats, error)
-	ListInvitationTokens(ctx context.Context, programID string) ([]*models.InvitationToken, error)
-	CreateInvitationToken(ctx context.Context, programID string, input models.InvitationTokenCreateInput) (*models.InvitationToken, error)
-	DeleteInvitationToken(ctx context.Context, tokenID string) error
 }
 
 // ProgramHandler holds Chi handlers for the programs resource.
@@ -67,6 +64,15 @@ func (h *ProgramHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 		program, err = h.svc.GetBySlug(r.Context(), id)
 		if err != nil {
 			Error(w, err)
+			return
+		}
+	}
+	// FR-009: hidden programs return 404 to everyone except the owner (matched by LFID).
+	if program.Status == models.ProgramStatusHidden {
+		principal := auth.PrincipalFromContext(r.Context())
+		isOwner := principal != nil && program.LFID != nil && *program.LFID == principal.Username
+		if !isOwner {
+			Error(w, domain.ErrProgramNotFound)
 			return
 		}
 	}
@@ -190,59 +196,4 @@ func (h *ProgramHandler) GetFundingStats(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	JSON(w, http.StatusOK, stats)
-}
-
-// ListInvitationTokens handles GET /v1/programs/{id}/invitation-tokens — requires JWT.
-func (h *ProgramHandler) ListInvitationTokens(w http.ResponseWriter, r *http.Request) {
-	principal := auth.PrincipalFromContext(r.Context())
-	if principal == nil {
-		Error(w, domain.ErrUnauthorized)
-		return
-	}
-
-	programID := chi.URLParam(r, "id")
-	tokens, err := h.svc.ListInvitationTokens(r.Context(), programID)
-	if err != nil {
-		Error(w, err)
-		return
-	}
-	JSON(w, http.StatusOK, map[string]any{"data": tokens})
-}
-
-// CreateInvitationToken handles POST /v1/programs/{id}/invitation-tokens — requires JWT.
-func (h *ProgramHandler) CreateInvitationToken(w http.ResponseWriter, r *http.Request) {
-	principal := auth.PrincipalFromContext(r.Context())
-	if principal == nil {
-		Error(w, domain.ErrUnauthorized)
-		return
-	}
-
-	programID := chi.URLParam(r, "id")
-	var input models.InvitationTokenCreateInput
-	if !decodeBody(w, r, &input) {
-		return
-	}
-
-	token, err := h.svc.CreateInvitationToken(r.Context(), programID, input)
-	if err != nil {
-		Error(w, err)
-		return
-	}
-	JSON(w, http.StatusCreated, token)
-}
-
-// DeleteInvitationToken handles DELETE /v1/programs/{id}/invitation-tokens/{tokenId} — requires JWT.
-func (h *ProgramHandler) DeleteInvitationToken(w http.ResponseWriter, r *http.Request) {
-	principal := auth.PrincipalFromContext(r.Context())
-	if principal == nil {
-		Error(w, domain.ErrUnauthorized)
-		return
-	}
-
-	tokenID := chi.URLParam(r, "tokenId")
-	if err := h.svc.DeleteInvitationToken(r.Context(), tokenID); err != nil {
-		Error(w, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
 }

@@ -19,9 +19,6 @@ type programMemberService interface {
 	Create(ctx context.Context, programID string, input models.ProgramMemberCreateInput) (*models.ProgramMember, error)
 	Update(ctx context.Context, id string, input models.ProgramMemberUpdateInput) (*models.ProgramMember, error)
 	Delete(ctx context.Context, id string) error
-	ListAdminsByProgram(ctx context.Context, programID string) ([]*models.ProgramAdmin, error)
-	AddAdmin(ctx context.Context, programID string, input models.ProgramAdminCreateInput) (*models.ProgramAdmin, error)
-	DeleteAdmin(ctx context.Context, adminID string) error
 }
 
 // ProgramMemberHandler holds Chi handlers for program members and admins.
@@ -99,6 +96,7 @@ func (h *ProgramMemberHandler) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 // Delete handles DELETE /v1/programs/{id}/members/{memberId} — requires JWT.
+// Per FR-022, removing a mentor sets status to "withdrawn" rather than deleting the record.
 func (h *ProgramMemberHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	principal := auth.PrincipalFromContext(r.Context())
 	if principal == nil {
@@ -107,56 +105,8 @@ func (h *ProgramMemberHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	memberID := chi.URLParam(r, "memberId")
-	if err := h.svc.Delete(r.Context(), memberID); err != nil {
-		Error(w, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// ListAdmins handles GET /v1/programs/{id}/admins.
-func (h *ProgramMemberHandler) ListAdmins(w http.ResponseWriter, r *http.Request) {
-	programID := chi.URLParam(r, "id")
-	admins, err := h.svc.ListAdminsByProgram(r.Context(), programID)
-	if err != nil {
-		Error(w, err)
-		return
-	}
-	JSON(w, http.StatusOK, map[string]any{"data": admins})
-}
-
-// AddAdmin handles POST /v1/programs/{id}/admins — requires JWT.
-func (h *ProgramMemberHandler) AddAdmin(w http.ResponseWriter, r *http.Request) {
-	principal := auth.PrincipalFromContext(r.Context())
-	if principal == nil {
-		Error(w, domain.ErrUnauthorized)
-		return
-	}
-
-	programID := chi.URLParam(r, "id")
-	var input models.ProgramAdminCreateInput
-	if !decodeBody(w, r, &input) {
-		return
-	}
-
-	admin, err := h.svc.AddAdmin(r.Context(), programID, input)
-	if err != nil {
-		Error(w, err)
-		return
-	}
-	JSON(w, http.StatusCreated, admin)
-}
-
-// DeleteAdmin handles DELETE /v1/programs/{id}/admins/{adminId} — requires JWT.
-func (h *ProgramMemberHandler) DeleteAdmin(w http.ResponseWriter, r *http.Request) {
-	principal := auth.PrincipalFromContext(r.Context())
-	if principal == nil {
-		Error(w, domain.ErrUnauthorized)
-		return
-	}
-
-	adminID := chi.URLParam(r, "adminId")
-	if err := h.svc.DeleteAdmin(r.Context(), adminID); err != nil {
+	withdrawn := "withdrawn"
+	if _, err := h.svc.Update(r.Context(), memberID, models.ProgramMemberUpdateInput{Status: &withdrawn}); err != nil {
 		Error(w, err)
 		return
 	}

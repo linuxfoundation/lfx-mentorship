@@ -5,7 +5,9 @@ package handler
 
 import (
 	"context"
+	"encoding/csv"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
@@ -20,6 +22,8 @@ type applicationService interface {
 	Create(ctx context.Context, programTermID string, input models.ApplicationCreateInput) (*models.Application, error)
 	Update(ctx context.Context, id string, input models.ApplicationUpdateInput) (*models.Application, error)
 	Delete(ctx context.Context, id string) error
+	BulkDeclineByTerm(ctx context.Context, termID string) (int, error)
+	ListPastMenteesByTerm(ctx context.Context, termID string) ([]*models.Application, error)
 }
 
 // ApplicationHandler holds Chi handlers for applications.
@@ -125,6 +129,8 @@ func (h *ApplicationHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &input) {
 		return
 	}
+	// Propagate caller identity for withdrawal guard.
+	input.ActorID = principal.UserID
 
 	app, err := h.svc.Update(r.Context(), id, input)
 	if err != nil {
@@ -135,6 +141,7 @@ func (h *ApplicationHandler) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 // Delete handles DELETE /v1/applications/{id} — requires JWT.
+// Per FR-039, a mentee withdrawal sets status to "withdrawn" rather than deleting the record.
 func (h *ApplicationHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	principal := auth.PrincipalFromContext(r.Context())
 	if principal == nil {
@@ -143,9 +150,91 @@ func (h *ApplicationHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := chi.URLParam(r, "id")
-	if err := h.svc.Delete(r.Context(), id); err != nil {
+	withdrawn := "withdrawn"
+	if _, err := h.svc.Update(r.Context(), id, models.ApplicationUpdateInput{
+		Status:  &withdrawn,
+		ActorID: principal.UserID,
+	}); err != nil {
 		Error(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// BulkDeclineByTerm handles POST /v1/program-terms/{id}/applications/bulk-decline — requires JWT.
+func (h *ApplicationHandler) BulkDeclineByTerm(w http.ResponseWriter, r *http.Request) {
+	principal := auth.PrincipalFromContext(r.Context())
+	if principal == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+
+	termID := chi.URLParam(r, "id")
+	count, err := h.svc.BulkDeclineByTerm(r.Context(), termID)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]any{"declined": count})
+}
+
+// ExportByTerm handles GET /v1/program-terms/{id}/applications/export — requires JWT.
+// Returns a CSV of applications for the term, filterable by ?status=, per FR-045.
+func (h *ApplicationHandler) ExportByTerm(w http.ResponseWriter, r *http.Request) {
+	principal := auth.PrincipalFromContext(r.Context())
+	if principal == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+
+	termID := chi.URLParam(r, "id")
+	limit, offset, ok := parsePaginationParams(w, r)
+	if !ok {
+		return
+	}
+	apps, _, err := h.svc.ListByProgramTerm(r.Context(), termID, models.ApplicationFilter{
+		Limit:  limit,
+		Offset: offset,
+		Status: r.URL.Query().Get("status"),
+	})
+	if err != nil {
+		Error(w, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("Content-Disposition", `attachment; filename="applications.csv"`)
+	w.WriteHeader(http.StatusOK)
+
+	cw := csv.NewWriter(w)
+	_ = cw.Write([]string{"id", "user_id", "role", "status", "attendance_type", "tasks_submitted", "created_on"})
+	for _, a := range apps {
+		attType := ""
+		if a.AttendanceType != nil {
+			attType = *a.AttendanceType
+		}
+		_ = cw.Write([]string{
+			a.ID, a.UserID, a.Role, a.Status, attType,
+			strconv.FormatBool(a.TasksSubmitted),
+			strconv.FormatInt(a.CreatedOn.Unix(), 10),
+		})
+	}
+	cw.Flush()
+}
+
+// PastMenteesByTerm handles GET /v1/program-terms/{id}/past-mentees — requires JWT.
+func (h *ApplicationHandler) PastMenteesByTerm(w http.ResponseWriter, r *http.Request) {
+	principal := auth.PrincipalFromContext(r.Context())
+	if principal == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+
+	termID := chi.URLParam(r, "id")
+	apps, err := h.svc.ListPastMenteesByTerm(r.Context(), termID)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]any{"data": apps})
 }

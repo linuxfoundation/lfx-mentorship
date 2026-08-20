@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
@@ -19,12 +20,16 @@ var programTermSvcTracer = otel.Tracer("program-terms-service")
 
 // ProgramTermService orchestrates program term reads and writes.
 type ProgramTermService struct {
-	repo domain.ProgramTermRepository
+	repo    domain.ProgramTermRepository
+	appRepo domain.ApplicationRepository
 }
 
+// maxOpenTermsPerProgram is the maximum number of concurrently open terms allowed (FR-003).
+const maxOpenTermsPerProgram = 4
+
 // NewProgramTermService returns a ProgramTermService.
-func NewProgramTermService(repo domain.ProgramTermRepository) *ProgramTermService {
-	return &ProgramTermService{repo: repo}
+func NewProgramTermService(repo domain.ProgramTermRepository, appRepo domain.ApplicationRepository) *ProgramTermService {
+	return &ProgramTermService{repo: repo, appRepo: appRepo}
 }
 
 // GetByID returns the program term with the given ID.
@@ -69,8 +74,20 @@ func (s *ProgramTermService) Create(ctx context.Context, input models.ProgramTer
 	if input.Status != "open" && input.Status != "closed" {
 		input.Status = "open"
 	}
-	input.ID = uuid.New().String()
 
+	// Open-term cap guard.
+	if input.Status == "open" {
+		count, err := s.repo.CountOpenTermsByProgram(ctx, input.ProgramID)
+		if err != nil {
+			span.RecordError(err)
+			return nil, fmt.Errorf("check open terms: %w", err)
+		}
+		if count >= maxOpenTermsPerProgram {
+			return nil, fmt.Errorf("%w: program already has %d open term(s) (max %d)", domain.ErrStateLocked, count, maxOpenTermsPerProgram)
+		}
+	}
+
+	input.ID = uuid.New().String()
 	t, err := s.repo.Create(ctx, input)
 	if err != nil {
 		span.RecordError(err)
@@ -85,8 +102,48 @@ func (s *ProgramTermService) Update(ctx context.Context, id string, input models
 	defer span.End()
 	span.SetAttributes(attribute.String("term.id", id))
 
-	if input.Status != nil && *input.Status != "open" && *input.Status != "closed" {
-		return nil, fmt.Errorf("%w: status must be open or closed", domain.ErrInvalidInput)
+	if input.Status != nil {
+		switch *input.Status {
+		case "open", "closed", "deleted":
+			// valid
+		default:
+			return nil, fmt.Errorf("%w: status must be open, closed, or deleted", domain.ErrInvalidInput)
+		}
+
+		if *input.Status == "open" {
+			current, err := s.repo.GetByID(ctx, id)
+			if err != nil {
+				span.RecordError(err)
+				return nil, fmt.Errorf("get term for reopen guard: %w", err)
+			}
+			// Reopen guard (FR-014): cannot reopen if end date has passed.
+			if current.EndDateTime != nil && time.Now().After(*current.EndDateTime) {
+				return nil, fmt.Errorf("%w: term end date has passed and cannot be reopened", domain.ErrStateLocked)
+			}
+			// Reopen guard: cannot reopen if max open terms already reached.
+			if current.Status != "open" {
+				count, err := s.repo.CountOpenTermsByProgram(ctx, current.ProgramID)
+				if err != nil {
+					span.RecordError(err)
+					return nil, fmt.Errorf("check open terms for reopen: %w", err)
+				}
+				if count >= maxOpenTermsPerProgram {
+					return nil, fmt.Errorf("%w: program already has %d open term(s) (max %d)", domain.ErrStateLocked, count, maxOpenTermsPerProgram)
+				}
+			}
+		}
+
+		if *input.Status == "closed" {
+			// Close guard: cannot close a term that has active/accepted applications.
+			count, err := s.appRepo.CountAcceptedByTerm(ctx, id)
+			if err != nil {
+				span.RecordError(err)
+				return nil, fmt.Errorf("check accepted applications for close: %w", err)
+			}
+			if count > 0 {
+				return nil, fmt.Errorf("%w: term has %d active/accepted application(s)", domain.ErrStateLocked, count)
+			}
+		}
 	}
 
 	t, err := s.repo.Update(ctx, id, input)

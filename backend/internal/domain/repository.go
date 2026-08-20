@@ -26,6 +26,9 @@ type UserProfileRepository interface {
 	Create(ctx context.Context, input models.UserProfileCreateInput) (*models.UserProfile, error)
 	Update(ctx context.Context, id string, input models.UserProfileUpdateInput) (*models.UserProfile, error)
 	Delete(ctx context.Context, id string) error
+
+	// CountActiveApprenticeProfiles returns the count of non-deleted apprentice profiles for a user.
+	CountActiveApprenticeProfiles(ctx context.Context, userID string) (int, error)
 }
 
 // ProgramRepository defines persistence operations for programs and related sub-resources.
@@ -44,11 +47,6 @@ type ProgramRepository interface {
 
 	// Funding stats
 	GetFundingStats(ctx context.Context, programID string) (*models.ProgramFundingStats, error)
-
-	// Invitation tokens
-	ListInvitationTokens(ctx context.Context, programID string) ([]*models.InvitationToken, error)
-	CreateInvitationToken(ctx context.Context, programID string, input models.InvitationTokenCreateInput) (*models.InvitationToken, error)
-	DeleteInvitationToken(ctx context.Context, tokenID string) error
 }
 
 // ProgramTermRepository defines persistence operations for program terms.
@@ -58,6 +56,9 @@ type ProgramTermRepository interface {
 	Create(ctx context.Context, input models.ProgramTermCreateInput) (*models.ProgramTerm, error)
 	Update(ctx context.Context, id string, input models.ProgramTermUpdateInput) (*models.ProgramTerm, error)
 	Delete(ctx context.Context, id string) error
+
+	// CountOpenTermsByProgram returns the number of terms with status='open' for a program.
+	CountOpenTermsByProgram(ctx context.Context, programID string) (int, error)
 }
 
 // ProgramMemberRepository defines persistence operations for program members.
@@ -67,11 +68,6 @@ type ProgramMemberRepository interface {
 	Create(ctx context.Context, programID string, input models.ProgramMemberCreateInput) (*models.ProgramMember, error)
 	Update(ctx context.Context, id string, input models.ProgramMemberUpdateInput) (*models.ProgramMember, error)
 	Delete(ctx context.Context, id string) error
-
-	// Admins
-	ListAdminsByProgram(ctx context.Context, programID string) ([]*models.ProgramAdmin, error)
-	AddAdmin(ctx context.Context, programID string, input models.ProgramAdminCreateInput) (*models.ProgramAdmin, error)
-	DeleteAdmin(ctx context.Context, adminID string) error
 }
 
 // ApplicationRepository defines persistence operations for applications.
@@ -82,22 +78,28 @@ type ApplicationRepository interface {
 	Create(ctx context.Context, programTermID string, input models.ApplicationCreateInput) (*models.Application, error)
 	Update(ctx context.Context, id string, input models.ApplicationUpdateInput) (*models.Application, error)
 	Delete(ctx context.Context, id string) error
-}
 
-// EnrollmentRepository defines persistence operations for enrollments.
-type EnrollmentRepository interface {
-	GetByID(ctx context.Context, id string) (*models.Enrollment, error)
-	ListByProgramTerm(ctx context.Context, programTermID string, filter models.EnrollmentFilter) ([]*models.Enrollment, *models.PaginationMeta, error)
-	Create(ctx context.Context, programTermID string, input models.EnrollmentCreateInput) (*models.Enrollment, error)
-	Update(ctx context.Context, id string, input models.EnrollmentUpdateInput) (*models.Enrollment, error)
+	// CountBlockingAppsForProgram returns applications in a non-terminal state across all terms of a program.
+	CountBlockingAppsForProgram(ctx context.Context, programID string) (int, error)
+	// CountAcceptedByTerm returns the count of accepted/active applications for a term.
+	CountAcceptedByTerm(ctx context.Context, termID string) (int, error)
+	// FindByTermAndUser returns an application for a specific term and user, or nil.
+	FindByTermAndUser(ctx context.Context, termID, userID string) (*models.Application, error)
+	// BulkDeclineByTerm moves all pending/submitted applications in a term to declined.
+	BulkDeclineByTerm(ctx context.Context, termID string) (int, error)
+	// ListPastMenteesByTerm returns accepted/graduated application user IDs for a term.
+	ListPastMenteesByTerm(ctx context.Context, termID string) ([]*models.Application, error)
 }
 
 // TaskRepository defines persistence operations for tasks.
 type TaskRepository interface {
 	GetByID(ctx context.Context, id string) (*models.Task, error)
-	ListByEnrollment(ctx context.Context, enrollmentID string, filter models.TaskFilter) ([]*models.Task, *models.PaginationMeta, error)
+	ListByApplication(ctx context.Context, applicationID string, filter models.TaskFilter) ([]*models.Task, *models.PaginationMeta, error)
 	ListByProgramTerm(ctx context.Context, programTermID string, filter models.TaskFilter) ([]*models.Task, *models.PaginationMeta, error)
-	Create(ctx context.Context, enrollmentID string, input models.TaskCreateInput) (*models.Task, error)
+	Create(ctx context.Context, applicationID string, input models.TaskCreateInput) (*models.Task, error)
 	Update(ctx context.Context, id string, input models.TaskUpdateInput) (*models.Task, error)
 	Delete(ctx context.Context, id string) error
+
+	// CountPrerequisiteTasksByApplication returns (total, complete) prerequisite task counts.
+	CountPrerequisiteTasksByApplication(ctx context.Context, applicationID string) (total int, complete int, err error)
 }

@@ -58,13 +58,6 @@ type ApplicationFilter struct {
 	Status string // pending | accepted | declined | withdrawn
 }
 
-// EnrollmentFilter constrains list queries for enrollments.
-type EnrollmentFilter struct {
-	Limit  int
-	Offset int
-	Status string // active | graduated | withdrawn | hold
-}
-
 // TaskFilter constrains list queries for tasks.
 type TaskFilter struct {
 	Limit      int

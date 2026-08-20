@@ -20,11 +20,10 @@ Source → Target mapping
                                       → program_funding_stats (amountRaised)
   jobspring-prod-program-terms        → program_terms
   jobspring-prod-project-members      → program_members
-                                      → program_admins   (memberType='maintainer')
-  jobspring-prod-program-term-mentees → applications     (all status values, mapped)
-                                      → enrollments      (active|graduated|withdrawn|hold)
+  jobspring-prod-program-term-mentees → applications     (full lifecycle;
+                                        active|graduated|hold map directly)
   jobspring-prod-tasks                → tasks
-                                        (enrollment_id resolved via
+                                        (application_id resolved via
                                         (program_term_id, assignee_id) lookup)
 
 Key notes
@@ -32,14 +31,11 @@ Key notes
 - All DynamoDB IDs are already valid UUIDs; they are used directly as Postgres PKs.
 - startDateTime / endDateTime in program-terms are Unix epoch strings (seconds).
 - user-profiles rows with recordKind='github-profile-reservation' are skipped.
-- program-term-mentees status lifecycle:
-    pending | accepted | declined | withdrawn → applications.status (mapped below)
-    active | graduated | withdrawn | hold     → enrollments.status
-  A mentee record where status ∈ {active, graduated, hold} also gets an
-  applications row with status='accepted'.
-- tasks.enrollment_id is resolved post-scan by matching (program_term_id, assignee_id)
-  against the enrollments that were just inserted. Tasks whose enrollment cannot
-  be resolved get enrollment_id=NULL (the column is nullable).
+- The enrollments table no longer exists; applications now covers the full mentee
+  lifecycle (pending → accepted → active → graduated|withdrawn).
+- attendance_type is not captured in DynamoDB; it is migrated as NULL.
+- tasks.application_id is resolved post-scan by matching (program_term_id, assignee_id)
+  against inserted applications. Tasks with no match get application_id=NULL.
 - All INSERTs use ON CONFLICT … DO UPDATE (idempotent; safe to re-run).
 
 Usage
@@ -243,40 +239,26 @@ def _redact_dsn(dsn: str) -> str:
 def _normalize_program_status(status: str | None) -> str:
     """Map DynamoDB project status to Postgres programs.status."""
     if not status:
-        return "pending"
-    m = {"published": "published", "pending": "pending", "archived": "archived"}
-    return m.get(status.lower(), "pending")
+        return "draft"
+    m = {
+        "draft": "draft",
+        "pending": "draft",       # legacy DynamoDB value
+        "submitted": "submitted",
+        "published": "published",
+        "rejected": "rejected",
+        "archived": "archived",
+        "hidden": "hidden",
+    }
+    return m.get(status.lower(), "draft")
+
+
+_VALID_APP_STATUSES = {"pending", "accepted", "active", "declined", "withdrawn", "graduated", "hold"}
 
 
 def _map_application_status(dynamo_status: str | None) -> str:
-    """Map full mentee lifecycle status → applications.status."""
+    """Map DynamoDB mentee status → applications.status."""
     s = (dynamo_status or "pending").lower()
-    # active/graduated/hold → were accepted before enrollment
-    if s in ("active", "graduated", "hold"):
-        return "accepted"
-    if s in ("declined",):
-        return "declined"
-    if s in ("withdrawn",):
-        return "withdrawn"
-    if s in ("accepted",):
-        return "accepted"
-    return "pending"
-
-
-def _is_enrollment_status(dynamo_status: str | None) -> bool:
-    """Return True if the mentee row represents an active/graduated enrollment."""
-    return (dynamo_status or "").lower() in ("active", "graduated", "withdrawn", "hold")
-
-
-def _map_enrollment_status(dynamo_status: str | None) -> str:
-    s = (dynamo_status or "active").lower()
-    mapping = {
-        "active": "active",
-        "graduated": "graduated",
-        "withdrawn": "withdrawn",
-        "hold": "hold",
-    }
-    return mapping.get(s, "active")
+    return s if s in _VALID_APP_STATUSES else "pending"
 
 
 # ---------------------------------------------------------------------------
@@ -627,7 +609,7 @@ def migrate_program_terms(cur, terms: list, known_program_ids: set) -> set:
             continue
         term_ids.add(tid)
         status = (t.get("Active") or "open").lower()
-        if status not in ("open", "closed"):
+        if status not in ("open", "closed", "deleted"):
             status = "closed"
         rows.append(
             (
@@ -676,25 +658,20 @@ def migrate_program_terms(cur, terms: list, known_program_ids: set) -> set:
 # ---------------------------------------------------------------------------
 
 
+_VALID_MEMBER_TYPES    = {"maintainer", "mentor"}
+_VALID_MEMBER_STATUSES = {"invited", "requested", "pending", "active", "declined", "withdrawn"}
+
+
 def migrate_program_members(
     cur,
     members: list,
     known_program_ids: set,
     known_user_ids: set,
-    profile_map: dict,
 ) -> None:
-    """
-    Upsert program_members from jobspring-prod-project-members.
-    Also creates program_admins rows for maintainer-type members whose
-    user_id has a matching user_profile.
-    """
+    """Upsert program_members from jobspring-prod-project-members."""
     log.info("Migrating program_members (%d rows) ...", len(members))
     member_rows = []
-    admin_rows = []
     skipped = 0
-
-    # Build a reverse map: user_id → profile_id (first profile found)
-    user_to_profile: dict = {uid: pid for pid, uid in profile_map.items() if uid}
 
     for m in members:
         mid = _as_uuid(m.get("id"))
@@ -718,7 +695,10 @@ def migrate_program_members(
             known_user_ids.add(uid)
 
         member_type = (m.get("memberType") or "mentor").strip()
-        status = (m.get("status") or "").strip() or None
+        if member_type not in _VALID_MEMBER_TYPES:
+            member_type = "mentor"
+        raw_status = (m.get("status") or "").strip() or None
+        status = raw_status if raw_status in _VALID_MEMBER_STATUSES else None
         member_rows.append(
             (
                 mid,
@@ -731,19 +711,6 @@ def migrate_program_members(
                 _parse_ts(m.get("updatedOn")),
             )
         )
-
-        # Maintainers → program_admins (if they have a profile)
-        if member_type == "maintainer":
-            profile_id = user_to_profile.get(uid)
-            if profile_id:
-                admin_rows.append(
-                    (
-                        str(uuid.uuid5(_UUID_NS, f"admin:{pid}|{profile_id}")),
-                        pid,
-                        profile_id,
-                        "maintainer",
-                    )
-                )
 
     psycopg2.extras.execute_batch(
         cur,
@@ -761,19 +728,6 @@ def migrate_program_members(
     )
     log.info("  → %d program_members upserted, %d skipped", len(member_rows), skipped)
 
-    if admin_rows:
-        psycopg2.extras.execute_batch(
-            cur,
-            """
-            INSERT INTO program_admins (id, program_id, user_profile_id, role)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (program_id, user_profile_id) DO NOTHING
-            """,
-            admin_rows,
-            page_size=500,
-        )
-        log.info("  → %d program_admins upserted", len(admin_rows))
-
 
 # ---------------------------------------------------------------------------
 # Migration: applications + enrollments
@@ -787,13 +741,12 @@ def migrate_mentees(
     known_user_ids: set,
 ) -> dict:
     """
-    Upsert applications and enrollments from jobspring-prod-program-term-mentees.
-    Returns {(program_term_id, mentee_user_id): enrollment_id} for task resolution.
+    Upsert applications from jobspring-prod-program-term-mentees.
+    Returns {(program_term_id, user_id): application_id} for task resolution.
     """
-    log.info("Migrating applications + enrollments (%d rows) ...", len(mentees))
+    log.info("Migrating applications (%d rows) ...", len(mentees))
     app_rows = []
-    enroll_rows = []
-    enrollment_index: dict = {}
+    application_index: dict = {}
     skipped = 0
 
     for m in mentees:
@@ -818,59 +771,38 @@ def migrate_mentees(
             known_user_ids.add(uid)
 
         dynamo_status = m.get("status") or "pending"
-        term_status = (m.get("programTermStatus") or "").strip() or None
-        tasks_submitted = _as_bool(m.get("tasksSubmitted"))
-        admin_notified = _as_bool(m.get("adminNotified"))
-        created_on = _parse_ts(m.get("createdOn"))
-        updated_on = _parse_ts(m.get("updatedOn"))
-
-        # --- applications row ---
-        app_status = _map_application_status(dynamo_status)
         app_rows.append(
             (
                 mid,
                 term_id,
                 uid,
                 "mentee",
-                app_status,
-                term_status,
-                tasks_submitted,
-                admin_notified,
-                created_on,
-                updated_on,
+                _map_application_status(dynamo_status),
+                (m.get("programTermStatus") or "").strip() or None,
+                _parse_epoch(m.get("startDateTime")),
+                _parse_epoch(m.get("endDateTime")),
+                _as_bool(m.get("tasksSubmitted")),
+                _as_bool(m.get("adminNotified")),
+                None,  # attendance_type — not captured in DynamoDB
+                _parse_ts(m.get("createdOn")),
+                _parse_ts(m.get("updatedOn")),
             )
         )
-
-        # --- enrollments row (only post-acceptance statuses) ---
-        if _is_enrollment_status(dynamo_status):
-            enroll_status = _map_enrollment_status(dynamo_status)
-            enroll_rows.append(
-                (
-                    mid,  # reuse same UUID as application for simplicity
-                    term_id,
-                    uid,
-                    enroll_status,
-                    term_status,
-                    _parse_epoch(m.get("startDateTime")),
-                    _parse_epoch(m.get("endDateTime")),
-                    tasks_submitted,
-                    admin_notified,
-                    created_on,
-                    updated_on,
-                )
-            )
-            enrollment_index[(term_id, uid)] = mid
+        application_index[(term_id, uid)] = mid
 
     psycopg2.extras.execute_batch(
         cur,
         """
         INSERT INTO applications
           (id, program_term_id, user_id, role, status, program_term_status,
-           tasks_submitted, admin_notified, created_on, updated_on)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+           start_date_time, end_date_time, tasks_submitted, admin_notified,
+           attendance_type, created_on, updated_on)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (program_term_id, user_id, role) DO UPDATE SET
           status              = EXCLUDED.status,
           program_term_status = EXCLUDED.program_term_status,
+          start_date_time     = EXCLUDED.start_date_time,
+          end_date_time       = EXCLUDED.end_date_time,
           tasks_submitted     = EXCLUDED.tasks_submitted,
           admin_notified      = EXCLUDED.admin_notified,
           updated_on          = EXCLUDED.updated_on
@@ -880,33 +812,11 @@ def migrate_mentees(
     )
     log.info("  → %d applications upserted, %d skipped", len(app_rows), skipped)
 
-    psycopg2.extras.execute_batch(
-        cur,
-        """
-        INSERT INTO enrollments
-          (id, program_term_id, mentee_user_id, status, program_term_status,
-           start_date_time, end_date_time, tasks_submitted, admin_notified,
-           created_on, updated_on)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (program_term_id, mentee_user_id) DO UPDATE SET
-          status              = EXCLUDED.status,
-          program_term_status = EXCLUDED.program_term_status,
-          start_date_time     = EXCLUDED.start_date_time,
-          end_date_time       = EXCLUDED.end_date_time,
-          tasks_submitted     = EXCLUDED.tasks_submitted,
-          admin_notified      = EXCLUDED.admin_notified,
-          updated_on          = EXCLUDED.updated_on
-        """,
-        enroll_rows,
-        page_size=500,
-    )
-    log.info("  → %d enrollments upserted", len(enroll_rows))
+    # Rebuild index from DB so ON CONFLICT winners are used for task resolution.
+    cur.execute("SELECT program_term_id::text, user_id::text, id::text FROM applications WHERE role = 'mentee'")
+    application_index = {(row[0], row[1]): row[2] for row in cur.fetchall()}
 
-    # Rebuild index from DB — ON CONFLICT keeps the first inserted ID, not the last
-    cur.execute("SELECT program_term_id::text, mentee_user_id::text, id::text FROM enrollments")
-    enrollment_index = {(row[0], row[1]): row[2] for row in cur.fetchall()}
-
-    return enrollment_index
+    return application_index
 
 
 # ---------------------------------------------------------------------------
@@ -914,14 +824,17 @@ def migrate_mentees(
 # ---------------------------------------------------------------------------
 
 
+_VALID_TASK_CATEGORIES = {"prerequisite", "non_prerequisite"}
+
+
 def migrate_tasks(
     cur,
     tasks: list,
-    enrollment_index: dict,
+    application_index: dict,
     known_term_ids: set,
     known_user_ids: set,
 ) -> None:
-    """Upsert tasks; resolve enrollment_id via (program_term_id, assignee_id)."""
+    """Upsert tasks; resolve application_id via (program_term_id, assignee_id)."""
     log.info("Migrating tasks (%d rows) ...", len(tasks))
     rows = []
     skipped = 0
@@ -949,8 +862,8 @@ def migrate_tasks(
                 )
                 known_user_ids.add(uid)
 
-        enrollment_id = enrollment_index.get((term_id, assignee_id)) if term_id else None
-        if not enrollment_id:
+        application_id = application_index.get((term_id, assignee_id)) if term_id else None
+        if not application_id:
             unresolved += 1
 
         # term_id FK must exist
@@ -968,16 +881,19 @@ def migrate_tasks(
             except ValueError:
                 pass
 
+        raw_category = (t.get("category") or "").strip() or None
+        category = raw_category if raw_category in _VALID_TASK_CATEGORIES else None
+
         rows.append(
             (
                 tid,
-                enrollment_id,
+                application_id,
                 resolved_term_id,
                 assignee_id,
                 owner_id,
                 (t.get("name") or "").strip() or None,
                 (t.get("description") or "").strip() or None,
-                (t.get("category") or "").strip() or None,
+                category,
                 status,
                 (t.get("applicationStatus") or "").strip() or None,
                 (t.get("programTermStatus") or "").strip() or None,
@@ -995,12 +911,12 @@ def migrate_tasks(
         cur,
         """
         INSERT INTO tasks
-          (id, enrollment_id, program_term_id, assignee_id, owner_id, name,
+          (id, application_id, program_term_id, assignee_id, owner_id, name,
            description, category, status, application_status, program_term_status,
            custom, submit_file, file, due_date, created_by, created_on, updated_on)
         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         ON CONFLICT (id) DO UPDATE SET
-          enrollment_id       = EXCLUDED.enrollment_id,
+          application_id      = EXCLUDED.application_id,
           program_term_id     = EXCLUDED.program_term_id,
           assignee_id         = EXCLUDED.assignee_id,
           owner_id            = EXCLUDED.owner_id,
@@ -1021,7 +937,7 @@ def migrate_tasks(
         page_size=500,
     )
     log.info(
-        "  → %d tasks upserted, %d skipped, %d with unresolved enrollment_id",
+        "  → %d tasks upserted, %d skipped, %d with unresolved application_id",
         len(rows),
         skipped,
         unresolved,
@@ -1066,13 +982,13 @@ def main() -> None:
                 known_term_ids   = migrate_program_terms(cur, terms_raw, known_program_ids)
                 conn.commit()
 
-                migrate_program_members(cur, members_raw, known_program_ids, known_user_ids, profile_map)
+                migrate_program_members(cur, members_raw, known_program_ids, known_user_ids)
                 conn.commit()
 
-                enrollment_index = migrate_mentees(cur, mentees_raw, known_term_ids, known_user_ids)
+                application_index = migrate_mentees(cur, mentees_raw, known_term_ids, known_user_ids)
                 conn.commit()
 
-                migrate_tasks(cur, tasks_raw, enrollment_index, known_term_ids, known_user_ids)
+                migrate_tasks(cur, tasks_raw, application_index, known_term_ids, known_user_ids)
                 conn.commit()
 
         log.info("Migration complete.")

@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
+	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/auth"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -18,18 +19,19 @@ var programMemberSvcTracer = otel.Tracer("program-members-service")
 
 // ProgramMemberService orchestrates program member reads and writes.
 type ProgramMemberService struct {
-	repo domain.ProgramMemberRepository
+	repo         domain.ProgramMemberRepository
+	notifier     domain.Notifier
+	inviteSecret string
 }
 
 // NewProgramMemberService returns a ProgramMemberService.
-func NewProgramMemberService(repo domain.ProgramMemberRepository) *ProgramMemberService {
-	return &ProgramMemberService{repo: repo}
+func NewProgramMemberService(repo domain.ProgramMemberRepository, notifier domain.Notifier, inviteSecret string) *ProgramMemberService {
+	return &ProgramMemberService{repo: repo, notifier: notifier, inviteSecret: inviteSecret}
 }
 
 var validMemberTypes = map[string]bool{
 	"maintainer": true,
 	"mentor":     true,
-	"apprentice": true,
 }
 
 // GetByID returns the program member with the given ID.
@@ -61,6 +63,8 @@ func (s *ProgramMemberService) ListByProgram(ctx context.Context, programID stri
 }
 
 // Create validates input and adds a member to a program.
+// When member_type is "mentor", the member is created with status "invited" and
+// a time-limited invite token is sent via the notifier.
 func (s *ProgramMemberService) Create(ctx context.Context, programID string, input models.ProgramMemberCreateInput) (*models.ProgramMember, error) {
 	ctx, span := programMemberSvcTracer.Start(ctx, "ProgramMemberService.Create")
 	defer span.End()
@@ -69,15 +73,40 @@ func (s *ProgramMemberService) Create(ctx context.Context, programID string, inp
 		return nil, fmt.Errorf("%w: user_id is required", domain.ErrInvalidInput)
 	}
 	if !validMemberTypes[input.MemberType] {
-		return nil, fmt.Errorf("%w: member_type must be maintainer, mentor, or apprentice", domain.ErrInvalidInput)
+		return nil, fmt.Errorf("%w: member_type must be maintainer or mentor", domain.ErrInvalidInput)
 	}
-	input.ID = uuid.New().String()
 
+	// Mentors are placed in 'invited' status and notified; maintainers are 'active' immediately.
+	if input.MemberType == "mentor" {
+		if input.Status == nil {
+			s := "invited"
+			input.Status = &s
+		}
+	} else {
+		if input.Status == nil {
+			s := "active"
+			input.Status = &s
+		}
+	}
+
+	input.ID = uuid.New().String()
 	m, err := s.repo.Create(ctx, programID, input)
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("create program member: %w", err)
 	}
+
+	// Send invite notification for mentors.
+	if input.MemberType == "mentor" && s.inviteSecret != "" {
+		token, tokenErr := auth.GenerateInviteToken(programID, input.UserID, s.inviteSecret)
+		if tokenErr != nil {
+			span.RecordError(tokenErr)
+			// Non-fatal: log but don't fail the create.
+		} else {
+			s.notifier.NotifyMentorInvited(ctx, programID, input.UserID, token)
+		}
+	}
+
 	return m, nil
 }
 
@@ -87,12 +116,101 @@ func (s *ProgramMemberService) Update(ctx context.Context, id string, input mode
 	defer span.End()
 	span.SetAttributes(attribute.String("member.id", id))
 
+	// Notify when a mentor declines directly via the update path.
+	if input.Status != nil && *input.Status == "declined" {
+		current, err := s.repo.GetByID(ctx, id)
+		if err == nil {
+			s.notifier.NotifyMentorDeclined(ctx, current.ProgramID, current.UserID)
+		}
+	}
+
 	m, err := s.repo.Update(ctx, id, input)
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("update program member: %w", err)
 	}
 	return m, nil
+}
+
+// AcceptInvite validates a mentor invite token and transitions the member to active.
+func (s *ProgramMemberService) AcceptInvite(ctx context.Context, token string) (*models.ProgramMember, error) {
+	ctx, span := programMemberSvcTracer.Start(ctx, "ProgramMemberService.AcceptInvite")
+	defer span.End()
+
+	programID, userID, err := auth.ValidateInviteToken(token, s.inviteSecret)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s", domain.ErrInvalidInput, err.Error())
+	}
+
+	span.SetAttributes(
+		attribute.String("program.id", programID),
+		attribute.String("user.id", userID),
+	)
+
+	// Find the invited member record.
+	members, _, err := s.repo.ListByProgram(ctx, programID, models.ProgramMemberFilter{Limit: 100})
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("lookup member for invite: %w", err)
+	}
+	var memberID string
+	for _, m := range members {
+		if m.UserID == userID && m.Status != nil && *m.Status == "invited" {
+			memberID = m.ID
+			break
+		}
+	}
+	if memberID == "" {
+		return nil, fmt.Errorf("%w: no pending invite found for this user", domain.ErrInvalidInput)
+	}
+
+	activeStatus := "active"
+	m, err := s.repo.Update(ctx, memberID, models.ProgramMemberUpdateInput{Status: &activeStatus})
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("accept invite: %w", err)
+	}
+	return m, nil
+}
+
+// DeclineInvite validates a mentor invite token and transitions the member to declined.
+func (s *ProgramMemberService) DeclineInvite(ctx context.Context, token string) error {
+	ctx, span := programMemberSvcTracer.Start(ctx, "ProgramMemberService.DeclineInvite")
+	defer span.End()
+
+	programID, userID, err := auth.ValidateInviteToken(token, s.inviteSecret)
+	if err != nil {
+		return fmt.Errorf("%w: %s", domain.ErrInvalidInput, err.Error())
+	}
+
+	span.SetAttributes(
+		attribute.String("program.id", programID),
+		attribute.String("user.id", userID),
+	)
+
+	members, _, err := s.repo.ListByProgram(ctx, programID, models.ProgramMemberFilter{Limit: 100})
+	if err != nil {
+		span.RecordError(err)
+		return fmt.Errorf("lookup member for decline: %w", err)
+	}
+	var memberID string
+	for _, m := range members {
+		if m.UserID == userID && m.Status != nil && *m.Status == "invited" {
+			memberID = m.ID
+			break
+		}
+	}
+	if memberID == "" {
+		return fmt.Errorf("%w: no pending invite found for this user", domain.ErrInvalidInput)
+	}
+
+	declinedStatus := "declined"
+	if _, err := s.repo.Update(ctx, memberID, models.ProgramMemberUpdateInput{Status: &declinedStatus}); err != nil {
+		span.RecordError(err)
+		return fmt.Errorf("decline invite: %w", err)
+	}
+	s.notifier.NotifyMentorDeclined(ctx, programID, userID)
+	return nil
 }
 
 // Delete removes a program member.
@@ -104,51 +222,6 @@ func (s *ProgramMemberService) Delete(ctx context.Context, id string) error {
 	if err := s.repo.Delete(ctx, id); err != nil {
 		span.RecordError(err)
 		return fmt.Errorf("delete program member: %w", err)
-	}
-	return nil
-}
-
-// ListAdminsByProgram returns all admins for a program.
-func (s *ProgramMemberService) ListAdminsByProgram(ctx context.Context, programID string) ([]*models.ProgramAdmin, error) {
-	ctx, span := programMemberSvcTracer.Start(ctx, "ProgramMemberService.ListAdmins")
-	defer span.End()
-
-	admins, err := s.repo.ListAdminsByProgram(ctx, programID)
-	if err != nil {
-		span.RecordError(err)
-		return nil, fmt.Errorf("list program admins: %w", err)
-	}
-	return admins, nil
-}
-
-// AddAdmin links a user profile to a program as admin.
-func (s *ProgramMemberService) AddAdmin(ctx context.Context, programID string, input models.ProgramAdminCreateInput) (*models.ProgramAdmin, error) {
-	ctx, span := programMemberSvcTracer.Start(ctx, "ProgramMemberService.AddAdmin")
-	defer span.End()
-
-	if input.UserProfileID == "" {
-		return nil, fmt.Errorf("%w: user_profile_id is required", domain.ErrInvalidInput)
-	}
-	if input.Role == "" {
-		return nil, fmt.Errorf("%w: role is required", domain.ErrInvalidInput)
-	}
-
-	a, err := s.repo.AddAdmin(ctx, programID, input)
-	if err != nil {
-		span.RecordError(err)
-		return nil, fmt.Errorf("add program admin: %w", err)
-	}
-	return a, nil
-}
-
-// DeleteAdmin removes a program admin entry.
-func (s *ProgramMemberService) DeleteAdmin(ctx context.Context, adminID string) error {
-	ctx, span := programMemberSvcTracer.Start(ctx, "ProgramMemberService.DeleteAdmin")
-	defer span.End()
-
-	if err := s.repo.DeleteAdmin(ctx, adminID); err != nil {
-		span.RecordError(err)
-		return fmt.Errorf("delete program admin: %w", err)
 	}
 	return nil
 }

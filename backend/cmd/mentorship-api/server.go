@@ -14,6 +14,7 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/handler"
+	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/auth"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/db"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/service"
@@ -49,18 +50,19 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	programTermRepo := db.NewProgramTermRepository(pool)
 	programMemberRepo := db.NewProgramMemberRepository(pool)
 	applicationRepo := db.NewApplicationRepository(pool)
-	enrollmentRepo := db.NewEnrollmentRepository(pool)
 	taskRepo := db.NewTaskRepository(pool)
+
+	// Notifier
+	notifier := infrastructure.NewLogNotifier(logger)
 
 	// Services
 	userSvc := service.NewUserService(userRepo)
 	userProfileSvc := service.NewUserProfileService(userProfileRepo)
-	programSvc := service.NewProgramService(programRepo)
-	programTermSvc := service.NewProgramTermService(programTermRepo)
-	programMemberSvc := service.NewProgramMemberService(programMemberRepo)
-	applicationSvc := service.NewApplicationService(applicationRepo)
-	enrollmentSvc := service.NewEnrollmentService(enrollmentRepo)
-	taskSvc := service.NewTaskService(taskRepo)
+	programSvc := service.NewProgramService(programRepo, programTermRepo, applicationRepo)
+	programTermSvc := service.NewProgramTermService(programTermRepo, applicationRepo)
+	programMemberSvc := service.NewProgramMemberService(programMemberRepo, notifier, cfg.Local.InviteSecret)
+	applicationSvc := service.NewApplicationService(applicationRepo, taskRepo, programTermRepo, programRepo, notifier)
+	taskSvc := service.NewTaskService(taskRepo, applicationRepo, notifier)
 
 	// Handlers
 	userH := handler.NewUserHandler(userSvc)
@@ -69,8 +71,8 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	programTermH := handler.NewProgramTermHandler(programTermSvc)
 	programMemberH := handler.NewProgramMemberHandler(programMemberSvc)
 	applicationH := handler.NewApplicationHandler(applicationSvc)
-	enrollmentH := handler.NewEnrollmentHandler(enrollmentSvc)
 	taskH := handler.NewTaskHandler(taskSvc)
+	mentorInviteH := handler.NewMentorInviteHandler(programMemberSvc)
 
 	// JWT authenticator
 	jwtAuth, err := auth.NewJWTAuthenticator(ctx, cfg.jwtAuthConfig(), logger)
@@ -113,17 +115,18 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		r.Get("/programs/{id}/funding-stats", programH.GetFundingStats)
 		r.Get("/programs/{id}/terms", programTermH.ListByProgram)
 		r.Get("/programs/{id}/members", programMemberH.List)
-		r.Get("/programs/{id}/admins", programMemberH.ListAdmins)
 
 		r.Get("/program-terms/{id}", programTermH.GetByID)
 		r.Get("/program-terms/{id}/applications", applicationH.ListByProgramTerm)
-		r.Get("/program-terms/{id}/enrollments", enrollmentH.ListByProgramTerm)
 		r.Get("/program-terms/{id}/tasks", taskH.ListByProgramTerm)
 
 		r.Get("/applications/{id}", applicationH.GetByID)
-		r.Get("/enrollments/{id}", enrollmentH.GetByID)
-		r.Get("/enrollments/{id}/tasks", taskH.ListByEnrollment)
+		r.Get("/applications/{id}/tasks", taskH.ListByApplication)
 		r.Get("/tasks/{id}", taskH.GetByID)
+
+		// Mentor invite (token is the credential — no JWT required)
+		r.Post("/mentor-invites/accept", mentorInviteH.AcceptInvite)
+		r.Post("/mentor-invites/decline", mentorInviteH.DeclineInvite)
 
 		// ── Authenticated endpoints ────────────────────────────────────────
 		r.Group(func(r chi.Router) {
@@ -146,16 +149,11 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			r.Delete("/programs/{id}", programH.Delete)
 			r.Post("/programs/{id}/skills", programH.AddSkill)
 			r.Delete("/programs/{id}/skills/{skillId}", programH.DeleteSkill)
-			r.Get("/programs/{id}/invitation-tokens", programH.ListInvitationTokens)
-			r.Post("/programs/{id}/invitation-tokens", programH.CreateInvitationToken)
-			r.Delete("/programs/{id}/invitation-tokens/{tokenId}", programH.DeleteInvitationToken)
 
-			// Program members and admins
+			// Program members
 			r.Post("/programs/{id}/members", programMemberH.Create)
 			r.Patch("/programs/{id}/members/{memberId}", programMemberH.Update)
 			r.Delete("/programs/{id}/members/{memberId}", programMemberH.Delete)
-			r.Post("/programs/{id}/admins", programMemberH.AddAdmin)
-			r.Delete("/programs/{id}/admins/{adminId}", programMemberH.DeleteAdmin)
 
 			// Program terms
 			r.Post("/programs/{id}/terms", programTermH.Create)
@@ -166,13 +164,12 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			r.Post("/program-terms/{id}/applications", applicationH.Create)
 			r.Patch("/applications/{id}", applicationH.Update)
 			r.Delete("/applications/{id}", applicationH.Delete)
-
-			// Enrollments
-			r.Post("/program-terms/{id}/enrollments", enrollmentH.Create)
-			r.Patch("/enrollments/{id}", enrollmentH.Update)
+			r.Post("/program-terms/{id}/applications/bulk-decline", applicationH.BulkDeclineByTerm)
+			r.Get("/program-terms/{id}/applications/export", applicationH.ExportByTerm)
+			r.Get("/program-terms/{id}/past-mentees", applicationH.PastMenteesByTerm)
 
 			// Tasks
-			r.Post("/enrollments/{id}/tasks", taskH.Create)
+			r.Post("/applications/{id}/tasks", taskH.Create)
 			r.Patch("/tasks/{id}", taskH.Update)
 			r.Delete("/tasks/{id}", taskH.Delete)
 		})

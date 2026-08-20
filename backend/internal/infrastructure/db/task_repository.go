@@ -30,7 +30,7 @@ func NewTaskRepository(pool *pgxpool.Pool) *TaskRepository {
 }
 
 const taskCols = `
-	id, enrollment_id, program_term_id, assignee_id, owner_id,
+	id, application_id, program_term_id, assignee_id, owner_id,
 	name, description, category, status, application_status, program_term_status,
 	custom, submit_file, file, due_date, created_by,
 	created_on, updated_on`
@@ -38,7 +38,7 @@ const taskCols = `
 func scanTask(row pgx.Row) (*models.Task, error) {
 	var t models.Task
 	err := row.Scan(
-		&t.ID, &t.EnrollmentID, &t.ProgramTermID, &t.AssigneeID, &t.OwnerID,
+		&t.ID, &t.ApplicationID, &t.ProgramTermID, &t.AssigneeID, &t.OwnerID,
 		&t.Name, &t.Description, &t.Category, &t.Status, &t.ApplicationStatus, &t.ProgramTermStatus,
 		&t.Custom, &t.SubmitFile, &t.File, &t.DueDate, &t.CreatedBy,
 		&t.CreatedOn, &t.UpdatedOn,
@@ -67,13 +67,13 @@ func (r *TaskRepository) GetByID(ctx context.Context, id string) (*models.Task, 
 	return t, nil
 }
 
-// ListByEnrollment returns paginated tasks for an enrollment.
-func (r *TaskRepository) ListByEnrollment(ctx context.Context, enrollmentID string, filter models.TaskFilter) ([]*models.Task, *models.PaginationMeta, error) {
-	ctx, span := taskTracer.Start(ctx, "db.tasks.ListByEnrollment")
+// ListByApplication returns paginated tasks for an application.
+func (r *TaskRepository) ListByApplication(ctx context.Context, applicationID string, filter models.TaskFilter) ([]*models.Task, *models.PaginationMeta, error) {
+	ctx, span := taskTracer.Start(ctx, "db.tasks.ListByApplication")
 	defer span.End()
-	span.SetAttributes(attribute.String("db.enrollment_id", enrollmentID))
+	span.SetAttributes(attribute.String("db.application_id", applicationID))
 
-	return r.listWithFilter(ctx, span, ` WHERE enrollment_id = $1`, enrollmentID, filter)
+	return r.listWithFilter(ctx, span, ` WHERE application_id = $1`, applicationID, filter)
 }
 
 // ListByProgramTerm returns paginated tasks for a program term.
@@ -142,21 +142,21 @@ func (r *TaskRepository) listWithFilter(ctx context.Context, span trace.Span, ba
 	return tasks, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, nil
 }
 
-// Create inserts a new task linked to the given enrollment.
-func (r *TaskRepository) Create(ctx context.Context, enrollmentID string, input models.TaskCreateInput) (*models.Task, error) {
+// Create inserts a new task linked to the given application.
+func (r *TaskRepository) Create(ctx context.Context, applicationID string, input models.TaskCreateInput) (*models.Task, error) {
 	ctx, span := taskTracer.Start(ctx, "db.tasks.Create")
 	defer span.End()
 
 	const q = `
 		INSERT INTO tasks (
-			id, enrollment_id, program_term_id, assignee_id, owner_id,
+			id, application_id, program_term_id, assignee_id, owner_id,
 			name, description, category, status, custom,
 			submit_file, due_date, created_by
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 		RETURNING ` + taskCols
 
 	t, err := scanTask(r.pool.QueryRow(ctx, q,
-		input.ID, enrollmentID, input.ProgramTermID, input.AssigneeID, input.OwnerID,
+		input.ID, applicationID, input.ProgramTermID, input.AssigneeID, input.OwnerID,
 		input.Name, input.Description, input.Category, input.Status, input.Custom,
 		input.SubmitFile, input.DueDate, input.CreatedBy,
 	))
@@ -217,4 +217,38 @@ func (r *TaskRepository) Delete(ctx context.Context, id string) error {
 		return domain.ErrTaskNotFound
 	}
 	return nil
+}
+
+// CountPrerequisiteTasksByApplication returns the total and complete prerequisite task counts.
+func (r *TaskRepository) CountPrerequisiteTasksByApplication(ctx context.Context, applicationID string) (total int, complete int, err error) {
+	ctx, span := taskTracer.Start(ctx, "db.tasks.CountPrerequisiteTasksByApplication")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.application_id", applicationID))
+
+	rows, qErr := r.pool.Query(ctx,
+		`SELECT status FROM tasks WHERE application_id = $1 AND category = 'prerequisite'`,
+		applicationID,
+	)
+	if qErr != nil {
+		span.RecordError(qErr)
+		return 0, 0, fmt.Errorf("count prerequisite tasks: %w", qErr)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var status string
+		if scanErr := rows.Scan(&status); scanErr != nil {
+			span.RecordError(scanErr)
+			return 0, 0, fmt.Errorf("scan task status: %w", scanErr)
+		}
+		total++
+		if status == "complete" {
+			complete++
+		}
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		span.RecordError(rowsErr)
+		return 0, 0, fmt.Errorf("prerequisite task rows: %w", rowsErr)
+	}
+	return total, complete, nil
 }

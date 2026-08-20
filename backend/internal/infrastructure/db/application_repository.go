@@ -30,13 +30,13 @@ func NewApplicationRepository(pool *pgxpool.Pool) *ApplicationRepository {
 
 const applicationCols = `
 	id, program_term_id, user_id, role, status, program_term_status,
-	tasks_submitted, admin_notified, created_on, updated_on`
+	start_date_time, end_date_time, tasks_submitted, admin_notified, attendance_type, created_on, updated_on`
 
 func scanApplication(row pgx.Row) (*models.Application, error) {
 	var a models.Application
 	err := row.Scan(
 		&a.ID, &a.ProgramTermID, &a.UserID, &a.Role, &a.Status, &a.ProgramTermStatus,
-		&a.TasksSubmitted, &a.AdminNotified, &a.CreatedOn, &a.UpdatedOn,
+		&a.StartDateTime, &a.EndDateTime, &a.TasksSubmitted, &a.AdminNotified, &a.AttendanceType, &a.CreatedOn, &a.UpdatedOn,
 	)
 	if err != nil {
 		return nil, err
@@ -196,12 +196,13 @@ func (r *ApplicationRepository) Create(ctx context.Context, programTermID string
 	defer span.End()
 
 	const q = `
-		INSERT INTO applications (id, program_term_id, user_id, role, status, program_term_status)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO applications (id, program_term_id, user_id, role, status, program_term_status, start_date_time, end_date_time, attendance_type)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING ` + applicationCols
 
 	a, err := scanApplication(r.pool.QueryRow(ctx, q,
 		input.ID, programTermID, input.UserID, input.Role, input.Status, input.ProgramTermStatus,
+		input.StartDateTime, input.EndDateTime, input.AttendanceType,
 	))
 	if err != nil {
 		span.RecordError(err)
@@ -218,15 +219,19 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 
 	const q = `
 		UPDATE applications SET
-			status             = COALESCE($2, status),
-			program_term_status= COALESCE($3, program_term_status),
-			tasks_submitted    = COALESCE($4, tasks_submitted),
-			admin_notified     = COALESCE($5, admin_notified)
+			status              = COALESCE($2, status),
+			program_term_status = COALESCE($3, program_term_status),
+			start_date_time     = COALESCE($4, start_date_time),
+			end_date_time       = COALESCE($5, end_date_time),
+			tasks_submitted     = COALESCE($6, tasks_submitted),
+			admin_notified      = COALESCE($7, admin_notified),
+			attendance_type     = COALESCE($8, attendance_type)
 		WHERE id = $1
 		RETURNING ` + applicationCols
 
 	a, err := scanApplication(r.pool.QueryRow(ctx, q,
-		id, input.Status, input.ProgramTermStatus, input.TasksSubmitted, input.AdminNotified,
+		id, input.Status, input.ProgramTermStatus, input.StartDateTime, input.EndDateTime,
+		input.TasksSubmitted, input.AdminNotified, input.AttendanceType,
 	))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrApplicationNotFound
@@ -252,4 +257,116 @@ func (r *ApplicationRepository) Delete(ctx context.Context, id string) error {
 		return domain.ErrApplicationNotFound
 	}
 	return nil
+}
+
+// CountBlockingAppsForProgram returns applications in a non-terminal state across all terms of a program.
+func (r *ApplicationRepository) CountBlockingAppsForProgram(ctx context.Context, programID string) (int, error) {
+	ctx, span := applicationTracer.Start(ctx, "db.applications.CountBlockingAppsForProgram")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.program_id", programID))
+
+	var count int
+	const q = `
+		SELECT COUNT(*) FROM applications a
+		JOIN program_terms pt ON pt.id = a.program_term_id
+		WHERE pt.program_id = $1
+		AND a.status IN ('pending', 'accepted', 'graduated')`
+	if err := r.pool.QueryRow(ctx, q, programID).Scan(&count); err != nil {
+		span.RecordError(err)
+		return 0, fmt.Errorf("count blocking applications: %w", err)
+	}
+	return count, nil
+}
+
+// CountAcceptedByTerm returns the count of accepted or active applications for a term.
+func (r *ApplicationRepository) CountAcceptedByTerm(ctx context.Context, termID string) (int, error) {
+	ctx, span := applicationTracer.Start(ctx, "db.applications.CountAcceptedByTerm")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.term_id", termID))
+
+	var count int
+	const q = `SELECT COUNT(*) FROM applications WHERE program_term_id = $1 AND status IN ('accepted', 'active')`
+	if err := r.pool.QueryRow(ctx, q, termID).Scan(&count); err != nil {
+		span.RecordError(err)
+		return 0, fmt.Errorf("count accepted applications: %w", err)
+	}
+	return count, nil
+}
+
+// FindByTermAndUser returns an application for a specific term and user, or nil.
+func (r *ApplicationRepository) FindByTermAndUser(ctx context.Context, termID, userID string) (*models.Application, error) {
+	ctx, span := applicationTracer.Start(ctx, "db.applications.FindByTermAndUser")
+	defer span.End()
+
+	q := `SELECT ` + applicationCols + ` FROM applications WHERE program_term_id = $1 AND user_id = $2 LIMIT 1`
+	a, err := scanApplication(r.pool.QueryRow(ctx, q, termID, userID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("find application by term and user: %w", err)
+	}
+	return a, nil
+}
+
+// BulkDeclineByTerm moves all pending/submitted applications in a term to declined.
+func (r *ApplicationRepository) BulkDeclineByTerm(ctx context.Context, termID string) (int, error) {
+	ctx, span := applicationTracer.Start(ctx, "db.applications.BulkDeclineByTerm")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.term_id", termID))
+
+	const q = `
+		UPDATE applications SET status = 'declined'
+		WHERE program_term_id = $1 AND status = 'pending'
+		RETURNING id`
+	rows, err := r.pool.Query(ctx, q, termID)
+	if err != nil {
+		span.RecordError(err)
+		return 0, fmt.Errorf("bulk decline: %w", err)
+	}
+	defer rows.Close()
+
+	var count int
+	for rows.Next() {
+		count++
+	}
+	if err := rows.Err(); err != nil {
+		span.RecordError(err)
+		return 0, fmt.Errorf("bulk decline rows: %w", err)
+	}
+	return count, nil
+}
+
+// ListPastMenteesByTerm returns accepted/graduated applications for a term.
+func (r *ApplicationRepository) ListPastMenteesByTerm(ctx context.Context, termID string) ([]*models.Application, error) {
+	ctx, span := applicationTracer.Start(ctx, "db.applications.ListPastMenteesByTerm")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.term_id", termID))
+
+	q := `SELECT ` + applicationCols + ` FROM applications WHERE program_term_id = $1 AND status IN ('accepted', 'active', 'graduated') ORDER BY created_on`
+	rows, err := r.pool.Query(ctx, q, termID)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("list past mentees: %w", err)
+	}
+	defer rows.Close()
+
+	var apps []*models.Application
+	for rows.Next() {
+		a, err := scanApplication(rows)
+		if err != nil {
+			span.RecordError(err)
+			return nil, fmt.Errorf("scan past mentee: %w", err)
+		}
+		apps = append(apps, a)
+	}
+	if err := rows.Err(); err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("past mentees rows: %w", err)
+	}
+	if apps == nil {
+		apps = []*models.Application{}
+	}
+	return apps, nil
 }

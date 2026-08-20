@@ -19,12 +19,24 @@ var programSvcTracer = otel.Tracer("programs-service")
 
 // ProgramService orchestrates program reads and writes.
 type ProgramService struct {
-	repo domain.ProgramRepository
+	repo     domain.ProgramRepository
+	termRepo domain.ProgramTermRepository
+	appRepo  domain.ApplicationRepository
 }
 
 // NewProgramService returns a ProgramService.
-func NewProgramService(repo domain.ProgramRepository) *ProgramService {
-	return &ProgramService{repo: repo}
+func NewProgramService(repo domain.ProgramRepository, termRepo domain.ProgramTermRepository, appRepo domain.ApplicationRepository) *ProgramService {
+	return &ProgramService{repo: repo, termRepo: termRepo, appRepo: appRepo}
+}
+
+// programTransitions defines the valid next states for each program status.
+var programTransitions = map[models.ProgramStatus][]models.ProgramStatus{
+	models.ProgramStatusDraft:     {models.ProgramStatusSubmitted},
+	models.ProgramStatusSubmitted: {models.ProgramStatusPublished, models.ProgramStatusRejected},
+	models.ProgramStatusPublished: {models.ProgramStatusArchived, models.ProgramStatusHidden},
+	models.ProgramStatusRejected:  {models.ProgramStatusDraft},
+	models.ProgramStatusArchived:  {},
+	models.ProgramStatusHidden:    {models.ProgramStatusPublished},
 }
 
 // GetByID returns the program with the given ID.
@@ -83,7 +95,7 @@ func (s *ProgramService) Create(ctx context.Context, input models.ProgramCreateI
 		return nil, fmt.Errorf("%w: invalid status %q", domain.ErrInvalidInput, input.Status)
 	}
 	if input.Status == "" {
-		input.Status = models.ProgramStatusPending
+		input.Status = models.ProgramStatusDraft
 	}
 	input.ID = uuid.New().String()
 
@@ -103,6 +115,71 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 
 	if input.Status != nil && !input.Status.IsValid() {
 		return nil, fmt.Errorf("%w: invalid status %q", domain.ErrInvalidInput, *input.Status)
+	}
+
+	if input.Status != nil {
+		current, err := s.repo.GetByID(ctx, id)
+		if err != nil {
+			span.RecordError(err)
+			return nil, fmt.Errorf("get program for update: %w", err)
+		}
+
+		next := *input.Status
+		allowed := programTransitions[current.Status]
+		ok := false
+		for _, s := range allowed {
+			if s == next {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return nil, fmt.Errorf("%w: cannot transition program from %q to %q", domain.ErrInvalidStateTransition, current.Status, next)
+		}
+
+		// Submission guard (FR-004): all required fields must be present and at least one open term.
+		if next == models.ProgramStatusSubmitted {
+			if current.LFID == nil || strings.TrimSpace(*current.LFID) == "" {
+				return nil, fmt.Errorf("%w: a linked LF project is required before submission", domain.ErrStateLocked)
+			}
+			if current.Description == nil || strings.TrimSpace(*current.Description) == "" {
+				return nil, fmt.Errorf("%w: description is required before submission", domain.ErrStateLocked)
+			}
+			if current.RepoLink == nil || strings.TrimSpace(*current.RepoLink) == "" {
+				return nil, fmt.Errorf("%w: repository URL is required before submission", domain.ErrStateLocked)
+			}
+			if current.LogoURL == nil || strings.TrimSpace(*current.LogoURL) == "" {
+				return nil, fmt.Errorf("%w: logo is required before submission", domain.ErrStateLocked)
+			}
+			skills, err := s.repo.ListSkills(ctx, id)
+			if err != nil {
+				span.RecordError(err)
+				return nil, fmt.Errorf("check program skills: %w", err)
+			}
+			if len(skills) == 0 {
+				return nil, fmt.Errorf("%w: at least one skill tag is required before submission", domain.ErrStateLocked)
+			}
+			count, err := s.termRepo.CountOpenTermsByProgram(ctx, id)
+			if err != nil {
+				span.RecordError(err)
+				return nil, fmt.Errorf("check open terms: %w", err)
+			}
+			if count == 0 {
+				return nil, fmt.Errorf("%w: program must have at least one open term to be submitted", domain.ErrStateLocked)
+			}
+		}
+
+		// Hide guard: must have no active applications.
+		if next == models.ProgramStatusHidden {
+			count, err := s.appRepo.CountBlockingAppsForProgram(ctx, id)
+			if err != nil {
+				span.RecordError(err)
+				return nil, fmt.Errorf("check blocking applications: %w", err)
+			}
+			if count > 0 {
+				return nil, fmt.Errorf("%w: program has %d active application(s) and cannot be hidden", domain.ErrStateLocked, count)
+			}
+		}
 	}
 
 	p, err := s.repo.Update(ctx, id, input)
@@ -179,46 +256,4 @@ func (s *ProgramService) GetFundingStats(ctx context.Context, programID string) 
 		return nil, fmt.Errorf("get funding stats: %w", err)
 	}
 	return stats, nil
-}
-
-// ListInvitationTokens returns all invitation tokens for a program.
-func (s *ProgramService) ListInvitationTokens(ctx context.Context, programID string) ([]*models.InvitationToken, error) {
-	ctx, span := programSvcTracer.Start(ctx, "ProgramService.ListInvitationTokens")
-	defer span.End()
-
-	tokens, err := s.repo.ListInvitationTokens(ctx, programID)
-	if err != nil {
-		span.RecordError(err)
-		return nil, fmt.Errorf("list invitation tokens: %w", err)
-	}
-	return tokens, nil
-}
-
-// CreateInvitationToken creates an invitation token for a program.
-func (s *ProgramService) CreateInvitationToken(ctx context.Context, programID string, input models.InvitationTokenCreateInput) (*models.InvitationToken, error) {
-	ctx, span := programSvcTracer.Start(ctx, "ProgramService.CreateInvitationToken")
-	defer span.End()
-
-	if input.Role != "mentor" && input.Role != "mentee" {
-		return nil, fmt.Errorf("%w: role must be mentor or mentee", domain.ErrInvalidInput)
-	}
-
-	token, err := s.repo.CreateInvitationToken(ctx, programID, input)
-	if err != nil {
-		span.RecordError(err)
-		return nil, fmt.Errorf("create invitation token: %w", err)
-	}
-	return token, nil
-}
-
-// DeleteInvitationToken removes an invitation token.
-func (s *ProgramService) DeleteInvitationToken(ctx context.Context, tokenID string) error {
-	ctx, span := programSvcTracer.Start(ctx, "ProgramService.DeleteInvitationToken")
-	defer span.End()
-
-	if err := s.repo.DeleteInvitationToken(ctx, tokenID); err != nil {
-		span.RecordError(err)
-		return fmt.Errorf("delete invitation token: %w", err)
-	}
-	return nil
 }

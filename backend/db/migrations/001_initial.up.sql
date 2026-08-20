@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS programs (
   id                   UUID         PRIMARY KEY,
   name                 TEXT         NOT NULL,
   slug                 TEXT         NOT NULL UNIQUE,
-  status               VARCHAR(20)  NOT NULL DEFAULT 'pending',   -- pending | published | archived
+  status               VARCHAR(20)  NOT NULL DEFAULT 'draft',    -- draft | submitted | published | rejected | archived | hidden
   is_paid              BOOLEAN      NOT NULL DEFAULT false,        -- stipend paid to mentees
   description          TEXT,
   logo_url             TEXT,
@@ -91,7 +91,7 @@ CREATE TABLE IF NOT EXISTS programs (
   task_templates       JSONB,                              -- default task list for new terms
   created_on           TIMESTAMPTZ  DEFAULT NOW(),
   updated_on           TIMESTAMPTZ  DEFAULT NOW(),
-  CONSTRAINT programs_status_check CHECK (status IN ('pending', 'published', 'archived'))
+  CONSTRAINT programs_status_check CHECK (status IN ('draft', 'submitted', 'published', 'rejected', 'archived', 'hidden'))
 );
 
 -- ============================================
@@ -122,21 +122,6 @@ CREATE TABLE IF NOT EXISTS program_funding_stats (
 );
 
 -- ============================================
--- TABLE: invitation_tokens
--- Source: not in DynamoDB (programmatically generated); table created for
--- future use and API compatibility.
--- ============================================
-CREATE TABLE IF NOT EXISTS invitation_tokens (
-  id         UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
-  program_id UUID         NOT NULL REFERENCES programs(id) ON DELETE CASCADE,
-  token      TEXT         NOT NULL UNIQUE,
-  role       VARCHAR(20)  NOT NULL,
-  created_on TIMESTAMPTZ  DEFAULT NOW(),
-  updated_on TIMESTAMPTZ  DEFAULT NOW(),
-  CONSTRAINT invitation_tokens_role_check CHECK (role IN ('mentor', 'mentee'))
-);
-
--- ============================================
 -- TABLE: program_terms
 -- Source: jobspring-prod-program-terms
 -- ============================================
@@ -144,7 +129,7 @@ CREATE TABLE IF NOT EXISTS program_terms (
   id                    UUID         PRIMARY KEY,
   program_id            UUID         NOT NULL REFERENCES programs(id) ON DELETE CASCADE,
   name                  TEXT         NOT NULL,
-  status                VARCHAR(20)  NOT NULL DEFAULT 'open',     -- open | closed
+  status                VARCHAR(20)  NOT NULL DEFAULT 'open',     -- open | closed | deleted
   active_users          INTEGER      DEFAULT 0,
   start_date_time       TIMESTAMPTZ,
   end_date_time         TIMESTAMPTZ,
@@ -152,98 +137,72 @@ CREATE TABLE IF NOT EXISTS program_terms (
   application_end_date   TIMESTAMPTZ,
   created_on            TIMESTAMPTZ  DEFAULT NOW(),
   updated_on            TIMESTAMPTZ  DEFAULT NOW(),
-  CONSTRAINT program_terms_status_check CHECK (status IN ('open', 'closed'))
+  CONSTRAINT program_terms_status_check CHECK (status IN ('open', 'closed', 'deleted'))
 );
 
 -- ============================================
 -- TABLE: program_members
 -- Source: jobspring-prod-project-members
--- Maintainers and mentors attached to a program (not mentee applicants).
+-- All program participants: maintainers and mentors.
+-- maintainer member_type replaces the former program_admins table.
+-- Mentees are term-scoped and tracked exclusively via applications.
 -- ============================================
 CREATE TABLE IF NOT EXISTS program_members (
   id          UUID         PRIMARY KEY,
   program_id  UUID         NOT NULL REFERENCES programs(id) ON DELETE CASCADE,
   user_id     UUID         NOT NULL REFERENCES users(id),
-  member_type VARCHAR(20)  NOT NULL,                       -- maintainer | mentor | apprentice
-  status      VARCHAR(20),                                 -- pending | active | graduated | withdrawn
+  member_type VARCHAR(20)  NOT NULL,                       -- maintainer | mentor
+  status      VARCHAR(20),                                 -- invited | requested | pending | active | declined | withdrawn
   email       TEXT,
   created_on  TIMESTAMPTZ  DEFAULT NOW(),
   updated_on  TIMESTAMPTZ  DEFAULT NOW(),
-  UNIQUE (program_id, user_id, member_type)
-);
-
--- ============================================
--- TABLE: program_admins
--- Source: jobspring-prod-project-members (memberType = 'maintainer')
--- Links a user_profile to a program with an admin role.
--- ============================================
-CREATE TABLE IF NOT EXISTS program_admins (
-  id              UUID  PRIMARY KEY DEFAULT gen_random_uuid(),
-  program_id      UUID  NOT NULL REFERENCES programs(id) ON DELETE CASCADE,
-  user_profile_id UUID  NOT NULL REFERENCES user_profiles(id),
-  role            TEXT  NOT NULL,
-  created_on      TIMESTAMPTZ DEFAULT NOW(),
-  updated_on      TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE (program_id, user_profile_id)                    -- unique per program+profile
+  UNIQUE (program_id, user_id, member_type),
+  CONSTRAINT program_members_type_check   CHECK (member_type IN ('maintainer', 'mentor')),
+  CONSTRAINT program_members_status_check CHECK (status IS NULL OR status IN ('invited', 'requested', 'pending', 'active', 'declined', 'withdrawn'))
 );
 
 -- ============================================
 -- TABLE: applications
--- Source: jobspring-prod-program-term-mentees (all status values)
--- Tracks a user's application to a program term before enrollment.
+-- Source: jobspring-prod-program-term-mentees
+-- Tracks a user's application and active enrollment lifecycle for a program term.
 -- ============================================
 CREATE TABLE IF NOT EXISTS applications (
   id                   UUID        PRIMARY KEY,
   program_term_id      UUID        NOT NULL REFERENCES program_terms(id) ON DELETE CASCADE,
   user_id              UUID        NOT NULL REFERENCES users(id),
   role                 VARCHAR(20) NOT NULL DEFAULT 'mentee',   -- mentor | mentee
-  status               VARCHAR(20) NOT NULL DEFAULT 'pending',  -- pending | accepted | declined | withdrawn
+  status               VARCHAR(20) NOT NULL DEFAULT 'pending',  -- pending | accepted | active | declined | withdrawn | graduated | hold
   program_term_status  VARCHAR(20),                             -- denormalised: open | closed
+  start_date_time      TIMESTAMPTZ,
+  end_date_time        TIMESTAMPTZ,
   tasks_submitted      BOOLEAN     DEFAULT false,
   admin_notified       BOOLEAN     DEFAULT false,
+  attendance_type      VARCHAR(20),                                 -- full_time | part_time (required on accept)
   created_on           TIMESTAMPTZ DEFAULT NOW(),
   updated_on           TIMESTAMPTZ DEFAULT NOW(),
-  CONSTRAINT applications_role_check   CHECK (role   IN ('mentor', 'mentee')),
-  CONSTRAINT applications_status_check CHECK (status IN ('pending', 'accepted', 'declined', 'withdrawn')),
+  CONSTRAINT applications_role_check       CHECK (role   IN ('mentor', 'mentee')),
+  CONSTRAINT applications_status_check     CHECK (status IN ('pending', 'accepted', 'active', 'declined', 'withdrawn', 'graduated', 'hold')),
+  CONSTRAINT applications_attendance_check CHECK (attendance_type IS NULL OR attendance_type IN ('full_time', 'part_time')),
   UNIQUE (program_term_id, user_id, role)
 );
 
--- ============================================
--- TABLE: enrollments
--- Source: jobspring-prod-program-term-mentees (status: active | graduated | withdrawn | hold)
--- Represents an accepted mentee who is actively (or was) in a term.
--- ============================================
-CREATE TABLE IF NOT EXISTS enrollments (
-  id                  UUID        PRIMARY KEY,
-  program_term_id     UUID        NOT NULL REFERENCES program_terms(id) ON DELETE CASCADE,
-  mentee_user_id      UUID        NOT NULL REFERENCES users(id),
-  status              VARCHAR(20) NOT NULL DEFAULT 'active',  -- active | graduated | withdrawn | hold
-  program_term_status VARCHAR(20),                            -- denormalised: open | closed
-  start_date_time     TIMESTAMPTZ,
-  end_date_time       TIMESTAMPTZ,
-  tasks_submitted     BOOLEAN     DEFAULT false,
-  admin_notified      BOOLEAN     DEFAULT false,
-  created_on          TIMESTAMPTZ DEFAULT NOW(),
-  updated_on          TIMESTAMPTZ DEFAULT NOW(),
-  CONSTRAINT enrollments_status_check CHECK (status IN ('active', 'graduated', 'withdrawn', 'hold')),
-  UNIQUE (program_term_id, mentee_user_id)
-);
+-- (enrollments table removed: applications now serve the full lifecycle)
 
 -- ============================================
 -- TABLE: tasks
 -- Source: jobspring-prod-tasks
--- Tasks are linked to an enrollment (term + assignee). Enrollment is derived
+-- Tasks are linked to an application (term + user). Application is derived
 -- during migration via (program_term_id, assignee_id) lookup.
 -- ============================================
 CREATE TABLE IF NOT EXISTS tasks (
   id                   UUID        PRIMARY KEY,
-  enrollment_id        UUID        REFERENCES enrollments(id) ON DELETE SET NULL,
+  application_id       UUID        REFERENCES applications(id) ON DELETE SET NULL,
   program_term_id      UUID        REFERENCES program_terms(id),  -- denormalised for direct lookup
   assignee_id          UUID        NOT NULL REFERENCES users(id),
   owner_id             UUID        REFERENCES users(id),
   name                 TEXT,
   description          TEXT,
-  category             VARCHAR(50),                               -- prerequisite | milestone
+  category             VARCHAR(50),                               -- prerequisite | non_prerequisite
   status               VARCHAR(30) NOT NULL DEFAULT 'incomplete', -- incomplete | in_progress | complete | submitted
   application_status   VARCHAR(20),                              -- pending | accepted | declined
   program_term_status  VARCHAR(20),                              -- open | closed
@@ -254,7 +213,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   created_by           TEXT,                                     -- lfid of creator
   created_on           TIMESTAMPTZ DEFAULT NOW(),
   updated_on           TIMESTAMPTZ DEFAULT NOW(),
-  CONSTRAINT tasks_status_check CHECK (status IN ('incomplete', 'in_progress', 'complete', 'submitted'))
+  CONSTRAINT tasks_status_check    CHECK (status   IN ('incomplete', 'in_progress', 'complete', 'submitted')),
+  CONSTRAINT tasks_category_check  CHECK (category IS NULL OR category IN ('prerequisite', 'non_prerequisite'))
 );
 
 -- ============================================
@@ -265,12 +225,9 @@ CREATE TRIGGER set_updated_on BEFORE UPDATE ON user_profiles       FOR EACH ROW 
 CREATE TRIGGER set_updated_on BEFORE UPDATE ON programs            FOR EACH ROW EXECUTE FUNCTION set_updated_on();
 CREATE TRIGGER set_updated_on BEFORE UPDATE ON program_skills      FOR EACH ROW EXECUTE FUNCTION set_updated_on();
 CREATE TRIGGER set_updated_on BEFORE UPDATE ON program_funding_stats FOR EACH ROW EXECUTE FUNCTION set_updated_on();
-CREATE TRIGGER set_updated_on BEFORE UPDATE ON invitation_tokens   FOR EACH ROW EXECUTE FUNCTION set_updated_on();
 CREATE TRIGGER set_updated_on BEFORE UPDATE ON program_terms       FOR EACH ROW EXECUTE FUNCTION set_updated_on();
 CREATE TRIGGER set_updated_on BEFORE UPDATE ON program_members     FOR EACH ROW EXECUTE FUNCTION set_updated_on();
-CREATE TRIGGER set_updated_on BEFORE UPDATE ON program_admins      FOR EACH ROW EXECUTE FUNCTION set_updated_on();
 CREATE TRIGGER set_updated_on BEFORE UPDATE ON applications        FOR EACH ROW EXECUTE FUNCTION set_updated_on();
-CREATE TRIGGER set_updated_on BEFORE UPDATE ON enrollments         FOR EACH ROW EXECUTE FUNCTION set_updated_on();
 CREATE TRIGGER set_updated_on BEFORE UPDATE ON tasks               FOR EACH ROW EXECUTE FUNCTION set_updated_on();
 
 -- ============================================
@@ -307,22 +264,13 @@ CREATE INDEX IF NOT EXISTS idx_program_members_program_id ON program_members(pro
 CREATE INDEX IF NOT EXISTS idx_program_members_user_id    ON program_members(user_id);
 CREATE INDEX IF NOT EXISTS idx_program_members_type       ON program_members(member_type);
 
--- program_admins
-CREATE INDEX IF NOT EXISTS idx_program_admins_program_id      ON program_admins(program_id);
-CREATE INDEX IF NOT EXISTS idx_program_admins_user_profile_id ON program_admins(user_profile_id);
-
 -- applications
 CREATE INDEX IF NOT EXISTS idx_applications_program_term_id ON applications(program_term_id);
 CREATE INDEX IF NOT EXISTS idx_applications_user_id         ON applications(user_id);
 CREATE INDEX IF NOT EXISTS idx_applications_status          ON applications(status);
 
--- enrollments
-CREATE INDEX IF NOT EXISTS idx_enrollments_program_term_id  ON enrollments(program_term_id);
-CREATE INDEX IF NOT EXISTS idx_enrollments_mentee_user_id   ON enrollments(mentee_user_id);
-CREATE INDEX IF NOT EXISTS idx_enrollments_status           ON enrollments(status);
-
 -- tasks
-CREATE INDEX IF NOT EXISTS idx_tasks_enrollment_id   ON tasks(enrollment_id) WHERE enrollment_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_tasks_application_id  ON tasks(application_id) WHERE application_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_tasks_program_term_id ON tasks(program_term_id) WHERE program_term_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_tasks_assignee_id     ON tasks(assignee_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_owner_id        ON tasks(owner_id) WHERE owner_id IS NOT NULL;

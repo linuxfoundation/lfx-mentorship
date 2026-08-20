@@ -8,13 +8,13 @@ import "time"
 // Task maps to the public.tasks table.
 type Task struct {
 	ID                string    `json:"id"`
-	EnrollmentID      *string   `json:"enrollment_id,omitempty"`
+	ApplicationID     *string   `json:"application_id,omitempty"`
 	ProgramTermID     *string   `json:"program_term_id,omitempty"`
 	AssigneeID        string    `json:"assignee_id"`
 	OwnerID           *string   `json:"owner_id,omitempty"`
 	Name              *string   `json:"name,omitempty"`
 	Description       *string   `json:"description,omitempty"`
-	Category          *string   `json:"category,omitempty"` // prerequisite | milestone
+	Category          *string   `json:"category,omitempty"` // prerequisite | non_prerequisite
 	Status            string    `json:"status"`             // incomplete | in_progress | complete | submitted
 	ApplicationStatus *string   `json:"application_status,omitempty"`
 	ProgramTermStatus *string   `json:"program_term_status,omitempty"`
@@ -55,4 +55,6 @@ type TaskUpdateInput struct {
 	SubmitFile        *string `json:"submit_file,omitempty"`
 	File              *string `json:"file,omitempty"`
 	DueDate           *string `json:"due_date,omitempty"`
+	// ActorID is the caller's user ID used for permission checks; not persisted.
+	ActorID string `json:"-"`
 }

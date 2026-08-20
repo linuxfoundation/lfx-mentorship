@@ -14,7 +14,6 @@ var (
 	ErrProgramTermNotFound   = errors.New("program term not found")
 	ErrProgramMemberNotFound = errors.New("program member not found")
 	ErrApplicationNotFound   = errors.New("application not found")
-	ErrEnrollmentNotFound    = errors.New("enrollment not found")
 	ErrTaskNotFound          = errors.New("task not found")
 
 	ErrInvalidInput        = errors.New("invalid input")
@@ -22,4 +21,8 @@ var (
 	ErrForbidden           = errors.New("forbidden")
 	ErrConflict            = errors.New("resource conflict")
 	ErrUpstreamUnavailable = errors.New("upstream service unavailable")
+
+	ErrInvalidStateTransition = errors.New("invalid state transition")
+	ErrStateLocked            = errors.New("state transition blocked by guard condition")
+	ErrIneligible             = errors.New("eligibility criteria not met")
 )

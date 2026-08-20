@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
@@ -326,69 +325,4 @@ func (r *ProgramRepository) GetFundingStats(ctx context.Context, programID strin
 		return nil, fmt.Errorf("get funding stats: %w", err)
 	}
 	return &fs, nil
-}
-
-// ListInvitationTokens returns all invitation tokens for a program.
-func (r *ProgramRepository) ListInvitationTokens(ctx context.Context, programID string) ([]*models.InvitationToken, error) {
-	ctx, span := programTracer.Start(ctx, "db.programs.ListInvitationTokens")
-	defer span.End()
-
-	rows, err := r.pool.Query(ctx,
-		`SELECT id, program_id, token, role, created_on, updated_on FROM invitation_tokens WHERE program_id = $1`,
-		programID,
-	)
-	if err != nil {
-		span.RecordError(err)
-		return nil, fmt.Errorf("list invitation tokens: %w", err)
-	}
-	defer rows.Close()
-
-	var tokens []*models.InvitationToken
-	for rows.Next() {
-		var t models.InvitationToken
-		if err := rows.Scan(&t.ID, &t.ProgramID, &t.Token, &t.Role, &t.CreatedOn, &t.UpdatedOn); err != nil {
-			span.RecordError(err)
-			return nil, fmt.Errorf("scan token: %w", err)
-		}
-		tokens = append(tokens, &t)
-	}
-	if tokens == nil {
-		tokens = []*models.InvitationToken{}
-	}
-	return tokens, rows.Err()
-}
-
-// CreateInvitationToken generates and persists a new invitation token.
-func (r *ProgramRepository) CreateInvitationToken(ctx context.Context, programID string, input models.InvitationTokenCreateInput) (*models.InvitationToken, error) {
-	ctx, span := programTracer.Start(ctx, "db.programs.CreateInvitationToken")
-	defer span.End()
-
-	token := uuid.New().String()
-	var t models.InvitationToken
-	err := r.pool.QueryRow(ctx,
-		`INSERT INTO invitation_tokens (program_id, token, role) VALUES ($1, $2, $3)
-		 RETURNING id, program_id, token, role, created_on, updated_on`,
-		programID, token, input.Role,
-	).Scan(&t.ID, &t.ProgramID, &t.Token, &t.Role, &t.CreatedOn, &t.UpdatedOn)
-	if err != nil {
-		span.RecordError(err)
-		return nil, fmt.Errorf("create invitation token: %w", err)
-	}
-	return &t, nil
-}
-
-// DeleteInvitationToken removes an invitation token.
-func (r *ProgramRepository) DeleteInvitationToken(ctx context.Context, tokenID string) error {
-	ctx, span := programTracer.Start(ctx, "db.programs.DeleteInvitationToken")
-	defer span.End()
-
-	cmd, err := r.pool.Exec(ctx, `DELETE FROM invitation_tokens WHERE id = $1`, tokenID)
-	if err != nil {
-		span.RecordError(err)
-		return fmt.Errorf("delete invitation token: %w", err)
-	}
-	if cmd.RowsAffected() == 0 {
-		return domain.ErrProgramNotFound
-	}
-	return nil
 }

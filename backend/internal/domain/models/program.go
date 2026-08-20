@@ -12,15 +12,19 @@ import (
 type ProgramStatus string
 
 const (
-	ProgramStatusPending   ProgramStatus = "pending"
+	ProgramStatusDraft     ProgramStatus = "draft"
+	ProgramStatusSubmitted ProgramStatus = "submitted"
 	ProgramStatusPublished ProgramStatus = "published"
+	ProgramStatusRejected  ProgramStatus = "rejected"
 	ProgramStatusArchived  ProgramStatus = "archived"
+	ProgramStatusHidden    ProgramStatus = "hidden"
 )
 
 // IsValid reports whether the status value is one of the allowed enum members.
 func (s ProgramStatus) IsValid() bool {
 	switch s {
-	case ProgramStatusPending, ProgramStatusPublished, ProgramStatusArchived:
+	case ProgramStatusDraft, ProgramStatusSubmitted, ProgramStatusPublished,
+		ProgramStatusRejected, ProgramStatusArchived, ProgramStatusHidden:
 		return true
 	}
 	return false
@@ -119,19 +123,4 @@ type ProgramFundingStats struct {
 	AmountRaised float64   `json:"amount_raised"`
 	CreatedOn    time.Time `json:"created_on"`
 	UpdatedOn    time.Time `json:"updated_on"`
-}
-
-// InvitationToken maps to the public.invitation_tokens table.
-type InvitationToken struct {
-	ID        string    `json:"id"`
-	ProgramID string    `json:"program_id"`
-	Token     string    `json:"token"`
-	Role      string    `json:"role"`
-	CreatedOn time.Time `json:"created_on"`
-	UpdatedOn time.Time `json:"updated_on"`
-}
-
-// InvitationTokenCreateInput is the request body for creating an invitation token.
-type InvitationTokenCreateInput struct {
-	Role string `json:"role"`
 }

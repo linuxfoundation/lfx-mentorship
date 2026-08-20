@@ -51,7 +51,6 @@ func mapError(err error) (int, string) {
 		errors.Is(err, domain.ErrProgramTermNotFound),
 		errors.Is(err, domain.ErrProgramMemberNotFound),
 		errors.Is(err, domain.ErrApplicationNotFound),
-		errors.Is(err, domain.ErrEnrollmentNotFound),
 		errors.Is(err, domain.ErrTaskNotFound):
 		return http.StatusNotFound, "not found"
 	case errors.Is(err, domain.ErrInvalidInput):
@@ -62,6 +61,12 @@ func mapError(err error) (int, string) {
 		return http.StatusForbidden, "forbidden"
 	case errors.Is(err, domain.ErrConflict):
 		return http.StatusConflict, "conflict"
+	case errors.Is(err, domain.ErrInvalidStateTransition):
+		return http.StatusConflict, err.Error()
+	case errors.Is(err, domain.ErrStateLocked):
+		return http.StatusConflict, err.Error()
+	case errors.Is(err, domain.ErrIneligible):
+		return http.StatusUnprocessableEntity, err.Error()
 	case errors.Is(err, domain.ErrUpstreamUnavailable):
 		return http.StatusServiceUnavailable, "upstream unavailable"
 	default:
@@ -76,6 +81,11 @@ func Error(w http.ResponseWriter, err error) {
 		slog.Error("internal error", "error", err)
 	}
 	JSON(w, status, errorBody{Error: msg})
+}
+
+// newInvalidInput is a convenience wrapper for creating ErrInvalidInput errors.
+func newInvalidInput(msg string) error {
+	return fmt.Errorf("%w: %s", domain.ErrInvalidInput, msg)
 }
 
 // parsePaginationParams parses ?limit= and ?offset= from r.

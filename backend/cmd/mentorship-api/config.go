@@ -61,6 +61,8 @@ type LocalConfig struct {
 	// DisabledMockLocalPrincipal sets a static principal for local dev.
 	// Leave empty in all non-local environments.
 	DisabledMockLocalPrincipal string
+	// InviteSecret is the HMAC secret used to sign mentor invite tokens.
+	InviteSecret string
 }
 
 func loadConfig() (*Config, error) {
@@ -114,6 +116,7 @@ func loadConfig() (*Config, error) {
 		Local: LocalConfig{
 			AllowMockLocalPrincipalBypass: os.Getenv("ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS") == "true",
 			DisabledMockLocalPrincipal:    os.Getenv("DISABLED_MOCK_LOCAL_PRINCIPAL"),
+			InviteSecret:                  getEnv("MENTOR_INVITE_SECRET", "change-me-in-production"),
 		},
 	}, nil
 }

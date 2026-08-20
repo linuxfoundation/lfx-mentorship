@@ -15,9 +15,9 @@ import (
 
 type taskService interface {
 	GetByID(ctx context.Context, id string) (*models.Task, error)
-	ListByEnrollment(ctx context.Context, enrollmentID string, filter models.TaskFilter) ([]*models.Task, *models.PaginationMeta, error)
+	ListByApplication(ctx context.Context, applicationID string, filter models.TaskFilter) ([]*models.Task, *models.PaginationMeta, error)
 	ListByProgramTerm(ctx context.Context, programTermID string, filter models.TaskFilter) ([]*models.Task, *models.PaginationMeta, error)
-	Create(ctx context.Context, enrollmentID string, input models.TaskCreateInput) (*models.Task, error)
+	Create(ctx context.Context, applicationID string, input models.TaskCreateInput) (*models.Task, error)
 	Update(ctx context.Context, id string, input models.TaskUpdateInput) (*models.Task, error)
 	Delete(ctx context.Context, id string) error
 }
@@ -32,14 +32,14 @@ func NewTaskHandler(svc taskService) *TaskHandler {
 	return &TaskHandler{svc: svc}
 }
 
-// ListByEnrollment handles GET /v1/enrollments/{id}/tasks.
-func (h *TaskHandler) ListByEnrollment(w http.ResponseWriter, r *http.Request) {
-	enrollmentID := chi.URLParam(r, "id")
+// ListByApplication handles GET /v1/applications/{id}/tasks.
+func (h *TaskHandler) ListByApplication(w http.ResponseWriter, r *http.Request) {
+	applicationID := chi.URLParam(r, "id")
 	limit, offset, ok := parsePaginationParams(w, r)
 	if !ok {
 		return
 	}
-	tasks, meta, err := h.svc.ListByEnrollment(r.Context(), enrollmentID, models.TaskFilter{
+	tasks, meta, err := h.svc.ListByApplication(r.Context(), applicationID, models.TaskFilter{
 		Limit:      limit,
 		Offset:     offset,
 		Status:     r.URL.Query().Get("status"),
@@ -83,7 +83,7 @@ func (h *TaskHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, task)
 }
 
-// Create handles POST /v1/enrollments/{id}/tasks — requires JWT.
+// Create handles POST /v1/applications/{id}/tasks — requires JWT.
 func (h *TaskHandler) Create(w http.ResponseWriter, r *http.Request) {
 	principal := auth.PrincipalFromContext(r.Context())
 	if principal == nil {
@@ -91,13 +91,13 @@ func (h *TaskHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	enrollmentID := chi.URLParam(r, "id")
+	applicationID := chi.URLParam(r, "id")
 	var input models.TaskCreateInput
 	if !decodeBody(w, r, &input) {
 		return
 	}
 
-	task, err := h.svc.Create(r.Context(), enrollmentID, input)
+	task, err := h.svc.Create(r.Context(), applicationID, input)
 	if err != nil {
 		Error(w, err)
 		return
@@ -118,6 +118,8 @@ func (h *TaskHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &input) {
 		return
 	}
+	// Propagate caller identity for assignee permission check.
+	input.ActorID = principal.UserID
 
 	task, err := h.svc.Update(r.Context(), id, input)
 	if err != nil {
