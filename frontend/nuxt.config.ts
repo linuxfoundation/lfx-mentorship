@@ -33,6 +33,7 @@ export default defineNuxtConfig({
   ],
   plugins: [
     '~/plugins/vue-query.ts',
+    '~/plugins/primevue-toast.ts',
     '~/plugins/lfx-ui-core.client.ts',
     '~/plugins/auth.client.ts',
   ],
