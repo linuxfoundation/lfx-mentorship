@@ -197,7 +197,7 @@ CREATE TABLE IF NOT EXISTS applications (
 CREATE TABLE IF NOT EXISTS tasks (
   id                   UUID        PRIMARY KEY,
   application_id       UUID        REFERENCES applications(id) ON DELETE SET NULL,
-  program_term_id      UUID        REFERENCES program_terms(id),  -- denormalised for direct lookup
+  program_term_id      UUID        REFERENCES program_terms(id) ON DELETE SET NULL,  -- denormalised for direct lookup
   assignee_id          UUID        NOT NULL REFERENCES users(id),
   owner_id             UUID        REFERENCES users(id),
   name                 TEXT,

@@ -135,6 +135,8 @@ func (s *ApplicationService) Create(ctx context.Context, programTermID string, i
 	}
 	if input.Status == "" {
 		input.Status = "pending"
+	} else if !validApplicationStatuses[input.Status] {
+		return nil, fmt.Errorf("%w: invalid status %q", domain.ErrInvalidInput, input.Status)
 	}
 
 	// Application window guard (FR-016): term must be open and now within the window.

@@ -456,7 +456,7 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
             continue
         program_ids.add(pid)
 
-        amount = _as_float(p.get("amountRaised"))
+        amount = _as_float(p.get("amountRaised")) / 100  # DynamoDB stores cents; convert to dollars
 
         # Generate slug from name if missing; ensure uniqueness
         slug = (p.get("slug") or "").strip() or None
@@ -790,6 +790,27 @@ def migrate_mentees(
         )
         application_index[(term_id, uid)] = mid
 
+    # Deterministic dedup: for duplicate (term, user) rows keep the highest-status row;
+    # break ties by newest updated_on so scan-order cannot change the outcome.
+    _STATUS_PRIORITY = {
+        "graduated": 6, "active": 5, "accepted": 4,
+        "hold": 3, "pending": 2, "declined": 1, "withdrawn": 0,
+    }
+    best: dict = {}
+    for row in app_rows:
+        key = (row[1], row[2])  # (program_term_id, user_id)
+        prev = best.get(key)
+        if prev is None:
+            best[key] = row
+        else:
+            prev_pri = _STATUS_PRIORITY.get(prev[4], -1)
+            row_pri  = _STATUS_PRIORITY.get(row[4], -1)
+            prev_ts  = prev[12] or 0
+            row_ts   = row[12] or 0
+            if row_pri > prev_pri or (row_pri == prev_pri and row_ts > prev_ts):
+                best[key] = row
+    app_rows = list(best.values())
+
     psycopg2.extras.execute_batch(
         cur,
         """
@@ -968,28 +989,15 @@ def main() -> None:
         tasks_raw        = scan_table(dynamo, f"{TABLE_PREFIX}-tasks")
 
         # ── 2. Migrate in FK dependency order ───────────────────────────────
-        with conn:
+        with conn:  # single transaction: commits on clean exit, rolls back on exception
             with conn.cursor() as cur:
-                known_user_ids   = migrate_users(cur, users_raw)
-                conn.commit()
-
-                profile_map      = migrate_user_profiles(cur, profiles_raw, known_user_ids)
-                conn.commit()
-
+                known_user_ids    = migrate_users(cur, users_raw)
+                profile_map       = migrate_user_profiles(cur, profiles_raw, known_user_ids)
                 known_program_ids = migrate_programs(cur, projects_raw, known_user_ids)
-                conn.commit()
-
-                known_term_ids   = migrate_program_terms(cur, terms_raw, known_program_ids)
-                conn.commit()
-
+                known_term_ids    = migrate_program_terms(cur, terms_raw, known_program_ids)
                 migrate_program_members(cur, members_raw, known_program_ids, known_user_ids)
-                conn.commit()
-
                 application_index = migrate_mentees(cur, mentees_raw, known_term_ids, known_user_ids)
-                conn.commit()
-
                 migrate_tasks(cur, tasks_raw, application_index, known_term_ids, known_user_ids)
-                conn.commit()
 
         log.info("Migration complete.")
 

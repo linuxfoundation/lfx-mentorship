@@ -91,6 +91,7 @@ func NewJWTAuthenticator(ctx context.Context, cfg JWTAuthConfig, logger *slog.Lo
 		ctx = context.Background()
 	}
 	mockPrincipal := strings.TrimSpace(cfg.DisabledMockLocalPrincipal)
+	cfg.DisabledMockLocalPrincipal = mockPrincipal // normalise before storage to prevent whitespace bypass
 	if mockPrincipal != "" {
 		if !cfg.AllowMockPrincipalBypass {
 			return nil, errors.New("DISABLED_MOCK_LOCAL_PRINCIPAL requires ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS=true")

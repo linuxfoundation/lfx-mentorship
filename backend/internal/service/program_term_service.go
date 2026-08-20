@@ -71,8 +71,10 @@ func (s *ProgramTermService) Create(ctx context.Context, input models.ProgramTer
 	if input.ProgramID == "" {
 		return nil, fmt.Errorf("%w: program_id is required", domain.ErrInvalidInput)
 	}
-	if input.Status != "open" && input.Status != "closed" {
+	if input.Status == "" {
 		input.Status = "open"
+	} else if input.Status != "open" && input.Status != "closed" {
+		return nil, fmt.Errorf("%w: status must be open or closed", domain.ErrInvalidInput)
 	}
 
 	// Open-term cap guard.
