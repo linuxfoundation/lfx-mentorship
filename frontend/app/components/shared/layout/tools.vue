@@ -10,6 +10,7 @@ SPDX-License-Identifier: MIT
     <lfx-menu-button
       class="!px-2"
       :class="{ 'bg-neutral-100 text-neutral-600': isOpen }"
+      aria-label="LFX tools"
     >
       <lfx-icon
         name="grid-round"

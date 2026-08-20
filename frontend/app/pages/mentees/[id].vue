@@ -16,11 +16,15 @@ const route = useRoute();
 const menteeId = computed(() => String(route.params.id ?? ''));
 const config = useRuntimeConfig();
 
-const { data: mentee } = await useAsyncData<MenteeDetail>(
+const { data: mentee, error } = await useAsyncData<MenteeDetail>(
   `mentee-seo-${menteeId.value}`,
   () => $fetch<MenteeDetail>(`/api/mentees/${menteeId.value}`),
   { lazy: false },
 );
+
+if (error.value) {
+  throw createError(error.value);
+}
 
 const title = computed(() => mentee.value?.name ?? 'Mentee');
 const description = computed(() => {

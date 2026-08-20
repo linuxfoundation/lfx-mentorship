@@ -100,10 +100,15 @@ import LfxMentorshipLogo from '~/components/shared/layout/components/lfx-mentors
 
 const lfxFooterRef = ref<HTMLElement | null>(null);
 
-const { show } = useIntercom();
+const { boot, show } = useIntercom();
 
-function openIntercom() {
-  show();
+async function openIntercom() {
+  try {
+    await boot({});
+    show();
+  } catch (err) {
+    console.error('[MentorshipFooter] Intercom is unavailable', err);
+  }
 }
 
 onMounted(async () => {

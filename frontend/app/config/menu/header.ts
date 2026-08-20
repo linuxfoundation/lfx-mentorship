@@ -28,12 +28,4 @@ export const lfxHeaderMenu: HeaderMenuItem[] = [
   { label: 'Find a Program', icon: 'magnifying-glass', to: AppRoute.FindProgram },
   { label: 'Mentees', icon: 'user-graduate', to: AppRoute.Mentees },
   { label: 'Mentors', icon: 'user-tie', to: AppRoute.Mentors },
-  {
-    label: 'More',
-    icon: 'ellipsis',
-    children: [
-      { label: 'About', icon: 'circle-info', to: AppRoute.About },
-      { label: 'Documentation', icon: 'book-open', to: AppRoute.Docs },
-    ],
-  },
 ];

@@ -61,7 +61,7 @@ SPDX-License-Identifier: MIT
     </lfx-popover>
 
     <lfx-icon-button
-      v-else
+      v-else-if="isAuthEnabled"
       icon="circle-user"
       type="transparent"
       size="medium"
@@ -75,6 +75,7 @@ SPDX-License-Identifier: MIT
          auth state only resolves client-side (LFXV2-2700). -->
     <template #fallback>
       <lfx-icon-button
+        v-if="isAuthEnabled"
         icon="circle-user"
         type="transparent"
         size="medium"
@@ -91,7 +92,7 @@ import LfxIcon from '~/components/uikit/icon/icon.vue';
 import LfxPopover from '~/components/uikit/popover/popover.vue';
 import { useAuth } from '~/composables/useAuth';
 
-const { isAuthenticated, user, isLoading, login, logout } = useAuth();
+const { isAuthenticated, user, isLoading, isAuthEnabled, login, logout } = useAuth();
 
 const {
   public: { selfServeUrl },

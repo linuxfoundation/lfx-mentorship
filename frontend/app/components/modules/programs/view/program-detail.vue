@@ -22,7 +22,6 @@ SPDX-License-Identifier: MIT
     <template v-else>
       <program-detail-header
         :program="program"
-        @apply="handleApply"
         @open-repository="openRepository"
         @donate="openDonate"
       />
@@ -113,8 +112,6 @@ import {
 import { useProgram } from '~/composables/programs/useProgram';
 import LfxButton from '~/components/uikit/button/button.vue';
 import LfxSpinner from '~/components/uikit/spinner/spinner.vue';
-import useToastService from '~/components/uikit/toast/toast.service';
-import { ToastTypesEnum } from '~/components/uikit/toast/types/toast.types';
 
 const props = defineProps<{
   programId: string;
@@ -127,7 +124,6 @@ const {
 } = useRuntimeConfig();
 
 const activeTab = ref(DEFAULT_PROGRAM_DETAIL_TAB);
-const { showToast } = useToastService();
 
 const currentMentees = computed(
   () => program.value?.mentees.filter((mentee) => mentee.status === 'active') ?? [],
@@ -139,10 +135,6 @@ const graduatedMentees = computed(
 watch(programId, () => {
   activeTab.value = DEFAULT_PROGRAM_DETAIL_TAB;
 });
-
-function handleApply() {
-  showToast('Application flow is not wired yet.', ToastTypesEnum.info);
-}
 
 function openRepository() {
   const url = program.value?.repositoryUrl;

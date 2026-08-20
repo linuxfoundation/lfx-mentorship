@@ -31,12 +31,17 @@ export const authState = ref<AuthState>({
 export const isAuthLoading = ref(false);
 export const isAuthReady = ref(false);
 
+/** Auth0 BFF (`server/api/auth/*`) is not part of this scaffold. */
+export const isAuthEnabled = false;
+
 let refreshAuthFn: () => Promise<unknown> = async () => {};
 export const setRefreshAuth = (fn: () => Promise<unknown>) => {
   refreshAuthFn = fn;
 };
 
 export const login = async (redirectTo?: string) => {
+  if (!isAuthEnabled) return;
+
   isAuthLoading.value = true;
   try {
     let currentPath = redirectTo || '/';
@@ -106,6 +111,7 @@ export const useAuth = () => {
     user,
     isLoading: isAuthLoading,
     isReady: isAuthReady,
+    isAuthEnabled,
     login,
     logout,
     refreshAuth: () => refreshAuthFn(),

@@ -15,18 +15,12 @@ export function usePrograms(filters: {
   status: MaybeRef<ProgramStatusFilter>;
   skill: MaybeRef<string>;
   sortBy: MaybeRef<ProgramSortBy>;
-  termName?: MaybeRef<string>;
-  termFrom?: MaybeRef<string>;
-  termTo?: MaybeRef<string>;
 }) {
   const query = useQuery<ProgramsListResponse>({
     queryKey: computed(() => [
       'programs',
       toValue(filters.search),
       toValue(filters.status),
-      toValue(filters.termName) ?? '',
-      toValue(filters.termFrom) ?? '',
-      toValue(filters.termTo) ?? '',
       toValue(filters.skill),
       toValue(filters.sortBy),
     ]),
@@ -35,9 +29,6 @@ export function usePrograms(filters: {
         query: {
           search: toValue(filters.search) || undefined,
           status: toValue(filters.status),
-          termName: toValue(filters.termName) || undefined,
-          termFrom: toValue(filters.termFrom) || undefined,
-          termTo: toValue(filters.termTo) || undefined,
           skill: toValue(filters.skill),
           sortBy: toValue(filters.sortBy),
         },

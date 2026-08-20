@@ -11,8 +11,6 @@ export const lfxFooterMenu: FooterMenuSection[] = [
       { name: 'Find a Program', link: AppRoute.FindProgram },
       { name: 'Mentees', link: AppRoute.Mentees },
       { name: 'Mentors', link: AppRoute.Mentors },
-      { name: 'About', link: AppRoute.About },
-      { name: 'Documentation', link: AppRoute.Docs },
       { name: 'Contact support', intercom: true },
     ],
   },

@@ -4,7 +4,7 @@ SPDX-License-Identifier: MIT
 -->
 <template>
   <section
-    class="container pt-6 pb-10 flex flex-col sticky gap-8 top-8 bg-white z-10"
+    class="container pt-6 pb-10 flex flex-col sticky gap-8 top-[var(--lfx-header-height)] bg-white z-10"
     :class="{ 'border-b border-neutral-200 !pb-5': isScrolled }"
   >
     <Transition name="header-eyebrow">

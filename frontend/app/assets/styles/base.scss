@@ -1,5 +1,10 @@
 // Copyright The Linux Foundation and each contributor to LFX.
 // SPDX-License-Identifier: MIT
+:root {
+  // py-4 (2rem) + medium icon-button (2.25rem)
+  --lfx-header-height: 4.25rem;
+}
+
 html {
   -ms-text-size-adjust: 100%;
   -webkit-text-size-adjust: 100%;

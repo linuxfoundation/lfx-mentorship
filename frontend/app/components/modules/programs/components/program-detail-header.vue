@@ -55,14 +55,6 @@ SPDX-License-Identifier: MIT
 
           <div class="flex flex-wrap items-center gap-3 pt-1">
             <lfx-button
-              v-if="program.status === 'acceptance'"
-              label="Apply to This Program"
-              icon="paper-plane"
-              type="primary"
-              button-style="pill"
-              @click="$emit('apply')"
-            />
-            <lfx-button
               v-if="program.repositoryUrl"
               label="Repository"
               icon="code-branch"
@@ -130,7 +122,6 @@ import { formatProgramDate } from "~/utils/date";
 const props = defineProps<{ program: Program }>();
 
 defineEmits<{
-  (e: "apply"): void;
   (e: "open-repository"): void;
   (e: "donate"): void;
 }>();

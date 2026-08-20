@@ -6,9 +6,6 @@ export enum AppRoute {
   FindProgram = '/programs',
   Mentees = '/mentees',
   Mentors = '/mentors',
-  Docs = '/docs',
-  About = '/about',
-  Contact = '/contact',
 }
 
 export function programPath(id: string): string {

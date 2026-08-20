@@ -4,49 +4,49 @@ SPDX-License-Identifier: MIT
 -->
 <template>
   <div class="flex justify-center items-center gap-6 py-8">
-    <lfx-tooltip
-      content="Share on X"
-      @click="twitter()"
-    >
-      <div
-        class="cursor-pointer flex items-center justify-center w-10 h-10 rounded-full bg-neutral-100 hover:bg-neutral-200 transition-colors"
+    <lfx-tooltip content="Share on X">
+      <button
+        type="button"
+        aria-label="Share on X"
+        class="flex items-center justify-center w-10 h-10 rounded-full bg-neutral-100 hover:bg-neutral-200 transition-colors"
+        @click="twitter()"
       >
         <lfx-icon
           name="x-twitter"
           type="brands"
           :size="20"
         />
-      </div>
+      </button>
     </lfx-tooltip>
 
-    <lfx-tooltip
-      content="Share on LinkedIn"
-      @click="linkedin()"
-    >
-      <div
-        class="cursor-pointer flex items-center justify-center w-10 h-10 rounded-full bg-neutral-100 hover:bg-neutral-200 transition-colors"
+    <lfx-tooltip content="Share on LinkedIn">
+      <button
+        type="button"
+        aria-label="Share on LinkedIn"
+        class="flex items-center justify-center w-10 h-10 rounded-full bg-neutral-100 hover:bg-neutral-200 transition-colors"
+        @click="linkedin()"
       >
         <lfx-icon
           name="linkedin"
           type="brands"
           :size="20"
         />
-      </div>
+      </button>
     </lfx-tooltip>
 
-    <lfx-tooltip
-      content="Share on Reddit"
-      @click="reddit()"
-    >
-      <div
-        class="cursor-pointer flex items-center justify-center w-10 h-10 rounded-full bg-neutral-100 hover:bg-neutral-200 transition-colors"
+    <lfx-tooltip content="Share on Reddit">
+      <button
+        type="button"
+        aria-label="Share on Reddit"
+        class="flex items-center justify-center w-10 h-10 rounded-full bg-neutral-100 hover:bg-neutral-200 transition-colors"
+        @click="reddit()"
       >
         <lfx-icon
           name="reddit"
           type="brands"
           :size="20"
         />
-      </div>
+      </button>
     </lfx-tooltip>
 
     <lfx-tooltip

@@ -7,9 +7,6 @@ SPDX-License-Identifier: MIT
     <programs-header
       v-model:search-term="searchTerm"
       v-model:active-status="activeStatus"
-      v-model:term-name="termName"
-      v-model:term-from="termFrom"
-      v-model:term-to="termTo"
       v-model:skill="skill"
       v-model:sort-by="sortBy"
       :skill-options="skillOptions"
@@ -48,9 +45,6 @@ import useScroll from '~/utils/scroll';
 
 const searchTerm = ref('');
 const activeStatus = ref<ProgramStatusFilter>(DEFAULT_PROGRAM_FILTER);
-const termName = ref('');
-const termFrom = ref('');
-const termTo = ref('');
 const skill = ref<string>(ALL_SKILLS_OPTION.value);
 const sortBy = ref<ProgramSortBy>(DEFAULT_PROGRAM_SORT.value);
 const visibleCount = ref(PROGRAM_PAGE_SIZE);
@@ -58,9 +52,6 @@ const visibleCount = ref(PROGRAM_PAGE_SIZE);
 const { data, isLoading, error } = usePrograms({
   search: searchTerm,
   status: activeStatus,
-  termName,
-  termFrom,
-  termTo,
   skill,
   sortBy,
 });
@@ -71,7 +62,7 @@ const programCount = computed(() => data.value?.programCount);
 const foundationCount = computed(() => data.value?.foundationCount);
 const programError = computed(() => (error.value as Error | null) ?? null);
 
-watch([searchTerm, activeStatus, termName, termFrom, termTo, skill, sortBy], () => {
+watch([searchTerm, activeStatus, skill, sortBy], () => {
   visibleCount.value = PROGRAM_PAGE_SIZE;
 });
 

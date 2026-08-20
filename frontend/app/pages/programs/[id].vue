@@ -16,11 +16,15 @@ const route = useRoute();
 const programId = computed(() => String(route.params.id ?? ''));
 const config = useRuntimeConfig();
 
-const { data: program } = await useAsyncData<Program>(
+const { data: program, error } = await useAsyncData<Program>(
   `program-seo-${programId.value}`,
   () => $fetch<Program>(`/api/programs/${programId.value}`),
   { lazy: false },
 );
+
+if (error.value) {
+  throw createError(error.value);
+}
 
 const title = computed(() => program.value?.name ?? 'Program');
 const description = computed(() => {

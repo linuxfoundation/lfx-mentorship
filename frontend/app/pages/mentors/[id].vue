@@ -16,11 +16,15 @@ const route = useRoute();
 const mentorId = computed(() => String(route.params.id ?? ''));
 const config = useRuntimeConfig();
 
-const { data: mentor } = await useAsyncData<MentorDetail>(
+const { data: mentor, error } = await useAsyncData<MentorDetail>(
   `mentor-seo-${mentorId.value}`,
   () => $fetch<MentorDetail>(`/api/mentors/${mentorId.value}`),
   { lazy: false },
 );
+
+if (error.value) {
+  throw createError(error.value);
+}
 
 const title = computed(() => mentor.value?.name ?? 'Mentor');
 const description = computed(() => {

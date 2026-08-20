@@ -18,21 +18,25 @@ SPDX-License-Identifier: MIT
   >
     <slot :is-active="props.active || (props.exact ? isExactActive : isActive)" />
   </nuxt-link>
-  <div
+  <button
     v-else
     v-bind="$attrs"
+    type="button"
     class="c-menu-button"
     :class="{
       'is-active': props.active,
       'is-disabled': props.disabled,
     }"
+    :disabled="props.disabled"
   >
     <slot :is-active="props.active" />
-  </div>
+  </button>
 </template>
 
 <script lang="ts" setup>
 import type { RouteLocationRaw } from 'vue-router';
+
+defineOptions({ inheritAttrs: false });
 
 const props = withDefaults(
   defineProps<{

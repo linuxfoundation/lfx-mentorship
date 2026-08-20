@@ -13,7 +13,7 @@ SPDX-License-Identifier: MIT
     >
       <a
         :href="href"
-        class="hidden items-center gap-2 rounded-full px-3 py-2 text-sm lg:inline-flex"
+        class="inline-flex items-center gap-2 rounded-full px-3 py-2 text-sm"
         :class="
           isActive
             ? 'bg-brand-50 font-semibold text-neutral-900'
