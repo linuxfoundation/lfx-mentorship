@@ -68,10 +68,10 @@ func (c *JWTClaims) effectiveEmail() string {
 func (c *JWTClaims) Validate(_ context.Context) error { return nil }
 
 var (
-	errMissingAuthorizationHeader = errors.New("missing Authorization header")
+	errMissingAuthorizationHeader   = errors.New("missing Authorization header")
 	errMalformedAuthorizationHeader = errors.New("malformed Authorization header")
-	errMissingBearerToken         = errors.New("missing bearer token")
-	errAuthenticatorContextClosed = errors.New("JWT authenticator context closed")
+	errMissingBearerToken           = errors.New("missing bearer token")
+	errAuthenticatorContextClosed   = errors.New("JWT authenticator context closed")
 )
 
 // JWTAuthenticator validates JWTs using a JWKS endpoint.
