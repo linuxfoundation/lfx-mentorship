@@ -470,6 +470,14 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
             suffix += 1
         seen_slugs.add(slug)
 
+        needs = p.get("menteeNeeds") or p.get("apprenticeNeeds") or {}
+        term_types    = needs.get("programTerms") or {}
+        term_type_fall    = bool(term_types.get("fall")    or False)
+        term_type_spring  = bool(term_types.get("spring")  or False)
+        term_type_summer  = bool(term_types.get("summer")  or False)
+        term_type_ongoing = bool(term_types.get("ongoing") or False)
+        term_type_custom  = bool(term_types.get("custom")  or False)
+
         prog_rows.append(
             (
                 pid,
@@ -491,14 +499,17 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
                 (p.get("programTermStatus") or "").strip() or None,
                 _as_int(p.get("discoverSortRank")),
                 amount,
-                _to_jsonb(p.get("menteeNeeds")),  # DynamoDB field was apprenticeNeeds
+                term_type_fall,
+                term_type_spring,
+                term_type_summer,
+                term_type_ongoing,
+                term_type_custom,
                 _to_jsonb(p.get("taskTemplates")),
                 _parse_ts(p.get("createdOn")),
                 _parse_ts(p.get("updatedOn")),
             )
         )
 
-        needs = p.get("menteeNeeds") or p.get("apprenticeNeeds") or {}  # field renamed in new data
         for skill in needs.get("skills") or []:
             if skill and str(skill).strip():
                 skill_rows.append(
@@ -525,9 +536,10 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
           (id, name, slug, status, is_paid, description, logo_url, website_url,
            repo_link, code_of_conduct, industry, color, lfid, cii_project_id,
            accept_applications, terms_and_conditions, program_term_status,
-           discover_sort_rank, amount_raised, mentee_needs, task_templates,
-           created_on, updated_on)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+           discover_sort_rank, amount_raised,
+           term_type_fall, term_type_spring, term_type_summer, term_type_ongoing, term_type_custom,
+           task_templates, created_on, updated_on)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         ON CONFLICT (id) DO UPDATE SET
           name                = EXCLUDED.name,
           slug                = EXCLUDED.slug,
@@ -547,7 +559,11 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
           program_term_status = EXCLUDED.program_term_status,
           discover_sort_rank  = EXCLUDED.discover_sort_rank,
           amount_raised       = EXCLUDED.amount_raised,
-          mentee_needs        = EXCLUDED.mentee_needs,
+          term_type_fall      = EXCLUDED.term_type_fall,
+          term_type_spring    = EXCLUDED.term_type_spring,
+          term_type_summer    = EXCLUDED.term_type_summer,
+          term_type_ongoing   = EXCLUDED.term_type_ongoing,
+          term_type_custom    = EXCLUDED.term_type_custom,
           task_templates      = EXCLUDED.task_templates,
           updated_on          = EXCLUDED.updated_on
         """,

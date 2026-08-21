@@ -87,7 +87,11 @@ CREATE TABLE IF NOT EXISTS programs (
   program_term_status  VARCHAR(20),                        -- open | closed (denormalised summary)
   discover_sort_rank   INTEGER      DEFAULT 0,
   amount_raised        NUMERIC(20,2) DEFAULT 0,
-  mentee_needs         JSONB,                              -- {mentors[], skills[], programTerms{}, acceptedMentees, graduatedMentees}
+  term_type_fall       BOOLEAN      NOT NULL DEFAULT false, -- participates in fall cycle
+  term_type_spring     BOOLEAN      NOT NULL DEFAULT false,
+  term_type_summer     BOOLEAN      NOT NULL DEFAULT false,
+  term_type_ongoing    BOOLEAN      NOT NULL DEFAULT false,
+  term_type_custom     BOOLEAN      NOT NULL DEFAULT false,
   task_templates       JSONB,                              -- default task list for new terms
   created_on           TIMESTAMPTZ  DEFAULT NOW(),
   updated_on           TIMESTAMPTZ  DEFAULT NOW(),
