@@ -238,20 +238,20 @@ func nilIfEmpty(b []byte) []byte {
 	return b
 }
 
-// CountActiveApprenticeProfiles returns the count of non-deleted apprentice profiles for a user.
-func (r *UserProfileRepository) CountActiveApprenticeProfiles(ctx context.Context, userID string) (int, error) {
-	ctx, span := userProfileTracer.Start(ctx, "db.user_profiles.CountActiveApprenticeProfiles")
+// CountActiveMenteeProfiles returns the count of non-deleted mentee profiles for a user.
+func (r *UserProfileRepository) CountActiveMenteeProfiles(ctx context.Context, userID string) (int, error) {
+	ctx, span := userProfileTracer.Start(ctx, "db.user_profiles.CountActiveMenteeProfiles")
 	defer span.End()
 	span.SetAttributes(attribute.String("db.user_id", userID))
 
 	var count int
 	err := r.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM user_profiles WHERE user_id = $1 AND profile_type = 'apprentice'`,
+		`SELECT COUNT(*) FROM user_profiles WHERE user_id = $1 AND profile_type = 'mentee'`,
 		userID,
 	).Scan(&count)
 	if err != nil {
 		span.RecordError(err)
-		return 0, fmt.Errorf("count apprentice profiles: %w", err)
+		return 0, fmt.Errorf("count mentee profiles: %w", err)
 	}
 	return count, nil
 }

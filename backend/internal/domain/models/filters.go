@@ -22,7 +22,7 @@ type UserProfileFilter struct {
 	Limit       int
 	Offset      int
 	UserID      string
-	ProfileType string // mentor | apprentice
+	ProfileType string // mentor | mentee
 }
 
 // ProgramFilter constrains list queries for programs.
@@ -45,7 +45,7 @@ type ProgramTermFilter struct {
 type ProgramMemberFilter struct {
 	Limit      int
 	Offset     int
-	MemberType string // maintainer | mentor | apprentice
+	MemberType string // program_admin | mentor
 	Status     string
 }
 

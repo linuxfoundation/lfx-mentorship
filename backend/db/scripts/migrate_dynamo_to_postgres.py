@@ -16,7 +16,7 @@ Source → Target mapping
                                         (recordKind='github-profile-reservation'
                                         rows are skipped)
   jobspring-prod-projects             → programs
-                                      → program_skills   (apprenticeNeeds.skills[])
+                                      → program_skills   (menteeNeeds.skills[])
                                       → program_funding_stats (amountRaised)
   jobspring-prod-program-terms        → program_terms
   jobspring-prod-project-members      → program_members
@@ -377,7 +377,7 @@ def migrate_user_profiles(cur, profiles: list, known_user_ids: set) -> dict:
             (
                 pid,
                 uid,
-                (p.get("type") or "apprentice").strip(),
+                (p.get("type") or "mentee").strip(),
                 slug,
                 (p.get("firstName") or "").strip() or None,
                 (p.get("lastName") or "").strip() or None,
@@ -491,15 +491,14 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
                 (p.get("programTermStatus") or "").strip() or None,
                 _as_int(p.get("discoverSortRank")),
                 amount,
-                _to_jsonb(p.get("apprenticeNeeds")),
+                _to_jsonb(p.get("menteeNeeds")),  # DynamoDB field was apprenticeNeeds
                 _to_jsonb(p.get("taskTemplates")),
                 _parse_ts(p.get("createdOn")),
                 _parse_ts(p.get("updatedOn")),
             )
         )
 
-        # Normalise skills from apprenticeNeeds.skills[]
-        needs = p.get("apprenticeNeeds") or {}
+        needs = p.get("menteeNeeds") or p.get("apprenticeNeeds") or {}  # field renamed in new data
         for skill in needs.get("skills") or []:
             if skill and str(skill).strip():
                 skill_rows.append(
@@ -526,7 +525,7 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
           (id, name, slug, status, is_paid, description, logo_url, website_url,
            repo_link, code_of_conduct, industry, color, lfid, cii_project_id,
            accept_applications, terms_and_conditions, program_term_status,
-           discover_sort_rank, amount_raised, apprentice_needs, task_templates,
+           discover_sort_rank, amount_raised, mentee_needs, task_templates,
            created_on, updated_on)
         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         ON CONFLICT (id) DO UPDATE SET
@@ -548,7 +547,7 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
           program_term_status = EXCLUDED.program_term_status,
           discover_sort_rank  = EXCLUDED.discover_sort_rank,
           amount_raised       = EXCLUDED.amount_raised,
-          apprentice_needs    = EXCLUDED.apprentice_needs,
+          mentee_needs        = EXCLUDED.mentee_needs,
           task_templates      = EXCLUDED.task_templates,
           updated_on          = EXCLUDED.updated_on
         """,
@@ -658,7 +657,7 @@ def migrate_program_terms(cur, terms: list, known_program_ids: set) -> set:
 # ---------------------------------------------------------------------------
 
 
-_VALID_MEMBER_TYPES    = {"maintainer", "mentor"}
+_VALID_MEMBER_TYPES    = {"program_admin", "mentor"}
 _VALID_MEMBER_STATUSES = {"invited", "requested", "pending", "active", "declined", "withdrawn"}
 
 

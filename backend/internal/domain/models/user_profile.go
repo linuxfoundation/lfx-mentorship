@@ -12,7 +12,7 @@ import (
 type UserProfile struct {
 	ID                 string          `json:"id"`
 	UserID             string          `json:"user_id"`
-	ProfileType        string          `json:"profile_type"` // mentor | apprentice
+	ProfileType        string          `json:"profile_type"` // mentor | mentee
 	Slug               *string         `json:"slug,omitempty"`
 	FirstName          *string         `json:"first_name,omitempty"`
 	LastName           *string         `json:"last_name,omitempty"`

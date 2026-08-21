@@ -30,8 +30,8 @@ func NewProgramMemberService(repo domain.ProgramMemberRepository, notifier domai
 }
 
 var validMemberTypes = map[string]bool{
-	"maintainer": true,
-	"mentor":     true,
+	"program_admin": true,
+	"mentor":        true,
 }
 
 // GetByID returns the program member with the given ID.
@@ -73,10 +73,10 @@ func (s *ProgramMemberService) Create(ctx context.Context, programID string, inp
 		return nil, fmt.Errorf("%w: user_id is required", domain.ErrInvalidInput)
 	}
 	if !validMemberTypes[input.MemberType] {
-		return nil, fmt.Errorf("%w: member_type must be maintainer or mentor", domain.ErrInvalidInput)
+		return nil, fmt.Errorf("%w: member_type must be program_admin or mentor", domain.ErrInvalidInput)
 	}
 
-	// Mentors are placed in 'invited' status and notified; maintainers are 'active' immediately.
+	// Mentors are placed in 'invited' status and notified; program_admins are 'active' immediately.
 	if input.MemberType == "mentor" {
 		if input.Status == nil {
 			s := "invited"

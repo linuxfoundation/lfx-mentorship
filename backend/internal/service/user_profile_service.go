@@ -67,8 +67,8 @@ func (s *UserProfileService) List(ctx context.Context, filter models.UserProfile
 }
 
 // Create validates input and creates a user profile.
-// For apprentice profiles, an eligibility gate is enforced: a user may not hold
-// more than one active apprentice profile.
+// For mentee profiles, an eligibility gate is enforced: a user may not hold
+// more than one active mentee profile.
 func (s *UserProfileService) Create(ctx context.Context, input models.UserProfileCreateInput) (*models.UserProfile, error) {
 	ctx, span := userProfileSvcTracer.Start(ctx, "UserProfileService.Create")
 	defer span.End()
@@ -82,19 +82,19 @@ func (s *UserProfileService) Create(ctx context.Context, input models.UserProfil
 	if input.ProfileType == "" {
 		return nil, fmt.Errorf("%w: profile_type is required", domain.ErrInvalidInput)
 	}
-	if input.ProfileType != "mentor" && input.ProfileType != "apprentice" {
-		return nil, fmt.Errorf("%w: profile_type must be mentor or apprentice", domain.ErrInvalidInput)
+	if input.ProfileType != "mentor" && input.ProfileType != "mentee" {
+		return nil, fmt.Errorf("%w: profile_type must be mentor or mentee", domain.ErrInvalidInput)
 	}
 
-	// Eligibility gate: users may only hold one active apprentice profile.
-	if input.ProfileType == "apprentice" {
-		count, err := s.repo.CountActiveApprenticeProfiles(ctx, input.UserID)
+	// Eligibility gate: users may only hold one active mentee profile.
+	if input.ProfileType == "mentee" {
+		count, err := s.repo.CountActiveMenteeProfiles(ctx, input.UserID)
 		if err != nil {
 			span.RecordError(err)
-			return nil, fmt.Errorf("check apprentice eligibility: %w", err)
+			return nil, fmt.Errorf("check mentee eligibility: %w", err)
 		}
 		if count > 0 {
-			return nil, fmt.Errorf("%w: user already has an active apprentice profile", domain.ErrIneligible)
+			return nil, fmt.Errorf("%w: user already has an active mentee profile", domain.ErrIneligible)
 		}
 	}
 

@@ -38,13 +38,13 @@ CREATE TABLE IF NOT EXISTS users (
 
 -- ============================================
 -- TABLE: user_profiles
--- Source: jobspring-prod-user-profiles (type = 'mentor' | 'apprentice')
+-- Source: jobspring-prod-user-profiles (type = 'mentor' | 'mentee')
 -- Rows where recordKind = 'github-profile-reservation' are excluded.
 -- ============================================
 CREATE TABLE IF NOT EXISTS user_profiles (
   id                   UUID         PRIMARY KEY,
   user_id              UUID         NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  profile_type         TEXT         NOT NULL,              -- mentor | apprentice
+  profile_type         TEXT         NOT NULL,              -- mentor | mentee
   slug                 TEXT         UNIQUE,
   first_name           TEXT,
   last_name            TEXT,
@@ -87,7 +87,7 @@ CREATE TABLE IF NOT EXISTS programs (
   program_term_status  VARCHAR(20),                        -- open | closed (denormalised summary)
   discover_sort_rank   INTEGER      DEFAULT 0,
   amount_raised        NUMERIC(20,2) DEFAULT 0,
-  apprentice_needs     JSONB,                              -- {mentors[], skills[], programTerms{}, acceptedMentees, graduatedMentees}
+  mentee_needs         JSONB,                              -- {mentors[], skills[], programTerms{}, acceptedMentees, graduatedMentees}
   task_templates       JSONB,                              -- default task list for new terms
   created_on           TIMESTAMPTZ  DEFAULT NOW(),
   updated_on           TIMESTAMPTZ  DEFAULT NOW(),
@@ -96,7 +96,7 @@ CREATE TABLE IF NOT EXISTS programs (
 
 -- ============================================
 -- TABLE: program_skills
--- Source: jobspring-prod-projects → apprenticeNeeds.skills[]
+-- Source: jobspring-prod-projects → menteeNeeds.skills[]
 -- Normalised from the embedded skills list on each project.
 -- ============================================
 CREATE TABLE IF NOT EXISTS program_skills (
@@ -143,21 +143,21 @@ CREATE TABLE IF NOT EXISTS program_terms (
 -- ============================================
 -- TABLE: program_members
 -- Source: jobspring-prod-project-members
--- All program participants: maintainers and mentors.
--- maintainer member_type replaces the former program_admins table.
+-- All program participants: program_admins and mentors.
+-- program_admin member_type replaces the former program_admins table.
 -- Mentees are term-scoped and tracked exclusively via applications.
 -- ============================================
 CREATE TABLE IF NOT EXISTS program_members (
   id          UUID         PRIMARY KEY,
   program_id  UUID         NOT NULL REFERENCES programs(id) ON DELETE CASCADE,
   user_id     UUID         NOT NULL REFERENCES users(id),
-  member_type VARCHAR(20)  NOT NULL,                       -- maintainer | mentor
+  member_type VARCHAR(20)  NOT NULL,                       -- program_admin | mentor
   status      VARCHAR(20),                                 -- invited | requested | pending | active | declined | withdrawn
   email       TEXT,
   created_on  TIMESTAMPTZ  DEFAULT NOW(),
   updated_on  TIMESTAMPTZ  DEFAULT NOW(),
   UNIQUE (program_id, user_id, member_type),
-  CONSTRAINT program_members_type_check   CHECK (member_type IN ('maintainer', 'mentor')),
+  CONSTRAINT program_members_type_check   CHECK (member_type IN ('program_admin', 'mentor')),
   CONSTRAINT program_members_status_check CHECK (status IS NULL OR status IN ('invited', 'requested', 'pending', 'active', 'declined', 'withdrawn'))
 );
 

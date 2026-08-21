@@ -32,7 +32,7 @@ const programCols = `
 	id, name, slug, status, is_paid, description, logo_url, website_url, repo_link,
 	code_of_conduct, industry, color, lfid, cii_project_id, accept_applications,
 	terms_and_conditions, program_term_status, discover_sort_rank, amount_raised,
-	apprentice_needs, task_templates, created_on, updated_on`
+	mentee_needs, task_templates, created_on, updated_on`
 
 func scanProgram(row pgx.Row) (*models.Program, error) {
 	var p models.Program
@@ -40,7 +40,7 @@ func scanProgram(row pgx.Row) (*models.Program, error) {
 		&p.ID, &p.Name, &p.Slug, &p.Status, &p.IsPaid, &p.Description, &p.LogoURL,
 		&p.WebsiteURL, &p.RepoLink, &p.CodeOfConduct, &p.Industry, &p.Color, &p.LFID,
 		&p.CIIProjectID, &p.AcceptApplications, &p.TermsAndConditions, &p.ProgramTermStatus,
-		&p.DiscoverSortRank, &p.AmountRaised, &p.ApprenticeNeeds, &p.TaskTemplates,
+		&p.DiscoverSortRank, &p.AmountRaised, &p.MenteeNeeds, &p.TaskTemplates,
 		&p.CreatedOn, &p.UpdatedOn,
 	)
 	if err != nil {
@@ -155,7 +155,7 @@ func (r *ProgramRepository) Create(ctx context.Context, input models.ProgramCrea
 		INSERT INTO programs (
 			id, name, slug, status, is_paid, description, logo_url, website_url, repo_link,
 			code_of_conduct, industry, color, lfid, cii_project_id, accept_applications,
-			terms_and_conditions, apprentice_needs, task_templates
+			terms_and_conditions, mentee_needs, task_templates
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
 		RETURNING` + programCols
 
@@ -164,7 +164,7 @@ func (r *ProgramRepository) Create(ctx context.Context, input models.ProgramCrea
 		input.Description, input.LogoURL, input.WebsiteURL, input.RepoLink,
 		input.CodeOfConduct, input.Industry, input.Color, input.LFID, input.CIIProjectID,
 		input.AcceptApplications, input.TermsAndConditions,
-		nilIfEmpty(input.ApprenticeNeeds), nilIfEmpty(input.TaskTemplates),
+		nilIfEmpty(input.MenteeNeeds), nilIfEmpty(input.TaskTemplates),
 	))
 	if err != nil {
 		span.RecordError(err)
@@ -198,7 +198,7 @@ func (r *ProgramRepository) Update(ctx context.Context, id string, input models.
 			terms_and_conditions= COALESCE($16, terms_and_conditions),
 			program_term_status = COALESCE($17, program_term_status),
 			discover_sort_rank  = COALESCE($18, discover_sort_rank),
-			apprentice_needs    = COALESCE($19, apprentice_needs),
+			mentee_needs        = COALESCE($19, mentee_needs),
 			task_templates      = COALESCE($20, task_templates)
 		WHERE id = $1
 		RETURNING` + programCols
@@ -214,7 +214,7 @@ func (r *ProgramRepository) Update(ctx context.Context, id string, input models.
 		input.Description, input.LogoURL, input.WebsiteURL, input.RepoLink,
 		input.CodeOfConduct, input.Industry, input.Color, input.LFID, input.CIIProjectID,
 		input.AcceptApplications, input.TermsAndConditions, input.ProgramTermStatus, input.DiscoverSortRank,
-		nilIfEmpty(input.ApprenticeNeeds), nilIfEmpty(input.TaskTemplates),
+		nilIfEmpty(input.MenteeNeeds), nilIfEmpty(input.TaskTemplates),
 	))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrProgramNotFound

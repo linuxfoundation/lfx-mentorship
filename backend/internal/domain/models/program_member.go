@@ -10,7 +10,7 @@ type ProgramMember struct {
 	ID         string    `json:"id"`
 	ProgramID  string    `json:"program_id"`
 	UserID     string    `json:"user_id"`
-	MemberType string    `json:"member_type"` // maintainer | mentor
+	MemberType string    `json:"member_type"` // program_admin | mentor
 	Status     *string   `json:"status,omitempty"`
 	Email      *string   `json:"email,omitempty"`
 	CreatedOn  time.Time `json:"created_on"`

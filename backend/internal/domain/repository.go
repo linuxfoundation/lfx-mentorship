@@ -27,8 +27,8 @@ type UserProfileRepository interface {
 	Update(ctx context.Context, id string, input models.UserProfileUpdateInput) (*models.UserProfile, error)
 	Delete(ctx context.Context, id string) error
 
-	// CountActiveApprenticeProfiles returns the count of non-deleted apprentice profiles for a user.
-	CountActiveApprenticeProfiles(ctx context.Context, userID string) (int, error)
+	// CountActiveMenteeProfiles returns the count of non-deleted mentee profiles for a user.
+	CountActiveMenteeProfiles(ctx context.Context, userID string) (int, error)
 }
 
 // ProgramRepository defines persistence operations for programs and related sub-resources.

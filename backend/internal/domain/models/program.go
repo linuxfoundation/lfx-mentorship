@@ -51,7 +51,7 @@ type Program struct {
 	ProgramTermStatus  *string         `json:"program_term_status,omitempty"`
 	DiscoverSortRank   int             `json:"discover_sort_rank"`
 	AmountRaised       float64         `json:"amount_raised"`
-	ApprenticeNeeds    json.RawMessage `json:"apprentice_needs,omitempty"`
+	MenteeNeeds        json.RawMessage `json:"mentee_needs,omitempty"`
 	TaskTemplates      json.RawMessage `json:"task_templates,omitempty"`
 	CreatedOn          time.Time       `json:"created_on"`
 	UpdatedOn          time.Time       `json:"updated_on"`
@@ -75,7 +75,7 @@ type ProgramCreateInput struct {
 	CIIProjectID       *string         `json:"cii_project_id,omitempty"`
 	AcceptApplications bool            `json:"accept_applications"`
 	TermsAndConditions bool            `json:"terms_and_conditions"`
-	ApprenticeNeeds    json.RawMessage `json:"apprentice_needs,omitempty"`
+	MenteeNeeds        json.RawMessage `json:"mentee_needs,omitempty"`
 	TaskTemplates      json.RawMessage `json:"task_templates,omitempty"`
 }
 
@@ -98,7 +98,7 @@ type ProgramUpdateInput struct {
 	TermsAndConditions *bool           `json:"terms_and_conditions,omitempty"`
 	ProgramTermStatus  *string         `json:"program_term_status,omitempty"`
 	DiscoverSortRank   *int            `json:"discover_sort_rank,omitempty"`
-	ApprenticeNeeds    json.RawMessage `json:"apprentice_needs,omitempty"`
+	MenteeNeeds        json.RawMessage `json:"mentee_needs,omitempty"`
 	TaskTemplates      json.RawMessage `json:"task_templates,omitempty"`
 }
 
