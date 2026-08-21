@@ -53,9 +53,9 @@ programs
   ├── program_terms            (1:many)
   │     └── applications       (1:many; per term per user)
   │           └── tasks        (1:many; category = prerequisite)
-  └── program_members          (1:many; maintainers + mentors)
+  └── program_members          (1:many; program admins + mentors)
 
-tasks                          (also created directly by maintainers:
+tasks                          (also created directly by program admins:
                                 category = non_prerequisite)
 ```
 
@@ -473,7 +473,7 @@ Programs are the top-level entity for a mentorship offering.
 | `submitted` | Under reviewer inspection |
 | `published` | Live; accepts applications |
 | `hidden` | Soft-hidden; only visible to owner |
-| `rejected` | Reviewer declined; maintainer may revise and resubmit |
+| `rejected` | Reviewer declined; program_admin may revise and resubmit |
 | `archived` | Completed; read-only |
 
 ### Program Skill Object
@@ -757,7 +757,7 @@ Soft-delete a term by setting its `status = "deleted"`.
 
 ## 10. Program Members (Mentors)
 
-Tracks the relationship between a user and a program as either `maintainer` or `mentor`.
+Tracks the relationship between a user and a program as either `program_admin` or `mentor`.
 
 ### ProgramMember Object
 
@@ -774,15 +774,15 @@ Tracks the relationship between a user and a program as either `maintainer` or `
 }
 ```
 
-**`member_type` values**: `maintainer`, `mentor`
+**`member_type` values**: `program_admin`, `mentor`
 
 **`status` values**: `invited`, `requested`, `pending`, `active`, `declined`, `withdrawn`
 
 | Status | Meaning |
 |---|---|
-| `invited` | Maintainer sent an invitation; awaiting mentor response |
-| `requested` | Mentor self-requested participation; awaiting maintainer approval |
-| `pending` | Manual hold set by maintainer |
+| `invited` | Program Admin sent an invitation; awaiting mentor response |
+| `requested` | Mentor self-requested participation; awaiting program_admin approval |
+| `pending` | Manual hold set by program_admin |
 | `active` | Member is confirmed and participating |
 | `declined` | Invitation or request was declined |
 | `withdrawn` | Removed from the program |
@@ -795,7 +795,7 @@ Tracks the relationship between a user and a program as either `maintainer` or `
 
 | Parameter | Values | Description |
 |---|---|---|
-| `member_type` | `maintainer\|mentor` | Filter by type |
+| `member_type` | `program_admin\|mentor` | Filter by type |
 | `status` | See status values | Filter by status |
 | `limit` / `offset` | — | Pagination |
 
@@ -817,14 +817,14 @@ Add a member to a program.
 **Self-request flow** (`member_type = "mentor"`, `status = "requested"` explicitly supplied):
 - Record is created with `status = "requested"`.
 
-**Maintainer flow** (`member_type = "maintainer"`):
+**Program Admin flow** (`member_type = "program_admin"`):
 - Record is created with `status = "active"`.
 
 **Request body**
 ```json
 {
   "user_id":     "uuid",       // required
-  "member_type": "mentor",     // required; "maintainer" | "mentor"
+  "member_type": "mentor",     // required; "program_admin" | "mentor"
   "status":      "requested",  // optional; if omitted, defaults per member_type above
   "email":       "mentor@example.com"
 }
@@ -935,13 +935,13 @@ An application represents a mentee's (or mentor's) request to join a specific pr
 
 | Status | Set by | Meaning |
 |---|---|---|
-| `pending` | System (on create) | Awaiting maintainer review |
-| `accepted` | Maintainer | Mentee selected; `attendance_type` required |
-| `active` | Maintainer | Program period has begun |
-| `graduated` | Maintainer | Mentee completed the program |
-| `declined` | Maintainer / bulk-decline | Not selected |
+| `pending` | System (on create) | Awaiting program_admin review |
+| `accepted` | Program Admin | Mentee selected; `attendance_type` required |
+| `active` | Program Admin | Program period has begun |
+| `graduated` | Program Admin | Mentee completed the program |
+| `declined` | Program Admin / bulk-decline | Not selected |
 | `withdrawn` | Mentee (self) | Mentee voluntarily exited |
-| `hold` | Maintainer | Pending additional information |
+| `hold` | Program Admin | Pending additional information |
 
 **`attendance_type` values**: `full_time`, `part_time` — **required** when `status = "accepted"`
 
@@ -1086,7 +1086,7 @@ Read-only list of accepted/active/graduated mentees for a (typically closed) ter
 Tasks represent units of work assigned to a mentee. They are either:
 
 - **prerequisite** — cloned from `program.task_templates` when an application is created; must all reach `submitted` or `complete` before `tasks_submitted` is set.
-- **non_prerequisite** — assigned manually by a maintainer or mentor to an active mentee.
+- **non_prerequisite** — assigned manually by a program_admin or mentor to an active mentee.
 
 ### Task Object
 
@@ -1204,8 +1204,8 @@ Update a task's status or metadata.
 |---|---|
 | `incomplete → in_progress` | Task **assignee** (mentee) only |
 | `in_progress → submitted` | Task **assignee** (mentee) only |
-| `submitted → complete` | **Non-assignee** (maintainer or mentor) only |
-| Any state → `incomplete` (reset) | **Non-assignee** (maintainer or mentor) only |
+| `submitted → complete` | **Non-assignee** (program_admin or mentor) only |
+| Any state → `incomplete` (reset) | **Non-assignee** (program_admin or mentor) only |
 
 Invalid forward transitions (e.g. `incomplete → complete`) return `409`.
 
@@ -1239,10 +1239,12 @@ draft ────────────────────────�
                           rejected        published             │
                               │           /       \             │
                               │      hidden    archived         │
-                              │        │                        │
-                              └──►draft  └──►published         │
+                              │      /   \                      │
+                              │  published archived             │
+                              │                                 │
+                              └──►submitted                     │
                                                                 │
-                              (rejected → draft for revision)
+                              (rejected → resubmit directly)
 ```
 
 | From | To | Notes |
@@ -1253,7 +1255,8 @@ draft ────────────────────────�
 | `published` | `hidden` | No pending/accepted/graduated applications |
 | `published` | `archived` | Program complete |
 | `hidden` | `published` | Unhide |
-| `rejected` | `draft` | Maintainer revises |
+| `hidden` | `archived` | Program complete while hidden |
+| `rejected` | `submitted` | Program Admin resubmits |
 
 ### Program Term Status
 
@@ -1289,17 +1292,17 @@ pending ──► accepted ──► active ──► graduated
 
 | From | To | Actor | Notes |
 |---|---|---|---|
-| `pending` | `accepted` | Maintainer | `attendance_type` required |
-| `pending` | `declined` | Maintainer | |
-| `pending` | `hold` | Maintainer | Needs more info |
+| `pending` | `accepted` | Program Admin | `attendance_type` required |
+| `pending` | `declined` | Program Admin | |
+| `pending` | `hold` | Program Admin | Needs more info |
 | `pending` | `withdrawn` | **Applicant only** | Self-withdrawal |
-| `hold` | `accepted` | Maintainer | |
-| `hold` | `declined` | Maintainer | |
-| `hold` | `pending` | Maintainer | |
-| `accepted` | `active` | Maintainer | Program period begins |
-| `accepted` | `declined` | Maintainer | |
-| `active` | `graduated` | Maintainer | Manual; never automatic |
-| `active` | `declined` | Maintainer | |
+| `hold` | `accepted` | Program Admin | |
+| `hold` | `declined` | Program Admin | |
+| `hold` | `pending` | Program Admin | |
+| `accepted` | `active` | Program Admin | Program period begins |
+| `accepted` | `declined` | Program Admin | |
+| `active` | `graduated` | Program Admin | Manual; never automatic |
+| `active` | `declined` | Program Admin | |
 
 ### Task Status
 
@@ -1409,7 +1412,7 @@ PATCH /v1/tasks/{taskId}  Body: { "status": "submitted", "file": "<upload-url>" 
 
 When all prerequisite tasks reach `submitted`/`complete`, the application's `tasks_submitted` flag is set to `true` — poll `GET /v1/applications/{id}` to detect this change.
 
-#### Maintainer: Accept / Decline Applications
+#### Program Admin: Accept / Decline Applications
 
 ```
 # List pending applications for a term
@@ -1427,7 +1430,7 @@ Body: { "status": "declined" }
 POST /v1/program-terms/{termId}/applications/bulk-decline
 ```
 
-#### Maintainer: Invite a Mentor
+#### Program Admin: Invite a Mentor
 
 ```
 POST /v1/programs/{programId}/members
@@ -1452,14 +1455,14 @@ POST /v1/programs/{programId}/members
 Body: { "user_id": "<uid>", "member_type": "mentor", "status": "requested" }
 ```
 
-The maintainer then approves or declines:
+The program_admin then approves or declines:
 ```
 PATCH /v1/programs/{programId}/members/{memberId}
 Body: { "status": "active" }   // approve
 Body: { "status": "declined" } // decline
 ```
 
-#### Program Submission Workflow (Maintainer)
+#### Program Submission Workflow (Program Admin)
 
 1. Create program in draft:
    ```

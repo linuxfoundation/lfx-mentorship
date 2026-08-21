@@ -91,7 +91,7 @@ open │ closed ──soft-delete──► deleted
 | `id` | UUID | PK | |
 | `program_id` | UUID | FK → programs | CASCADE delete |
 | `user_id` | UUID | FK → users | |
-| `member_type` | VARCHAR(20) | NOT NULL | `maintainer \| mentor` |
+| `member_type` | VARCHAR(20) | NOT NULL | `program_admin \| mentor` |
 | `status` | VARCHAR(20) | nullable | see lifecycle below |
 | `email` | TEXT | nullable | invitation address |
 | `created_on` | TIMESTAMPTZ | DEFAULT NOW() | |
@@ -110,7 +110,7 @@ active ──remove──► withdrawn
 invited │ requested │ active ──manual-hold──► pending
 ```
 
-**Maintainer records (`member_type = maintainer`) carry no status (NULL).**
+**Program Admin records (`member_type = program_admin`) carry no status (NULL).**
 
 ---
 
@@ -207,7 +207,7 @@ any state ──admin/mentor──► incomplete  (reset)
 
 **Category semantics**:
 - `prerequisite` — cloned from program templates at application time; gate application review
-- `non_prerequisite` — assigned by maintainer/mentor after application is `accepted`
+- `non_prerequisite` — assigned by program_admin/mentor after application is `accepted`
 
 ---
 

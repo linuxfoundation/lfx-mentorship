@@ -33,13 +33,13 @@ Valid transitions enforced in `ProgramService.Update`:
 
 | `from` | `to` | Actor |
 |--------|------|-------|
-| `draft` | `submitted` | maintainer |
+| `draft` | `submitted` | program_admin |
 | `submitted` | `published` | reviewer |
 | `submitted` | `rejected` | reviewer |
-| `rejected` | `submitted` | maintainer (resubmit) |
-| `published` | `hidden` | maintainer (guard: no blocking apps) |
-| `hidden` | `published` | maintainer |
-| `published` \| `hidden` | `archived` | maintainer |
+| `rejected` | `submitted` | program_admin (resubmit) |
+| `published` | `hidden` | program_admin (guard: no blocking apps) |
+| `hidden` | `published` | program_admin |
+| `published` \| `hidden` | `archived` | program_admin |
 
 Any other `(from, to)` pair is rejected.
 
@@ -54,7 +54,7 @@ transitions human-readable and testable.
 `pending`, `accepted`, `graduated`, **`hold`**.
 
 **Rationale**: An application in `hold` represents an active, unresolved decision. Hiding
-the program while the maintainer is mid-review would create a confusing state. The
+the program while the program_admin is mid-review would create a confusing state. The
 conservative choice is to include it.
 
 ---
@@ -80,7 +80,7 @@ stored in the `program_members` row's invite metadata (not a separate table — 
 
 - The `program_members.status` remains `invited`.
 - The accept/decline token links return 410 Gone.
-- The maintainer must remove the `program_members` record and re-invite.
+- The program_admin must remove the `program_members` record and re-invite.
 
 **Implementation**: Token expiry is encoded in the signed JWT embedded in the email link.
 The acceptance endpoint validates the JWT and rejects expired tokens with 410. No
@@ -111,7 +111,7 @@ surprising and potentially lossy. Statuses are only ever changed by explicit act
 of `tasks_submitted` state.
 
 **Rationale**: The intent of bulk decline is administrative cleanup. Task submission state
-is informational; it does not protect an application from admin decisions. If the maintainer
+is informational; it does not protect an application from admin decisions. If the program_admin
 wants to spare tasks-submitted applicants, they can accept them individually first.
 
 ---

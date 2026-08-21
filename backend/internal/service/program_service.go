@@ -34,9 +34,9 @@ var programTransitions = map[models.ProgramStatus][]models.ProgramStatus{
 	models.ProgramStatusDraft:     {models.ProgramStatusSubmitted},
 	models.ProgramStatusSubmitted: {models.ProgramStatusPublished, models.ProgramStatusRejected},
 	models.ProgramStatusPublished: {models.ProgramStatusArchived, models.ProgramStatusHidden},
-	models.ProgramStatusRejected:  {models.ProgramStatusDraft},
+	models.ProgramStatusRejected:  {models.ProgramStatusSubmitted}, // resubmit directly; no detour through draft
 	models.ProgramStatusArchived:  {},
-	models.ProgramStatusHidden:    {models.ProgramStatusPublished},
+	models.ProgramStatusHidden:    {models.ProgramStatusPublished, models.ProgramStatusArchived},
 }
 
 // GetByID returns the program with the given ID.
@@ -91,12 +91,7 @@ func (s *ProgramService) Create(ctx context.Context, input models.ProgramCreateI
 	if strings.TrimSpace(input.Slug) == "" {
 		return nil, fmt.Errorf("%w: slug is required", domain.ErrInvalidInput)
 	}
-	if input.Status != "" && !input.Status.IsValid() {
-		return nil, fmt.Errorf("%w: invalid status %q", domain.ErrInvalidInput, input.Status)
-	}
-	if input.Status == "" {
-		input.Status = models.ProgramStatusDraft
-	}
+	input.Status = models.ProgramStatusDraft // programs always start as draft
 	input.ID = uuid.New().String()
 
 	p, err := s.repo.Create(ctx, input)

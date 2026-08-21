@@ -136,7 +136,7 @@ curl -s -X POST $BASE/programs/$PROGRAM_ID/members $AUTH \
   -d '{"user_id":"<another-mentor-id>","member_type":"mentor","status":"requested"}'
 # Expected: 201, "status":"requested"
 
-# Maintainer approves
+# Program Admin approves
 curl -s -X PATCH $BASE/programs/$PROGRAM_ID/members/<new-member-id> $AUTH \
   -d '{"status":"active"}'
 # Expected: 200, "status":"active"
@@ -189,7 +189,7 @@ curl -s $BASE/applications/$APP_ID | jq .tasks_submitted
 ### 4d. Admin tries to set complete — succeeds; mentee tries to set complete — fails
 
 ```bash
-# Admin (maintainer): submitted → complete — OK
+# Admin (program_admin): submitted → complete — OK
 curl -s -X PATCH $BASE/tasks/$TASK_ID $AUTH -d '{"status":"complete"}'
 # Expected: 200
 

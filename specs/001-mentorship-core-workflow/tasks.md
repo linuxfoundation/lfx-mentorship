@@ -69,7 +69,7 @@ complete before any story work begins.
 
 ## Phase 3: User Story 1 — Program & Term Lifecycle (Priority: P1) 🎯 MVP
 
-**Goal**: Maintainers can take a program through the full lifecycle (draft → published →
+**Goal**: Program Admins can take a program through the full lifecycle (draft → published →
 hidden → archived), terms enforce the 4-open cap and close guard, and terms return a
 computed discovery label.
 
@@ -93,7 +93,7 @@ transitions, 4-term cap, term close guard, discovery labels).
 
 ## Phase 4: User Story 2 — Mentor Invitation & Self-Request (Priority: P2)
 
-**Goal**: Maintainers can invite mentors via tokenised email links; mentors can
+**Goal**: Program Admins can invite mentors via tokenised email links; mentors can
 self-request; all transitions are tracked correctly.
 
 **Independent Test**: Quickstart Scenario 3 passes (invite, accept, decline, self-request approve).
@@ -140,8 +140,8 @@ sets `tasks_submitted = true` and notifies the admin.
 
 ### Implementation for User Story 4
 
-- [x] T032 [US4] Add caller-role resolution to `TaskService.Update` in `backend/internal/service/task_service.go`: extract caller's user ID from context, look up `program_members` to determine if caller is `assignee` (mentee) or `maintainer/mentor`; attach resolved role to the update call
-- [x] T033 [US4] Add actor-permission check to `TaskService.Update` in `backend/internal/service/task_service.go`: mentee callers may only set `in_progress` (from `incomplete`) or `submitted` (from `in_progress`); maintainer/mentor callers may set `complete` or reset to `incomplete`; all others return `ErrForbidden`
+- [x] T032 [US4] Add caller-role resolution to `TaskService.Update` in `backend/internal/service/task_service.go`: extract caller's user ID from context, look up `program_members` to determine if caller is `assignee` (mentee) or `program_admin/mentor`; attach resolved role to the update call
+- [x] T033 [US4] Add actor-permission check to `TaskService.Update` in `backend/internal/service/task_service.go`: mentee callers may only set `in_progress` (from `incomplete`) or `submitted` (from `in_progress`); program_admin/mentor callers may set `complete` or reset to `incomplete`; all others return `ErrForbidden`
 - [x] T034 [US4] Add `tasks_submitted` side-effect to `TaskService.Update` in `backend/internal/service/task_service.go`: after a successful update to `submitted` or `complete`, if the task has a non-nil `application_id` and `category = prerequisite`, call `CountPrerequisiteTasksByApplication`; if `doneCount == total`, set `applications.tasks_submitted = true` via `ApplicationRepository.Update` and call `Notifier.NotifyAdminTasksSubmitted`
 - [x] T035 [P] [US4] Add `ErrForbidden` sentinel to `backend/internal/domain/errors.go` and map it to HTTP 403 in `backend/internal/handler/respond.go`
 
@@ -170,7 +170,7 @@ attendance_type, graduate flow works).
 
 ## Phase 8: User Story 6 — Supporting Operations (Priority: P3)
 
-**Goal**: Bulk decline, CSV export, and past mentees view are available to maintainers.
+**Goal**: Bulk decline, CSV export, and past mentees view are available to program admins.
 
 **Independent Test**: Quickstart Scenarios 7, 8, 9 (partial — discovery label is US1)
 and Past Mentees view pass.
@@ -245,7 +245,7 @@ and Past Mentees view pass.
 **MVP** (deliver first): Phase 1 + Phase 2 + Phase 3 (US1) + Phase 7 (US5)
 
 This gives a fully working program lifecycle with application acceptance — the core
-maintainer journey is testable end-to-end after these 4 phases (tasks T001–T019,
+program_admin journey is testable end-to-end after these 4 phases (tasks T001–T019,
 T036–T039).
 
 **Increment 2**: Phase 4 (US2) + Phase 5 (US3) + Phase 6 (US4)

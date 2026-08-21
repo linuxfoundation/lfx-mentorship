@@ -133,11 +133,7 @@ func (s *ApplicationService) Create(ctx context.Context, programTermID string, i
 	if !validApplicationRoles[input.Role] {
 		return nil, fmt.Errorf("%w: role must be mentor or mentee", domain.ErrInvalidInput)
 	}
-	if input.Status == "" {
-		input.Status = "pending"
-	} else if !validApplicationStatuses[input.Status] {
-		return nil, fmt.Errorf("%w: invalid status %q", domain.ErrInvalidInput, input.Status)
-	}
+	input.Status = "pending" // applications always start as pending
 
 	// Application window guard (FR-016): term must be open and now within the window.
 	term, err := s.termRepo.GetByID(ctx, programTermID)
@@ -169,6 +165,11 @@ func (s *ApplicationService) Create(ctx context.Context, programTermID string, i
 		}
 		if existing.Status != "withdrawn" {
 			return nil, fmt.Errorf("%w: an application for this term already exists (status: %s)", domain.ErrConflict, existing.Status)
+		}
+		// Remove the withdrawn record so the unique (term, user, role) constraint allows the new insert.
+		if err := s.repo.Delete(ctx, existing.ID); err != nil {
+			span.RecordError(err)
+			return nil, fmt.Errorf("remove withdrawn application: %w", err)
 		}
 	}
 

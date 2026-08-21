@@ -7,14 +7,14 @@
 
 ## Execution Flow (main)
 ```
-1. Maintainer creates a program in draft and submits it for review
+1. Program Admin creates a program in draft and submits it for review
 2. Reviewer publishes or rejects the program
-3. Maintainer invites mentors, or mentors self-request; each is approved or declined
+3. Program Admin invites mentors, or mentors self-request; each is approved or declined
 4. Mentee creates a profile (subject to an eligibility gate) and applies to an open term
 5. Prerequisite tasks are cloned onto the application; mentee completes them
-6. Maintainer reviews submitted tasks and accepts, declines, or holds the application
+6. Program Admin reviews submitted tasks and accepts, declines, or holds the application
 7. Accepted mentees begin the program, are later graduated, or withdraw
-8. Maintainer manages terms and program visibility throughout
+8. Program Admin manages terms and program visibility throughout
 ```
 
 ---
@@ -22,44 +22,44 @@
 ## User Scenarios & Testing *(mandatory)*
 
 ### Primary User Story
-A maintainer stands up a mentorship program, defines one or more terms, and submits
+A program_admin stands up a mentorship program, defines one or more terms, and submits
 it for review. Once published, mentors join by invitation or self-request, and
 prospective mentees create a profile, apply to an open term, and complete prerequisite
-tasks. The maintainer reviews completed tasks and decides whether to accept, decline,
+tasks. The program_admin reviews completed tasks and decides whether to accept, decline,
 or hold each applicant. Accepted mentees move through the program to graduation, and
-the maintainer can manage the program's visibility and terms throughout its lifecycle.
+the program_admin can manage the program's visibility and terms throughout its lifecycle.
 
 ### Acceptance Scenarios
 
-1. **Given** a maintainer with a linked LF project, **When** they create a program with
+1. **Given** a program_admin with a linked LF project, **When** they create a program with
    a unique name, description, repository URL, logo, at least one skill tag, and at
    least one term, **Then** the program is created with `status = draft`.
 
-2. **Given** a `draft` program that meets all required fields, **When** the maintainer
+2. **Given** a `draft` program that meets all required fields, **When** the program_admin
    submits it, **Then** `status` transitions to `submitted` and it becomes visible to
    reviewers.
 
 3. **Given** a `submitted` program, **When** a reviewer approves it, **Then**
    `status` transitions to `published` and the Mentees, Mentors, and Terms admin tabs
    become active. **When** a reviewer instead declines it, **Then** `status`
-   transitions to `rejected` and the maintainer may revise and resubmit.
+   transitions to `rejected` and the program_admin may revise and resubmit.
 
 4. **Given** a `published` program with no `pending`, `accepted`, or `graduated`
-   applications, **When** the maintainer hides it, **Then** `status` transitions to
+   applications, **When** the program_admin hides it, **Then** `status` transitions to
    `hidden` and the program returns a 404 to all users except the owner.
 
-5. **Given** a `hidden` program, **When** the maintainer unhides it, **Then**
+5. **Given** a `hidden` program, **When** the program_admin unhides it, **Then**
    `status` returns to `published`.
 
-6. **Given** a `published` program, **When** the maintainer marks it complete,
+6. **Given** a `published` program, **When** the program_admin marks it complete,
    **Then** `status` transitions to `archived`.
 
 7. **Given** an `open` term with an `accepted` application still active, **When**
-   the maintainer attempts to close the term, **Then** the close is blocked until
+   the program_admin attempts to close the term, **Then** the close is blocked until
    that mentee is `graduated` or `declined`.
 
 8. **Given** a `closed` term whose end date is still in the future, **When** the
-   maintainer reopens it, **Then** `status` returns to `open`.
+   program_admin reopens it, **Then** `status` returns to `open`.
 
 9. **Given** an `open` term whose current date falls before
    `application_start_date`, **When** a prospective mentee views the program,
@@ -69,7 +69,7 @@ the maintainer can manage the program's visibility and terms throughout its life
    "In Progress". **When** the term is `closed`, **Then** the label reads
    "Completed".
 
-10. **Given** a `published` program, **When** the maintainer searches for and invites
+10. **Given** a `published` program, **When** the program_admin searches for and invites
     an LF user as a mentor, **Then** a `program_members` record is created with
     `member_type = mentor`, `status = invited`, and an invitation email with a
     tokenised accept/decline link is sent.
@@ -80,11 +80,11 @@ the maintainer can manage the program's visibility and terms throughout its life
 
 12. **Given** a `published` program, **When** a mentor self-requests participation
     without an invitation, **Then** a `program_members` record is created with
-    `member_type = mentor`, `status = requested`. **When** the maintainer approves,
-    **Then** `status` transitions to `active`. **When** the maintainer declines,
+    `member_type = mentor`, `status = requested`. **When** the program_admin approves,
+    **Then** `status` transitions to `active`. **When** the program_admin declines,
     **Then** `status` transitions to `declined`.
 
-13. **Given** an `active` mentor, **When** the maintainer removes them, **Then**
+13. **Given** an `active` mentor, **When** the program_admin removes them, **Then**
     `status` transitions to `withdrawn`.
 
 14. **Given** a prospective mentee who confirms all three eligibility criteria
@@ -109,7 +109,7 @@ the maintainer can manage the program's visibility and terms throughout its life
 18. **Given** a mentee with prerequisite tasks in `incomplete`, **When** the mentee
     starts work, **Then** the task transitions to `in_progress`, and **When** they
     submit it, **Then** it transitions to `submitted`. **Given** a `submitted` task,
-    **When** the maintainer or mentor reviews it, **Then** it transitions to
+    **When** the program_admin or mentor reviews it, **Then** it transitions to
     `complete`, or is reset to `incomplete` for rework.
 
 19. **Given** an application whose prerequisite tasks all reach `submitted` or
@@ -118,8 +118,8 @@ the maintainer can manage the program's visibility and terms throughout its life
     and the application `status` remains `pending` (task completion never
     auto-changes application status).
 
-20. **Given** a `pending` application reviewed by the maintainer, **When** the
-    mentee qualifies, **Then** `status` transitions to `accepted` and the maintainer
+20. **Given** a `pending` application reviewed by the program_admin, **When** the
+    mentee qualifies, **Then** `status` transitions to `accepted` and the program_admin
     supplies `attendance_type` (`full_time` or `part_time`), triggering mentee
     notification and HR paperwork. **When** the mentee does not qualify, **Then**
     `status` transitions to `declined`.
@@ -127,38 +127,38 @@ the maintainer can manage the program's visibility and terms throughout its life
 21. **Given** a `pending` application, **When** the mentee voluntarily exits,
     **Then** `status` transitions to `withdrawn`.
 
-22. **Given** an application under review, **When** the maintainer needs more
+22. **Given** an application under review, **When** the program_admin needs more
     information before deciding, **Then** `status` transitions to `hold`.
 
 23. **Given** an `accepted` application whose program period has begun, **When**
-    the maintainer marks it, **Then** `status` transitions to `active`, and
-    **When** the maintainer manually marks the program period complete for that
+    the program_admin marks it, **Then** `status` transitions to `active`, and
+    **When** the program_admin manually marks the program period complete for that
     mentee, **Then** `status` transitions to `graduated` (this is never automatic at
     term end).
 
-24. **Given** an `active` mentee, **When** the maintainer or mentor assigns
+24. **Given** an `active` mentee, **When** the program_admin or mentor assigns
     additional work, **Then** a task is created with `category = non_prerequisite`.
 
-25. **Given** a term with multiple `pending` applications, **When** the maintainer
+25. **Given** a term with multiple `pending` applications, **When** the program_admin
     performs a bulk decline, **Then** all `pending` applications for that term
     transition to `declined`.
 
-26. **Given** a set of applications, **When** the maintainer exports by status
+26. **Given** a set of applications, **When** the program_admin exports by status
     (including `tasks_submitted`), **Then** a CSV is produced matching the filter.
 
-27. **Given** a `closed` term, **When** the maintainer views Past Mentees, **Then**
+27. **Given** a `closed` term, **When** the program_admin views Past Mentees, **Then**
     a read-only list of that term's mentees is shown.
 
 ### Edge Cases
 
-- What happens when a maintainer attempts to submit a program with zero terms, or a
+- What happens when a program_admin attempts to submit a program with zero terms, or a
   fifth open term (exceeding the 4-open-term maximum)? → Submission/term-creation must
   be blocked. [NEEDS CLARIFICATION: exact error/validation message not specified in
   source]
 - What happens when a reviewer attempts to act on a program that is not in
   `submitted` state? → Out of scope for this spec; assumed blocked by state guard.
   [NEEDS CLARIFICATION: no explicit rule given]
-- What happens if a maintainer tries to hide a program while an application is
+- What happens if a program_admin tries to hide a program while an application is
   `hold`? → Not addressed by source document; only `pending`, `accepted`, and
   `graduated` are named as blockers. [NEEDS CLARIFICATION: confirm `hold` should or
   should not also block hide]
@@ -181,28 +181,28 @@ the maintainer can manage the program's visibility and terms throughout its life
 
 ### Functional Requirements — Program Lifecycle
 
-- **FR-001**: System MUST allow a maintainer to create a program with `status =
+- **FR-001**: System MUST allow a program_admin to create a program with `status =
   draft`, requiring a linked LF project, a unique name, a description, a repository
   URL, a logo, at least one skill tag, and at least one term.
 - **FR-002**: System MUST support the following optional program fields: CII project
   ID, website URL, code of conduct, and prerequisite task templates.
 - **FR-003**: System MUST enforce a maximum of 4 open terms per program.
-- **FR-004**: System MUST allow a maintainer to transition a program from `draft` to
+- **FR-004**: System MUST allow a program_admin to transition a program from `draft` to
   `submitted` only when all required fields (FR-001) are present.
 - **FR-005**: System MUST allow a reviewer to transition a `submitted` program to
   either `published` or `rejected`.
 - **FR-006**: System MUST activate the Mentees, Mentors, and Terms admin tabs only
   once a program reaches `published`.
-- **FR-007**: System MUST allow a maintainer to revise and resubmit a `rejected`
+- **FR-007**: System MUST allow a program_admin to revise and resubmit a `rejected`
   program.
-- **FR-008**: System MUST allow a maintainer to transition a `published` program to
+- **FR-008**: System MUST allow a program_admin to transition a `published` program to
   `hidden`, and MUST block this transition while any application on the program has
   `status` of `pending`, `accepted`, or `graduated`.
 - **FR-009**: System MUST return a 404 response for a `hidden` program to all users
   except its owner.
-- **FR-010**: System MUST allow a maintainer to transition a `hidden` program back to
+- **FR-010**: System MUST allow a program_admin to transition a `hidden` program back to
   `published`.
-- **FR-011**: System MUST allow a maintainer to transition a `published` program to
+- **FR-011**: System MUST allow a program_admin to transition a `published` program to
   `archived` upon completion.
 
 ### Functional Requirements — Term Lifecycle
@@ -224,7 +224,7 @@ the maintainer can manage the program's visibility and terms throughout its life
 
 ### Functional Requirements — Mentor Invitation & Self-Request
 
-- **FR-018**: System MUST allow a maintainer, after a program is `published`, to
+- **FR-018**: System MUST allow a program_admin, after a program is `published`, to
   search LF users and create a `program_members` record with `member_type = mentor`
   and `status = invited`.
 - **FR-019**: System MUST dispatch an invitation email containing a tokenised
@@ -232,14 +232,14 @@ the maintainer can manage the program's visibility and terms throughout its life
 - **FR-020**: System MUST transition an invited mentor's `status` to `active` on
   acceptance, or to `declined` on decline, and MUST notify the program admin on
   decline.
-- **FR-021**: System MUST allow a maintainer to manually set a mentor's `status` to
+- **FR-021**: System MUST allow a program_admin to manually set a mentor's `status` to
   `pending`.
-- **FR-022**: System MUST allow a maintainer to remove a mentor, setting `status` to
+- **FR-022**: System MUST allow a program_admin to remove a mentor, setting `status` to
   `withdrawn`.
 - **FR-023**: System MUST allow a mentor to self-request participation in a
   `published` program, creating a `program_members` record with `member_type =
   mentor` and `status = requested`.
-- **FR-024**: System MUST allow a maintainer to approve a self-requested mentor
+- **FR-024**: System MUST allow a program_admin to approve a self-requested mentor
   (`status = active`), decline them (`status = declined`), or remove them (`status =
   withdrawn`).
 
@@ -265,7 +265,7 @@ the maintainer can manage the program's visibility and terms throughout its life
   `declined` application.
 - **FR-031**: System MUST allow a mentee to hold concurrent applications across
   different programs, and MUST surface those cross-program applications on the
-  maintainer's Mentee row view.
+  program_admin's Mentee row view.
 
 ### Functional Requirements — Prerequisite Task Evaluation
 
@@ -273,7 +273,7 @@ the maintainer can manage the program's visibility and terms throughout its life
   mentee upon application submission, linking each via `application_id` with
   `category = prerequisite`.
 - **FR-033**: System MUST restrict task status transitions by actor: a mentee may
-  move a task `incomplete → in_progress` and `in_progress → submitted`; a maintainer
+  move a task `incomplete → in_progress` and `in_progress → submitted`; a program_admin
   or mentor may move a task `submitted → complete` or reset any state to
   `incomplete`.
 - **FR-034**: System MUST set `applications.tasks_submitted = true` once all
@@ -285,25 +285,25 @@ the maintainer can manage the program's visibility and terms throughout its life
 
 ### Functional Requirements — Application Disposition
 
-- **FR-036**: System MUST allow a maintainer to transition a `pending` application
+- **FR-036**: System MUST allow a program_admin to transition a `pending` application
   to `accepted` when the mentee qualifies, and MUST require `attendance_type`
   (`full_time` or `part_time`) to be supplied at the same time.
 - **FR-037**: System MUST trigger mentee notification and HR paperwork generation
   when an application is set to `accepted`.
-- **FR-038**: System MUST allow a maintainer to transition a `pending` application to
+- **FR-038**: System MUST allow a program_admin to transition a `pending` application to
   `declined` when the mentee does not qualify.
 - **FR-039**: System MUST allow a mentee to voluntarily transition their own
   `pending` application to `withdrawn`.
-- **FR-040**: System MUST allow a maintainer to transition an application to `hold`
+- **FR-040**: System MUST allow a program_admin to transition an application to `hold`
   pending additional information.
-- **FR-041**: System MUST allow a maintainer to transition an `accepted` application
+- **FR-041**: System MUST allow a program_admin to transition an `accepted` application
   to `active` when the program period begins.
-- **FR-042**: System MUST allow a maintainer to manually transition an `active`
+- **FR-042**: System MUST allow a program_admin to manually transition an `active`
   application to `graduated`; this transition MUST NOT occur automatically at term
   end.
-- **FR-043**: System MUST allow a maintainer or mentor to assign additional tasks
+- **FR-043**: System MUST allow a program_admin or mentor to assign additional tasks
   with `category = non_prerequisite` to an `active` mentee.
-- **FR-044**: System MUST allow a maintainer to bulk-decline all `pending`
+- **FR-044**: System MUST allow a program_admin to bulk-decline all `pending`
   applications for a given term in a single action.
 - **FR-045**: System MUST support CSV export of applications filtered by status,
   including the `tasks_submitted` flag.
@@ -312,7 +312,7 @@ the maintainer can manage the program's visibility and terms throughout its life
 
 ### Key Entities
 
-- **Program**: Represents a mentorship program owned by a maintainer and linked to an
+- **Program**: Represents a mentorship program owned by a program_admin and linked to an
   LF project. Key attributes: name (unique), description, repository URL, logo,
   skill tags (≥1), CII project ID (optional), website URL (optional), code of conduct
   (optional), prerequisite task templates (optional). Status lifecycle: `draft` →
@@ -320,7 +320,7 @@ the maintainer can manage the program's visibility and terms throughout its life
 - **ProgramTerm**: A time-boxed run of a program (max 4 open per program). Key
   attributes: `application_start_date`, `application_end_date`, end date. Status
   lifecycle: `open` ↔ `closed` | `deleted`. Belongs to one Program.
-- **ProgramMember**: Represents a mentor's (or maintainer's) relationship to a
+- **ProgramMember**: Represents a mentor's (or program_admin's) relationship to a
   program. Key attributes: `member_type` (`mentor`, etc.), `status` (`invited` |
   `requested` → `active` | `declined` | `withdrawn`; `pending` as a manual hold).
   Belongs to one Program.

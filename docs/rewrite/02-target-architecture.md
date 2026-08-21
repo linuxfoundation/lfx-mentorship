@@ -20,7 +20,7 @@ Rewrite LFX Mentorship following the pattern proven by the Crowdfunding rewrite 
 
 ```mermaid
 flowchart TB
-    ADMIN(["Mentorship Admin<br/>(maintainer)"])
+    ADMIN(["Mentorship Admin<br/>(program_admin)"])
     USERS(["Mentee / Mentor"])
     SUPER(["Mentorship Super-Admin"])
 
@@ -126,7 +126,7 @@ erDiagram
         uuid id PK
         uuid program_id FK
         uuid user_id FK
-        text member_type "maintainer | mentor"
+        text member_type "program_admin | mentor"
         text status
     }
     enrollments {
@@ -158,7 +158,7 @@ Same split as Crowdfunding (public site + `app.lfx.dev` lenses):
 | Surface                                                                                  | Audience                                            | Scope                                                                                                                                                                                                                                                                                                                                                     |
 | ---------------------------------------------------------------------------------------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Nuxt 4 public site** (new, in this repo)                                               | Unauthenticated visitors, applicants                | Marketing/overview, program discovery & search, program detail, apply flow, initial program creation. SSR for SEO. LFX Insights design language (per crowdfunding.linuxfoundation.org). Milestone 1 epic: [lfx-self-serve#1477](https://github.com/linuxfoundation/lfx-self-serve/issues/1477) (Mentee public site — tracked in the lfx-self-serve repo). |
-| **LFX Self Serve** ([lfx-self-serve](https://github.com/linuxfoundation/lfx-self-serve)) | Authenticated maintainers, mentors, mentees, admins | Manage programs, review applications, tasks/milestones, admin approvals. Delivered as separate Admin/Mentor/Mentee management epics tracked in [lfx-self-serve](https://github.com/linuxfoundation/lfx-self-serve).                                                                                                                                       |
+| **LFX Self Serve** ([lfx-self-serve](https://github.com/linuxfoundation/lfx-self-serve)) | Authenticated program admins, mentors, mentees, admins | Manage programs, review applications, tasks/milestones, admin approvals. Delivered as separate Admin/Mentor/Mentee management epics tracked in [lfx-self-serve](https://github.com/linuxfoundation/lfx-self-serve).                                                                                                                                       |
 
 Frontend stack mirrors Crowdfunding: Nuxt 4 + Vue 3, TypeScript, Tailwind + PrimeVue, Pinia + Vue Query, Vitest + Playwright.
 
@@ -176,7 +176,7 @@ Identical to Crowdfunding's documented auth architecture. **Authentication** (wh
 
 Three tiers, all evaluated server-side against the caller's LFID:
 
-1. **Ownership / membership** — enforced in the service layer: maintainers and mentors via `program_members.member_type`, mentees via `enrollments.mentee_user_id`. A user with `access:me` can only reach their own programs, applications, and tasks.
+1. **Ownership / membership** — enforced in the service layer: program admins and mentors via `program_members.member_type`, mentees via `enrollments.mentee_user_id`. A user with `access:me` can only reach their own programs, applications, and tasks.
 2. **Super-admin** — platform-wide approval and management (program submissions, cross-program administration) on `/v1/admin/*`. Authorized by an **LFID allowlist injected at deploy time** (config, not an Auth0 role), checked against the caller's `access:me` principal. This is the pattern Crowdfunding uses for its initiative approver (`ALLOWED_APPROVERS`); it means Self Serve forwards an ordinary user token and the API decides, so no admin-only scope or elevated client is needed.
 3. **Email approval links** — the program-submission notification to super-admins carries an HMAC-signed, expiring link. The signature is the sole authorization for that action and requires no login, matching Crowdfunding's approval-link flow.
 

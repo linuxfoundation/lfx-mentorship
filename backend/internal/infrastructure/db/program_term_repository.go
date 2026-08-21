@@ -182,7 +182,7 @@ func (r *ProgramTermRepository) Delete(ctx context.Context, id string) error {
 	ctx, span := programTermTracer.Start(ctx, "db.program_terms.Delete")
 	defer span.End()
 
-	cmd, err := r.pool.Exec(ctx, `DELETE FROM program_terms WHERE id = $1`, id)
+	cmd, err := r.pool.Exec(ctx, `UPDATE program_terms SET status = 'deleted', updated_on = NOW() WHERE id = $1`, id)
 	if err != nil {
 		span.RecordError(err)
 		return fmt.Errorf("delete program term: %w", err)

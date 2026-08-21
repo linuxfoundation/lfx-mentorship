@@ -116,7 +116,7 @@ func loadConfig() (*Config, error) {
 		Local: LocalConfig{
 			AllowMockLocalPrincipalBypass: os.Getenv("ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS") == "true",
 			DisabledMockLocalPrincipal:    os.Getenv("DISABLED_MOCK_LOCAL_PRINCIPAL"),
-			InviteSecret:                  getEnv("MENTOR_INVITE_SECRET", "change-me-in-production"),
+			InviteSecret:                  requireEnv("MENTOR_INVITE_SECRET"),
 		},
 	}, nil
 }

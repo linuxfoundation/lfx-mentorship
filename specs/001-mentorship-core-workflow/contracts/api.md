@@ -29,7 +29,7 @@ Content-Type: application/json
 | `draft` | `submitted` | Requires ≥1 open term and all required fields |
 | `submitted` | `published` | Reviewer only |
 | `submitted` | `rejected` | Reviewer only |
-| `rejected` | `submitted` | Maintainer resubmit |
+| `rejected` | `submitted` | Program Admin resubmit |
 | `published` | `hidden` | Guard: no blocking apps (pending/accepted/graduated/hold) |
 | `hidden` | `published` | |
 | `published` \| `hidden` | `archived` | |
@@ -102,7 +102,7 @@ POST /v1/mentor-invites/{token}/accept   [public]
 
 - Validates JWT `token` (issued at invite time, 7-day TTL, contains `program_id` + `user_id`)
 - Sets `program_members.status = active` for the matching record
-- Notifies the program maintainer (in-process hook)
+- Notifies the program program_admin (in-process hook)
 
 **Responses**:
 - `200 OK` — `{ "status": "active", "program_id": "..." }`
@@ -211,7 +211,7 @@ Content-Type: application/json
 **Actor rules**:
 - **Mentee** (caller is the task's `assignee_id`): may transition `incomplete → in_progress`
   and `in_progress → submitted` only.
-- **Maintainer / Mentor** (caller is the program's member with `member_type = maintainer |
+- **Program Admin / Mentor** (caller is the program's member with `member_type = program_admin |
   mentor` and `status = active`): may transition `submitted → complete` or reset any state
   to `incomplete`.
 

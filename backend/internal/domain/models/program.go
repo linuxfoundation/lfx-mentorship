@@ -51,11 +51,7 @@ type Program struct {
 	ProgramTermStatus  *string         `json:"program_term_status,omitempty"`
 	DiscoverSortRank   int             `json:"discover_sort_rank"`
 	AmountRaised       float64         `json:"amount_raised"`
-	TermTypeFall        bool            `json:"term_type_fall"`
-	TermTypeSpring      bool            `json:"term_type_spring"`
-	TermTypeSummer      bool            `json:"term_type_summer"`
-	TermTypeOngoing     bool            `json:"term_type_ongoing"`
-	TermTypeCustom      bool            `json:"term_type_custom"`
+	MenteeNeeds        json.RawMessage `json:"mentee_needs,omitempty"`
 	TaskTemplates      json.RawMessage `json:"task_templates,omitempty"`
 	CreatedOn          time.Time       `json:"created_on"`
 	UpdatedOn          time.Time       `json:"updated_on"`
@@ -79,11 +75,7 @@ type ProgramCreateInput struct {
 	CIIProjectID       *string         `json:"cii_project_id,omitempty"`
 	AcceptApplications bool            `json:"accept_applications"`
 	TermsAndConditions bool            `json:"terms_and_conditions"`
-	TermTypeFall       bool            `json:"term_type_fall"`
-	TermTypeSpring     bool            `json:"term_type_spring"`
-	TermTypeSummer     bool            `json:"term_type_summer"`
-	TermTypeOngoing    bool            `json:"term_type_ongoing"`
-	TermTypeCustom     bool            `json:"term_type_custom"`
+	MenteeNeeds        json.RawMessage `json:"mentee_needs,omitempty"`
 	TaskTemplates      json.RawMessage `json:"task_templates,omitempty"`
 }
 
@@ -106,11 +98,7 @@ type ProgramUpdateInput struct {
 	TermsAndConditions *bool           `json:"terms_and_conditions,omitempty"`
 	ProgramTermStatus  *string         `json:"program_term_status,omitempty"`
 	DiscoverSortRank   *int            `json:"discover_sort_rank,omitempty"`
-	TermTypeFall        *bool           `json:"term_type_fall,omitempty"`
-	TermTypeSpring      *bool           `json:"term_type_spring,omitempty"`
-	TermTypeSummer      *bool           `json:"term_type_summer,omitempty"`
-	TermTypeOngoing     *bool           `json:"term_type_ongoing,omitempty"`
-	TermTypeCustom      *bool           `json:"term_type_custom,omitempty"`
+	MenteeNeeds        json.RawMessage `json:"mentee_needs,omitempty"`
 	TaskTemplates      json.RawMessage `json:"task_templates,omitempty"`
 }
 
