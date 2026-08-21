@@ -36,8 +36,8 @@ type UserProfileCreateInput struct {
 	ID                 string          `json:"id"`
 	UserID             string          `json:"user_id"`
 	ProfileType        string          `json:"profile_type"`
-	AgeEligible        bool            `json:"age_eligible"`        // mentee only; caller confirms minimum-age criterion
-	WorkEligible       bool            `json:"work_eligible"`       // mentee only; caller confirms work-eligibility criterion
+	AgeEligible        bool            `json:"age_eligible"`  // mentee only; caller confirms minimum-age criterion
+	WorkEligible       bool            `json:"work_eligible"` // mentee only; caller confirms work-eligibility criterion
 	Slug               *string         `json:"slug,omitempty"`
 	FirstName          *string         `json:"first_name,omitempty"`
 	LastName           *string         `json:"last_name,omitempty"`

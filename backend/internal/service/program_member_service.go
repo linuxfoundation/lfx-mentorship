@@ -19,9 +19,9 @@ var programMemberSvcTracer = otel.Tracer("program-members-service")
 
 // ProgramMemberService orchestrates program member reads and writes.
 type ProgramMemberService struct {
-	repo        domain.ProgramMemberRepository
-	programRepo domain.ProgramRepository
-	notifier    domain.Notifier
+	repo         domain.ProgramMemberRepository
+	programRepo  domain.ProgramRepository
+	notifier     domain.Notifier
 	inviteSecret string
 }
 
