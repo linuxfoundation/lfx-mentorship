@@ -23,9 +23,7 @@ SPDX-License-Identifier: MIT
       <mentor-detail-header :mentor="mentor" />
 
       <section class="space-y-4">
-        <h2 class="font-secondary text-2xl md:text-3xl font-light text-neutral-900">
-          Programs
-        </h2>
+        <h2 class="font-secondary text-2xl md:text-3xl font-light text-neutral-900">Programs</h2>
         <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <profile-program-card
             v-for="program in mentor.programs"
@@ -39,9 +37,7 @@ SPDX-License-Identifier: MIT
         v-if="mentor.currentMentees.length"
         class="space-y-4"
       >
-        <h2 class="font-secondary text-2xl md:text-3xl font-light text-neutral-900">
-          Mentees
-        </h2>
+        <h2 class="font-secondary text-2xl md:text-3xl font-light text-neutral-900">Mentees</h2>
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3">
           <profile-mentee-card
             v-for="mentee in mentor.currentMentees"
@@ -55,9 +51,7 @@ SPDX-License-Identifier: MIT
         v-if="mentor.graduatedMentees.length"
         class="space-y-4"
       >
-        <h2 class="font-secondary text-2xl md:text-3xl font-light text-neutral-900">
-          Graduated Mentees
-        </h2>
+        <h2 class="font-secondary text-2xl md:text-3xl font-light text-neutral-900">Graduated Mentees</h2>
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3">
           <profile-mentee-card
             v-for="mentee in mentor.graduatedMentees"

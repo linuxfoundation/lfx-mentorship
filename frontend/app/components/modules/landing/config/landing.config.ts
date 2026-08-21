@@ -96,7 +96,6 @@ export const LANDING_ELIGIBILITY_ITEMS: LandingEligibilityItem[] = [
   },
 ];
 
-
 export const LANDING_ELIGIBILITY_FOOTER =
   'Stipend amounts vary by program and by country of residence. They are paid in three installments over the term.';
 

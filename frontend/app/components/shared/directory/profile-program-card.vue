@@ -36,9 +36,7 @@ SPDX-License-Identifier: MIT
       v-if="program.skills.length"
       class="flex flex-col gap-2"
     >
-      <p class="text-xs font-semibold uppercase tracking-wide text-neutral-500">
-        Required skills
-      </p>
+      <p class="text-xs font-semibold uppercase tracking-wide text-neutral-500">Required skills</p>
       <div class="flex flex-wrap gap-2">
         <lfx-chip
           v-for="skill in program.skills"
@@ -55,9 +53,7 @@ SPDX-License-Identifier: MIT
       v-if="program.terms.length"
       class="flex flex-col gap-2"
     >
-      <p class="text-xs font-semibold uppercase tracking-wide text-neutral-500">
-        Terms
-      </p>
+      <p class="text-xs font-semibold uppercase tracking-wide text-neutral-500">Terms</p>
       <div class="flex flex-wrap gap-2">
         <div
           v-for="term in program.terms"
@@ -79,9 +75,7 @@ SPDX-License-Identifier: MIT
       v-if="program.mentors?.length"
       class="flex flex-col gap-3"
     >
-      <p class="text-xs font-semibold uppercase tracking-wide text-neutral-500">
-        Mentors
-      </p>
+      <p class="text-xs font-semibold uppercase tracking-wide text-neutral-500">Mentors</p>
       <ul class="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:gap-x-8 sm:gap-y-4">
         <li
           v-for="mentor in program.mentors"

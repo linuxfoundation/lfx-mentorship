@@ -10,8 +10,7 @@ SPDX-License-Identifier: MIT
 import ProgramsView from '~/components/modules/programs/view/programs.vue';
 
 const title = 'Programs';
-const description =
-  'Browse LFX Mentorship programs. Find opportunities by status, skills, and mentors.';
+const description = 'Browse LFX Mentorship programs. Find opportunities by status, skills, and mentors.';
 
 useHead({ title });
 useSeoMeta({

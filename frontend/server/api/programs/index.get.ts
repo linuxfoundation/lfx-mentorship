@@ -15,7 +15,6 @@ function isProgramStatus(value: string): value is ProgramStatus {
   return (PROGRAM_STATUSES as readonly string[]).includes(value);
 }
 
-
 const STATUS_RANK_ACCEPTING_FIRST: Record<ProgramStatus, number> = {
   acceptance: 0,
   'in-progress': 1,

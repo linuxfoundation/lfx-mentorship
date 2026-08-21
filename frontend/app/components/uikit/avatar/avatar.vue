@@ -25,7 +25,7 @@ import { AvatarIcons } from './types/Avatar.types';
 
 const props = withDefaults(
   defineProps<{
-    type: AvatarType;
+    type?: AvatarType;
     size?: AvatarSize;
     src?: string;
   }>(),

@@ -36,7 +36,6 @@ export const PROGRAM_SORT_OPTIONS: ProgramSortOption[] = [
   { value: 'updated_newest', label: 'Updated (Newest First)' },
 ];
 
-
 /** Builds the header catalog summary, e.g. "128 programs across 42 foundations". */
 export function formatProgramsCatalogSummary(
   programCount: number,

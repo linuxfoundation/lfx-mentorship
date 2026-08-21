@@ -76,7 +76,7 @@ export default {
     },
   },
   plugins: [
-    plugin(({ addUtilities }: { addUtilities: (utilities: Record<string, any>) => void }) => {
+    plugin(({ addUtilities }: { addUtilities: (utilities: Record<string, unknown>) => void }) => {
       addUtilities({
         '.break-word': {
           'word-break': 'break-word',

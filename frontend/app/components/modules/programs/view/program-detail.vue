@@ -125,12 +125,8 @@ const {
 
 const activeTab = ref(DEFAULT_PROGRAM_DETAIL_TAB);
 
-const currentMentees = computed(
-  () => program.value?.mentees.filter((mentee) => mentee.status === 'active') ?? [],
-);
-const graduatedMentees = computed(
-  () => program.value?.mentees.filter((mentee) => mentee.status === 'graduated') ?? [],
-);
+const currentMentees = computed(() => program.value?.mentees.filter((mentee) => mentee.status === 'active') ?? []);
+const graduatedMentees = computed(() => program.value?.mentees.filter((mentee) => mentee.status === 'graduated') ?? []);
 
 watch(programId, () => {
   activeTab.value = DEFAULT_PROGRAM_DETAIL_TAB;

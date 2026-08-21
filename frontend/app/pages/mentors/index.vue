@@ -10,8 +10,7 @@ SPDX-License-Identifier: MIT
 import MentorsView from '~/components/modules/mentors/view/mentors.vue';
 
 const title = 'Mentors';
-const description =
-  'Browse LFX Mentorship mentors. Find mentors by skill and project experience.';
+const description = 'Browse LFX Mentorship mentors. Find mentors by skill and project experience.';
 
 useHead({ title });
 useSeoMeta({

@@ -75,17 +75,13 @@ SPDX-License-Identifier: MIT
     <div class="flex flex-col gap-4 w-full pt-6 mt-6 border-t border-neutral-100">
       <div class="grid grid-cols-2 gap-4">
         <div class="flex flex-col gap-1 min-w-0">
-          <p class="text-xs font-semibold uppercase tracking-wide text-neutral-500">
-            Project
-          </p>
+          <p class="text-xs font-semibold uppercase tracking-wide text-neutral-500">Project</p>
           <p class="text-sm font-medium text-neutral-900 truncate">
             {{ mentee.project.foundationLabel }} · {{ mentee.project.name }}
           </p>
         </div>
         <div class="flex flex-col gap-1">
-          <p class="text-xs font-semibold uppercase tracking-wide text-neutral-500">
-            Mentors
-          </p>
+          <p class="text-xs font-semibold uppercase tracking-wide text-neutral-500">Mentors</p>
           <div
             v-if="mentee.mentors.length"
             class="flex items-center -space-x-2"
@@ -149,12 +145,8 @@ const props = defineProps<{ mentee: Mentee }>();
 const statusConfig = computed(() => MENTEE_STATUS_CONFIG[props.mentee.status]);
 const visibleSkills = computed(() => props.mentee.skills.slice(0, MENTEE_SKILLS_VISIBLE_COUNT));
 const overflowSkills = computed(() => props.mentee.skills.slice(MENTEE_SKILLS_VISIBLE_COUNT));
-const visibleMentors = computed(() =>
-  props.mentee.mentors.slice(0, MENTEE_MENTORS_VISIBLE_COUNT),
-);
-const overflowMentors = computed(() =>
-  props.mentee.mentors.slice(MENTEE_MENTORS_VISIBLE_COUNT),
-);
+const visibleMentors = computed(() => props.mentee.mentors.slice(0, MENTEE_MENTORS_VISIBLE_COUNT));
+const overflowMentors = computed(() => props.mentee.mentors.slice(MENTEE_MENTORS_VISIBLE_COUNT));
 </script>
 
 <script lang="ts">

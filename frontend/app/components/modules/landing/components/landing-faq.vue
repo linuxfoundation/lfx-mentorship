@@ -6,9 +6,7 @@ SPDX-License-Identifier: MIT
   <section class="container px-5 pb-10 md:px-10 md:pb-12">
     <div class="rounded-2xl border border-neutral-200 bg-white p-6 md:p-8">
       <div class="mb-8">
-        <h2 class="font-secondary text-2xl md:text-3xl font-light text-neutral-900">
-          Frequently Asked
-        </h2>
+        <h2 class="font-secondary text-2xl md:text-3xl font-light text-neutral-900">Frequently Asked</h2>
         <p class="mt-2 text-sm text-neutral-500">{{ LANDING_FAQ_SUBTITLE }}</p>
       </div>
 
