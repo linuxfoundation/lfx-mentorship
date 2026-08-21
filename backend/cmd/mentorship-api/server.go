@@ -60,7 +60,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	userProfileSvc := service.NewUserProfileService(userProfileRepo)
 	programSvc := service.NewProgramService(programRepo, programTermRepo, applicationRepo)
 	programTermSvc := service.NewProgramTermService(programTermRepo, applicationRepo)
-	programMemberSvc := service.NewProgramMemberService(programMemberRepo, notifier, cfg.Local.InviteSecret)
+	programMemberSvc := service.NewProgramMemberService(programMemberRepo, programRepo, notifier, cfg.Local.InviteSecret)
 	applicationSvc := service.NewApplicationService(applicationRepo, taskRepo, programTermRepo, programRepo, notifier)
 	taskSvc := service.NewTaskService(taskRepo, applicationRepo, notifier)
 
@@ -124,9 +124,9 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		r.Get("/applications/{id}/tasks", taskH.ListByApplication)
 		r.Get("/tasks/{id}", taskH.GetByID)
 
-		// Mentor invite (token is the credential — no JWT required)
-		r.Post("/mentor-invites/accept", mentorInviteH.AcceptInvite)
-		r.Post("/mentor-invites/decline", mentorInviteH.DeclineInvite)
+		// Mentor invite — token in path is the credential, no JWT required
+		r.Post("/mentor-invites/{token}/accept", mentorInviteH.AcceptInvite)
+		r.Post("/mentor-invites/{token}/decline", mentorInviteH.DeclineInvite)
 
 		// ── Authenticated endpoints ────────────────────────────────────────
 		r.Group(func(r chi.Router) {

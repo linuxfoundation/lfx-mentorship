@@ -87,8 +87,14 @@ func (s *UserProfileService) Create(ctx context.Context, input models.UserProfil
 		return nil, fmt.Errorf("%w: profile_type must be mentor or mentee", domain.ErrInvalidInput)
 	}
 
-	// Eligibility gate: users may only hold one active mentee profile.
+	// Eligibility gate for mentee profiles (FR-014).
 	if input.ProfileType == "mentee" {
+		if !input.AgeEligible {
+			return nil, fmt.Errorf("%w: age eligibility must be confirmed", domain.ErrIneligible)
+		}
+		if !input.WorkEligible {
+			return nil, fmt.Errorf("%w: work eligibility must be confirmed", domain.ErrIneligible)
+		}
 		count, err := s.repo.CountActiveMenteeProfiles(ctx, input.UserID)
 		if err != nil {
 			span.RecordError(err)

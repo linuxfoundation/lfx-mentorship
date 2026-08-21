@@ -7,6 +7,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
 )
 
@@ -25,19 +26,14 @@ func NewMentorInviteHandler(svc mentorInviteService) *MentorInviteHandler {
 	return &MentorInviteHandler{svc: svc}
 }
 
-// AcceptInvite handles POST /v1/mentor-invites/accept — public (token is the credential).
+// AcceptInvite handles POST /v1/mentor-invites/{token}/accept — public (token is the credential).
 func (h *MentorInviteHandler) AcceptInvite(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Token string `json:"token"`
-	}
-	if !decodeBody(w, r, &body) {
-		return
-	}
-	if body.Token == "" {
+	token := chi.URLParam(r, "token")
+	if token == "" {
 		Error(w, newInvalidInput("token is required"))
 		return
 	}
-	member, err := h.svc.AcceptInvite(r.Context(), body.Token)
+	member, err := h.svc.AcceptInvite(r.Context(), token)
 	if err != nil {
 		Error(w, err)
 		return
@@ -45,19 +41,14 @@ func (h *MentorInviteHandler) AcceptInvite(w http.ResponseWriter, r *http.Reques
 	JSON(w, http.StatusOK, member)
 }
 
-// DeclineInvite handles POST /v1/mentor-invites/decline — public (token is the credential).
+// DeclineInvite handles POST /v1/mentor-invites/{token}/decline — public (token is the credential).
 func (h *MentorInviteHandler) DeclineInvite(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Token string `json:"token"`
-	}
-	if !decodeBody(w, r, &body) {
-		return
-	}
-	if body.Token == "" {
+	token := chi.URLParam(r, "token")
+	if token == "" {
 		Error(w, newInvalidInput("token is required"))
 		return
 	}
-	if err := h.svc.DeclineInvite(r.Context(), body.Token); err != nil {
+	if err := h.svc.DeclineInvite(r.Context(), token); err != nil {
 		Error(w, err)
 		return
 	}

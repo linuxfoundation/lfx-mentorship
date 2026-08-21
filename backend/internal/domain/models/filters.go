@@ -51,11 +51,12 @@ type ProgramMemberFilter struct {
 
 // ApplicationFilter constrains list queries for applications.
 type ApplicationFilter struct {
-	Limit  int
-	Offset int
-	UserID string
-	Role   string // mentor | mentee
-	Status string // pending | accepted | declined | withdrawn
+	Limit          int
+	Offset         int
+	UserID         string
+	Role           string // mentor | mentee
+	Status         string // pending | accepted | declined | withdrawn
+	TasksSubmitted *bool  // nil = no filter
 }
 
 // TaskFilter constrains list queries for tasks.

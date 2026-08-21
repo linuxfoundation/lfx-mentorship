@@ -175,7 +175,7 @@ func (h *ApplicationHandler) BulkDeclineByTerm(w http.ResponseWriter, r *http.Re
 		Error(w, err)
 		return
 	}
-	JSON(w, http.StatusOK, map[string]any{"declined": count})
+	JSON(w, http.StatusOK, map[string]any{"declined_count": count})
 }
 
 // ExportByTerm handles GET /v1/program-terms/{id}/applications/export — requires JWT.
@@ -188,15 +188,20 @@ func (h *ApplicationHandler) ExportByTerm(w http.ResponseWriter, r *http.Request
 	}
 
 	termID := chi.URLParam(r, "id")
-	limit, offset, ok := parsePaginationParams(w, r)
-	if !ok {
-		return
+	q := r.URL.Query()
+	filter := models.ApplicationFilter{
+		Limit:  100_000, // export is unbounded
+		Status: q.Get("status"),
+		Role:   q.Get("role"),
 	}
-	apps, _, err := h.svc.ListByProgramTerm(r.Context(), termID, models.ApplicationFilter{
-		Limit:  limit,
-		Offset: offset,
-		Status: r.URL.Query().Get("status"),
-	})
+	if v := q.Get("tasks_submitted"); v == "true" {
+		t := true
+		filter.TasksSubmitted = &t
+	} else if v == "false" {
+		f := false
+		filter.TasksSubmitted = &f
+	}
+	apps, _, err := h.svc.ListByProgramTerm(r.Context(), termID, filter)
 	if err != nil {
 		Error(w, err)
 		return

@@ -91,6 +91,10 @@ func (r *ApplicationRepository) ListByProgramTerm(ctx context.Context, programTe
 		args = append(args, filter.UserID)
 		where += fmt.Sprintf(` AND user_id = $%d`, len(args))
 	}
+	if filter.TasksSubmitted != nil {
+		args = append(args, *filter.TasksSubmitted)
+		where += fmt.Sprintf(` AND tasks_submitted = $%d`, len(args))
+	}
 
 	var total int
 	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM applications`+where, args...).Scan(&total); err != nil {

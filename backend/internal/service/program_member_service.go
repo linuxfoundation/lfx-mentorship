@@ -19,14 +19,25 @@ var programMemberSvcTracer = otel.Tracer("program-members-service")
 
 // ProgramMemberService orchestrates program member reads and writes.
 type ProgramMemberService struct {
-	repo         domain.ProgramMemberRepository
-	notifier     domain.Notifier
+	repo        domain.ProgramMemberRepository
+	programRepo domain.ProgramRepository
+	notifier    domain.Notifier
 	inviteSecret string
 }
 
 // NewProgramMemberService returns a ProgramMemberService.
-func NewProgramMemberService(repo domain.ProgramMemberRepository, notifier domain.Notifier, inviteSecret string) *ProgramMemberService {
-	return &ProgramMemberService{repo: repo, notifier: notifier, inviteSecret: inviteSecret}
+func NewProgramMemberService(repo domain.ProgramMemberRepository, programRepo domain.ProgramRepository, notifier domain.Notifier, inviteSecret string) *ProgramMemberService {
+	return &ProgramMemberService{repo: repo, programRepo: programRepo, notifier: notifier, inviteSecret: inviteSecret}
+}
+
+// memberTransitions defines valid next statuses for each member status.
+var memberTransitions = map[string]map[string]bool{
+	"invited":   {"active": true, "declined": true, "pending": true},
+	"requested": {"active": true, "declined": true, "pending": true},
+	"active":    {"withdrawn": true, "pending": true},
+	"pending":   {"active": true, "declined": true},
+	"declined":  {},
+	"withdrawn": {},
 }
 
 var validMemberTypes = map[string]bool{
@@ -74,6 +85,16 @@ func (s *ProgramMemberService) Create(ctx context.Context, programID string, inp
 	}
 	if !validMemberTypes[input.MemberType] {
 		return nil, fmt.Errorf("%w: member_type must be program_admin or mentor", domain.ErrInvalidInput)
+	}
+
+	// FR-018 / FR-023: members may only be added to a published program.
+	prog, err := s.programRepo.GetByID(ctx, programID)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("get program: %w", err)
+	}
+	if prog.Status != "published" {
+		return nil, fmt.Errorf("%w: program must be published before adding members", domain.ErrInvalidInput)
 	}
 
 	// Mentors are placed in 'invited' status and notified; program_admins are 'active' immediately.
