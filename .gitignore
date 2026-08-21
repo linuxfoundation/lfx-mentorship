@@ -1,6 +1,22 @@
 # Copyright The Linux Foundation and each contributor to LFX.
 # SPDX-License-Identifier: MIT
 
+# ─── Secrets ─────────────────────────────────────────────────────────────────
+.env
+
+# ─── Go build artefacts ──────────────────────────────────────────────────────
+backend/bin/
+backend/mentorship-api
+
+# ─── Tools & local state ─────────────────────────────────────────────────────
+megalinter-reports/
+.specify/
+.playwright-mcp/
+.worktrees/
+.claude/worktrees/
+.claude/settings.local.json
+.claude/skills/speckit-*
+settings.json
 # Dependencies
 node_modules/
 
@@ -9,11 +25,6 @@ dist/
 bin/
 .nuxt/
 .output/
-
-# Environment / secrets
-.env
-.env.*
-!.env.example
 
 # Editor / OS
 .DS_Store

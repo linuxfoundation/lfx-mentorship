@@ -1,0 +1,115 @@
+# Copyright The Linux Foundation and each contributor to LFX.
+# SPDX-License-Identifier: MIT
+---
+replicaCount: 2
+
+image:
+  repository: ghcr.io/linuxfoundation/lfx-mentorship-backend
+  pullPolicy: Always
+  tag: "" # required — set per environment via ArgoCD values
+
+imagePullSecrets: []
+
+serviceAccount:
+  create: true
+  automount: false
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts: []
+  tls: []
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+livenessProbe:
+  httpGet:
+    path: /livez
+    port: 8080
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: 8080
+  initialDelaySeconds: 10
+  periodSeconds: 10
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+
+# ── Non-secret environment variables ────────────────────────────────────────
+# These are rendered into a ConfigMap and mounted via envFrom.
+config:
+  JWKS_URL: ""
+  JWT_AUDIENCE: ""
+  JWT_ISSUER: ""
+  OTEL_EXPORTER_OTLP_ENDPOINT: ""
+  OTEL_SERVICE_NAME: "lfx-mentorship-backend"
+
+# ── Additional environment variables ─────────────────────────────────────────
+# Rendered as a Kubernetes env: list on the Deployment.
+# Supports the full env entry schema (value:, valueFrom:, etc.).
+# Override in ArgoCD values to inject secretKeyRef entries (e.g. DB components).
+env: []
+
+# ── Secret environment variables ─────────────────────────────────────────────
+# These are sourced from a Kubernetes Secret via envFrom.secretRef.
+# The Secret itself is managed externally (e.g. External Secrets Operator
+# syncing from AWS Secrets Manager).
+#
+# Expected keys in the Secret:
+#   DATABASE_DSN — full Postgres connection string
+#     or individual RDS components referenced via env: above:
+#     username, password, host, port, dbname
+secretName: lfx-mentorship-backend-secrets
+
+# createPlaceholderSecret — opt-in, defaults to false.
+#
+# When false (default): the Secret must already exist before helm install runs.
+# When true: the chart creates an empty Secret placeholder via a pre-install hook
+# for local development (kind/minikube). If ESO is also managing this Secret
+# it MUST be configured with creationPolicy: Merge.
+createPlaceholderSecret: false
