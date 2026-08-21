@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 )
 
@@ -44,6 +45,15 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 
 // mapError translates domain sentinel errors to HTTP status codes.
 func mapError(err error) (int, string) {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		switch pgErr.Code {
+		case "23503": // foreign_key_violation
+			return http.StatusUnprocessableEntity, "referenced resource does not exist"
+		case "23505": // unique_violation
+			return http.StatusConflict, "a resource with that value already exists"
+		}
+	}
 	switch {
 	case errors.Is(err, domain.ErrUserNotFound),
 		errors.Is(err, domain.ErrUserProfileNotFound),

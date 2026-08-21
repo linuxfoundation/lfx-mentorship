@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
 	"go.opentelemetry.io/otel"
@@ -74,7 +75,7 @@ func (s *UserProfileService) Create(ctx context.Context, input models.UserProfil
 	defer span.End()
 
 	if input.ID == "" {
-		return nil, fmt.Errorf("%w: id is required", domain.ErrInvalidInput)
+		input.ID = uuid.New().String()
 	}
 	if input.UserID == "" {
 		return nil, fmt.Errorf("%w: user_id is required", domain.ErrInvalidInput)
