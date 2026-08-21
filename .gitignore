@@ -17,3 +17,21 @@ megalinter-reports/
 .claude/settings.local.json
 .claude/skills/speckit-*
 settings.json
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+bin/
+.nuxt/
+.output/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Test / coverage
+coverage/
+*.out

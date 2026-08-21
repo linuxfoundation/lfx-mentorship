@@ -1,0 +1,52 @@
+// Copyright The Linux Foundation and each contributor to LFX.
+// SPDX-License-Identifier: MIT
+.c-checkbox {
+  @apply inline-flex items-center flex-wrap relative gap-2;
+
+  input {
+    @apply absolute inset-0 h-full w-full border border-solid border-neutral-300 rounded-sm bg-white;
+    @apply transition-all appearance-none p-0 m-0 cursor-pointer;
+
+    // Checked
+    &:checked {
+      @apply bg-brand-500 border-brand-500;
+      /* --lf-checkbox-border: var(--lf-checkbox-checked-border);
+      --lf-checkbox-background: var(--lf-checkbox-checked-background);
+      --lf-checkbox-icon: var(--lf-checkbox-checked-icon);  */
+    }
+
+    &:checked::after {
+      transform: rotate(45deg) scaleY(1);
+    }
+
+    // Disabled
+    &:disabled {
+      /* --lf-checkbox-border: var(--lf-checkbox-disabled-unchecked-border);
+      --lf-checkbox-background: var(
+        --lf-checkbox-disabled-unchecked-background
+      );
+      --lf-checkbox-icon: var(--lf-checkbox-disabled-unchecked-icon);
+      @apply cursor-not-allowed;
+
+      &:checked {
+        --lf-checkbox-border: var(--lf-checkbox-disabled-checked-border);
+        --lf-checkbox-background: var(
+          --lf-checkbox-disabled-checked-background
+        );
+        --lf-checkbox-icon: var(--lf-checkbox-disabled-checked-icon);
+      }
+
+      & + span {
+        @apply cursor-not-allowed;
+      } */
+    }
+  }
+
+  &__box {
+    @apply relative flex items-center justify-center shrink-0 h-3.5 w-3.5;
+  }
+
+  &__check {
+    @apply absolute pointer-events-none;
+  }
+}
