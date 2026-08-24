@@ -18,14 +18,22 @@ var taskSvcTracer = otel.Tracer("tasks-service")
 
 // TaskService orchestrates task reads and writes.
 type TaskService struct {
-	repo     domain.TaskRepository
-	appRepo  domain.ApplicationRepository
-	notifier domain.Notifier
+	repo       domain.TaskRepository
+	appRepo    domain.ApplicationRepository
+	termRepo   domain.ProgramTermRepository
+	memberRepo domain.ProgramMemberRepository
+	notifier   domain.Notifier
 }
 
 // NewTaskService returns a TaskService.
-func NewTaskService(repo domain.TaskRepository, appRepo domain.ApplicationRepository, notifier domain.Notifier) *TaskService {
-	return &TaskService{repo: repo, appRepo: appRepo, notifier: notifier}
+func NewTaskService(
+	repo domain.TaskRepository,
+	appRepo domain.ApplicationRepository,
+	termRepo domain.ProgramTermRepository,
+	memberRepo domain.ProgramMemberRepository,
+	notifier domain.Notifier,
+) *TaskService {
+	return &TaskService{repo: repo, appRepo: appRepo, termRepo: termRepo, memberRepo: memberRepo, notifier: notifier}
 }
 
 var validTaskStatuses = map[string]bool{
@@ -150,6 +158,11 @@ func (s *TaskService) Update(ctx context.Context, id string, input models.TaskUp
 			if isAssignee {
 				return nil, fmt.Errorf("%w: only a reviewer may mark a task %s", domain.ErrForbidden, next)
 			}
+			// Principle VII-4: verify the actor holds an active mentor/admin role on this program.
+			if err := s.assertReviewer(ctx, current, input.ActorID); err != nil {
+				span.RecordError(err)
+				return nil, err
+			}
 		}
 	}
 
@@ -171,6 +184,33 @@ func (s *TaskService) Update(ctx context.Context, id string, input models.TaskUp
 	}
 
 	return t, nil
+}
+
+// assertReviewer verifies that actorID holds an active mentor or program_admin role
+// on the program that owns the given task.
+func (s *TaskService) assertReviewer(ctx context.Context, task *models.Task, actorID string) error {
+	if task.ApplicationID == nil {
+		return fmt.Errorf("%w: task has no application; cannot verify reviewer role", domain.ErrForbidden)
+	}
+	app, err := s.appRepo.GetByID(ctx, *task.ApplicationID)
+	if err != nil {
+		return fmt.Errorf("get application for reviewer check: %w", err)
+	}
+	term, err := s.termRepo.GetByID(ctx, app.ProgramTermID)
+	if err != nil {
+		return fmt.Errorf("get term for reviewer check: %w", err)
+	}
+	member, err := s.memberRepo.FindByProgramAndUser(ctx, term.ProgramID, actorID)
+	if err != nil {
+		return fmt.Errorf("%w: actor is not a member of this program", domain.ErrForbidden)
+	}
+	if member.MemberType != "mentor" && member.MemberType != "program_admin" {
+		return fmt.Errorf("%w: actor must be mentor or program_admin to review tasks", domain.ErrForbidden)
+	}
+	if member.Status != nil && *member.Status != "active" {
+		return fmt.Errorf("%w: actor's program membership is not active", domain.ErrForbidden)
+	}
+	return nil
 }
 
 // Delete removes a task.
