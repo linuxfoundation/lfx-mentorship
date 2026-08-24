@@ -5,7 +5,12 @@ SPDX-License-Identifier: MIT
 <template>
   <div
     class="c-tag"
-    :class="[`c-tag--${props.variation}`, `c-tag--${props.size}`, `c-tag--${props.type}`]"
+    :class="[
+      `c-tag--${props.variation}`,
+      `c-tag--${props.size}`,
+      `c-tag--${props.type}`,
+      { '!rounded-none': !props.rounded },
+    ]"
   >
     <slot />
   </div>
@@ -19,11 +24,13 @@ const props = withDefaults(
     variation?: TagStyle;
     size?: TagSize;
     type?: TagType;
+    rounded?: boolean;
   }>(),
   {
     variation: 'default',
     size: 'medium',
     type: 'solid',
+    rounded: true,
   },
 );
 </script>

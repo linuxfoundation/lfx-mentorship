@@ -4,6 +4,7 @@
 export enum AppRoute {
   Home = '/',
   FindProgram = '/programs',
+  EnrollProgram = '/programs/enroll',
   Mentees = '/mentees',
   Mentors = '/mentors',
 }

@@ -35,7 +35,7 @@ SPDX-License-Identifier: MIT
         >
           <lfx-icon
             :name="feature.icon"
-            type="solid"
+            :type="feature.iconType ?? 'solid'"
             :size="16"
             class="text-positive-600 shrink-0"
           />
@@ -53,13 +53,14 @@ SPDX-License-Identifier: MIT
             class="justify-center"
           />
         </NuxtLink>
-        <div
-          class="inline-flex items-center gap-2 rounded-full border border-positive-100 bg-positive-50 px-3 py-1.5 text-sm"
-        >
-          <span class="size-1.5 shrink-0 rounded-full bg-positive-500" />
-          <span class="font-medium text-positive-800">{{ LANDING_HERO_TERM_STATUS.label }}</span>
-          <span class="text-neutral-500">{{ LANDING_HERO_TERM_STATUS.closesLabel }}</span>
-        </div>
+        <NuxtLink :to="AppRoute.EnrollProgram">
+          <lfx-button
+            label="Enroll a Program"
+            type="outline"
+            button-style="pill"
+            class="justify-center"
+          />
+        </NuxtLink>
       </div>
     </div>
   </section>
@@ -71,7 +72,6 @@ import {
   LANDING_HERO_AVATARS,
   LANDING_HERO_FEATURES,
   LANDING_HERO_SUBTITLE,
-  LANDING_HERO_TERM_STATUS,
   LANDING_HERO_TITLE,
 } from '../config/landing.config';
 import { AppRoute } from '~/config/routes';
