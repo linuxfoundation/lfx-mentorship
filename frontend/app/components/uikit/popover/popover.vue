@@ -15,7 +15,10 @@ SPDX-License-Identifier: MIT
     <slot />
   </div>
   <ClientOnly>
-    <teleport v-if="isVisible && !props.disabled" to="body">
+    <teleport
+      v-if="isVisible && !props.disabled"
+      to="body"
+    >
       <div
         ref="popover"
         class="c-popover__content"
@@ -25,21 +28,24 @@ SPDX-License-Identifier: MIT
         }"
         @click="props.isModal ? closePopover() : null"
       >
-        <slot name="content" :close="closePopover" />
+        <slot
+          name="content"
+          :close="closePopover"
+        />
       </div>
     </teleport>
   </ClientOnly>
 </template>
 
 <script lang="ts" setup>
-import { ref, watch, onMounted, onBeforeUnmount, nextTick } from "vue";
-import type { Instance, Modifier, Placement } from "@popperjs/core";
-import { createPopper } from "@popperjs/core";
+import { ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
+import type { Instance, Modifier, Placement } from '@popperjs/core';
+import { createPopper } from '@popperjs/core';
 
 const props = withDefaults(
   defineProps<{
     placement?: Placement;
-    triggerEvent?: "click" | "hover";
+    triggerEvent?: 'click' | 'hover';
     visibility?: boolean;
     spacing?: number;
     disabled?: boolean;
@@ -49,19 +55,19 @@ const props = withDefaults(
     allowPassThrough?: boolean;
   }>(),
   {
-    placement: "bottom-start",
-    triggerEvent: "click",
+    placement: 'bottom-start',
+    triggerEvent: 'click',
     visibility: false,
     spacing: 4,
     disabled: false,
     matchWidth: false,
     isModal: false,
-    popoverClass: "",
+    popoverClass: '',
     allowPassThrough: false,
   },
 );
 
-const emit = defineEmits<{ (e: "update:visibility", value: boolean): void }>();
+const emit = defineEmits<{ (e: 'update:visibility', value: boolean): void }>();
 
 const trigger = ref<HTMLElement | null>(null);
 const popover = ref<HTMLElement | null>(null);
@@ -75,13 +81,13 @@ watch(
     isVisible.value = val;
   },
 );
-watch(isVisible, (val) => emit("update:visibility", val));
+watch(isVisible, (val) => emit('update:visibility', val));
 
-const sameWidthModifier: Modifier<"sameWidth", Record<string, never>> = {
-  name: "sameWidth",
+const sameWidthModifier: Modifier<'sameWidth', Record<string, never>> = {
+  name: 'sameWidth',
   enabled: true,
-  phase: "beforeWrite",
-  requires: ["computeStyles"],
+  phase: 'beforeWrite',
+  requires: ['computeStyles'],
   fn: ({ state }) => {
     Object.assign(state.styles.popper as Record<string, string>, {
       width: `${state.rects.reference.width}px`,
@@ -92,11 +98,11 @@ const sameWidthModifier: Modifier<"sameWidth", Record<string, never>> = {
 const createPopperInstance = () => {
   if (trigger.value && popover.value) {
     popperInstance.value = createPopper(trigger.value, popover.value, {
-      strategy: "fixed",
+      strategy: 'fixed',
       placement: props.placement,
       modifiers: [
         {
-          name: "offset",
+          name: 'offset',
           options: {
             offset: [0, props.spacing],
           },
@@ -121,11 +127,11 @@ const closePopover = () => {
 };
 
 const handleClick = (e: Event) => {
-  if (!props.allowPassThrough && props.triggerEvent === "click") {
+  if (!props.allowPassThrough && props.triggerEvent === 'click') {
     e.stopPropagation();
     e.preventDefault();
   }
-  if (props.triggerEvent === "click") {
+  if (props.triggerEvent === 'click') {
     if (isVisible.value) {
       closePopover();
     } else {
@@ -135,17 +141,13 @@ const handleClick = (e: Event) => {
 };
 
 const handleClickOutside = (e: Event) => {
-  if (
-    popover.value &&
-    !popover.value.contains(e.target as Node) &&
-    !trigger.value?.contains(e.target as Node)
-  ) {
+  if (popover.value && !popover.value.contains(e.target as Node) && !trigger.value?.contains(e.target as Node)) {
     closePopover();
   }
 };
 
 const onEscapeKeyDown = (event: KeyboardEvent) => {
-  if (event.key === "Escape" && isVisible.value) {
+  if (event.key === 'Escape' && isVisible.value) {
     event.stopPropagation();
     closePopover();
   }
@@ -171,18 +173,18 @@ onMounted(async () => {
     if (isVisible.value) {
       await nextTick();
       createPopperInstance();
-      document.addEventListener("keydown", onEscapeKeyDown, true);
-      if (props.triggerEvent === "click") {
-        document.addEventListener("click", handleClickOutside, true);
+      document.addEventListener('keydown', onEscapeKeyDown, true);
+      if (props.triggerEvent === 'click') {
+        document.addEventListener('click', handleClickOutside, true);
       }
     }
-    if (props.triggerEvent === "hover") {
-      trigger.value?.addEventListener("mouseenter", openPopover);
-      trigger.value?.addEventListener("mouseleave", scheduleClose);
-      trigger.value?.addEventListener("focusin", openPopover);
-      trigger.value?.addEventListener("focusout", scheduleClose);
-      popover.value?.addEventListener("mouseenter", cancelClose);
-      popover.value?.addEventListener("mouseleave", scheduleClose);
+    if (props.triggerEvent === 'hover') {
+      trigger.value?.addEventListener('mouseenter', openPopover);
+      trigger.value?.addEventListener('mouseleave', scheduleClose);
+      trigger.value?.addEventListener('focusin', openPopover);
+      trigger.value?.addEventListener('focusout', scheduleClose);
+      popover.value?.addEventListener('mouseenter', cancelClose);
+      popover.value?.addEventListener('mouseleave', scheduleClose);
     }
   }
 });
@@ -192,46 +194,46 @@ watch(isVisible, async (visible) => {
     await nextTick();
     createPopperInstance();
 
-    document.addEventListener("keydown", onEscapeKeyDown, true);
+    document.addEventListener('keydown', onEscapeKeyDown, true);
 
-    if (props.triggerEvent === "click") {
-      document.addEventListener("click", handleClickOutside, true);
+    if (props.triggerEvent === 'click') {
+      document.addEventListener('click', handleClickOutside, true);
     }
 
-    if (props.triggerEvent === "hover") {
-      popover.value?.addEventListener("mouseenter", cancelClose);
-      popover.value?.addEventListener("mouseleave", scheduleClose);
+    if (props.triggerEvent === 'hover') {
+      popover.value?.addEventListener('mouseenter', cancelClose);
+      popover.value?.addEventListener('mouseleave', scheduleClose);
     }
   } else {
     destroyPopperInstance();
-    document.removeEventListener("keydown", onEscapeKeyDown, true);
+    document.removeEventListener('keydown', onEscapeKeyDown, true);
 
-    if (props.triggerEvent === "click") {
-      document.removeEventListener("click", handleClickOutside, true);
+    if (props.triggerEvent === 'click') {
+      document.removeEventListener('click', handleClickOutside, true);
     }
 
-    if (props.triggerEvent === "hover") {
-      popover.value?.removeEventListener("mouseenter", cancelClose);
-      popover.value?.removeEventListener("mouseleave", scheduleClose);
+    if (props.triggerEvent === 'hover') {
+      popover.value?.removeEventListener('mouseenter', cancelClose);
+      popover.value?.removeEventListener('mouseleave', scheduleClose);
     }
   }
 });
 
 onBeforeUnmount(() => {
   destroyPopperInstance();
-  document.removeEventListener("keydown", onEscapeKeyDown, true);
+  document.removeEventListener('keydown', onEscapeKeyDown, true);
 
-  if (props.triggerEvent === "click") {
-    document.removeEventListener("click", handleClickOutside, true);
+  if (props.triggerEvent === 'click') {
+    document.removeEventListener('click', handleClickOutside, true);
   }
 
-  if (props.triggerEvent === "hover") {
-    trigger.value?.removeEventListener("mouseenter", openPopover);
-    trigger.value?.removeEventListener("mouseleave", scheduleClose);
-    trigger.value?.removeEventListener("focusin", openPopover);
-    trigger.value?.removeEventListener("focusout", scheduleClose);
-    popover.value?.removeEventListener("mouseenter", cancelClose);
-    popover.value?.removeEventListener("mouseleave", scheduleClose);
+  if (props.triggerEvent === 'hover') {
+    trigger.value?.removeEventListener('mouseenter', openPopover);
+    trigger.value?.removeEventListener('mouseleave', scheduleClose);
+    trigger.value?.removeEventListener('focusin', openPopover);
+    trigger.value?.removeEventListener('focusout', scheduleClose);
+    popover.value?.removeEventListener('mouseenter', cancelClose);
+    popover.value?.removeEventListener('mouseleave', scheduleClose);
   }
 
   if (closeTimeout.value !== null) {
@@ -247,6 +249,6 @@ defineExpose({
 
 <script lang="ts">
 export default {
-  name: "LfxPopover",
+  name: 'LfxPopover',
 };
 </script>

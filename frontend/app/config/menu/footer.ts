@@ -16,8 +16,7 @@ export const lfxFooterMenu: FooterMenuSection[] = [
   },
   {
     title: 'Solutions',
-    links: [
-    ],
+    links: [],
   },
   {
     title: 'The Linux Foundation',

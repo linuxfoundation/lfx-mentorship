@@ -89,7 +89,6 @@ SPDX-License-Identifier: MIT
             </NuxtLink>
           </div>
         </div>
-
       </div>
     </template>
   </lfx-drawer>

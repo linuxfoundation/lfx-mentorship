@@ -10,8 +10,7 @@ SPDX-License-Identifier: MIT
 import MenteesView from '~/components/modules/mentees/view/mentees.vue';
 
 const title = 'Mentees';
-const description =
-  'Browse LFX Mentorship mentees. Find contributors by skill, project, and status.';
+const description = 'Browse LFX Mentorship mentees. Find contributors by skill, project, and status.';
 
 useHead({ title });
 useSeoMeta({

@@ -29,9 +29,7 @@ if (error.value) {
 const title = computed(() => mentee.value?.name ?? 'Mentee');
 const description = computed(() => {
   const raw = mentee.value?.bio ?? '';
-  return raw.length > 160
-    ? `${raw.slice(0, 157)}...`
-    : raw || 'Explore this mentee profile on LFX Mentorship.';
+  return raw.length > 160 ? `${raw.slice(0, 157)}...` : raw || 'Explore this mentee profile on LFX Mentorship.';
 });
 const baseUrl = (config.public.appUrl as string).replace(/\/$/, '');
 const ogUrl = computed(() => `${baseUrl}${menteePath(menteeId.value)}`);

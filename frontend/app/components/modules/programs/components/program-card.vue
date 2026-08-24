@@ -141,10 +141,7 @@ SPDX-License-Identifier: MIT
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import {
-  PROGRAM_SKILLS_VISIBLE_COUNT,
-  PROGRAM_STATUS_CONFIG,
-} from '../config/program-card.config';
+import { PROGRAM_SKILLS_VISIBLE_COUNT, PROGRAM_STATUS_CONFIG } from '../config/program-card.config';
 import { programPath } from '~/config/routes';
 import type { Program, ProgramMember } from '~/types/program.types';
 import LfxAvatar from '~/components/uikit/avatar/avatar.vue';
@@ -169,13 +166,7 @@ const memberGroups = computed(() => [
   memberGroup('mentors', 'Mentors', 'mentor', 'user-tie', props.program.mentors),
 ]);
 
-function memberGroup(
-  key: string,
-  title: string,
-  singular: string,
-  icon: string,
-  members: ProgramMember[],
-) {
+function memberGroup(key: string, title: string, singular: string, icon: string, members: ProgramMember[]) {
   const count = members.length;
   return {
     key,

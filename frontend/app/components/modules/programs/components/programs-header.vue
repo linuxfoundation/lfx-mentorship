@@ -82,7 +82,6 @@ SPDX-License-Identifier: MIT
       </div>
 
       <div class="flex flex-wrap items-center gap-3 xl:ml-auto xl:flex-nowrap">
-
         <skill-filter-select
           :model-value="skill"
           :skill-options="skillOptions"
@@ -151,10 +150,9 @@ const catalogSummary = computed(() => {
   return formatProgramsCatalogSummary(props.programCount, props.foundationCount);
 });
 
-const emit = defineEmits<{
-  (e: 'update:searchTerm', value: string): void;
+defineEmits<{
+  (e: 'update:searchTerm' | 'update:skill', value: string): void;
   (e: 'update:activeStatus', value: ProgramStatusFilter): void;
-  (e: 'update:skill', value: string): void;
   (e: 'update:sortBy', value: ProgramSortBy): void;
 }>();
 
@@ -194,5 +192,4 @@ export default {
   transform: translateY(-8px);
   max-height: 0;
 }
-
 </style>

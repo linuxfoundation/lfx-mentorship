@@ -17,15 +17,11 @@ SPDX-License-Identifier: MIT
         />
 
         <div class="flex min-w-0 flex-1 flex-col gap-3">
-          <h1
-            class="font-secondary text-3xl md:text-4xl font-light text-neutral-900 leading-tight"
-          >
+          <h1 class="font-secondary text-3xl md:text-4xl font-light text-neutral-900 leading-tight">
             {{ mentor.name }}
           </h1>
 
-          <p class="text-sm text-neutral-500 leading-5">
-            {{ mentor.sinceLabel }} · {{ mentor.affiliationsLabel }}
-          </p>
+          <p class="text-sm text-neutral-500 leading-5">{{ mentor.sinceLabel }} · {{ mentor.affiliationsLabel }}</p>
 
           <p class="text-sm text-neutral-600 leading-6 max-w-xl">
             {{ mentor.bio }}
@@ -59,9 +55,7 @@ SPDX-License-Identifier: MIT
           v-if="mentor.skills.length"
           class="flex flex-col gap-3"
         >
-          <p class="text-xs font-semibold uppercase tracking-wide text-neutral-500">
-            Featured skills
-          </p>
+          <p class="text-xs font-semibold uppercase tracking-wide text-neutral-500">Featured skills</p>
           <div class="flex flex-wrap gap-2">
             <lfx-chip
               v-for="skill in mentor.skills"

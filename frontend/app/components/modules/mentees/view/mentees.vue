@@ -31,11 +31,7 @@ SPDX-License-Identifier: MIT
 import { computed, ref, watch } from 'vue';
 import MenteesHeader from '../components/mentees-header.vue';
 import MenteesGrid from '../components/mentees-grid.vue';
-import {
-  ALL_SKILLS_OPTION,
-  DEFAULT_MENTEE_FILTER,
-  DIRECTORY_PAGE_SIZE,
-} from '../config/mentees-header.config';
+import { ALL_SKILLS_OPTION, DEFAULT_MENTEE_FILTER, DIRECTORY_PAGE_SIZE } from '../config/mentees-header.config';
 import { SKILL_LIST } from '~/config/skills';
 import { useMentees } from '~/composables/mentees/useMentees';
 import type { MenteeStatusFilter } from '~/types/mentee.types';

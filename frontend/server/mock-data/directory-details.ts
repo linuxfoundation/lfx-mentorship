@@ -207,14 +207,10 @@ function fallbackMentorDetail(id: string): MentorDetail | undefined {
     })),
     currentMentees: relatedMentees
       .filter((m) => m.status === 'active')
-      .map((m) =>
-        menteeSummary(m.id, m.name, m.bio, `${m.project.name} · Term 3: Sep–Nov`),
-      ),
+      .map((m) => menteeSummary(m.id, m.name, m.bio, `${m.project.name} · Term 3: Sep–Nov`)),
     graduatedMentees: relatedMentees
       .filter((m) => m.status === 'graduated')
-      .map((m) =>
-        menteeSummary(m.id, m.name, m.bio, `${m.project.name} · Term 3: Sep–Nov`),
-      ),
+      .map((m) => menteeSummary(m.id, m.name, m.bio, `${m.project.name} · Term 3: Sep–Nov`)),
   };
 }
 

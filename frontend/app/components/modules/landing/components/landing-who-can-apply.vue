@@ -45,10 +45,7 @@ SPDX-License-Identifier: MIT
 </template>
 
 <script setup lang="ts">
-import {
-  LANDING_ELIGIBILITY_FOOTER,
-  LANDING_ELIGIBILITY_ITEMS,
-} from '../config/landing.config';
+import { LANDING_ELIGIBILITY_FOOTER, LANDING_ELIGIBILITY_ITEMS } from '../config/landing.config';
 import LfxIcon from '~/components/uikit/icon/icon.vue';
 </script>
 
