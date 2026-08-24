@@ -83,8 +83,7 @@ const catalogSummary = computed(() => {
 });
 
 defineEmits<{
-  (e: 'update:searchTerm', value: string): void;
-  (e: 'update:skill', value: string): void;
+  (e: 'update:searchTerm' | 'update:skill', value: string): void;
 }>();
 
 let prevOverflowAnchor = '';

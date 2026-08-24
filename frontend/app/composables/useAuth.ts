@@ -45,7 +45,7 @@ export const login = async (redirectTo?: string) => {
   isAuthLoading.value = true;
   try {
     let currentPath = redirectTo || '/';
-    if (!redirectTo && process.client) {
+    if (!redirectTo && import.meta.client) {
       try {
         const route = useRoute();
         currentPath = route.fullPath || '/';
@@ -64,7 +64,7 @@ export const login = async (redirectTo?: string) => {
     );
 
     if (response.success && response.authorizationUrl) {
-      if (process.client) {
+      if (import.meta.client) {
         window.location.href = response.authorizationUrl;
       } else {
         await navigateTo(response.authorizationUrl, { external: true });
@@ -83,13 +83,13 @@ export const logout = async () => {
   try {
     const response = await $fetch<{ success: boolean; logoutUrl: string }>('/api/auth/logout', {
       method: 'POST',
-      body: process.client ? { returnTo: window.location.origin } : undefined,
+      body: import.meta.client ? { returnTo: window.location.origin } : undefined,
     });
 
     if (response.success) {
       authState.value = { isAuthenticated: false, user: null, token: null };
 
-      if (process.client) {
+      if (import.meta.client) {
         window.location.href = response.logoutUrl;
       } else {
         await navigateTo(response.logoutUrl, { external: true });

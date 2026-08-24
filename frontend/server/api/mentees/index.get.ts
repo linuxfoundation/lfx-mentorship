@@ -3,11 +3,7 @@
 
 import { SKILL_LIST } from '../../../app/config/skills';
 import { MOCK_MENTEES } from '../../mock-data/directory';
-import type {
-  Mentee,
-  MenteeStatus,
-  MenteesListResponse,
-} from '../../../app/types/mentee.types';
+import type { Mentee, MenteeStatus, MenteesListResponse } from '../../../app/types/mentee.types';
 import { MENTEE_STATUSES } from '../../../app/types/mentee.types';
 
 function isMenteeStatus(value: string): value is MenteeStatus {

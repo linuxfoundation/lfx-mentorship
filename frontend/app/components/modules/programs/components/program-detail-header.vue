@@ -9,12 +9,8 @@ SPDX-License-Identifier: MIT
       label="Programs"
       class="mb-6"
     />
-    <div
-      class="flex flex-col gap-8 lg:flex-row lg:items-start lg:justify-between"
-    >
-      <div
-        class="flex min-w-0 flex-1 flex-col gap-6 md:flex-row md:items-start"
-      >
+    <div class="flex flex-col gap-8 lg:flex-row lg:items-start lg:justify-between">
+      <div class="flex min-w-0 flex-1 flex-col gap-6 md:flex-row md:items-start">
         <lfx-avatar
           :src="program.logoUrl"
           type="organization"
@@ -24,9 +20,7 @@ SPDX-License-Identifier: MIT
 
         <div class="flex min-w-0 flex-1 flex-col gap-4">
           <div class="flex flex-wrap items-center gap-3">
-            <span class="text-sm text-neutral-500">{{
-              program.foundation.name
-            }}</span>
+            <span class="text-sm text-neutral-500">{{ program.foundation.name }}</span>
             <lfx-tag
               :variation="statusConfig.variation"
               size="small"
@@ -36,13 +30,14 @@ SPDX-License-Identifier: MIT
             </lfx-tag>
           </div>
 
-          <h1
-            class="font-secondary text-2xl md:text-3xl font-light text-neutral-900 leading-tight break-words"
-          >
+          <h1 class="font-secondary text-2xl md:text-3xl font-light text-neutral-900 leading-tight break-words">
             {{ program.name }}
           </h1>
 
-          <div v-if="program.skills.length" class="flex flex-wrap gap-2">
+          <div
+            v-if="program.skills.length"
+            class="flex flex-wrap gap-2"
+          >
             <lfx-chip
               v-for="skill in program.skills"
               :key="skill"
@@ -74,14 +69,8 @@ SPDX-License-Identifier: MIT
         </div>
       </div>
 
-      <aside
-        class="w-full shrink-0 rounded-xl bg-neutral-50 border border-neutral-100 p-5 lg:w-72"
-      >
-        <p
-          class="text-xs font-semibold uppercase tracking-wide text-neutral-500 mb-4"
-        >
-          Term details
-        </p>
+      <aside class="w-full shrink-0 rounded-xl bg-neutral-50 border border-neutral-100 p-5 lg:w-72">
+        <p class="text-xs font-semibold uppercase tracking-wide text-neutral-500 mb-4">Term details</p>
         <dl class="flex flex-col gap-4">
           <div class="flex flex-col gap-1">
             <dt class="text-xs text-neutral-500">Term</dt>
@@ -89,7 +78,10 @@ SPDX-License-Identifier: MIT
               {{ termLabel }}
             </dd>
           </div>
-          <div v-if="applicationsCloseLabel" class="flex flex-col gap-1">
+          <div
+            v-if="applicationsCloseLabel"
+            class="flex flex-col gap-1"
+          >
             <dt class="text-xs text-neutral-500">Applications close</dt>
             <dd class="text-sm font-medium text-neutral-900">
               {{ applicationsCloseLabel }}
@@ -97,9 +89,7 @@ SPDX-License-Identifier: MIT
           </div>
           <div class="flex flex-col gap-1">
             <dt class="text-xs text-neutral-500">Stipend</dt>
-            <dd class="text-sm font-medium text-neutral-900">
-              Amount determined by mentee location
-            </dd>
+            <dd class="text-sm font-medium text-neutral-900">Amount determined by mentee location</dd>
           </div>
         </dl>
       </aside>
@@ -108,27 +98,24 @@ SPDX-License-Identifier: MIT
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
-import { PROGRAM_STATUS_CONFIG } from "../config/program-card.config";
-import { AppRoute } from "~/config/routes";
-import DetailBackLink from "~/components/shared/detail-back-link.vue";
-import type { Program } from "~/types/program.types";
-import LfxAvatar from "~/components/uikit/avatar/avatar.vue";
-import LfxButton from "~/components/uikit/button/button.vue";
-import LfxChip from "~/components/uikit/chip/chip.vue";
-import LfxTag from "~/components/uikit/tag/tag.vue";
-import { formatProgramDate } from "~/utils/date";
+import { computed } from 'vue';
+import { PROGRAM_STATUS_CONFIG } from '../config/program-card.config';
+import { AppRoute } from '~/config/routes';
+import DetailBackLink from '~/components/shared/detail-back-link.vue';
+import type { Program } from '~/types/program.types';
+import LfxAvatar from '~/components/uikit/avatar/avatar.vue';
+import LfxButton from '~/components/uikit/button/button.vue';
+import LfxChip from '~/components/uikit/chip/chip.vue';
+import LfxTag from '~/components/uikit/tag/tag.vue';
+import { formatProgramDate } from '~/utils/date';
 
 const props = defineProps<{ program: Program }>();
 
 defineEmits<{
-  (e: "open-repository"): void;
-  (e: "donate"): void;
+  (e: 'open-repository' | 'donate'): void;
 }>();
 
-const statusConfig = computed(
-  () => PROGRAM_STATUS_CONFIG[props.program.status],
-);
+const statusConfig = computed(() => PROGRAM_STATUS_CONFIG[props.program.status]);
 
 const termLabel = computed(() => {
   const { name, dateRangeLabel } = props.program.activeTerm;
@@ -143,6 +130,6 @@ const applicationsCloseLabel = computed(() => {
 
 <script lang="ts">
 export default {
-  name: "ProgramDetailHeader",
+  name: 'ProgramDetailHeader',
 };
 </script>

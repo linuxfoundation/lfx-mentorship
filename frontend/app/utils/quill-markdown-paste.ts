@@ -53,7 +53,9 @@ const DOMPURIFY_CONFIG = {
 };
 
 type QuillLike = {
-  clipboard: { addMatcher: (nodeType: number, matcher: (node: Node, delta: Delta) => Delta) => void };
+  clipboard: {
+    addMatcher: (nodeType: number, matcher: (node: Node, delta: Delta) => Delta) => void;
+  };
   keyboard: {
     addBinding: (
       key: { key: number | string },
@@ -67,7 +69,13 @@ type QuillLike = {
   getText: (index: number, length: number) => string;
   getSelection: (focus?: boolean) => { index: number; length: number } | null;
   deleteText: (index: number, length: number, source?: string) => void;
-  formatLine: (index: number, length: number, format: string, value: string | number | boolean, source?: string) => void;
+  formatLine: (
+    index: number,
+    length: number,
+    format: string,
+    value: string | number | boolean,
+    source?: string,
+  ) => void;
   setSelection: (index: number, length: number, source?: string) => void;
   updateContents: (delta: Delta, source?: string) => void;
   on: (event: 'text-change', handler: (delta: Delta, old: Delta, source: string) => void) => void;
@@ -183,7 +191,11 @@ export function configureQuillMarkdownEditor(quill: QuillLike, maxLength: number
   enableMarkdownPaste(quill, maxLength);
 }
 
-function appendBlockTokens(tokens: Token[], ops: Op[], lineAttrs: Record<string, unknown> = {}): void {
+function appendBlockTokens(
+  tokens: Token[],
+  ops: Op[],
+  lineAttrs: Record<string, unknown> = {},
+): void {
   for (const token of tokens) {
     switch (token.type) {
       case 'space':
@@ -282,7 +294,10 @@ function appendInlineTokens(tokens: Token[], ops: Op[], attrs: Record<string, un
         if (text.tokens?.length) {
           appendInlineTokens(text.tokens, ops, attrs);
         } else if (text.text) {
-          ops.push({ insert: decodeMarkedEntities(text.text), attributes: attrsOrUndefined(attrs) });
+          ops.push({
+            insert: decodeMarkedEntities(text.text),
+            attributes: attrsOrUndefined(attrs),
+          });
         }
         break;
       }
@@ -321,7 +336,10 @@ function appendInlineTokens(tokens: Token[], ops: Op[], attrs: Record<string, un
         break;
       case 'escape': {
         const escape = token as marked.Tokens.Escape;
-        ops.push({ insert: decodeMarkedEntities(escape.text), attributes: attrsOrUndefined(attrs) });
+        ops.push({
+          insert: decodeMarkedEntities(escape.text),
+          attributes: attrsOrUndefined(attrs),
+        });
         break;
       }
       case 'html': {
@@ -468,8 +486,13 @@ function enableMarkdownPaste(quill: QuillLike, maxLength: number): void {
         return;
       }
 
-      const pastedDelta = trimTrailingUnformattedNewline(truncateDelta(markdownToDelta(text), remaining));
-      const update = new Delta().retain(selection.index).delete(selection.length).concat(pastedDelta);
+      const pastedDelta = trimTrailingUnformattedNewline(
+        truncateDelta(markdownToDelta(text), remaining),
+      );
+      const update = new Delta()
+        .retain(selection.index)
+        .delete(selection.length)
+        .concat(pastedDelta);
       quill.updateContents(update, 'user');
       quill.setSelection(selection.index + pastedDelta.length(), 0, 'silent');
     },

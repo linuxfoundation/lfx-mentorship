@@ -20,10 +20,12 @@ SPDX-License-Identifier: MIT
           >
             {{ toastHeading(slotProps.message) }}
           </p>
+          <!-- eslint-disable vue/no-v-html -- content is sanitized via useSanitize() -->
           <p
             class="text-xs leading-5"
             v-html="sanitize(slotProps.message.detail ?? '')"
           ></p>
+          <!-- eslint-enable vue/no-v-html -->
         </div>
         <div v-if="slotProps.message.actionLabel">
           <a

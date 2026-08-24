@@ -29,9 +29,7 @@ if (error.value) {
 const title = computed(() => program.value?.name ?? 'Program');
 const description = computed(() => {
   const raw = program.value?.description ?? '';
-  return raw.length > 160
-    ? `${raw.slice(0, 157)}...`
-    : raw || 'Explore this mentorship program on LFX Mentorship.';
+  return raw.length > 160 ? `${raw.slice(0, 157)}...` : raw || 'Explore this mentorship program on LFX Mentorship.';
 });
 const baseUrl = (config.public.appUrl as string).replace(/\/$/, '');
 const ogUrl = computed(() => `${baseUrl}${programPath(programId.value)}`);

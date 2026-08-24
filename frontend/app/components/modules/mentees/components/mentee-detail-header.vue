@@ -18,9 +18,7 @@ SPDX-License-Identifier: MIT
 
         <div class="flex min-w-0 flex-1 flex-col gap-3">
           <div class="flex flex-wrap items-center gap-2.5">
-            <h1
-              class="font-secondary text-3xl md:text-4xl font-light text-neutral-900 leading-tight"
-            >
+            <h1 class="font-secondary text-3xl md:text-4xl font-light text-neutral-900 leading-tight">
               {{ mentee.name }}
             </h1>
             <lfx-tag
@@ -69,9 +67,7 @@ SPDX-License-Identifier: MIT
           v-if="mentee.skills.length"
           class="flex flex-col gap-3"
         >
-          <p class="text-xs font-semibold uppercase tracking-wide text-neutral-500">
-            Featured skills
-          </p>
+          <p class="text-xs font-semibold uppercase tracking-wide text-neutral-500">Featured skills</p>
           <div class="flex flex-wrap gap-2">
             <lfx-chip
               v-for="skill in mentee.skills"

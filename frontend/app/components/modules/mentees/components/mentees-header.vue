@@ -94,10 +94,7 @@ SPDX-License-Identifier: MIT
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted } from 'vue';
-import {
-  MENTEE_FILTER_TABS,
-  formatMenteesCatalogSummary,
-} from '../config/mentees-header.config';
+import { MENTEE_FILTER_TABS, formatMenteesCatalogSummary } from '../config/mentees-header.config';
 import LfxIcon from '~/components/uikit/icon/icon.vue';
 import LfxInput from '~/components/uikit/input/input.vue';
 import LfxTabs from '~/components/uikit/tabs/tabs.vue';
@@ -126,9 +123,8 @@ const catalogSummary = computed(() => {
 });
 
 defineEmits<{
-  (e: 'update:searchTerm', value: string): void;
+  (e: 'update:searchTerm' | 'update:skill', value: string): void;
   (e: 'update:activeStatus', value: MenteeStatusFilter): void;
-  (e: 'update:skill', value: string): void;
 }>();
 
 let prevOverflowAnchor = '';
