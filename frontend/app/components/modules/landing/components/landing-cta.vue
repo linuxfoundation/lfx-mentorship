@@ -15,19 +15,15 @@ SPDX-License-Identifier: MIT
           {{ LANDING_CTA_SUBTITLE }}
         </p>
       </div>
-      <NuxtLink
-        :to="AppRoute.FindProgram"
-        class="shrink-0"
-      >
-        <lfx-button
-          label="Find a Program"
-          type="primary"
-          button-style="rounded"
-          size="large"
-          icon="arrow-right"
-          icon-position="right"
-        />
-      </NuxtLink>
+      <lfx-button
+        label="Find a Program"
+        type="primary"
+        button-style="rounded"
+        size="large"
+        icon="arrow-right"
+        icon-position="right"
+        @click="navigateTo(AppRoute.FindProgram)"
+      />
     </div>
   </section>
 </template>

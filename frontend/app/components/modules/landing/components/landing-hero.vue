@@ -19,7 +19,7 @@ SPDX-License-Identifier: MIT
       </div>
 
       <div class="flex flex-col gap-4">
-        <h1 class="font-secondary font-light text-6xl md:text-5xl leading-tight text-neutral-900">
+        <h1 class="font-secondary font-light text-6xl sm:text-5xl leading-tight text-neutral-900">
           {{ LANDING_HERO_TITLE }}
         </h1>
         <p class="text-base text-neutral-600 leading-6 max-w-2xl">
@@ -44,25 +44,23 @@ SPDX-License-Identifier: MIT
       </ul>
 
       <div class="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-center">
-        <NuxtLink :to="AppRoute.FindProgram">
-          <lfx-button
-            label="Find a Program"
-            type="primary"
-            size="large"
-            button-style="rounded"
-            icon="magnifying-glass"
-            class="justify-center"
-          />
-        </NuxtLink>
-        <NuxtLink :to="AppRoute.EnrollProgram">
-          <lfx-button
-            label="Enroll a Program"
-            type="outline"
-            size="large"
-            button-style="rounded"
-            class="justify-center"
-          />
-        </NuxtLink>
+        <lfx-button
+          label="Find a Program"
+          type="primary"
+          size="large"
+          button-style="rounded"
+          icon="magnifying-glass"
+          class="justify-center"
+          @click="navigateTo(AppRoute.FindProgram)"
+        />
+        <lfx-button
+          label="Enroll a Program"
+          type="outline"
+          size="large"
+          button-style="rounded"
+          class="justify-center"
+          @click="navigateTo(AppRoute.EnrollProgram)"
+        />
       </div>
     </div>
   </section>

@@ -10,12 +10,14 @@ SPDX-License-Identifier: MIT
         <a
           href="https://docs.linuxfoundation.org/lfx/mentorship/mentee-guide/mentee-faqs"
           target="_blank"
+          rel="noopener noreferrer"
+          class="inline-flex items-center gap-2 text-sm font-semibold text-brand-500 hover:text-brand-600"
         >
-          <lfx-button
-            label="Full FAQ & documentation"
-            type="transparent"
-            icon-position="right"
-            icon="arrow-up-right-from-square"
+          Full FAQ & documentation
+          <lfx-icon
+            name="arrow-up-right-from-square"
+            type="light"
+            :size="14"
           />
         </a>
       </div>
