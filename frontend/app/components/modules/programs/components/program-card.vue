@@ -137,15 +137,13 @@ SPDX-License-Identifier: MIT
           <p>Paid stipend</p>
         </div>
       </div>
-
-      <NuxtLink :to="programPath(program.id)">
-        <lfx-button
-          label="View program"
-          type="outline"
-          button-style="rounded"
-          size="small"
-        />
-      </NuxtLink>
+      <lfx-button
+        label="View program"
+        type="outline"
+        button-style="rounded"
+        size="small"
+        @click="navigateTo(programPath(program.id))"
+      />
     </div>
   </NuxtLink>
 </template>
