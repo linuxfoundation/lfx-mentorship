@@ -9,7 +9,10 @@ SPDX-License-Identifier: MIT
       `c-tag--${props.variation}`,
       `c-tag--${props.size}`,
       `c-tag--${props.type}`,
-      { '!rounded-none': !props.rounded },
+      { '!rounded-sm': props.roundedSize === 'small' },
+      { '!rounded-md': props.roundedSize === 'medium' },
+      { '!rounded-lg': props.roundedSize === 'large' },
+      { '!rounded-full': props.roundedSize === 'full' },
     ]"
   >
     <slot />
@@ -24,13 +27,13 @@ const props = withDefaults(
     variation?: TagStyle;
     size?: TagSize;
     type?: TagType;
-    rounded?: boolean;
+    roundedSize?: 'none' | 'small' | 'medium' | 'large' | 'full';
   }>(),
   {
     variation: 'default',
     size: 'medium',
     type: 'solid',
-    rounded: true,
+    roundedSize: 'small',
   },
 );
 </script>

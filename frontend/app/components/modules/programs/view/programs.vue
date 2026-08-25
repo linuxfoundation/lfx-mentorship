@@ -10,8 +10,6 @@ SPDX-License-Identifier: MIT
       v-model:skill="skill"
       v-model:sort-by="sortBy"
       :skill-options="skillOptions"
-      :program-count="programCount"
-      :foundation-count="foundationCount"
     />
     <div
       class="transition-all ease-linear"
@@ -58,8 +56,6 @@ const { data, isLoading, error } = usePrograms({
 
 const programs = computed(() => data.value?.data ?? []);
 const skillOptions = SKILL_LIST;
-const programCount = computed(() => data.value?.programCount);
-const foundationCount = computed(() => data.value?.foundationCount);
 const programError = computed(() => (error.value as Error | null) ?? null);
 
 watch([searchTerm, activeStatus, skill, sortBy], () => {

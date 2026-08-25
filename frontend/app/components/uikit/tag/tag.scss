@@ -1,7 +1,7 @@
 // Copyright The Linux Foundation and each contributor to LFX.
 // SPDX-License-Identifier: MIT
 .c-tag {
-  @apply gap-1.5 inline-flex text-sm items-center rounded-full font-semibold;
+  @apply gap-1.5 inline-flex text-sm items-center font-semibold;
 
   /* Styles */
   &--default {
@@ -63,6 +63,10 @@
     @apply font-normal;
     &.c-tag--default {
       @apply border border-neutral-200 bg-white text-neutral-900;
+    }
+
+    &.c-tag--neutral {
+      @apply border border-neutral-200;
     }
 
     &.c-tag--info {

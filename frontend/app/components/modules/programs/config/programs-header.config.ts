@@ -36,13 +36,5 @@ export const PROGRAM_SORT_OPTIONS: ProgramSortOption[] = [
   { value: 'updated_newest', label: 'Updated (Newest First)' },
 ];
 
-/** Builds the header catalog summary, e.g. "128 programs across 42 foundations". */
-export function formatProgramsCatalogSummary(
-  programCount: number,
-  foundationCount: number,
-): string {
-  const programsLabel = programCount === 1 ? 'program' : 'programs';
-  const foundationsLabel = foundationCount === 1 ? 'foundation' : 'foundations';
-
-  return `${programCount.toLocaleString()} ${programsLabel} across ${foundationCount.toLocaleString()} ${foundationsLabel}`;
-}
+export const PROGRAMS_HEADER_SUBTITLE =
+  'All programs across 42 foundations, including terms already under way.';

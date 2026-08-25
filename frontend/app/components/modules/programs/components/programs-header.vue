@@ -20,13 +20,10 @@ SPDX-License-Identifier: MIT
           />
           <span class="text-lg font-medium leading-7 text-accent-800">Programs</span>
         </div>
-        <h1 class="font-secondary font-light md:text-5xl text-4xl leading-normal text-neutral-900">
-          Find a mentorship program
-          <p
-            v-if="catalogSummary"
-            class="text-sm text-neutral-600"
-          >
-            {{ catalogSummary }}
+        <h1 class="font-secondary font-light md:text-4xl text-3xl leading-normal text-neutral-900">
+          Find a Program
+          <p class="text-sm text-neutral-600">
+            {{ PROGRAMS_HEADER_SUBTITLE }}
           </p>
         </h1>
       </div>
@@ -120,35 +117,18 @@ import {
   DEFAULT_PROGRAM_SORT,
   PROGRAM_FILTER_TABS,
   PROGRAM_SORT_OPTIONS,
-  formatProgramsCatalogSummary,
+  PROGRAMS_HEADER_SUBTITLE,
 } from '../config/programs-header.config';
-import LfxIcon from '~/components/uikit/icon/icon.vue';
-import LfxInput from '~/components/uikit/input/input.vue';
-import LfxTabs from '~/components/uikit/tabs/tabs.vue';
-import LfxButton from '~/components/uikit/button/button.vue';
-import LfxDropdownSelect from '~/components/uikit/dropdown/dropdown-select.vue';
-import LfxDropdownItem from '~/components/uikit/dropdown/dropdown-item.vue';
-import SkillFilterSelect from '~/components/shared/skill-filter-select.vue';
 import useScroll from '~/utils/scroll';
 import type { ProgramSortBy, ProgramStatusFilter } from '~/types/program.types';
 
-const props = defineProps<{
+defineProps<{
   searchTerm: string;
   activeStatus: ProgramStatusFilter;
   skill: string;
   sortBy: ProgramSortBy;
   skillOptions: string[];
-  programCount?: number;
-  foundationCount?: number;
 }>();
-
-const catalogSummary = computed(() => {
-  if (props.programCount == null || props.foundationCount == null) {
-    return '';
-  }
-
-  return formatProgramsCatalogSummary(props.programCount, props.foundationCount);
-});
 
 defineEmits<{
   (e: 'update:searchTerm' | 'update:skill', value: string): void;

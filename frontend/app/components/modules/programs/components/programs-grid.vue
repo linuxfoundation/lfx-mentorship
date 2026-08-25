@@ -39,7 +39,7 @@ SPDX-License-Identifier: MIT
     </div>
 
     <template v-else>
-      <div class="grid grid-cols-1 gap-8 lg:grid-cols-2">
+      <div class="grid grid-cols-1 gap-8 md:grid-cols-2 lg:grid-cols-3">
         <program-card
           v-for="program in visiblePrograms"
           :key="program.id"
