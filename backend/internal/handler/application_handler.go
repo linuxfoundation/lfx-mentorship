@@ -66,6 +66,11 @@ func (h *ApplicationHandler) ListByUser(w http.ResponseWriter, r *http.Request) 
 	}
 
 	userID := chi.URLParam(r, "userId")
+	// Principle VII-1: reject IDOR — callers may only list their own applications.
+	if userID != principal.UserID {
+		Error(w, domain.ErrForbidden)
+		return
+	}
 	limit, offset, ok := parsePaginationParams(w, r)
 	if !ok {
 		return
@@ -107,6 +112,8 @@ func (h *ApplicationHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &input) {
 		return
 	}
+	// Principle VII-2: bind ownership to the authenticated principal, not the request body.
+	input.UserID = principal.UserID
 
 	app, err := h.svc.Create(r.Context(), programTermID, input)
 	if err != nil {

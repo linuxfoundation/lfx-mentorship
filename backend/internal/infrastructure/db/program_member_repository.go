@@ -57,6 +57,24 @@ func (r *ProgramMemberRepository) GetByID(ctx context.Context, id string) (*mode
 	return m, nil
 }
 
+// FindByProgramAndUser returns the member record for a given program + user pair.
+func (r *ProgramMemberRepository) FindByProgramAndUser(ctx context.Context, programID, userID string) (*models.ProgramMember, error) {
+	ctx, span := programMemberTracer.Start(ctx, "db.program_members.FindByProgramAndUser")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.program_id", programID), attribute.String("db.user_id", userID))
+
+	q := `SELECT ` + programMemberCols + ` FROM program_members WHERE program_id = $1 AND user_id = $2`
+	m, err := scanProgramMember(r.pool.QueryRow(ctx, q, programID, userID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrProgramMemberNotFound
+	}
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("find program member by program and user: %w", err)
+	}
+	return m, nil
+}
+
 // ListByProgram returns paginated members for a program.
 func (r *ProgramMemberRepository) ListByProgram(ctx context.Context, programID string, filter models.ProgramMemberFilter) ([]*models.ProgramMember, *models.PaginationMeta, error) {
 	ctx, span := programMemberTracer.Start(ctx, "db.program_members.ListByProgram")

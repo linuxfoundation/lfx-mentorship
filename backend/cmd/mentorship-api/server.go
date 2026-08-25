@@ -62,7 +62,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	programTermSvc := service.NewProgramTermService(programTermRepo, applicationRepo)
 	programMemberSvc := service.NewProgramMemberService(programMemberRepo, programRepo, notifier, cfg.Local.InviteSecret)
 	applicationSvc := service.NewApplicationService(applicationRepo, taskRepo, programTermRepo, programRepo, notifier)
-	taskSvc := service.NewTaskService(taskRepo, applicationRepo, notifier)
+	taskSvc := service.NewTaskService(taskRepo, applicationRepo, programTermRepo, programMemberRepo, notifier)
 
 	// Handlers
 	userH := handler.NewUserHandler(userSvc)
