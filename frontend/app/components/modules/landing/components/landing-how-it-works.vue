@@ -6,7 +6,7 @@ SPDX-License-Identifier: MIT
   <section class="container px-5 pb-10 md:px-10 md:pb-12">
     <div class="rounded-2xl border border-neutral-200 bg-white p-6 md:p-8">
       <div class="mb-8">
-        <h2 class="font-secondary text-xl md:text-2xl font-normal  text-neutral-900">How It Works</h2>
+        <h2 class="font-secondary text-xl md:text-2xl font-normal text-neutral-900">How It Works</h2>
       </div>
 
       <ol class="grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-5 lg:gap-4">
