@@ -19,7 +19,7 @@ SPDX-License-Identifier: MIT
       </div>
 
       <div class="flex flex-col gap-4">
-        <h1 class="font-secondary font-light text-6xl sm:text-5xl leading-tight text-neutral-900">
+        <h1 class="font-secondary font-light text-5xl md:text-6xl leading-tight text-neutral-900">
           {{ LANDING_HERO_TITLE }}
         </h1>
         <p class="text-base text-neutral-600 leading-6 max-w-2xl">
