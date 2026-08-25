@@ -3,6 +3,7 @@
 
 export interface LandingHeroFeature {
   icon: string;
+  iconType?: 'solid' | 'regular' | 'light';
   label: string;
 }
 

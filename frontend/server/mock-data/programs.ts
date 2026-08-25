@@ -1,7 +1,13 @@
 // Copyright The Linux Foundation and each contributor to LFX.
 // SPDX-License-Identifier: MIT
 
-import type { Foundation, Program, ProgramTerm } from '../../app/types/program.types';
+import type {
+  Foundation,
+  Program,
+  ProgramMentee,
+  ProgramTerm,
+} from '../../app/types/program.types';
+import type { MenteeStatus } from '../../app/types/mentee.types';
 
 export const MOCK_FOUNDATIONS: Foundation[] = [
   { id: 'f-cncf', name: 'CNCF', slug: 'cncf' },
@@ -45,6 +51,32 @@ function term(
   return { id, name, dateRangeLabel, applicationsCloseAt, ...dates };
 }
 
+function emailFromName(name: string): string {
+  const ascii = name.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const parts = ascii.split(/[\s-]+/).filter(Boolean);
+  const first = parts[0]?.charAt(0) ?? '';
+  const last = parts[parts.length - 1] ?? 'mentee';
+  return `${first}${last}@example.org`.toLowerCase();
+}
+
+function mentee(
+  id: string,
+  name: string,
+  status: MenteeStatus,
+  termLabel: string,
+  intro: string,
+  email?: string,
+): ProgramMentee {
+  return {
+    id,
+    name,
+    status,
+    termLabel,
+    intro,
+    email: email ?? emailFromName(name),
+  };
+}
+
 export const MOCK_PROGRAMS: Program[] = [
   {
     id: '1',
@@ -66,27 +98,54 @@ export const MOCK_PROGRAMS: Program[] = [
     repositoryUrl: 'https://github.com/kubernetes/community',
     crowdfundingInitiativeId: '9b4080d9-701a-4513-85e6-a162beb3773a',
     mentees: [
-      {
-        id: 'm1',
-        name: 'Alex Rivera',
-        status: 'active',
-        intro:
-          'New Kubernetes contributor learning SIG workflows, issue triage, and how to land a first patch with mentor support.',
-      },
-      {
-        id: 'm2',
-        name: 'Sam Chen',
-        status: 'active',
-        intro:
-          'Exploring Kubernetes contribution paths and helping improve SIG docs so newcomers can find the right working group.',
-      },
-      {
-        id: 'm3',
-        name: 'Jordan Lee',
-        status: 'graduated',
-        intro:
-          'Practiced Git-based review and community norms while contributing small fixes across Kubernetes SIGs.',
-      },
+      mentee(
+        'm1',
+        'Hana Suzuki',
+        'active',
+        'Fall 2026',
+        'New Kubernetes contributor learning SIG workflows, issue triage, and how to land a first patch with mentor support.',
+        'hsuzuki@example.org',
+      ),
+      mentee(
+        'm2',
+        'Mateo Rossi',
+        'active',
+        'Fall 2026',
+        'Exploring Kubernetes contribution paths and helping improve SIG docs so newcomers can find the right working group.',
+        'mrossi@example.org',
+      ),
+      mentee(
+        'm3',
+        'Ifeoma Adeyemi',
+        'graduated',
+        'Spring 2026',
+        'Practiced Git-based review and community norms while contributing small fixes across Kubernetes SIGs.',
+        'iadeyemi@example.org',
+      ),
+      mentee(
+        'm3b',
+        'Luis Fernández',
+        'graduated',
+        'Spring 2026',
+        'Shipped contributor-docs improvements and supported SIG onboarding for first-time Kubernetes mentees.',
+        'lfernandez@example.org',
+      ),
+      mentee(
+        'm3c',
+        'Grace Wanjiru',
+        'graduated',
+        'Summer 2025',
+        'Helped with issue triage and first-patch reviews during an earlier Kubernetes mentorship term.',
+        'gwanjiru@example.org',
+      ),
+      mentee(
+        'm3d',
+        'Omar Haddad',
+        'graduated',
+        'Spring 2025',
+        'Contributed small SIG fixes and learned Kubernetes community process with mentor support.',
+        'ohaddad@example.org',
+      ),
     ],
     mentors: [
       {
@@ -128,20 +187,20 @@ export const MOCK_PROGRAMS: Program[] = [
     repositoryUrl: 'https://github.com/ossf',
     crowdfundingInitiativeId: '9b4080d9-701a-4513-85e6-a162beb3773a',
     mentees: [
-      {
-        id: 'm4',
-        name: 'Taylor Brooks',
-        status: 'active',
-        intro:
-          'Learning vulnerability triage and secure-by-default habits while pairing with security mentors on real project issues.',
-      },
-      {
-        id: 'm5',
-        name: 'Morgan Diaz',
-        status: 'graduated',
-        intro:
-          'Hardened CI pipelines and studied OpenSSF practices to help projects ship with stronger supply-chain checks.',
-      },
+      mentee(
+        'm4',
+        'Taylor Brooks',
+        'active',
+        'Summer 2026',
+        'Learning vulnerability triage and secure-by-default habits while pairing with security mentors on real project issues.',
+      ),
+      mentee(
+        'm5',
+        'Morgan Diaz',
+        'graduated',
+        'Spring 2026',
+        'Hardened CI pipelines and studied OpenSSF practices to help projects ship with stronger supply-chain checks.',
+      ),
     ],
     mentors: [
       {
@@ -180,13 +239,13 @@ export const MOCK_PROGRAMS: Program[] = [
     repositoryUrl: 'https://github.com/linuxfoundation',
     crowdfundingInitiativeId: '9b4080d9-701a-4513-85e6-a162beb3773a',
     mentees: [
-      {
-        id: 'm6',
-        name: 'Casey Ng',
-        status: 'graduated',
-        intro:
-          'Improved documentation and onboarding guides so new contributors could find examples and land a first PR faster.',
-      },
+      mentee(
+        'm6',
+        'Casey Ng',
+        'graduated',
+        'Spring 2026',
+        'Improved documentation and onboarding guides so new contributors could find examples and land a first PR faster.',
+      ),
     ],
     mentors: [
       {
@@ -243,34 +302,34 @@ export const MOCK_PROGRAMS: Program[] = [
     repositoryUrl: 'https://github.com/Apicurio/apicurio-registry',
     crowdfundingInitiativeId: '9b4080d9-701a-4513-85e6-a162beb3773a',
     mentees: [
-      {
-        id: 'm7',
-        name: 'Jamie Soto-Fernandez de la Vega y Contreras',
-        status: 'active',
-        intro:
-          'Building a prompt-template playground around Apicurio Registry, including schema discovery, template authoring, and validation workflows for cloud-native API artifacts.',
-      },
-      {
-        id: 'm8',
-        name: 'Robin Hale',
-        status: 'active',
-        intro:
-          'Working on template authoring and validation flows so developers can experiment with AsyncAPI, OpenAPI, and Protobuf artifacts before publishing.',
-      },
-      {
-        id: 'm9',
-        name: 'DrewParksApicurioRegistryContributorWithoutSpaces',
-        status: 'graduated',
-        intro:
-          'Contributed registry UX and contributor onboarding so teams can find, validate, and share API artifacts across services.',
-      },
-      {
-        id: 'm10',
-        name: 'Skyler Dunn',
-        status: 'graduated',
-        intro:
-          'Helped with contributor onboarding and playground docs for Apicurio Registry’s cloud-native artifact workflows.',
-      },
+      mentee(
+        'm7',
+        'Jamie Soto-Fernandez de la Vega y Contreras',
+        'active',
+        'Fall 2026',
+        'Building a prompt-template playground around Apicurio Registry, including schema discovery, template authoring, and validation workflows for cloud-native API artifacts.',
+      ),
+      mentee(
+        'm8',
+        'Robin Hale',
+        'active',
+        'Fall 2026',
+        'Working on template authoring and validation flows so developers can experiment with AsyncAPI, OpenAPI, and Protobuf artifacts before publishing.',
+      ),
+      mentee(
+        'm9',
+        'DrewParksApicurioRegistryContributorWithoutSpaces',
+        'graduated',
+        'Summer 2026',
+        'Contributed registry UX and contributor onboarding so teams can find, validate, and share API artifacts across services.',
+      ),
+      mentee(
+        'm10',
+        'Skyler Dunn',
+        'graduated',
+        'Spring 2026',
+        'Helped with contributor onboarding and playground docs for Apicurio Registry’s cloud-native artifact workflows.',
+      ),
     ],
     mentors: [
       {
@@ -315,20 +374,20 @@ export const MOCK_PROGRAMS: Program[] = [
     repositoryUrl: 'https://git.kernel.org',
     crowdfundingInitiativeId: '9b4080d9-701a-4513-85e6-a162beb3773a',
     mentees: [
-      {
-        id: 'm11',
-        name: 'Parker James',
-        status: 'active',
-        intro:
-          'Learning kernel development, mailing-list etiquette, and how to send a first patch with mentor review.',
-      },
-      {
-        id: 'm12',
-        name: 'Reese Ortiz',
-        status: 'graduated',
-        intro:
-          'Practiced C and Git workflows for kernel contribution and followed subsystem conventions with mentors.',
-      },
+      mentee(
+        'm11',
+        'Parker James',
+        'active',
+        'Summer 2026',
+        'Learning kernel development, mailing-list etiquette, and how to send a first patch with mentor review.',
+      ),
+      mentee(
+        'm12',
+        'Reese Ortiz',
+        'graduated',
+        'Spring 2026',
+        'Practiced C and Git workflows for kernel contribution and followed subsystem conventions with mentors.',
+      ),
     ],
     mentors: [
       {
@@ -365,27 +424,27 @@ export const MOCK_PROGRAMS: Program[] = [
     updatedAt: '2026-05-01T10:00:00.000Z',
     crowdfundingInitiativeId: '9b4080d9-701a-4513-85e6-a162beb3773a',
     mentees: [
-      {
-        id: 'm13',
-        name: 'Blake Foster',
-        status: 'graduated',
-        intro:
-          'Developed facilitation and inclusive community practices through hands-on work with LF mentors.',
-      },
-      {
-        id: 'm14',
-        name: 'Cameron Ellis',
-        status: 'graduated',
-        intro:
-          'Learned open source governance and community leadership by supporting contributor programs.',
-      },
-      {
-        id: 'm15',
-        name: 'Devon Price',
-        status: 'graduated',
-        intro:
-          'Built skills in community operations, facilitation, and helping new contributors feel welcome.',
-      },
+      mentee(
+        'm13',
+        'Blake Foster',
+        'graduated',
+        'Fall 2025',
+        'Developed facilitation and inclusive community practices through hands-on work with LF mentors.',
+      ),
+      mentee(
+        'm14',
+        'Cameron Ellis',
+        'graduated',
+        'Summer 2025',
+        'Learned open source governance and community leadership by supporting contributor programs.',
+      ),
+      mentee(
+        'm15',
+        'Devon Price',
+        'graduated',
+        'Spring 2025',
+        'Built skills in community operations, facilitation, and helping new contributors feel welcome.',
+      ),
     ],
     mentors: [
       {
@@ -419,13 +478,13 @@ export const MOCK_PROGRAMS: Program[] = [
     repositoryUrl: 'https://github.com/prometheus',
     crowdfundingInitiativeId: '9b4080d9-701a-4513-85e6-a162beb3773a',
     mentees: [
-      {
-        id: 'm16',
-        name: 'Amir Haddad',
-        status: 'active',
-        intro:
-          'Extending Prometheus exporters and Grafana dashboards while learning observability patterns with mentors.',
-      },
+      mentee(
+        'm16',
+        'Amir Haddad',
+        'active',
+        'Fall 2026',
+        'Extending Prometheus exporters and Grafana dashboards while learning observability patterns with mentors.',
+      ),
     ],
     mentors: [
       {
@@ -455,20 +514,20 @@ export const MOCK_PROGRAMS: Program[] = [
     repositoryUrl: 'https://github.com/rust-lang',
     crowdfundingInitiativeId: '9b4080d9-701a-4513-85e6-a162beb3773a',
     mentees: [
-      {
-        id: 'm17',
-        name: 'Lucia Romano',
-        status: 'active',
-        intro:
-          'Learning safe systems programming by contributing to Rust crates used across Linux Foundation projects.',
-      },
-      {
-        id: 'm18',
-        name: 'Ben Walsh',
-        status: 'graduated',
-        intro:
-          'Practiced Rust testing and contribution workflows with mentors focused on systems programming.',
-      },
+      mentee(
+        'm17',
+        'Lucia Romano',
+        'active',
+        'Summer 2026',
+        'Learning safe systems programming by contributing to Rust crates used across Linux Foundation projects.',
+      ),
+      mentee(
+        'm18',
+        'Ben Walsh',
+        'graduated',
+        'Spring 2026',
+        'Practiced Rust testing and contribution workflows with mentors focused on systems programming.',
+      ),
     ],
     mentors: [
       {

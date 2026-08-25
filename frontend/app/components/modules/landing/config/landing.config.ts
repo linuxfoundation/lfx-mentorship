@@ -22,18 +22,13 @@ export const LANDING_HERO_AVATARS = [
 export const LANDING_HERO_TITLE = 'Learn open source by building it.';
 
 export const LANDING_HERO_SUBTITLE =
-  'LFX Mentorship pairs contributors with maintainers of the projects that run modern infrastructure. Over a 12-week term you take on real, scoped work, review it with your mentor, and earn a stipend for completing it.';
+  'LFX Mentorship pairs contributors with maintainers of the projects that run modern infrastructure. Over the course of a term you take on real, scoped work and review it with your mentor.';
 
 export const LANDING_HERO_FEATURES: LandingHeroFeature[] = [
-  { icon: 'sack-dollar', label: 'Paid stipend each term' },
-  { icon: 'calendar', label: '12-week terms, three per year' },
+  { icon: 'sack-dollar', label: 'Many programs offer a stipend' },
+  { icon: 'calendar', iconType: 'solid', label: 'Multi-week programs' },
   { icon: 'layer-group', label: '128 programs across 42 foundations' },
 ];
-
-export const LANDING_HERO_TERM_STATUS = {
-  label: 'Term 3 applications open',
-  closesLabel: 'Closes Jul 15, 2026',
-};
 
 export const LANDING_STATS: LandingStat[] = [
   { value: '128', label: 'Programs Accepting' },
@@ -41,8 +36,6 @@ export const LANDING_STATS: LandingStat[] = [
   { value: '$6.1M', label: 'Stipends Paid' },
   { value: '840', label: 'Active Mentors' },
 ];
-
-export const LANDING_HOW_IT_WORKS_SUBTITLE = 'Five steps from application to graduation.';
 
 export const LANDING_HOW_IT_WORKS_STEPS: LandingHowItWorksStep[] = [
   {
@@ -75,36 +68,31 @@ export const LANDING_HOW_IT_WORKS_STEPS: LandingHowItWorksStep[] = [
 export const LANDING_ELIGIBILITY_ITEMS: LandingEligibilityItem[] = [
   {
     id: 'e1',
-    text: 'You are 18 or older and legally able to receive a stipend.',
+    text: 'You are 18 or older.',
   },
   {
     id: 'e2',
-    text: 'You can commit roughly 20 hours a week for the full 12-week term.',
-    parts: [
-      { text: 'You can commit roughly ' },
-      { text: '20 hours a week', bold: true },
-      { text: ' for the full 12-week term.' },
-    ],
+    text: 'You can commit consistent hours for the full term.',
   },
   {
     id: 'e3',
-    text: 'You are not concurrently enrolled in another paid mentorship for the same term.',
+    text: 'You may have up to 3 applications at a time.',
   },
   {
     id: 'e4',
-    text: 'You hold at most one active LFX mentorship at a time.',
+    text: 'You may only enter one Mentorship program in your career.',
   },
 ];
 
 export const LANDING_ELIGIBILITY_FOOTER =
-  'Stipend amounts vary by program and by country of residence. They are paid in three installments over the term.';
+  'Not every program is funded. Where a stipend is offered, the amount varies by program and by your country of residence. Each program page lists its own stipend.';
 
 export const LANDING_BENEFITS: LandingBenefit[] = [
   {
     icon: 'sack-dollar',
-    title: 'Paid, not volunteered',
+    title: 'Funded work where available',
     description:
-      'Every mentorship carries a stipend for the 12-week term, paid in three milestone installments. Amounts vary by program and country of residence.',
+      'Many programs carry a stipend, paid in milestone installments. Amounts vary by program and country of residence.',
   },
   {
     icon: 'user-tie',
@@ -122,31 +110,29 @@ export const LANDING_BENEFITS: LandingBenefit[] = [
     icon: 'door-open',
     title: 'No experience required',
     description:
-      'Most programs expect you to learn the domain in the first two weeks. Prior open source work is not required.',
+      'Most programs expect you to learn the domain as you start. Prior open source work is not required.',
   },
 ];
 
-export const LANDING_FAQ_SUBTITLE = 'What applicants ask most often before their first term.';
-
 export const LANDING_FAQ_ITEMS: LandingFaqItem[] = [
   {
-    question: 'How much is the stipend?',
+    question: 'Is there a stipend?',
     answer:
-      'It varies by program and by your country of residence. Each program page lists its own amount before you apply.',
+      'Not every program is funded. Where a stipend is offered it varies by program and by your country of residence, and the program page says so before you apply.',
   },
   {
     question: 'Who can apply?',
-    answer:
-      'Anyone 18 or older who can legally receive a stipend and is not enrolled in another paid mentorship for the same term.',
+    answer: 'Anyone 18 or older who has not previously completed an LFX mentorship.',
   },
   {
     question: 'What happens at the end?',
     answer:
-      'You complete a final evaluation with your mentor. Graduating releases your last stipend installment and is recorded on your profile.',
+      'You complete a final evaluation with your mentor. Graduating is recorded on your profile.',
   },
   {
     question: 'How much time does a term take?',
-    answer: 'Around 20 hours a week for 12 weeks. You may hold one active mentorship at a time.',
+    answer:
+      'A significant weekly commitment across a multi-week program. Each program page lists its own term dates.',
   },
   {
     question: 'Do I need to be a student?',
@@ -154,7 +140,8 @@ export const LANDING_FAQ_ITEMS: LandingFaqItem[] = [
   },
   {
     question: 'How many programs can I apply to?',
-    answer: 'Up to three per term. Withdrawing an application frees a slot.',
+    answer:
+      'You may have up to three applications at a time. Withdrawing an application frees a slot.',
   },
   {
     question: 'How are applicants chosen?',
@@ -166,4 +153,4 @@ export const LANDING_FAQ_ITEMS: LandingFaqItem[] = [
 export const LANDING_CTA_TITLE = '128 programs are accepting applications';
 
 export const LANDING_CTA_SUBTITLE =
-  'Browse by foundation, skill or term. You can submit up to three applications per term.';
+  'Browse by foundation, skill or term. You can have up to three applications at a time.';

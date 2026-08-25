@@ -6,8 +6,7 @@ SPDX-License-Identifier: MIT
   <section class="container px-5 pb-10 md:px-10 md:pb-12">
     <div class="rounded-2xl border border-neutral-200 bg-white p-6 md:p-8">
       <div class="mb-8">
-        <h2 class="font-secondary text-2xl md:text-3xl font-light text-neutral-900">How It Works</h2>
-        <p class="mt-2 text-sm text-neutral-500">{{ LANDING_HOW_IT_WORKS_SUBTITLE }}</p>
+        <h2 class="font-secondary text-xl md:text-2xl font-normal text-neutral-900">How It Works</h2>
       </div>
 
       <ol class="grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-5 lg:gap-4">
@@ -23,7 +22,7 @@ SPDX-License-Identifier: MIT
           </span>
           <div>
             <h3 class="text-sm font-semibold text-neutral-900">{{ step.title }}</h3>
-            <p class="mt-1 text-sm text-neutral-500 leading-5">{{ step.description }}</p>
+            <p class="mt-1 text-xs text-neutral-500 leading-5">{{ step.description }}</p>
           </div>
         </li>
       </ol>
@@ -32,7 +31,7 @@ SPDX-License-Identifier: MIT
 </template>
 
 <script setup lang="ts">
-import { LANDING_HOW_IT_WORKS_STEPS, LANDING_HOW_IT_WORKS_SUBTITLE } from '../config/landing.config';
+import { LANDING_HOW_IT_WORKS_STEPS } from '../config/landing.config';
 </script>
 
 <script lang="ts">

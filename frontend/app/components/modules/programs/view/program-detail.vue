@@ -62,31 +62,11 @@ SPDX-License-Identifier: MIT
             :members="program.mentors"
             empty-label="mentors"
           />
-          <div
+          <program-detail-mentees
             v-else-if="activeTab === 'mentees'"
-            class="space-y-8"
-          >
-            <p
-              v-if="!currentMentees.length && !graduatedMentees.length"
-              class="py-10 text-sm text-neutral-500"
-            >
-              No mentees listed yet.
-            </p>
-            <template v-else>
-              <program-detail-members
-                v-if="currentMentees.length"
-                :heading="PROGRAM_CURRENT_MENTEES_HEADING"
-                :members="currentMentees"
-                empty-label="current mentees"
-              />
-              <program-detail-members
-                v-if="graduatedMentees.length"
-                :heading="PROGRAM_GRADUATED_MENTEES_HEADING"
-                :members="graduatedMentees"
-                empty-label="graduated mentees"
-              />
-            </template>
-          </div>
+            :current-mentees="currentMentees"
+            :graduated-mentees="graduatedMentees"
+          />
           <program-detail-sponsors
             v-else
             :sponsors="program.sponsors"
@@ -101,14 +81,10 @@ SPDX-License-Identifier: MIT
 import { computed, ref, watch } from 'vue';
 import ProgramDetailHeader from '../components/program-detail-header.vue';
 import ProgramDetailMembers from '../components/program-detail-members.vue';
+import ProgramDetailMentees from '../components/program-detail-mentees.vue';
 import ProgramDetailOverview from '../components/program-detail-overview.vue';
 import ProgramDetailSponsors from '../components/program-detail-sponsors.vue';
-import {
-  DEFAULT_PROGRAM_DETAIL_TAB,
-  PROGRAM_CURRENT_MENTEES_HEADING,
-  PROGRAM_DETAIL_TABS,
-  PROGRAM_GRADUATED_MENTEES_HEADING,
-} from '../config/program-detail.config';
+import { DEFAULT_PROGRAM_DETAIL_TAB, PROGRAM_DETAIL_TABS } from '../config/program-detail.config';
 import { useProgram } from '~/composables/programs/useProgram';
 import LfxButton from '~/components/uikit/button/button.vue';
 import LfxSpinner from '~/components/uikit/spinner/spinner.vue';

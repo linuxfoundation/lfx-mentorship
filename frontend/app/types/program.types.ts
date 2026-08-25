@@ -27,6 +27,9 @@ export interface ProgramMember {
 /** Program mentee: currently in a term, or already graduated. */
 export interface ProgramMentee extends ProgramMember {
   status: MenteeStatus;
+  email: string;
+  /** Display term, e.g. "Fall 2026". */
+  termLabel: string;
 }
 
 /** Foundation owns many programs. */
