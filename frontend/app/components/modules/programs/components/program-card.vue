@@ -3,30 +3,31 @@ Copyright (c) 2025 The Linux Foundation and each contributor.
 SPDX-License-Identifier: MIT
 -->
 <template>
-  <article
+  <NuxtLink
     class="relative flex flex-col justify-between border border-neutral-200 rounded-2xl p-6 h-full min-h-[260px] bg-white transition-shadow duration-200 hover:shadow-lg"
+    :to="programPath(program.id)"
   >
     <lfx-tag
       class="absolute top-6 right-6"
       :variation="statusConfig.variation"
       size="small"
-      type="outline"
+      type="solid"
     >
       {{ statusConfig.label }}
     </lfx-tag>
 
     <div class="flex flex-col gap-6 w-full">
-      <div class="flex items-center gap-4 pr-24">
+      <div class="flex items-center gap-4">
         <lfx-avatar
           :src="program.logoUrl"
           type="organization"
           size="xlarge"
         />
         <div class="flex flex-col max-w-[calc(100%-64px)]">
-          <p class="text-sm text-neutral-500 leading-5 truncate">
+          <p class="text-xs text-neutral-500 leading-5 truncate pr-24">
             {{ program.foundation.name }} · {{ program.activeTerm.name }}
           </p>
-          <h3 class="text-lg font-semibold text-neutral-900 leading-7 truncate">
+          <h3 class="text-base font-semibold text-neutral-900 leading-7 truncate">
             {{ program.name }}
           </h3>
         </div>
@@ -34,7 +35,7 @@ SPDX-License-Identifier: MIT
 
       <div class="flex flex-col gap-4 w-full">
         <div class="flex flex-col gap-1 w-full">
-          <p class="text-sm text-neutral-600 leading-5 line-clamp-2">
+          <p class="text-xs text-neutral-600 leading-5 line-clamp-2">
             {{ plainDescription }}
           </p>
         </div>
@@ -43,25 +44,27 @@ SPDX-License-Identifier: MIT
           v-if="program.skills.length"
           class="flex flex-wrap gap-2"
         >
-          <lfx-chip
+          <lfx-tag
             v-for="skill in visibleSkills"
             :key="skill"
-            type="bordered"
-            size="xsmall"
+            variation="neutral"
+            type="outline"
+            size="small"
           >
             {{ skill }}
-          </lfx-chip>
+          </lfx-tag>
           <lfx-tooltip
             v-if="overflowSkills.length"
             placement="top"
             class="inline-flex"
           >
-            <lfx-chip
-              type="bordered"
-              size="xsmall"
+            <lfx-tag
+              variation="neutral"
+              type="outline"
+              size="small"
             >
               +{{ overflowSkills.length }}
-            </lfx-chip>
+            </lfx-tag>
             <template #content>
               <div class="flex flex-col gap-1 text-xs">
                 <span
@@ -88,13 +91,13 @@ SPDX-License-Identifier: MIT
           popover-class="!p-0"
         >
           <div
-            class="inline-flex items-center gap-2 text-sm text-neutral-600 cursor-default"
+            class="inline-flex items-center gap-2 text-xs text-neutral-400 cursor-default"
             @click.stop
           >
             <lfx-icon
               :name="group.icon"
               type="light"
-              :size="16"
+              :size="12"
             />
             <span>{{ group.countLabel }}</span>
           </div>
@@ -125,18 +128,26 @@ SPDX-License-Identifier: MIT
             </div>
           </template>
         </lfx-popover>
+        <div class="flex items-center gap-2 text-xs text-neutral-400">
+          <lfx-icon
+            name="sack-dollar"
+            type="solid"
+            :size="12"
+          />
+          <p>Paid stipend</p>
+        </div>
       </div>
 
       <NuxtLink :to="programPath(program.id)">
         <lfx-button
           label="View program"
-          type="secondary"
-          button-style="pill"
+          type="outline"
+          button-style="rounded"
           size="small"
         />
       </NuxtLink>
     </div>
-  </article>
+  </NuxtLink>
 </template>
 
 <script setup lang="ts">
@@ -146,7 +157,6 @@ import { programPath } from '~/config/routes';
 import type { Program, ProgramMember } from '~/types/program.types';
 import LfxAvatar from '~/components/uikit/avatar/avatar.vue';
 import LfxButton from '~/components/uikit/button/button.vue';
-import LfxChip from '~/components/uikit/chip/chip.vue';
 import LfxIcon from '~/components/uikit/icon/icon.vue';
 import LfxPopover from '~/components/uikit/popover/popover.vue';
 import LfxTag from '~/components/uikit/tag/tag.vue';
@@ -161,10 +171,7 @@ const plainDescription = computed(() => stripHtml(props.program.description ?? '
 const statusConfig = computed(() => PROGRAM_STATUS_CONFIG[props.program.status]);
 const visibleSkills = computed(() => props.program.skills.slice(0, PROGRAM_SKILLS_VISIBLE_COUNT));
 const overflowSkills = computed(() => props.program.skills.slice(PROGRAM_SKILLS_VISIBLE_COUNT));
-const memberGroups = computed(() => [
-  memberGroup('mentees', 'Mentees', 'mentee', 'user-graduate', props.program.mentees),
-  memberGroup('mentors', 'Mentors', 'mentor', 'user-tie', props.program.mentors),
-]);
+const memberGroups = computed(() => [memberGroup('mentors', 'Mentors', 'mentor', 'user-tie', props.program.mentors)]);
 
 function memberGroup(key: string, title: string, singular: string, icon: string, members: ProgramMember[]) {
   const count = members.length;
