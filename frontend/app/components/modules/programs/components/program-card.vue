@@ -142,7 +142,6 @@ SPDX-License-Identifier: MIT
         type="outline"
         button-style="rounded"
         size="small"
-        @click="navigateTo(programPath(program.id))"
       />
     </div>
   </NuxtLink>
