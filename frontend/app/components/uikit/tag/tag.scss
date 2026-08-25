@@ -65,6 +65,10 @@
       @apply border border-neutral-200 bg-white text-neutral-900;
     }
 
+    &.c-tag--neutral {
+      @apply border border-neutral-200;
+    }
+
     &.c-tag--info {
       @apply border border-brand-100;
     }

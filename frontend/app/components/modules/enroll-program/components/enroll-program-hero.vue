@@ -9,7 +9,6 @@ SPDX-License-Identifier: MIT
         variation="info"
         size="small"
         type="solid"
-        :rounded="false"
         class="w-fit !h-auto px-2 py-1"
       >
         {{ ENROLL_PROGRAM_BADGE }}

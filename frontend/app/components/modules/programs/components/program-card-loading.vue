@@ -5,9 +5,9 @@ SPDX-License-Identifier: MIT
 <template>
   <div class="border border-neutral-200 rounded-2xl p-6 min-h-[260px] flex flex-col gap-6">
     <lfx-skeleton
-      width="3rem"
-      height="3rem"
-      class="!rounded-lg"
+      width="4rem"
+      height="4rem"
+      class="!rounded-md"
     />
     <div class="flex flex-col gap-3">
       <lfx-skeleton
