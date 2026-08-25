@@ -131,16 +131,26 @@ func (s *ProgramMemberService) Create(ctx context.Context, programID string, inp
 	return m, nil
 }
 
-// Update patches a program member.
+// Update patches a program member, enforcing the status lifecycle.
 func (s *ProgramMemberService) Update(ctx context.Context, id string, input models.ProgramMemberUpdateInput) (*models.ProgramMember, error) {
 	ctx, span := programMemberSvcTracer.Start(ctx, "ProgramMemberService.Update")
 	defer span.End()
 	span.SetAttributes(attribute.String("member.id", id))
 
-	// Notify when a mentor declines directly via the update path.
-	if input.Status != nil && *input.Status == "declined" {
+	if input.Status != nil {
 		current, err := s.repo.GetByID(ctx, id)
-		if err == nil {
+		if err != nil {
+			span.RecordError(err)
+			return nil, fmt.Errorf("get member: %w", err)
+		}
+		currentStatus := ""
+		if current.Status != nil {
+			currentStatus = *current.Status
+		}
+		if !memberTransitions[currentStatus][*input.Status] {
+			return nil, fmt.Errorf("%w: cannot transition member from %q to %q", domain.ErrInvalidStateTransition, currentStatus, *input.Status)
+		}
+		if *input.Status == "declined" {
 			s.notifier.NotifyMentorDeclined(ctx, current.ProgramID, current.UserID)
 		}
 	}
