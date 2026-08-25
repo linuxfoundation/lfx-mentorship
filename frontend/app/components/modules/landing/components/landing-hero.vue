@@ -19,7 +19,7 @@ SPDX-License-Identifier: MIT
       </div>
 
       <div class="flex flex-col gap-4">
-        <h1 class="font-secondary font-light text-4xl md:text-5xl leading-tight text-neutral-900">
+        <h1 class="font-secondary font-light text-6xl md:text-5xl leading-tight text-neutral-900">
           {{ LANDING_HERO_TITLE }}
         </h1>
         <p class="text-base text-neutral-600 leading-6 max-w-2xl">
@@ -48,7 +48,8 @@ SPDX-License-Identifier: MIT
           <lfx-button
             label="Find a Program"
             type="primary"
-            button-style="pill"
+            size="large"
+            button-style="rounded"
             icon="magnifying-glass"
             class="justify-center"
           />
@@ -57,7 +58,8 @@ SPDX-License-Identifier: MIT
           <lfx-button
             label="Enroll a Program"
             type="outline"
-            button-style="pill"
+            size="large"
+            button-style="rounded"
             class="justify-center"
           />
         </NuxtLink>

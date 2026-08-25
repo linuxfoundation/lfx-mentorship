@@ -4,7 +4,7 @@ SPDX-License-Identifier: MIT
 -->
 <template>
   <div class="rounded-2xl border border-neutral-200 bg-white p-6 md:p-8 h-full flex flex-col">
-    <h2 class="font-secondary text-2xl font-light text-neutral-900 mb-6">Who Can Apply</h2>
+    <h2 class="font-secondary text-xl md:text-2xl font-normal text-neutral-900 mb-6">Who Can Apply</h2>
 
     <ul class="flex flex-col gap-4 flex-1">
       <li
@@ -13,9 +13,9 @@ SPDX-License-Identifier: MIT
         class="flex items-start gap-3"
       >
         <lfx-icon
-          name="circle-check"
+          name="check"
           type="solid"
-          :size="18"
+          :size="12"
           class="text-positive-600 shrink-0 mt-0.5"
         />
         <p class="text-sm text-neutral-700 leading-5">

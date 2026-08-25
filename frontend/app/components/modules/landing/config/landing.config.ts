@@ -37,7 +37,6 @@ export const LANDING_STATS: LandingStat[] = [
   { value: '840', label: 'Active Mentors' },
 ];
 
-export const LANDING_HOW_IT_WORKS_SUBTITLE = 'Five steps from application to graduation.';
 
 export const LANDING_HOW_IT_WORKS_STEPS: LandingHowItWorksStep[] = [
   {

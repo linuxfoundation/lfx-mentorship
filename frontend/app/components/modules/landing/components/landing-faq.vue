@@ -6,7 +6,7 @@ SPDX-License-Identifier: MIT
   <section class="container px-5 pb-10 md:px-10 md:pb-12">
     <div class="rounded-2xl border border-neutral-200 bg-white p-6 md:p-8">
       <div class="mb-8 flex items-center justify-between">
-        <h2 class="font-secondary text-2xl md:text-3xl font-light text-neutral-900">Frequently Asked</h2>
+        <h2 class="font-secondary text-xl md:text-2xl font-normal text-neutral-900">Frequently Asked</h2>
         <a
           href="https://docs.linuxfoundation.org/lfx/mentorship/mentee-guide/mentee-faqs"
           target="_blank"

@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT
       class="flex flex-col gap-6 rounded-2xl border border-neutral-200 bg-white p-6 md:flex-row md:items-center md:justify-between md:p-8"
     >
       <div class="max-w-xl">
-        <h2 class="font-secondary text-2xl md:text-3xl font-light text-neutral-900">
+        <h2 class="font-secondary text-xl md:text-2xl font-normal text-neutral-900">
           {{ LANDING_CTA_TITLE }}
         </h2>
         <p class="mt-2 text-sm text-neutral-500 leading-5">
@@ -22,7 +22,8 @@ SPDX-License-Identifier: MIT
         <lfx-button
           label="Find a Program"
           type="primary"
-          button-style="pill"
+          button-style="rounded"
+          size="large"
           icon="arrow-right"
           icon-position="right"
         />

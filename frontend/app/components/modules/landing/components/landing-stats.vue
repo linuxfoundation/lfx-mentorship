@@ -10,10 +10,10 @@ SPDX-License-Identifier: MIT
         :key="stat.label"
         class="rounded-2xl border border-neutral-200 bg-white px-5 py-6"
       >
-        <p class="text-3xl md:text-4xl font-semibold text-neutral-900 leading-none">
+        <p class="text-2xl font-semibold text-neutral-900 leading-none">
           {{ stat.value }}
         </p>
-        <p class="mt-2 text-sm text-neutral-500">{{ stat.label }}</p>
+        <p class="mt-2 text-xs text-neutral-500">{{ stat.label }}</p>
       </li>
     </ul>
   </section>
