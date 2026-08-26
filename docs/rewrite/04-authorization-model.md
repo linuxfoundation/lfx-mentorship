@@ -27,7 +27,7 @@ flowchart TB
     PROJECT["LF Project<br/><i>(exists in FGA today)</i>"]
     PROGRAM["Program"]
     TERM["Program Term"]
-    APP["Application<br/><i>(status: pending → accepted →<br/>graduated | rejected | withdrawn | hold)</i>"]
+    APP["Application<br/><i>(status: pending → accepted →<br/>graduated | declined | withdrawn)</i>"]
     TASK["Task<br/><i>(category: prerequisite | program)</i>"]
     ADMIN(["Program Admin<br/>(maintainer)"])
     MENTOR(["Mentor"])
@@ -50,6 +50,8 @@ flowchart TB
 ```
 
 **Legend:** ═══ blue = Postgres **and** FGA (via fga-sync) · - - - grey = Postgres only. Edge labels on blue edges are the FGA **relation names** — e.g. `mentee ==applicant==> application` is the direct tuple `mentorship_application:{uid}#applicant@user:{lfid}`, not an intermediate hop.
+
+**Statuses shown are the ones settable in the current UI** (mentee applications: pending/accepted/declined/graduated/withdrawn). The legacy backend also defines `hold` (not settable anywhere today), `rejected` (used only for declined **mentor invitations**, whose rows legacy deletes), and `approved` (mentor/maintainer membership). The backfill inventory counts rows carrying vestigial statuses and maps them explicitly.
 
 **No enrollment entity.** In the legacy system the application *is* the lifecycle object: one `project-members` row (memberType `apprentice`, keyed by user + program term) whose status runs the full journey `pending → accepted → graduated`. Acceptance and graduation are status changes on that row, and mentors relate to the **program**, not to individual mentees (a mentee's "mentors" list is a cron-denormalized copy of the program's approved mentors). The rewrite keeps that shape — no `enrollments` table, no mentor-mentee assignment — and the ERD in [02](./02-target-architecture.md) will be corrected accordingly.
 
