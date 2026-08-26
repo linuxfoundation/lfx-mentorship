@@ -32,6 +32,7 @@ flowchart LR
 
 ## Migration-specific tasks
 
+- **Vocabulary normalization**: legacy `memberType: "apprentice"` maps to `mentee` (the term the UI already uses) and legacy status variants map onto `pending / accepted / declined / graduated / withdrawn`. Both belong in the field-level mapping dictionary; missing the first silently drops every mentee.
 - **Fivetran**: add Postgres connector, repoint `lf-dbt` bronze `fivetran_mentorship_*` sources, keep column compatibility or version the models.
 - **Crowdfunding coordination**: two complementary flows exist — CF's planned `mentorship-sync` (program/beneficiary data **into** CF) and the new `cf-funding-sync` (funding stats **out of** CF into Mentorship). The funding-stats pull is part of this proposal regardless; what needs deciding with the CF team is only the source for CF's inbound feed (see OQ-2).
 - **Auth0**: new resource server/audience + scopes for Mentorship (dev/staging/prod tenants), Self Serve silent-auth wiring — via [auth0-terraform](https://github.com/linuxfoundation/auth0-terraform).
