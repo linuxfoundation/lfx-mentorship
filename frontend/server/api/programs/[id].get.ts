@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import { MOCK_PROGRAMS } from '../../mock-data/programs';
+import { withActiveTerms } from '../../../app/utils/program-terms';
 
 export default defineEventHandler((event) => {
   const id = getRouterParam(event, 'id');
@@ -16,5 +17,5 @@ export default defineEventHandler((event) => {
     throw createError({ statusCode: 404, message: 'Program not found' });
   }
 
-  return program;
+  return withActiveTerms(program);
 });

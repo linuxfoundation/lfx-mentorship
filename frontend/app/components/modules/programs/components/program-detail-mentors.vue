@@ -12,7 +12,7 @@ SPDX-License-Identifier: MIT
     </h3>
 
     <div
-      v-if="!members.length"
+      v-if="!mentors.length"
       class="py-10 text-sm text-neutral-500"
     >
       No {{ emptyLabel }} listed yet.
@@ -23,24 +23,29 @@ SPDX-License-Identifier: MIT
       class="grid grid-cols-1 gap-4 sm:grid-cols-2"
     >
       <li
-        v-for="member in members"
+        v-for="member in mentors"
         :key="member.id"
-        class="flex items-center gap-3 rounded-xl border border-neutral-200 p-4"
+        class="flex flex-col gap-3 rounded-xl border border-neutral-200 p-4"
       >
-        <lfx-avatar
-          :src="member.avatarUrl"
-          type="member"
-          size="normal"
-        />
-        <div class="min-w-0">
-          <p class="text-sm font-semibold text-neutral-900 truncate">{{ member.name }}</p>
-          <p
-            v-if="member.intro"
-            class="text-xs text-neutral-500 line-clamp-3"
+        <div class="min-w-0 flex items-center gap-3">
+          <lfx-avatar
+            :src="member.avatarUrl"
+            type="member"
+            size="normal"
+          />
+          <NuxtLink
+            :to="mentorProfilePath(member.id)"
+            class="block text-sm font-semibold text-brand-700 truncate hover:underline"
           >
-            {{ member.intro }}
-          </p>
+            {{ member.name }}
+          </NuxtLink>
         </div>
+        <p
+          v-if="member.intro"
+          class="text-xs text-neutral-500 line-clamp-3"
+        >
+          {{ member.intro }}
+        </p>
       </li>
     </ul>
   </div>
@@ -51,14 +56,16 @@ import type { ProgramMember } from '~/types/program.types';
 import LfxAvatar from '~/components/uikit/avatar/avatar.vue';
 
 defineProps<{
-  members: ProgramMember[];
+  mentors: ProgramMember[];
   emptyLabel: string;
   heading?: string;
 }>();
+
+const mentorProfilePath = (mentorId: string) => `/mentor/${mentorId}`;
 </script>
 
 <script lang="ts">
 export default {
-  name: 'ProgramDetailMembers',
+  name: 'ProgramDetailMentors',
 };
 </script>
