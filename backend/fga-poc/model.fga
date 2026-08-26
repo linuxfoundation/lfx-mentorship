@@ -1,0 +1,78 @@
+model
+  schema 1.1
+
+# A single global object representing the platform as a whole.
+# Holds the roles that are NOT scoped to a specific program.
+type user
+
+type platform
+  relations
+    define super_admin: [user]
+    define program_approver: [user]
+    define program_admin: [user]
+
+    # Global pool of registered mentees, granted once a user completes their
+    # mentee profile. Mirrors program_admin's pool: it exists to answer
+    # "is this user eligible to do X" BEFORE the object (an application)
+    # they'd act on has been created.
+    define mentee: [user]
+
+    define can_create_program: program_admin or super_admin
+    define can_approve_program: program_approver or super_admin
+    define can_apply: mentee or super_admin
+
+type program
+  relations
+    # Link back to the platform object, so global roles (super_admin,
+    # program_approver) automatically apply to every program.
+    define platform: [platform]
+
+    # Direct, program-scoped assignments.
+    define program_admin: [user]
+    define mentor: [user]
+
+    # Global roles projected onto this program.
+    define super_admin: super_admin from platform
+    define approver: program_approver from platform
+
+    # A mentor who has accepted an invitation inherits program_admin-level
+    # rights, but only for this specific program.
+    define admin: program_admin or mentor or super_admin
+
+    define can_invite_mentor: admin
+    define can_create_term: admin
+    define can_add_prerequisite_task: admin
+    define can_view: admin or approver
+    define can_view_applications: admin
+    define can_decide_application: admin
+    define can_approve: approver or super_admin
+
+type application
+  relations
+    define program: [program]
+
+    # The mentee who submitted this specific application.
+    # Named "mentee" rather than a generic "applicant" — per the
+    # requirements, the applicant IS the mentee, so the relation says so.
+    define mentee: [user]
+
+    # Projected relations from the parent program, so application-level
+    # permissions automatically follow program-level roles.
+    define admin: admin from program
+    define approver: approver from program
+
+    define can_view: mentee or admin or approver
+    define can_decide: admin
+    define can_submit: mentee
+
+type task
+  relations
+    define application: [application]
+    define assignee: [user]
+
+    # Projected relation from the parent application (and, transitively,
+    # its program), so task visibility follows the same admin chain.
+    define admin: admin from application
+
+    define can_view: assignee or admin
+    define can_update_status: assignee or admin

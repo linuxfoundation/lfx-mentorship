@@ -1,0 +1,75 @@
+# --- Platform-level (global) role assignments ---
+- user: user:aisha
+  relation: super_admin
+  object: platform:lfx
+
+- user: user:priya
+  relation: program_approver
+  object: platform:lfx
+
+- user: user:carla
+  relation: program_admin
+  object: platform:lfx
+
+- user: user:derek
+  relation: program_admin
+  object: platform:lfx
+
+# Registered mentees (platform-level eligibility pool, granted once a
+# mentee profile is created — independent of which programs they apply to).
+- user: user:mia
+  relation: mentee
+  object: platform:lfx
+
+- user: user:noah
+  relation: mentee
+  object: platform:lfx
+
+# --- Program: go-2026, created and administered by Carla ---
+- user: platform:lfx
+  relation: platform
+  object: program:go-2026
+
+- user: user:carla
+  relation: program_admin
+  object: program:go-2026
+
+- user: user:miguel
+  relation: mentor
+  object: program:go-2026
+
+# --- Program: rust-2026, created and administered by Derek ---
+# (Deliberately has no overlap with go-2026's mentors/admins, to test scoping)
+- user: platform:lfx
+  relation: platform
+  object: program:rust-2026
+
+- user: user:derek
+  relation: program_admin
+  object: program:rust-2026
+
+# --- Applications to go-2026 ---
+- user: program:go-2026
+  relation: program
+  object: application:app-mia
+
+- user: user:mia
+  relation: mentee
+  object: application:app-mia
+
+- user: program:go-2026
+  relation: program
+  object: application:app-noah
+
+- user: user:noah
+  relation: mentee
+  object: application:app-noah
+
+# --- Task assigned to Mia's application ---
+- user: application:app-mia
+  relation: application
+  object: task:task-mia-1
+
+- user: user:mia
+  relation: assignee
+  object: task:task-mia-1

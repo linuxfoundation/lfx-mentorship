@@ -1,0 +1,208 @@
+name: Mentorship Authorization Model Tests
+model_file: model.fga
+tuple_file: tuples.yaml
+
+tests:
+  - name: platform-level program creation and approval rights
+    check:
+      - user: user:carla
+        object: platform:lfx
+        assertions:
+          can_create_program: true
+          can_approve_program: false
+      - user: user:priya
+        object: platform:lfx
+        assertions:
+          can_create_program: false
+          can_approve_program: true
+      - user: user:aisha
+        object: platform:lfx
+        assertions:
+          can_create_program: true
+          can_approve_program: true
+      - user: user:miguel
+        object: platform:lfx
+        assertions:
+          can_create_program: false
+
+  - name: only registered mentees (or super_admin) are eligible to apply
+    check:
+      - user: user:mia
+        object: platform:lfx
+        assertions:
+          can_apply: true
+      - user: user:noah
+        object: platform:lfx
+        assertions:
+          can_apply: true
+      - user: user:carla
+        object: platform:lfx
+        assertions:
+          can_apply: false   # program_admin is not automatically a mentee
+      - user: user:miguel
+        object: platform:lfx
+        assertions:
+          can_apply: false   # mentor is not automatically a mentee
+      - user: user:aisha
+        object: platform:lfx
+        assertions:
+          can_apply: true    # super_admin override
+      - user: user:zoe
+        object: platform:lfx
+        assertions:
+          can_apply: false   # unregistered user with no tuples at all
+
+  - name: super_admin has unrestricted access to every program, application, and task
+    check:
+      - user: user:aisha
+        object: program:go-2026
+        assertions:
+          can_view: true
+          can_invite_mentor: true
+          can_create_term: true
+          can_add_prerequisite_task: true
+          can_view_applications: true
+          can_decide_application: true
+          can_approve: true
+      - user: user:aisha
+        object: program:rust-2026
+        assertions:
+          can_view: true
+          can_approve: true
+      - user: user:aisha
+        object: application:app-mia
+        assertions:
+          can_view: true
+          can_decide: true
+      - user: user:aisha
+        object: task:task-mia-1
+        assertions:
+          can_view: true
+          can_update_status: true
+
+  - name: program_admin has full control over the program they created
+    check:
+      - user: user:carla
+        object: program:go-2026
+        assertions:
+          can_invite_mentor: true
+          can_create_term: true
+          can_add_prerequisite_task: true
+          can_view_applications: true
+          can_decide_application: true
+          can_view: true
+          can_approve: false
+
+  - name: program_admin has no access to a program they do not administer
+    check:
+      - user: user:carla
+        object: program:rust-2026
+        assertions:
+          can_view: false
+          can_invite_mentor: false
+          can_view_applications: false
+          can_decide_application: false
+
+  - name: mentor inherits program_admin-equivalent rights on the program they accepted
+    check:
+      - user: user:miguel
+        object: program:go-2026
+        assertions:
+          can_view: true
+          can_create_term: true
+          can_view_applications: true
+          can_decide_application: true
+          can_invite_mentor: true
+          can_approve: false
+
+  - name: mentor has zero access to a program they were never invited to
+    check:
+      - user: user:miguel
+        object: program:rust-2026
+        assertions:
+          can_view: false
+          can_view_applications: false
+          can_decide_application: false
+
+  - name: mentee can view and submit only their own application
+    check:
+      - user: user:mia
+        object: application:app-mia
+        assertions:
+          can_view: true
+          can_submit: true
+          can_decide: false
+      - user: user:mia
+        object: application:app-noah
+        assertions:
+          can_view: false
+          can_submit: false
+          can_decide: false
+
+  - name: program_admin and mentor can view and decide on applications within their program
+    check:
+      - user: user:carla
+        object: application:app-mia
+        assertions:
+          can_view: true
+          can_decide: true
+      - user: user:miguel
+        object: application:app-mia
+        assertions:
+          can_view: true
+          can_decide: true
+
+  - name: mentee can view only tasks assigned to them, never another mentee's tasks
+    check:
+      - user: user:mia
+        object: task:task-mia-1
+        assertions:
+          can_view: true
+          can_update_status: true
+      - user: user:noah
+        object: task:task-mia-1
+        assertions:
+          can_view: false
+          can_update_status: false
+
+  - name: program_admin and mentor can view tasks tied to applications in their program
+    check:
+      - user: user:carla
+        object: task:task-mia-1
+        assertions:
+          can_view: true
+      - user: user:miguel
+        object: task:task-mia-1
+        assertions:
+          can_view: true
+
+  - name: program_approver can view and approve, but cannot manage program operations
+    check:
+      - user: user:priya
+        object: program:go-2026
+        assertions:
+          can_view: true
+          can_approve: true
+          can_invite_mentor: false
+          can_create_term: false
+          can_add_prerequisite_task: false
+          can_view_applications: false
+          can_decide_application: false
+      - user: user:priya
+        object: program:rust-2026
+        assertions:
+          can_view: true
+          can_approve: true
+
+  - name: program_approver can see applications (for review context) but cannot decide, and has no task-level access
+    check:
+      - user: user:priya
+        object: application:app-mia
+        assertions:
+          can_view: true
+          can_decide: false
+      - user: user:priya
+        object: task:task-mia-1
+        assertions:
+          can_view: false
+          can_update_status: false
