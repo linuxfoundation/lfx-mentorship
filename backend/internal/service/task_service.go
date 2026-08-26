@@ -114,6 +114,12 @@ func (s *TaskService) Update(ctx context.Context, id string, input models.TaskUp
 	if input.Status != nil && !input.Status.IsValid() {
 		return nil, fmt.Errorf("%w: invalid status %q", domain.ErrInvalidInput, *input.Status)
 	}
+	if input.ApplicationStatus != nil && !input.ApplicationStatus.IsValid() {
+		return nil, fmt.Errorf("%w: invalid application status %q", domain.ErrInvalidInput, *input.ApplicationStatus)
+	}
+	if input.ProgramTermStatus != nil && !input.ProgramTermStatus.IsValid() {
+		return nil, fmt.Errorf("%w: invalid program term status %q", domain.ErrInvalidInput, *input.ProgramTermStatus)
+	}
 
 	// FR-033: enforce state transitions and actor permissions when ActorID is known.
 	if input.Status != nil && input.ActorID != "" {

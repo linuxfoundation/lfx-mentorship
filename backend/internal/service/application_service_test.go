@@ -490,3 +490,12 @@ func TestApplicationService_Update_WithdrawnTerminal(t *testing.T) {
 		t.Errorf("expected ErrInvalidStateTransition for terminal withdrawn, got %v", err)
 	}
 }
+
+func TestApplicationService_Update_InvalidProgramTermStatus_Rejected(t *testing.T) {
+	svc := newApplicationSvc(&stubAppRepo{}, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{})
+	bad := models.ProgramTermStatus("ajar") // not a member of the enum
+	_, err := svc.Update(context.Background(), "app-1", models.ApplicationUpdateInput{ProgramTermStatus: &bad})
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput for unknown program_term_status, got %v", err)
+	}
+}

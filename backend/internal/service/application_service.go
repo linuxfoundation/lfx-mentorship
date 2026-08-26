@@ -128,6 +128,9 @@ func (s *ApplicationService) Create(ctx context.Context, programTermID string, i
 	if !input.Role.IsValid() {
 		return nil, fmt.Errorf("%w: role must be mentor or mentee", domain.ErrInvalidInput)
 	}
+	if input.ProgramTermStatus != nil && !input.ProgramTermStatus.IsValid() {
+		return nil, fmt.Errorf("%w: invalid program term status %q", domain.ErrInvalidInput, *input.ProgramTermStatus)
+	}
 	input.Status = models.ApplicationStatusPending // applications always start as pending
 
 	// Application window guard (FR-016): term must be open and now within the window.
@@ -220,6 +223,9 @@ func (s *ApplicationService) Update(ctx context.Context, id string, input models
 	}
 	if input.AttendanceType != nil && !input.AttendanceType.IsValid() {
 		return nil, fmt.Errorf("%w: attendance_type must be full_time or part_time", domain.ErrInvalidInput)
+	}
+	if input.ProgramTermStatus != nil && !input.ProgramTermStatus.IsValid() {
+		return nil, fmt.Errorf("%w: invalid program term status %q", domain.ErrInvalidInput, *input.ProgramTermStatus)
 	}
 
 	if input.Status != nil {
