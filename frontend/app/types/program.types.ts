@@ -18,6 +18,7 @@ export type ProgramSortBy =
   | 'updated_newest';
 
 export interface ProgramMember {
+  /** User id used for profile links (`/mentors/{id}`), not the program-membership row. */
   id: string;
   name?: string;
   intro?: string;

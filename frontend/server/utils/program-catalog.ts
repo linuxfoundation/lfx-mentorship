@@ -73,7 +73,7 @@ function mapTerm(term: ProgramCatalogTerm): ProgramTerm {
 
 function mapMentor(mentor: ProgramCatalogMentor): ProgramMember {
   return {
-    id: mentor.id,
+    id: mentor.user_id,
     name: mentor.name?.trim() || 'Mentor',
     avatarUrl: mentor.avatar_url,
     intro: mentor.introduction?.trim() || undefined,
