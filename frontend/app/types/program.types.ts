@@ -18,9 +18,9 @@ export type ProgramSortBy =
   | 'updated_newest';
 
 export interface ProgramMember {
-  /** User id used for profile links (`/mentors/{id}`), not the program-membership row. */
+  /** User id used for profile links, not the membership or application row. */
   id: string;
-  name?: string;
+  name: string;
   intro?: string;
   avatarUrl?: string;
 }
@@ -29,6 +29,8 @@ export interface ProgramMember {
 export interface ProgramMentee extends ProgramMember {
   status: MenteeStatus;
   email: string;
+  /** Term id used with `id` for list keys when a user appears on more than one term. */
+  termId?: string;
   /** Display term, e.g. "Fall 2026". */
   termLabel: string;
 }

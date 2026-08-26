@@ -38,6 +38,7 @@ type ProgramRepository interface {
 	List(ctx context.Context, filter models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error)
 	ListCatalog(ctx context.Context, filter models.ProgramFilter) ([]*models.ProgramCatalogItem, *models.PaginationMeta, error)
 	GetCatalog(ctx context.Context, id string) (*models.ProgramCatalogItem, error)
+	ListCatalogMentees(ctx context.Context, programID string) ([]*models.ProgramCatalogMentee, error)
 	Create(ctx context.Context, input models.ProgramCreateInput) (*models.Program, error)
 	Update(ctx context.Context, id string, input models.ProgramUpdateInput) (*models.Program, error)
 	Delete(ctx context.Context, id string) error

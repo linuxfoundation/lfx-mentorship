@@ -19,6 +19,7 @@ type programService interface {
 	List(ctx context.Context, filter models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error)
 	ListCatalog(ctx context.Context, filter models.ProgramFilter) ([]*models.ProgramCatalogItem, *models.PaginationMeta, error)
 	GetCatalog(ctx context.Context, id string) (*models.ProgramCatalogItem, error)
+	ListCatalogMentees(ctx context.Context, programID string) ([]*models.ProgramCatalogMentee, error)
 	Create(ctx context.Context, input models.ProgramCreateInput) (*models.Program, error)
 	Update(ctx context.Context, id string, input models.ProgramUpdateInput) (*models.Program, error)
 	Delete(ctx context.Context, id string) error
@@ -102,6 +103,33 @@ func (h *ProgramHandler) GetCatalog(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	JSON(w, http.StatusOK, item)
+}
+
+// ListCatalogMentees handles GET /v1/programs/{id}/mentees.
+func (h *ProgramHandler) ListCatalogMentees(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	program, err := h.svc.GetByID(r.Context(), id)
+	if err != nil {
+		program, err = h.svc.GetBySlug(r.Context(), id)
+		if err != nil {
+			Error(w, err)
+			return
+		}
+	}
+	if program.Status == models.ProgramStatusHidden {
+		principal := auth.PrincipalFromContext(r.Context())
+		isOwner := principal != nil && program.LFID != nil && *program.LFID == principal.Username
+		if !isOwner {
+			Error(w, domain.ErrProgramNotFound)
+			return
+		}
+	}
+	mentees, err := h.svc.ListCatalogMentees(r.Context(), program.ID)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]any{"data": mentees})
 }
 
 // GetByID handles GET /v1/programs/{id}.

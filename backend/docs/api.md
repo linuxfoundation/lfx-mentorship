@@ -594,6 +594,34 @@ Same catalog shape as `GET /v1/programs/catalog` for a single program (UUID or s
 
 ---
 
+#### `GET /v1/programs/{id}/mentees` 🔓
+
+Public list of accepted, active, and graduated mentees for a program (UUID or slug). Hidden programs follow the same FR-009 404 rule as `GET /v1/programs/{id}`. Pending, declined, withdrawn, and hold applications are omitted.
+
+**Response** `200`
+```json
+{
+  "data": [
+    {
+      "user_id": "uuid",
+      "name": "Alex Mentee",
+      "avatar_url": "https://...",
+      "introduction": "I contribute to Kubernetes...",
+      "email": "alex@example.com",
+      "status": "active",
+      "term_id": "uuid",
+      "term_name": "Spring 2026"
+    }
+  ]
+}
+```
+
+`status` is the application status: `accepted`, `active`, or `graduated`. Display fields come from `users` and the mentee `user_profiles` row. `term_name` is `program_terms.name`.
+
+**Errors** `404`
+
+---
+
 #### `GET /v1/programs/{id}` 🔓
 
 Fetch a program by UUID or slug.

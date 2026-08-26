@@ -275,3 +275,21 @@ func TestProgramService_GetCatalog_NotFound(t *testing.T) {
 		t.Errorf("expected ErrProgramNotFound, got %v", err)
 	}
 }
+
+func TestProgramService_ListCatalogMentees(t *testing.T) {
+	var captured string
+	repo := &stubProgRepo{
+		listMentees: func(_ context.Context, id string) ([]*models.ProgramCatalogMentee, error) {
+			captured = id
+			return []*models.ProgramCatalogMentee{{UserID: "u1", Status: "active", TermID: "t1", TermName: "Spring 2026"}}, nil
+		},
+	}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	mentees, err := svc.ListCatalogMentees(context.Background(), "prog-1")
+	if err != nil {
+		t.Fatalf("ListCatalogMentees: %v", err)
+	}
+	if captured != "prog-1" || len(mentees) != 1 || mentees[0].UserID != "u1" {
+		t.Errorf("mentees = %+v captured = %q", mentees, captured)
+	}
+}

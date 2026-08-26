@@ -309,6 +309,57 @@ func (r *ProgramRepository) GetCatalog(ctx context.Context, id string) (*models.
 	return items[0], nil
 }
 
+// ListCatalogMentees returns accepted/active/graduated mentees for a program.
+func (r *ProgramRepository) ListCatalogMentees(ctx context.Context, programID string) ([]*models.ProgramCatalogMentee, error) {
+	ctx, span := programTracer.Start(ctx, "db.programs.ListCatalogMentees")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.program_id", programID))
+
+	rows, err := r.pool.Query(ctx, `
+		SELECT a.user_id, u.name, u.avatar_url, u.email, up.introduction, a.status, pt.id, pt.name
+		FROM applications a
+		JOIN program_terms pt ON pt.id = a.program_term_id
+		LEFT JOIN users u ON u.id = a.user_id
+		LEFT JOIN LATERAL (
+			SELECT introduction
+			FROM user_profiles
+			WHERE user_id = a.user_id
+			  AND profile_type = 'mentee'
+			ORDER BY updated_on DESC
+			LIMIT 1
+		) up ON true
+		WHERE pt.program_id = $1
+		  AND pt.status <> 'deleted'
+		  AND a.role = 'mentee'
+		  AND a.status IN ('accepted', 'active', 'graduated')
+		ORDER BY CASE WHEN a.status = 'graduated' THEN 1 ELSE 0 END,
+		         u.name NULLS LAST,
+		         pt.start_date_time DESC NULLS LAST`, programID)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("list catalog mentees: %w", err)
+	}
+	defer rows.Close()
+
+	var mentees []*models.ProgramCatalogMentee
+	for rows.Next() {
+		var m models.ProgramCatalogMentee
+		if err := rows.Scan(&m.UserID, &m.Name, &m.AvatarURL, &m.Email, &m.Introduction, &m.Status, &m.TermID, &m.TermName); err != nil {
+			span.RecordError(err)
+			return nil, fmt.Errorf("scan catalog mentee: %w", err)
+		}
+		mentees = append(mentees, &m)
+	}
+	if err := rows.Err(); err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("catalog mentees rows: %w", err)
+	}
+	if mentees == nil {
+		mentees = []*models.ProgramCatalogMentee{}
+	}
+	return mentees, nil
+}
+
 func (r *ProgramRepository) attachCatalog(ctx context.Context, programs []*models.Program) ([]*models.ProgramCatalogItem, error) {
 	items := make([]*models.ProgramCatalogItem, 0, len(programs))
 	if len(programs) == 0 {

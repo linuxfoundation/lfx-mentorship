@@ -70,6 +70,8 @@ SPDX-License-Identifier: MIT
             v-else-if="activeTab === 'mentees'"
             :current-mentees="currentMentees"
             :graduated-mentees="graduatedMentees"
+            :is-loading="isMenteesLoading"
+            :load-failed="Boolean(menteesError)"
           />
           <program-detail-sponsors
             v-else
@@ -91,6 +93,7 @@ import ProgramDetailSponsors from '../components/program-detail-sponsors.vue';
 import ProgramDetailTerms from '../components/program-detail-terms.vue';
 import { DEFAULT_PROGRAM_DETAIL_TAB, PROGRAM_DETAIL_TABS } from '../config/program-detail.config';
 import { useProgram } from '~/composables/programs/useProgram';
+import { useProgramMentees } from '~/composables/programs/useProgramMentees';
 import LfxButton from '~/components/uikit/button/button.vue';
 import LfxSpinner from '~/components/uikit/spinner/spinner.vue';
 import { ToastTypesEnum } from '~/components/uikit/toast/types/toast.types';
@@ -119,9 +122,20 @@ watch(error, (err) => {
 });
 
 const activeTab = ref(DEFAULT_PROGRAM_DETAIL_TAB);
+const menteesEnabled = computed(() => activeTab.value === 'mentees');
+const {
+  data: mentees,
+  isLoading: isMenteesLoading,
+  error: menteesError,
+} = useProgramMentees(programId, menteesEnabled);
 
-const currentMentees = computed(() => program.value?.mentees.filter((mentee) => mentee.status === 'active') ?? []);
-const graduatedMentees = computed(() => program.value?.mentees.filter((mentee) => mentee.status === 'graduated') ?? []);
+watch(menteesError, (err) => {
+  if (!import.meta.client || !err) return;
+  showToast(getFetchErrorMessage(err, 'Failed to load mentees. Please try again.'), ToastTypesEnum.negative);
+});
+
+const currentMentees = computed(() => mentees.value?.filter((mentee) => mentee.status === 'active') ?? []);
+const graduatedMentees = computed(() => mentees.value?.filter((mentee) => mentee.status === 'graduated') ?? []);
 
 watch(programId, () => {
   activeTab.value = DEFAULT_PROGRAM_DETAIL_TAB;

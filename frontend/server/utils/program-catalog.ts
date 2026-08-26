@@ -4,6 +4,7 @@
 import type {
   Program,
   ProgramMember,
+  ProgramMentee,
   ProgramStatus,
   ProgramTerm,
   TermStatus,
@@ -45,6 +46,21 @@ export interface ProgramCatalogItem {
   mentors?: ProgramCatalogMentor[];
 }
 
+export interface ProgramCatalogMentee {
+  user_id: string;
+  name?: string;
+  avatar_url?: string;
+  introduction?: string;
+  email?: string;
+  status: string;
+  term_id: string;
+  term_name: string;
+}
+
+export interface ProgramCatalogMenteesResponse {
+  data: ProgramCatalogMentee[];
+}
+
 export interface ProgramCatalogListResponse {
   data: ProgramCatalogItem[];
   meta: { total: number; limit: number; offset: number };
@@ -77,6 +93,23 @@ function mapMentor(mentor: ProgramCatalogMentor): ProgramMember {
     name: mentor.name?.trim() || 'Mentor',
     avatarUrl: mentor.avatar_url,
     intro: mentor.introduction?.trim() || undefined,
+  };
+}
+
+function toMenteeStatus(status: string): ProgramMentee['status'] {
+  return status === 'graduated' ? 'graduated' : 'active';
+}
+
+export function mapCatalogMentee(mentee: ProgramCatalogMentee): ProgramMentee {
+  return {
+    id: mentee.user_id,
+    name: mentee.name?.trim() || 'Mentee',
+    avatarUrl: mentee.avatar_url,
+    intro: mentee.introduction?.trim() || undefined,
+    email: mentee.email?.trim() || '',
+    status: toMenteeStatus(mentee.status),
+    termId: mentee.term_id,
+    termLabel: mentee.term_name,
   };
 }
 
@@ -153,6 +186,20 @@ export async function fetchProgramCatalogItem(id: string): Promise<ProgramCatalo
     throw createError({
       statusCode: fetchErrorStatus(error),
       message: fetchErrorStatus(error) === 404 ? 'Program not found' : 'Failed to load program',
+    });
+  }
+}
+
+export async function fetchProgramMentees(id: string): Promise<ProgramCatalogMenteesResponse> {
+  const config = useRuntimeConfig();
+  try {
+    return await $fetch<ProgramCatalogMenteesResponse>(
+      `${config.apiBaseUrl}/v1/programs/${id}/mentees`,
+    );
+  } catch (error) {
+    throw createError({
+      statusCode: fetchErrorStatus(error),
+      message: fetchErrorStatus(error) === 404 ? 'Program not found' : 'Failed to load mentees',
     });
   }
 }

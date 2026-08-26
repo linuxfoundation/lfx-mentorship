@@ -153,6 +153,20 @@ func (s *ProgramService) GetCatalog(ctx context.Context, id string) (*models.Pro
 	return item, nil
 }
 
+// ListCatalogMentees returns accepted/active/graduated mentees for a program.
+func (s *ProgramService) ListCatalogMentees(ctx context.Context, programID string) ([]*models.ProgramCatalogMentee, error) {
+	ctx, span := programSvcTracer.Start(ctx, "ProgramService.ListCatalogMentees")
+	defer span.End()
+	span.SetAttributes(attribute.String("program.id", programID))
+
+	mentees, err := s.repo.ListCatalogMentees(ctx, programID)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("list catalog mentees: %w", err)
+	}
+	return mentees, nil
+}
+
 // Create validates input and creates a program.
 func (s *ProgramService) Create(ctx context.Context, input models.ProgramCreateInput) (*models.Program, error) {
 	ctx, span := programSvcTracer.Start(ctx, "ProgramService.Create")

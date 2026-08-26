@@ -150,6 +150,7 @@ type stubProgRepo struct {
 	list            func(context.Context, models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error)
 	listCatalog     func(context.Context, models.ProgramFilter) ([]*models.ProgramCatalogItem, *models.PaginationMeta, error)
 	getCatalog      func(context.Context, string) (*models.ProgramCatalogItem, error)
+	listMentees     func(context.Context, string) ([]*models.ProgramCatalogMentee, error)
 	create          func(context.Context, models.ProgramCreateInput) (*models.Program, error)
 	update          func(context.Context, string, models.ProgramUpdateInput) (*models.Program, error)
 	delete          func(context.Context, string) error
@@ -188,6 +189,12 @@ func (m *stubProgRepo) GetCatalog(ctx context.Context, id string) (*models.Progr
 		return m.getCatalog(ctx, id)
 	}
 	return &models.ProgramCatalogItem{Program: models.Program{ID: id, Status: models.ProgramStatusPublished}}, nil
+}
+func (m *stubProgRepo) ListCatalogMentees(ctx context.Context, id string) ([]*models.ProgramCatalogMentee, error) {
+	if m.listMentees != nil {
+		return m.listMentees(ctx, id)
+	}
+	return []*models.ProgramCatalogMentee{}, nil
 }
 func (m *stubProgRepo) Create(ctx context.Context, in models.ProgramCreateInput) (*models.Program, error) {
 	if m.create != nil {
