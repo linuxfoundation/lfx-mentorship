@@ -53,7 +53,9 @@ flowchart TB
 
 **Statuses**: mentee applications run pending/accepted/declined/graduated/withdrawn; declined mentor invitations use the same `declined` vocabulary. The backfill inventory maps any legacy status variants onto this set explicitly.
 
-**No enrollment entity.** In the legacy system the application *is* the lifecycle object: one `project-members` row (memberType `apprentice`, keyed by user + program term) whose status runs the full journey `pending → accepted → graduated`. Acceptance and graduation are status changes on that row, and mentors relate to the **program**, not to individual mentees (a mentee's "mentors" list is a cron-denormalized copy of the program's approved mentors). The rewrite keeps that shape — no `enrollments` table, no mentor-mentee assignment — and the ERD in [02](./02-target-architecture.md) will be corrected accordingly.
+**Vocabulary**: the new model uses **mentee** throughout, including as the member-type value. Legacy's internal `apprentice` (never surfaced in the UI, which already says "mentee") is mapped to `mentee` by the backfill; it appears in these docs only when quoting legacy data.
+
+**No enrollment entity.** In the legacy system the application *is* the lifecycle object: one `project-members` row (memberType `apprentice` → `mentee`, keyed by user + program term) whose status runs the full journey `pending → accepted → graduated`. Acceptance and graduation are status changes on that row, and mentors relate to the **program**, not to individual mentees (a mentee's "mentors" list is a cron-denormalized copy of the program's approved mentors). The rewrite keeps that shape — no `enrollments` table, no mentor-mentee assignment — and the ERD in [02](./02-target-architecture.md) will be corrected accordingly.
 
 ### FGA types and derived permissions (sketch)
 
