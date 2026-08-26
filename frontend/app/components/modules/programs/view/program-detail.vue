@@ -93,6 +93,9 @@ import { DEFAULT_PROGRAM_DETAIL_TAB, PROGRAM_DETAIL_TABS } from '../config/progr
 import { useProgram } from '~/composables/programs/useProgram';
 import LfxButton from '~/components/uikit/button/button.vue';
 import LfxSpinner from '~/components/uikit/spinner/spinner.vue';
+import { ToastTypesEnum } from '~/components/uikit/toast/types/toast.types';
+import useToastService from '~/components/uikit/toast/toast.service';
+import { getFetchErrorMessage } from '~/utils/fetch-error';
 
 const props = defineProps<{
   programId: string;
@@ -100,9 +103,20 @@ const props = defineProps<{
 
 const programId = computed(() => props.programId);
 const { data: program, isLoading, error } = useProgram(programId);
+const { showToast } = useToastService();
 const {
   public: { crowdfundingUrl },
 } = useRuntimeConfig();
+
+watch(error, (err) => {
+  if (!import.meta.client || !err) return;
+  const statusCode =
+    typeof err === 'object' && err !== null && 'statusCode' in err
+      ? Number((err as { statusCode?: number }).statusCode)
+      : 0;
+  const fallback = statusCode === 404 ? 'Program not found.' : 'Failed to load program. Please try again.';
+  showToast(getFetchErrorMessage(err, fallback), ToastTypesEnum.negative);
+});
 
 const activeTab = ref(DEFAULT_PROGRAM_DETAIL_TAB);
 
@@ -120,11 +134,11 @@ function openRepository() {
 }
 
 function openDonate() {
-  const initiativeId = program.value?.crowdfundingInitiativeId;
-  if (!initiativeId || !import.meta.client) return;
+  const programId = program.value?.id;
+  if (!programId || !import.meta.client) return;
 
   const base = String(crowdfundingUrl).replace(/\/$/, '');
-  window.open(`${base}/initiatives/${initiativeId}`, '_blank', 'noopener,noreferrer');
+  window.open(`${base}/initiatives/${programId}`, '_blank', 'noopener,noreferrer');
 }
 
 useHead({

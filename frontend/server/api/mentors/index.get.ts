@@ -1,7 +1,6 @@
 // Copyright The Linux Foundation and each contributor to LFX.
 // SPDX-License-Identifier: MIT
 
-import { SKILL_LIST } from '../../../app/config/skills';
 import { MOCK_MENTORS } from '../../mock-data/directory';
 import type { Mentor, MentorsListResponse } from '../../../app/types/mentor.types';
 
@@ -36,7 +35,6 @@ export default defineEventHandler((event): MentorsListResponse => {
   return {
     data,
     total: data.length,
-    skills: SKILL_LIST,
     mentorCount: MOCK_MENTORS.length,
     projectCount,
   };

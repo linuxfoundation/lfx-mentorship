@@ -17,6 +17,8 @@ type programService interface {
 	GetByID(ctx context.Context, id string) (*models.Program, error)
 	GetBySlug(ctx context.Context, slug string) (*models.Program, error)
 	List(ctx context.Context, filter models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error)
+	ListCatalog(ctx context.Context, filter models.ProgramFilter) ([]*models.ProgramCatalogItem, *models.PaginationMeta, error)
+	GetCatalog(ctx context.Context, id string) (*models.ProgramCatalogItem, error)
 	Create(ctx context.Context, input models.ProgramCreateInput) (*models.Program, error)
 	Update(ctx context.Context, id string, input models.ProgramUpdateInput) (*models.Program, error)
 	Delete(ctx context.Context, id string) error
@@ -53,6 +55,53 @@ func (h *ProgramHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	JSON(w, http.StatusOK, map[string]any{"data": programs, "meta": meta})
+}
+
+func catalogSortParam(r *http.Request) string {
+	if v := r.URL.Query().Get("sort_by"); v != "" {
+		return v
+	}
+	return r.URL.Query().Get("sortBy")
+}
+
+// ListCatalog handles GET /v1/programs/catalog.
+func (h *ProgramHandler) ListCatalog(w http.ResponseWriter, r *http.Request) {
+	limit, offset, ok := parsePaginationParams(w, r)
+	if !ok {
+		return
+	}
+	items, meta, err := h.svc.ListCatalog(r.Context(), models.ProgramFilter{
+		Limit:           limit,
+		Offset:          offset,
+		Search:          r.URL.Query().Get("search"),
+		Skill:           r.URL.Query().Get("skill"),
+		DiscoveryStatus: r.URL.Query().Get("status"),
+		SortBy:          catalogSortParam(r),
+	})
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]any{"data": items, "meta": meta})
+}
+
+// GetCatalog handles GET /v1/programs/{id}/catalog.
+func (h *ProgramHandler) GetCatalog(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	item, err := h.svc.GetCatalog(r.Context(), id)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	if item.Status == models.ProgramStatusHidden {
+		principal := auth.PrincipalFromContext(r.Context())
+		isOwner := principal != nil && item.LFID != nil && *item.LFID == principal.Username
+		if !isOwner {
+			Error(w, domain.ErrProgramNotFound)
+			return
+		}
+	}
+	JSON(w, http.StatusOK, item)
 }
 
 // GetByID handles GET /v1/programs/{id}.

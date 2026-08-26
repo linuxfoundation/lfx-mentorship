@@ -124,3 +124,26 @@ type ProgramFundingStats struct {
 	CreatedOn    time.Time `json:"created_on"`
 	UpdatedOn    time.Time `json:"updated_on"`
 }
+
+// ProgramCatalogTerm is a program term with the computed public discovery label.
+type ProgramCatalogTerm struct {
+	ProgramTerm
+	DiscoveryLabel string `json:"discovery_label"`
+}
+
+// ProgramCatalogMentor is an active mentor with display fields joined from users.
+type ProgramCatalogMentor struct {
+	ID        string  `json:"id"`
+	UserID    string  `json:"user_id"`
+	Name      *string `json:"name,omitempty"`
+	AvatarURL *string `json:"avatar_url,omitempty"`
+	Email     *string `json:"email,omitempty"`
+}
+
+// ProgramCatalogItem is the public catalog shape: a program plus nested skills, terms, and mentors.
+type ProgramCatalogItem struct {
+	Program
+	Skills  []string               `json:"skills"`
+	Terms   []ProgramCatalogTerm   `json:"terms"`
+	Mentors []ProgramCatalogMentor `json:"mentors"`
+}
