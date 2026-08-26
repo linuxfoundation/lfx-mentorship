@@ -27,10 +27,9 @@ flowchart TB
     PROJECT["LF Project<br/><i>(exists in FGA today)</i>"]
     PROGRAM["Program"]
     TERM["Program Term"]
-    APP["Application"]
-    ENR["Enrollment"]
+    APP["Application<br/><i>(status: pending → accepted →<br/>graduated | rejected | withdrawn | hold)</i>"]
     TASK["Task<br/><i>(category: prerequisite | program)</i>"]
-    ADMIN(["Program Admin"])
+    ADMIN(["Program Admin<br/>(maintainer)"])
     MENTOR(["Mentor"])
     MENTEE(["Applicant / Mentee"])
 
@@ -44,16 +43,15 @@ flowchart TB
 
     PROGRAM -.->|"has terms"| TERM
     TERM -.->|"receives"| APP
-    TERM -.->|"has"| ENR
-    APP -.->|"accepted ⇒ creates"| ENR
-    ENR -.->|"works on (program tasks)"| TASK
-    MENTOR -.->|"assigned via enrollment_mentors"| ENR
+    APP -.->|"has tasks (both categories)"| TASK
 
     linkStyle 0,1,2,3,4,5,6 stroke:#2563eb,stroke-width:2.5px
-    linkStyle 7,8,9,10,11,12 stroke:#9ca3af,stroke-dasharray:5 5
+    linkStyle 7,8,9 stroke:#9ca3af,stroke-dasharray:5 5
 ```
 
-**Legend:** ═══ blue = Postgres **and** FGA (via fga-sync) · - - - grey = Postgres only.
+**Legend:** ═══ blue = Postgres **and** FGA (via fga-sync) · - - - grey = Postgres only. Edge labels on blue edges are the FGA **relation names** — e.g. `mentee ==applicant==> application` is the direct tuple `mentorship_application:{uid}#applicant@user:{lfid}`, not an intermediate hop.
+
+**No enrollment entity.** In the legacy system the application *is* the lifecycle object: one `project-members` row (memberType `apprentice`, keyed by user + program term) whose status runs the full journey `pending → accepted → graduated`. Acceptance and graduation are status changes on that row, and mentors relate to the **program**, not to individual mentees (a mentee's "mentors" list is a cron-denormalized copy of the program's approved mentors). The rewrite keeps that shape — no `enrollments` table, no mentor-mentee assignment — and the ERD in [02](./02-target-architecture.md) will be corrected accordingly.
 
 ### FGA types and derived permissions (sketch)
 
@@ -79,7 +77,7 @@ Two tuples per application/task (owner + parent), a handful per program. At Ment
 ## Deliberate modeling decisions
 
 1. **No mentee→program relation.** "Accepted mentee" is a *state* of the application (Postgres), not an FGA relation. Every mentee-facing surface is already covered: their applications and tasks carry their own `applicant`/`assignee` tuples, program pages are public, and their dashboard is `/me`-scoped. No route needs "caller is an accepted mentee of program X" at the edge. If one appears (e.g. enrolled-only program content), acceptance is exactly the transition where a `participant` tuple would be emitted — deferred until a route requires it.
-2. **Tasks parent to the program, not to applications or enrollments.** Matches the legacy data shape (owner + project + term) and the fact that tasks exist in both phases: prerequisite tasks are assigned to applicants, program tasks to enrolled mentees. Access is identical either way — assignee acts, program mentors/admins review — so one FGA type covers both categories.
+2. **Tasks: structural parent is the application; FGA parent is the program.** In Postgres, tasks belong to the mentee's application journey (prerequisite tasks gate whether the application is considered; program tasks gate graduation — same object, `category` distinguishes the phase, as in legacy `task.Category`). In FGA, the task's `parent` points at the **program**, because the reviewers (mentors/admins) hold their relations there — pointing it at the application would authorize nobody. One FGA type covers both categories.
 3. **Workflow gates are business logic, not access rules.** "All prerequisite tasks submitted before the application is considered" and "all program tasks submitted to graduate" are state-machine checks in Postgres. FGA answers *who may touch*; the service answers *what is allowed given state*.
 4. **Pending invitations/applications have no FGA presence.** A pending mentor invitation or mentee application is a Postgres row. Tuples appear when the relationship becomes effective (invite accepted → `mentor`; application submitted → `applicant` + `parent` so mentors can evaluate it).
 5. **List routes are nested to reuse the parent check.** `GET /programs/{uid}/applications` lets Heimdall authorize the caller's relation on the program straight from the path — no per-object listing problem, no mentor→application tuples.
@@ -92,8 +90,8 @@ Two tuples per application/task (owner + parent), a handful per program. At Ment
 | Mentor invite accepted | `program_members` row | `member_put` mentor→program |
 | Application submitted | `applications` row | `update_access`: applicant + parent program |
 | Prerequisite/program task created | `tasks` row | `update_access`: assignee + parent program |
-| Application accepted | status change + `enrollments` row | — (none; see decision 1) |
-| Graduation / gate checks | status changes | — |
+| Application accepted | status change on the application row | — (none; see decision 1) |
+| Graduation / gate checks | status change on the application row | — |
 | Withdrawal / member removal | status change / row removal | `member_remove` / `delete_access` |
 | Backfill (one-time) | DynamoDB → Postgres ETL | bulk seed: re-emit `update_access` for every object |
 
