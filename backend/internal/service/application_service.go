@@ -131,6 +131,9 @@ func (s *ApplicationService) Create(ctx context.Context, programTermID string, i
 	if input.ProgramTermStatus != nil && !input.ProgramTermStatus.IsValid() {
 		return nil, fmt.Errorf("%w: invalid program term status %q", domain.ErrInvalidInput, *input.ProgramTermStatus)
 	}
+	if input.AttendanceType != nil && !input.AttendanceType.IsValid() {
+		return nil, fmt.Errorf("%w: attendance_type must be full_time or part_time", domain.ErrInvalidInput)
+	}
 	input.Status = models.ApplicationStatusPending // applications always start as pending
 
 	// Application window guard (FR-016): term must be open and now within the window.

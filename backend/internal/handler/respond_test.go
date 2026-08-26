@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/handler"
 )
@@ -87,5 +88,34 @@ func TestError_WritesJSONBody(t *testing.T) {
 	ct := w.Header().Get("Content-Type")
 	if ct != "application/json" {
 		t.Errorf("Content-Type = %q; want application/json", ct)
+	}
+}
+
+// A CHECK constraint violation is bad client input, not a server fault, so it
+// must not surface as a 500.
+func TestError_CheckViolation_IsNotInternalError(t *testing.T) {
+	rec := httptest.NewRecorder()
+	handler.Error(rec, &pgconn.PgError{Code: "23514", ConstraintName: "applications_attendance_check"})
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("expected 422 for check_violation, got %d", rec.Code)
+	}
+}
+
+func TestError_PgErrorMappings(t *testing.T) {
+	cases := []struct {
+		code string
+		want int
+	}{
+		{"23503", http.StatusUnprocessableEntity}, // foreign_key_violation
+		{"23505", http.StatusConflict},            // unique_violation
+		{"23514", http.StatusUnprocessableEntity}, // check_violation
+	}
+	for _, tc := range cases {
+		rec := httptest.NewRecorder()
+		handler.Error(rec, &pgconn.PgError{Code: tc.code})
+		if rec.Code != tc.want {
+			t.Errorf("SQLSTATE %s: expected %d, got %d", tc.code, tc.want, rec.Code)
+		}
 	}
 }

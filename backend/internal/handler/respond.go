@@ -52,6 +52,8 @@ func mapError(err error) (int, string) {
 			return http.StatusUnprocessableEntity, "referenced resource does not exist"
 		case "23505": // unique_violation
 			return http.StatusConflict, "a resource with that value already exists"
+		case "23514": // check_violation — a value outside an allowed set reached the DB
+			return http.StatusUnprocessableEntity, "a field value is not allowed"
 		}
 	}
 	switch {
