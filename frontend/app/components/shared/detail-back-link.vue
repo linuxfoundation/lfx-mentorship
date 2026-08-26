@@ -5,12 +5,12 @@ SPDX-License-Identifier: MIT
 <template>
   <NuxtLink
     :to="to"
-    class="inline-flex items-center gap-1.5 text-sm font-medium text-brand-600 hover:text-brand-700"
+    class="inline-flex items-center gap-1.5 text-xs font-medium text-brand-600 hover:text-brand-700"
   >
     <lfx-icon
       name="chevron-left"
       type="light"
-      :size="12"
+      :size="11"
     />
     {{ label }}
   </NuxtLink>

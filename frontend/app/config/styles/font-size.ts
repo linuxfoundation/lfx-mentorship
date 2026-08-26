@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: MIT
 export const lfxFontSizes = {
   // Base scale
-  xxxs: ['0.5rem', '1.25'] as [string, string],
-  xxs: ['0.625rem', '1.25'] as [string, string],
-  '2xs': '0.625rem',
+  xxxxs: ['0.5rem', '1.25'] as [string, string],
+  xxxs: ['0.625rem', '1.25'] as [string, string],
+  xxs: ['0.6875rem', '1.25'] as [string, string],
+  '3xs': '0.625rem',
+  '2xs': '0.6875rem',
   xs: '0.75rem',
   sm: '0.875rem',
   base: '1rem',

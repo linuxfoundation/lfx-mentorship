@@ -26,7 +26,7 @@ SPDX-License-Identifier: MIT
         @donate="openDonate"
       />
 
-      <section class="border border-neutral-200 rounded-2xl bg-white overflow-hidden">
+      <section class="border border-neutral-200 rounded-lg bg-white overflow-hidden">
         <div class="border-b border-neutral-200 px-4 md:px-6">
           <div
             class="flex flex-wrap gap-1"

@@ -10,6 +10,7 @@ import type {
   ProgramsListResponse,
 } from '../../../app/types/program.types';
 import { PROGRAM_STATUSES } from '../../../app/types/program.types';
+import { withActiveTerms } from '../../../app/utils/program-terms';
 
 function isProgramStatus(value: string): value is ProgramStatus {
   return (PROGRAM_STATUSES as readonly string[]).includes(value);
@@ -69,7 +70,7 @@ export default defineEventHandler((event): ProgramsListResponse => {
   const status = String(query.status ?? 'all');
   const sortBy = String(query.sortBy ?? 'accepting_first') as ProgramSortBy;
 
-  let data = [...MOCK_PROGRAMS];
+  let data = MOCK_PROGRAMS.map(withActiveTerms);
 
   if (status !== 'all' && isProgramStatus(status)) {
     data = data.filter((program) => program.status === status);
@@ -87,7 +88,7 @@ export default defineEventHandler((event): ProgramsListResponse => {
         program.name,
         program.description,
         program.foundation.name,
-        program.activeTerm.name,
+        ...program.terms.map((term) => term.name),
         ...program.skills,
       ]
         .join(' ')
