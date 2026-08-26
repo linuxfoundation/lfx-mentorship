@@ -200,6 +200,7 @@ func (r *ProgramTermRepository) CountOpenTermsByProgram(ctx context.Context, pro
 	span.SetAttributes(attribute.String("db.program_id", programID))
 
 	var count int
+	// NOTE: status literal must stay in sync with models.ProgramTermStatus.
 	err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM program_terms WHERE program_id = $1 AND status = 'open'`, programID).Scan(&count)
 	if err != nil {
 		span.RecordError(err)

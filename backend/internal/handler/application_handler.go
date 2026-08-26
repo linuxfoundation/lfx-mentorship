@@ -157,7 +157,7 @@ func (h *ApplicationHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := chi.URLParam(r, "id")
-	withdrawn := "withdrawn"
+	withdrawn := models.ApplicationStatusWithdrawn
 	if _, err := h.svc.Update(r.Context(), id, models.ApplicationUpdateInput{
 		Status:  &withdrawn,
 		ActorID: principal.UserID,
@@ -223,10 +223,10 @@ func (h *ApplicationHandler) ExportByTerm(w http.ResponseWriter, r *http.Request
 	for _, a := range apps {
 		attType := ""
 		if a.AttendanceType != nil {
-			attType = *a.AttendanceType
+			attType = string(*a.AttendanceType)
 		}
 		_ = cw.Write([]string{
-			a.ID, a.UserID, a.Role, a.Status, attType,
+			a.ID, a.UserID, string(a.Role), string(a.Status), attType,
 			strconv.FormatBool(a.TasksSubmitted),
 			strconv.FormatInt(a.CreatedOn.Unix(), 10),
 		})
