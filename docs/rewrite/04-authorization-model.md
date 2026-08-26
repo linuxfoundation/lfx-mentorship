@@ -92,7 +92,8 @@ Two tuples per application/task (owner + parent), a handful per program. At Ment
 | Prerequisite/program task created | `tasks` row | `update_access`: assignee + parent program |
 | Application accepted | status change on the application row | — (none; see decision 1) |
 | Graduation / gate checks | status change on the application row | — |
-| Withdrawal / member removal | status change / row removal | `member_remove` / `delete_access` |
+| Application withdrawn | status change on the application row | — (tuples stay: applicant and program mentors/admins can still view the record) |
+| Mentor / admin removed from program | status change on the member row | `member_remove` (access ends; the Postgres row is kept as history) |
 | Backfill (one-time) | DynamoDB → Postgres ETL | bulk seed: re-emit `update_access` for every object |
 
 ## Open questions for the Architecture team
