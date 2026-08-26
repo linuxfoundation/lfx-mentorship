@@ -35,6 +35,10 @@ const TERM_DATES_BY_LABEL: Record<string, { startsAt: string; endsAt: string }> 
   'Jan-Mar 2025': { startsAt: '2025-01-01', endsAt: '2025-03-31' },
   'Apr-Jun 2025': { startsAt: '2025-04-01', endsAt: '2025-06-30' },
   'Sep-Nov 2025': { startsAt: '2025-09-01', endsAt: '2025-11-30' },
+  'Mar 2 – May 25, 2026': { startsAt: '2026-03-02', endsAt: '2026-05-25' },
+  'Jun 1 – Aug 24, 2026': { startsAt: '2026-06-01', endsAt: '2026-08-24' },
+  'Sep 1 – Nov 23, 2026': { startsAt: '2026-09-01', endsAt: '2026-11-23' },
+  'Dec 1, 2026 – Feb 22, 2027': { startsAt: '2026-12-01', endsAt: '2027-02-22' },
   'September through November 2026 (extended mentorship window)': {
     startsAt: '2026-09-01',
     endsAt: '2026-11-30',
@@ -105,23 +109,37 @@ const PROGRAM_SEEDS: Omit<Program, 'activeTerms'>[] = [
     status: 'acceptance',
     foundation: cncf,
     terms: [
-      term('t1-1', 'Term 1', 'Jan-Mar 2026', '2025-12-01T00:00:00.000Z', 'closed'),
-      term('t1-2', 'Term 2', 'Apr-Jun 2026', '2026-03-01T00:00:00.000Z', 'closed'),
+      term(
+        't1-1',
+        'Spring 2026',
+        'Mar 2 – May 25, 2026',
+        '2026-01-15T00:00:00.000Z',
+        'closed',
+        '2025-11-03T00:00:00.000Z',
+      ),
+      term(
+        't1-2',
+        'Summer 2026',
+        'Jun 1 – Aug 24, 2026',
+        '2026-04-15T00:00:00.000Z',
+        'closed',
+        '2026-02-02T00:00:00.000Z',
+      ),
       term(
         't1-3',
-        'Term 3',
-        'Sep-Nov 2026',
+        'Fall 2026',
+        'Sep 1 – Nov 23, 2026',
         '2026-09-15T00:00:00.000Z',
         'open',
-        '2026-07-01T00:00:00.000Z',
+        '2026-05-01T00:00:00.000Z',
       ),
       term(
         't1-4',
-        'Term 4',
-        'Jan-Mar 2027',
-        '2026-11-01T00:00:00.000Z',
+        'Winter 2026',
+        'Dec 1, 2026 – Feb 22, 2027',
+        '2026-10-15T00:00:00.000Z',
         'open',
-        '2026-08-01T00:00:00.000Z',
+        '2026-09-01T00:00:00.000Z',
       ),
     ],
     updatedAt: '2026-08-10T12:00:00.000Z',
@@ -129,7 +147,7 @@ const PROGRAM_SEEDS: Omit<Program, 'activeTerms'>[] = [
     crowdfundingInitiativeId: '9b4080d9-701a-4513-85e6-a162beb3773a',
     mentees: [
       mentee(
-        'm1',
+        'me-1',
         'Hana Suzuki',
         'active',
         'Fall 2026',
@@ -137,7 +155,7 @@ const PROGRAM_SEEDS: Omit<Program, 'activeTerms'>[] = [
         'hsuzuki@example.org',
       ),
       mentee(
-        'm2',
+        'me-2',
         'Mateo Rossi',
         'active',
         'Fall 2026',
@@ -145,7 +163,7 @@ const PROGRAM_SEEDS: Omit<Program, 'activeTerms'>[] = [
         'mrossi@example.org',
       ),
       mentee(
-        'm3',
+        'me-3',
         'Ifeoma Adeyemi',
         'graduated',
         'Spring 2026',
@@ -153,7 +171,7 @@ const PROGRAM_SEEDS: Omit<Program, 'activeTerms'>[] = [
         'iadeyemi@example.org',
       ),
       mentee(
-        'm3b',
+        'me-4',
         'Luis Fernández',
         'graduated',
         'Spring 2026',
@@ -161,7 +179,7 @@ const PROGRAM_SEEDS: Omit<Program, 'activeTerms'>[] = [
         'lfernandez@example.org',
       ),
       mentee(
-        'm3c',
+        'me-5',
         'Grace Wanjiru',
         'graduated',
         'Summer 2025',
@@ -169,7 +187,7 @@ const PROGRAM_SEEDS: Omit<Program, 'activeTerms'>[] = [
         'gwanjiru@example.org',
       ),
       mentee(
-        'm3d',
+        'me-6',
         'Omar Haddad',
         'graduated',
         'Spring 2025',
@@ -217,14 +235,14 @@ const PROGRAM_SEEDS: Omit<Program, 'activeTerms'>[] = [
     crowdfundingInitiativeId: '9b4080d9-701a-4513-85e6-a162beb3773a',
     mentees: [
       mentee(
-        'm4',
+        'me-4',
         'Taylor Brooks',
         'active',
         'Summer 2026',
         'Learning vulnerability triage and secure-by-default habits while pairing with security mentors on real project issues.',
       ),
       mentee(
-        'm5',
+        'me-5',
         'Morgan Diaz',
         'graduated',
         'Spring 2026',
@@ -268,7 +286,7 @@ const PROGRAM_SEEDS: Omit<Program, 'activeTerms'>[] = [
     crowdfundingInitiativeId: '9b4080d9-701a-4513-85e6-a162beb3773a',
     mentees: [
       mentee(
-        'm6',
+        'me-6',
         'Casey Ng',
         'graduated',
         'Spring 2026',
@@ -327,28 +345,28 @@ const PROGRAM_SEEDS: Omit<Program, 'activeTerms'>[] = [
     crowdfundingInitiativeId: '9b4080d9-701a-4513-85e6-a162beb3773a',
     mentees: [
       mentee(
-        'm7',
+        'me-7',
         'Jamie Soto-Fernandez de la Vega y Contreras',
         'active',
         'Fall 2026',
         'Building a prompt-template playground around Apicurio Registry, including schema discovery, template authoring, and validation workflows for cloud-native API artifacts.',
       ),
       mentee(
-        'm8',
+        'me-8',
         'Robin Hale',
         'active',
         'Fall 2026',
         'Working on template authoring and validation flows so developers can experiment with AsyncAPI, OpenAPI, and Protobuf artifacts before publishing.',
       ),
       mentee(
-        'm9',
+        'me-9',
         'DrewParksApicurioRegistryContributorWithoutSpaces',
         'graduated',
         'Summer 2026',
         'Contributed registry UX and contributor onboarding so teams can find, validate, and share API artifacts across services.',
       ),
       mentee(
-        'm10',
+        'me-10',
         'Skyler Dunn',
         'graduated',
         'Spring 2026',
@@ -398,14 +416,14 @@ const PROGRAM_SEEDS: Omit<Program, 'activeTerms'>[] = [
     crowdfundingInitiativeId: '9b4080d9-701a-4513-85e6-a162beb3773a',
     mentees: [
       mentee(
-        'm11',
+        'me-11',
         'Parker James',
         'active',
         'Summer 2026',
         'Learning kernel development, mailing-list etiquette, and how to send a first patch with mentor review.',
       ),
       mentee(
-        'm12',
+        'me-12',
         'Reese Ortiz',
         'graduated',
         'Spring 2026',
@@ -447,21 +465,21 @@ const PROGRAM_SEEDS: Omit<Program, 'activeTerms'>[] = [
     crowdfundingInitiativeId: '9b4080d9-701a-4513-85e6-a162beb3773a',
     mentees: [
       mentee(
-        'm13',
+        'me-13',
         'Blake Foster',
         'graduated',
         'Fall 2025',
         'Developed facilitation and inclusive community practices through hands-on work with LF mentors.',
       ),
       mentee(
-        'm14',
+        'me-14',
         'Cameron Ellis',
         'graduated',
         'Summer 2025',
         'Learned open source governance and community leadership by supporting contributor programs.',
       ),
       mentee(
-        'm15',
+        'me-15',
         'Devon Price',
         'graduated',
         'Spring 2025',
@@ -509,7 +527,7 @@ const PROGRAM_SEEDS: Omit<Program, 'activeTerms'>[] = [
     crowdfundingInitiativeId: '9b4080d9-701a-4513-85e6-a162beb3773a',
     mentees: [
       mentee(
-        'm16',
+        'me-16',
         'Amir Haddad',
         'active',
         'Fall 2026',
@@ -544,14 +562,14 @@ const PROGRAM_SEEDS: Omit<Program, 'activeTerms'>[] = [
     crowdfundingInitiativeId: '9b4080d9-701a-4513-85e6-a162beb3773a',
     mentees: [
       mentee(
-        'm17',
+        'me-17',
         'Lucia Romano',
         'active',
         'Summer 2026',
         'Learning safe systems programming by contributing to Rust crates used across Linux Foundation projects.',
       ),
       mentee(
-        'm18',
+        'me-18',
         'Ben Walsh',
         'graduated',
         'Spring 2026',

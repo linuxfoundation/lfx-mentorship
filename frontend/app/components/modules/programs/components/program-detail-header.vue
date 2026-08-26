@@ -80,9 +80,9 @@ SPDX-License-Identifier: MIT
       </div>
 
       <aside
-        class="w-full shrink-0 rounded-xl bg-neutral-50 border border-neutral-100 px-4.5 py-4 lg:w-52"
         v-for="term in displayTerms"
         :key="term.id"
+        class="w-full shrink-0 rounded-xl bg-neutral-50 border border-neutral-100 px-4.5 py-4 lg:w-52"
       >
         <p class="text-xs font-semibold uppercase tracking-wide text-neutral-500 mb-3">
           {{ isAccepting ? 'Accepting Applications' : 'Previous Term' }}

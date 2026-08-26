@@ -22,10 +22,10 @@ SPDX-License-Identifier: MIT
       <li
         v-for="sponsor in sponsors"
         :key="sponsor.id"
-        class="flex flex-col items-center justify-center rounded-xl border border-neutral-200 bg-white px-4 py-6 text-center"
+        class="flex flex-col items-center justify-center rounded-xl border border-neutral-200 bg-white p-4 text-center"
       >
         <p class="text-sm font-semibold text-neutral-900 break-word">{{ sponsor.name }}</p>
-        <p class="mt-1 text-sm text-neutral-500">
+        <p class="mt-1 text-xs text-neutral-500">
           {{ formatUsdFromCents(sponsor.amountCents) }}
         </p>
       </li>

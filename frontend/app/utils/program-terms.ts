@@ -3,6 +3,11 @@
 
 import type { Program, ProgramTerm } from '../types/program.types';
 
+/** Public-facing term lifecycle shown on the program Terms tab. */
+export const PROGRAM_TERM_DISPLAY_STATUSES = ['opens-soon', 'accepting', 'completed'] as const;
+
+export type ProgramTermDisplayStatus = (typeof PROGRAM_TERM_DISPLAY_STATUSES)[number];
+
 /**
  * Terms currently accepting applications: status is open, the start
  * date has been reached, and the close date has not arrived yet.
@@ -30,6 +35,49 @@ export function withActiveTerms(program: Omit<Program, 'activeTerms'> | Program)
 
 export function formatTermLabel(term: ProgramTerm): string {
   return term.dateRangeLabel ? `${term.name} · ${term.dateRangeLabel}` : term.name;
+}
+
+/**
+ * Maps a term to the badge state shown on the public Terms tab.
+ * Prefers application-window timing over the raw open/closed status.
+ */
+export function getProgramTermDisplayStatus(
+  term: ProgramTerm,
+  now: Date = new Date(),
+): ProgramTermDisplayStatus {
+  if (term.status === 'closed' || term.status === 'deleted') {
+    return 'completed';
+  }
+
+  const nowMs = now.getTime();
+  const applicationsStartMs = parseTime(term.applicationsStartAt);
+  const applicationsCloseMs = parseTime(term.applicationsCloseAt);
+  const termEndMs = parseTime(term.endsAt);
+
+  if (applicationsStartMs !== null && nowMs < applicationsStartMs) {
+    return 'opens-soon';
+  }
+
+  if (
+    applicationsStartMs !== null &&
+    applicationsCloseMs !== null &&
+    applicationsStartMs <= nowMs &&
+    nowMs < applicationsCloseMs
+  ) {
+    return 'accepting';
+  }
+
+  if (termEndMs !== null && nowMs > termEndMs) {
+    return 'completed';
+  }
+
+  // Application window passed but term not finished — treat as completed for listing.
+  return 'completed';
+}
+
+/** Newest term first for the Terms tab table. */
+export function sortTermsNewestFirst(terms: ProgramTerm[]): ProgramTerm[] {
+  return [...terms].sort((a, b) => (parseTime(b.startsAt) ?? 0) - (parseTime(a.startsAt) ?? 0));
 }
 
 function parseTime(iso: string | undefined): number | null {

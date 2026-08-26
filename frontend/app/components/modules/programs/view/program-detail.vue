@@ -57,10 +57,14 @@ SPDX-License-Identifier: MIT
             v-if="activeTab === 'overview'"
             :program="program"
           />
-          <program-detail-members
+          <program-detail-terms
+            v-else-if="activeTab === 'terms'"
+            :terms="program.terms"
+          />
+          <program-detail-mentors
             v-else-if="activeTab === 'mentors'"
-            :members="program.mentors"
-            empty-label="mentors"
+            :mentors="program.mentors"
+            empty-label="Mentors"
           />
           <program-detail-mentees
             v-else-if="activeTab === 'mentees'"
@@ -80,10 +84,11 @@ SPDX-License-Identifier: MIT
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import ProgramDetailHeader from '../components/program-detail-header.vue';
-import ProgramDetailMembers from '../components/program-detail-members.vue';
+import ProgramDetailMentors from '../components/program-detail-mentors.vue';
 import ProgramDetailMentees from '../components/program-detail-mentees.vue';
 import ProgramDetailOverview from '../components/program-detail-overview.vue';
 import ProgramDetailSponsors from '../components/program-detail-sponsors.vue';
+import ProgramDetailTerms from '../components/program-detail-terms.vue';
 import { DEFAULT_PROGRAM_DETAIL_TAB, PROGRAM_DETAIL_TABS } from '../config/program-detail.config';
 import { useProgram } from '~/composables/programs/useProgram';
 import LfxButton from '~/components/uikit/button/button.vue';

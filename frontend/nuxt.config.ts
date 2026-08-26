@@ -13,6 +13,9 @@ export default defineNuxtConfig({
   app: { head },
   compatibilityDate: '2025-07-15',
   devtools: { enabled: true },
+  devServer: {
+    port: 3000,
+  },
   experimental: { typedPages: true },
   modules,
   // Register uikit as lfx-* (e.g. button/button.vue → LfxButton)
