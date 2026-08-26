@@ -71,7 +71,7 @@ SPDX-License-Identifier: MIT
               @click="$emit('open-repository')"
             />
             <lfx-button
-              v-if="program.id"
+              v-if="program.slug"
               label="Donate"
               icon="heart"
               icon-type="solid"

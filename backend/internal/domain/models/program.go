@@ -131,13 +131,13 @@ type ProgramCatalogTerm struct {
 	DiscoveryLabel string `json:"discovery_label"`
 }
 
-// ProgramCatalogMentor is an active mentor with display fields joined from users.
+// ProgramCatalogMentor is an active mentor with display fields from users and user_profiles.
 type ProgramCatalogMentor struct {
-	ID        string  `json:"id"`
-	UserID    string  `json:"user_id"`
-	Name      *string `json:"name,omitempty"`
-	AvatarURL *string `json:"avatar_url,omitempty"`
-	Email     *string `json:"email,omitempty"`
+	ID           string  `json:"id"`
+	UserID       string  `json:"user_id"`
+	Name         *string `json:"name,omitempty"`
+	AvatarURL    *string `json:"avatar_url,omitempty"`
+	Introduction *string `json:"introduction,omitempty"`
 }
 
 // ProgramCatalogItem is the public catalog shape: a program plus nested skills, terms, and mentors.

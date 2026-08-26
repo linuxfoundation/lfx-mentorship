@@ -20,7 +20,6 @@ export type ProgramSortBy =
 export interface ProgramMember {
   id: string;
   name?: string;
-  email?: string;
   intro?: string;
   avatarUrl?: string;
 }

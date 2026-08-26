@@ -176,6 +176,7 @@ const (
 		WHERE pt.program_id = programs.id
 		  AND pt.status = 'open'
 		  AND pt.application_start_date IS NOT NULL
+		  AND pt.application_end_date IS NOT NULL
 		  AND pt.application_start_date > NOW()
 	)`
 	sqlHasOpenTerm = `EXISTS (
@@ -222,17 +223,17 @@ func catalogOrderBy(sortBy string) string {
 	completedRank := `CASE WHEN NOT (` + sqlHasOpenTerm + `) THEN 0 WHEN ` + sqlHasOpenTerm + ` AND NOT (` + sqlHasAcceptingTerm + `) AND NOT (` + sqlHasComingSoonTerm + `) THEN 1 WHEN ` + sqlHasAcceptingTerm + ` THEN 2 ELSE 3 END`
 	switch sortBy {
 	case "name_asc":
-		return `name ASC`
+		return `name ASC, id ASC`
 	case "name_desc":
-		return `name DESC`
+		return `name DESC, id ASC`
 	case "updated_oldest":
-		return `updated_on ASC`
+		return `updated_on ASC, id ASC`
 	case "updated_newest":
-		return `updated_on DESC`
+		return `updated_on DESC, id ASC`
 	case "completed_first":
-		return completedRank + `, name ASC`
+		return completedRank + `, name ASC, id ASC`
 	default:
-		return acceptingRank + `, name ASC`
+		return acceptingRank + `, name ASC, id ASC`
 	}
 }
 
@@ -403,9 +404,17 @@ func (r *ProgramRepository) loadCatalogTerms(ctx context.Context, ids []string) 
 func (r *ProgramRepository) loadCatalogMentors(ctx context.Context, ids []string) (map[string][]models.ProgramCatalogMentor, error) {
 	out := map[string][]models.ProgramCatalogMentor{}
 	rows, err := r.pool.Query(ctx, `
-		SELECT pm.id, pm.program_id, pm.user_id, pm.email, u.name, u.avatar_url
+		SELECT pm.id, pm.program_id, pm.user_id, u.name, u.avatar_url, up.introduction
 		FROM program_members pm
 		LEFT JOIN users u ON u.id = pm.user_id
+		LEFT JOIN LATERAL (
+			SELECT introduction
+			FROM user_profiles
+			WHERE user_id = pm.user_id
+			  AND profile_type = 'mentor'
+			ORDER BY updated_on DESC
+			LIMIT 1
+		) up ON true
 		WHERE pm.program_id = ANY($1::uuid[])
 		  AND pm.member_type = 'mentor'
 		  AND pm.status = 'active'
@@ -418,7 +427,7 @@ func (r *ProgramRepository) loadCatalogMentors(ctx context.Context, ids []string
 	for rows.Next() {
 		var programID string
 		var m models.ProgramCatalogMentor
-		if err := rows.Scan(&m.ID, &programID, &m.UserID, &m.Email, &m.Name, &m.AvatarURL); err != nil {
+		if err := rows.Scan(&m.ID, &programID, &m.UserID, &m.Name, &m.AvatarURL, &m.Introduction); err != nil {
 			return nil, fmt.Errorf("scan catalog mentor: %w", err)
 		}
 		out[programID] = append(out[programID], m)

@@ -569,7 +569,8 @@ Always returns `status = published` programs. Draft, hidden, and other statuses 
           "id": "uuid",
           "user_id": "uuid",
           "name": "Jane Mentor",
-          "avatar_url": "https://..."
+          "avatar_url": "https://...",
+          "introduction": "I mentor kernel contributors..."
         }
       ]
     }
@@ -578,7 +579,7 @@ Always returns `status = published` programs. Draft, hidden, and other statuses 
 }
 ```
 
-Nested `terms` omit soft-deleted terms. Nested `mentors` are `member_type = mentor` and `status = active`, joined to `users` for name and avatar.
+Nested `terms` omit soft-deleted terms. Nested `mentors` are `member_type = mentor` and `status = active`, joined to `users` for name and avatar, and to the mentor `user_profiles` row for `introduction`.
 
 LF project / foundation is not included yet — `programs.lfid` remains the owner username.
 

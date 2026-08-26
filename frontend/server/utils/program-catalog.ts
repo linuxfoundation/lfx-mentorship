@@ -27,7 +27,7 @@ export interface ProgramCatalogMentor {
   user_id: string;
   name?: string;
   avatar_url?: string;
-  email?: string;
+  introduction?: string;
 }
 
 export interface ProgramCatalogItem {
@@ -76,7 +76,7 @@ function mapMentor(mentor: ProgramCatalogMentor): ProgramMember {
     id: mentor.id,
     name: mentor.name?.trim() || 'Mentor',
     avatarUrl: mentor.avatar_url,
-    email: mentor.email,
+    intro: mentor.introduction?.trim() || undefined,
   };
 }
 

@@ -134,11 +134,11 @@ function openRepository() {
 }
 
 function openDonate() {
-  const programId = program.value?.id;
-  if (!programId || !import.meta.client) return;
+  const programSlug = program.value?.slug;
+  if (!programSlug || !import.meta.client) return;
 
   const base = String(crowdfundingUrl).replace(/\/$/, '');
-  window.open(`${base}/initiatives/${programId}`, '_blank', 'noopener,noreferrer');
+  window.open(`${base}/initiatives/${programSlug}`, '_blank', 'noopener,noreferrer');
 }
 
 useHead({
