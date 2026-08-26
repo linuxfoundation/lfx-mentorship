@@ -3,7 +3,7 @@
 .c-table {
   -webkit-overflow-scrolling: touch;
   @apply h-full overflow-y-hidden overflow-x-auto;
-  @apply bg-white shadow-sm rounded-lg;
+  @apply bg-white border border-neutral-200 rounded-xl;
 
   &::-webkit-scrollbar {
     display: none;
@@ -11,23 +11,24 @@
 
   th,
   td {
-    @apply pl-6;
+    @apply pl-4 md:pl-5;
 
     &:last-child {
-      @apply pr-5;
+      @apply px-4 md:px-5;
     }
   }
 
   table {
-    @apply w-full;
+    @apply w-full border-collapse;
 
     thead {
-      @apply border-b border-neutral-100;
       tr {
-        @apply bg-white;
+        @apply bg-neutral-50;
       }
+
       th {
-        @apply text-xs py-3 leading-4 font-semibold text-neutral-500 text-left whitespace-nowrap;
+        @apply text-sm py-3.5 leading-5 font-medium text-neutral-800 text-left whitespace-nowrap;
+        @apply border-b border-neutral-200;
       }
     }
 
@@ -37,17 +38,19 @@
         @apply bg-white table-row align-middle;
 
         &:not(:last-child) {
-          @apply border-b border-neutral-100;
+          td {
+            @apply border-b border-neutral-100;
+          }
         }
       }
 
       td {
-        @apply py-5 text-sm table-cell;
+        @apply py-4 text-xs text-neutral-600 table-cell;
       }
     }
 
     tfoot {
-      @apply border-t border-neutral-100;
+      @apply border-t border-neutral-200;
     }
   }
 }

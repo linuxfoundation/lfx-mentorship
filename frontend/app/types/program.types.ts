@@ -39,17 +39,24 @@ export interface Foundation {
   slug: string;
 }
 
+export const TERM_STATUSES = ['open', 'closed', 'deleted'] as const;
+
+export type TermStatus = (typeof TERM_STATUSES)[number];
+
 /** Term belongs to a program; each program has at least one. */
 export interface ProgramTerm {
   id: string;
   name: string;
+  status: TermStatus;
   /** Display range, e.g. "Sep-Nov 2026". */
   dateRangeLabel?: string;
   /** Inclusive term start, ISO date `YYYY-MM-DD`. */
   startsAt: string;
   /** Inclusive term end, ISO date `YYYY-MM-DD`. */
   endsAt: string;
-  /** ISO date when applications close for this term. */
+  /** ISO datetime when applications open for this term. */
+  applicationsStartAt?: string;
+  /** ISO datetime when applications close for this term. */
   applicationsCloseAt?: string;
 }
 
@@ -71,8 +78,11 @@ export interface Program {
   status: ProgramStatus;
   foundation: Foundation;
   terms: ProgramTerm[];
-  /** Active / current term shown on cards (must be one of `terms`). */
-  activeTerm: ProgramTerm;
+  /**
+   * Open terms whose application window includes now.
+   * Computed from `terms` — not stored independently.
+   */
+  activeTerms: ProgramTerm[];
   updatedAt: string;
   repositoryUrl?: string;
   /**

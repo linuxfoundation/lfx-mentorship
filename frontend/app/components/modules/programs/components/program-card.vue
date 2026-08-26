@@ -25,7 +25,7 @@ SPDX-License-Identifier: MIT
         />
         <div class="flex flex-col max-w-[calc(100%-64px)]">
           <p class="text-xs text-neutral-500 leading-5 truncate pr-24">
-            {{ program.foundation.name }} · {{ program.activeTerm.name }}
+            {{ foundationLine }}
           </p>
           <h3 class="text-base font-semibold text-neutral-900 leading-7 truncate">
             {{ program.name }}
@@ -166,6 +166,13 @@ const { stripHtml } = useSanitize();
 
 const plainDescription = computed(() => stripHtml(props.program.description ?? ''));
 const statusConfig = computed(() => PROGRAM_STATUS_CONFIG[props.program.status]);
+const foundationLine = computed(() => {
+  const names = (props.program.activeTerms.length ? props.program.activeTerms : props.program.terms.slice(-1))
+    .map((term) => term.name)
+    .filter(Boolean);
+  const foundation = props.program.foundation.name;
+  return names.length ? `${foundation} · ${names.join(', ')}` : foundation;
+});
 const visibleSkills = computed(() => props.program.skills.slice(0, PROGRAM_SKILLS_VISIBLE_COUNT));
 const overflowSkills = computed(() => props.program.skills.slice(PROGRAM_SKILLS_VISIBLE_COUNT));
 const memberGroups = computed(() => [memberGroup('mentors', 'Mentors', 'mentor', 'user-tie', props.program.mentors)]);
