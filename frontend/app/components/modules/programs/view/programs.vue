@@ -52,13 +52,12 @@ const activeStatus = ref<ProgramStatusFilter>(DEFAULT_PROGRAM_FILTER);
 const skill = ref<string>(ALL_SKILLS_OPTION.value);
 const sortBy = ref<ProgramSortBy>(DEFAULT_PROGRAM_SORT.value);
 
-const { data, isPending, isFetchingNextPage, isFetchNextPageError, hasNextPage, fetchNextPage, error } =
-  usePrograms({
-    search: debouncedSearchTerm,
-    status: activeStatus,
-    skill,
-    sortBy,
-  });
+const { data, isPending, isFetchingNextPage, isFetchNextPageError, hasNextPage, fetchNextPage, error } = usePrograms({
+  search: debouncedSearchTerm,
+  status: activeStatus,
+  skill,
+  sortBy,
+});
 
 const programs = computed(() => data.value?.pages.flatMap((page) => page.data) ?? []);
 const isLoading = computed(() => isPending.value && programs.value.length === 0);
@@ -69,10 +68,7 @@ const { showToast } = useToastService();
 
 watch(error, (err) => {
   if (!import.meta.client || !err || programs.value.length > 0) return;
-  showToast(
-    getFetchErrorMessage(err, 'Failed to load programs. Please try again.'),
-    ToastTypesEnum.negative,
-  );
+  showToast(getFetchErrorMessage(err, 'Failed to load programs. Please try again.'), ToastTypesEnum.negative);
 });
 
 async function loadMore() {
@@ -87,10 +83,7 @@ async function loadMore() {
       );
     }
   } catch (err) {
-    showToast(
-      getFetchErrorMessage(err, 'Failed to load more programs. Please try again.'),
-      ToastTypesEnum.negative,
-    );
+    showToast(getFetchErrorMessage(err, 'Failed to load more programs. Please try again.'), ToastTypesEnum.negative);
   }
 }
 

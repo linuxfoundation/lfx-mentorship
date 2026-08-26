@@ -23,7 +23,8 @@ SPDX-License-Identifier: MIT
             <span
               v-if="program.foundation.name"
               class="text-xs text-neutral-500"
-            >{{ program.foundation.name }}</span>
+              >{{ program.foundation.name }}</span
+            >
             <lfx-tag
               :variation="statusConfig.variation"
               size="small"

@@ -128,7 +128,10 @@ SPDX-License-Identifier: MIT
             </div>
           </template>
         </lfx-popover>
-        <div v-if="program.isPaid" class="flex items-center gap-2 text-xs text-neutral-400">
+        <div
+          v-if="program.isPaid"
+          class="flex items-center gap-2 text-xs text-neutral-400"
+        >
           <lfx-icon
             name="sack-dollar"
             type="solid"

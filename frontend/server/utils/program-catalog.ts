@@ -1,7 +1,13 @@
 // Copyright The Linux Foundation and each contributor to LFX.
 // SPDX-License-Identifier: MIT
 
-import type { Program, ProgramMember, ProgramStatus, ProgramTerm, TermStatus } from '../../app/types/program.types';
+import type {
+  Program,
+  ProgramMember,
+  ProgramStatus,
+  ProgramTerm,
+  TermStatus,
+} from '../../app/types/program.types';
 import { getProgramTermDisplayStatus, withActiveTerms } from '../../app/utils/program-terms';
 
 export interface ProgramCatalogTerm {
@@ -52,7 +58,8 @@ function toDate(iso?: string): string {
 }
 
 function mapTerm(term: ProgramCatalogTerm): ProgramTerm {
-  const status: TermStatus = term.status === 'closed' || term.status === 'deleted' ? term.status : 'open';
+  const status: TermStatus =
+    term.status === 'closed' || term.status === 'deleted' ? term.status : 'open';
   return {
     id: term.id,
     name: term.name,
