@@ -89,11 +89,14 @@ type mentorship_application
     define mentorship_program: [mentorship_program]
     # @fgadoc:alias Applicant
     define applicant: [user]
-    # @fgadoc:jtbd Evaluate, accept & decline an application
-    define manager: manager from mentorship_program
-    # @fgadoc:jtbd View & withdraw an application
-    # withdraw covers the applicant and staff-assisted (white-glove) withdrawal
+    # admins only — mentors cannot change application status (verified in legacy)
+    # @fgadoc:jtbd Accept, decline & update application status
+    define manager: writer from mentorship_program
+    # @fgadoc:jtbd Withdraw an application
+    # the applicant, or staff-assisted (white-glove) withdrawal by an admin
     define writer: applicant or manager
+    # @fgadoc:jtbd View & evaluate an application
+    define auditor: writer or mentor from mentorship_program
 
 type mentorship_task
   relations
@@ -115,9 +118,10 @@ Two tuples per application/task (owner + parent), a handful per program. At Ment
 
 - **Where `writer` on a program comes from**: **both** — directly assigned (the legacy `maintainer` who created the program) *and* inherited via `writer from project`, so project writers can administer their programs without a separate grant. `mentor` is **directly assigned only**, matching the invite flow.
 - **Who creates a program**: `mentorship_program_creator` on the **project**, defined as `writer or mentorship_coordinator` — the same shape as `meetings_creator`. Project writers get it by default; the extra direct relation exists so LF staff can be granted program-creation on a project without full write access. Heimdall extracts the project ID from the POST payload and checks this relation.
-- **Who creates applications and tasks**: **tasks** are created by `manager` on the parent program (mentors and admins). **Applications** are created by the applicant themselves — any authenticated user may apply to a program whose application window is open, so creation is authorized by authentication alone (window state is a Postgres business rule, not an access rule), with the applicant's LFID taken from the JWT rather than the payload.
+- **Who creates applications and tasks**: **tasks** are created by `manager` on the parent program — mentors and admins, both of whom also update and review tasks (verified in legacy: task modification is open to the assignee, any project mentor, or the maintainer). **Applications** are created by the applicant themselves — any authenticated user may apply to a program whose application window is open, so creation is authorized by authentication alone (window state is a Postgres business rule, not an access rule), with the applicant's LFID taken from the JWT rather than the payload.
+- **Application status is admin-only**: mentors view and evaluate applications (`auditor`) but cannot accept/decline or otherwise change status (`manager: writer from mentorship_program`) — matching legacy, where the status dropdown exists only in maintainer-gated views. The legacy approve/disapprove endpoints are wired without auth middleware; the new model closes that by construction.
 - **Single-relation rules**: rather than have Heimdall evaluate "mentor from parent or writer from parent", the model defines **`manager`** on the program (`writer or mentor`) and children resolve `manager from mentorship_program`. Every child route checks exactly one relation.
-- **Staff-assisted withdrawal**: yes, needed — support and program admins do withdraw applications on a mentee's behalf. Hence the application's `writer: applicant or manager` rather than applicant-only; the manager-only actions (accept/decline) check `manager` directly.
+- **Staff-assisted withdrawal**: yes, needed — support and program admins do withdraw applications on a mentee's behalf. Hence the application's `writer: applicant or manager` rather than applicant-only; the admin-only actions (accept/decline) check `manager` directly.
 - **Business-rule boundary, confirmed by the platform model**: the `meeting.participant` comment notes committee members aren't automatically participants because that filtering "is managed by the backend services and therefore can't be a relationship in the authorization model" — the same line this proposal draws for application windows and graduation gates (Postgres state, not FGA).
 
 ## Deliberate modeling decisions
