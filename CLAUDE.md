@@ -22,6 +22,30 @@ This repo hosts the LFX Mentorship platform — a Kubernetes-native rewrite of t
 - **DCO**: sign off every commit (`git commit --signoff`) — enforced by CI.
 - **Scope**: the goal is feature parity with the legacy platform. Scope exclusions (employer portal, Elasticsearch, SES, and others) are listed in `docs/rewrite/02-target-architecture.md` — do not reintroduce them.
 
+## Architecture
+
+Monorepo: Go backend + Nuxt frontend, following the lfx-crowdfunding layout.
+
+```
+backend/          Go 1.25 · Chi v5 · pgx v5 (Postgres) · OpenTelemetry
+  cmd/            entrypoint
+  internal/
+    domain/       models + repository interfaces + sentinel errors
+    service/      business logic and validation
+    handler/      HTTP handlers, routing, error mapping
+    infrastructure/  Postgres repository implementations
+  db/migrations/  SQL schema (source of truth for CHECK constraints)
+  charts/         Helm chart
+frontend/         Nuxt 4 · Vue 3 · TypeScript
+specs/            feature specs and task lists
+```
+
+**Layering rule**: `handler` → `service` → `domain` (interfaces) ← `infrastructure`. Handlers do no business logic; services never touch SQL; repositories return domain models, not driver types. `domain` imports nothing from the other layers. Services reach `infrastructure` only through the interfaces `domain` declares — the one exception is `infrastructure/auth`, a stateless token helper.
+
+**Errors**: services return sentinel errors from `internal/domain` wrapped with `%w`. Not-found is per entity (`ErrUserNotFound`, `ErrProgramNotFound`, `ErrApplicationNotFound`, …); the rest are shared (`ErrInvalidInput`, `ErrIneligible`, `ErrConflict`, `ErrInvalidStateTransition`, `ErrStateLocked`, `ErrForbidden`, `ErrUnauthorized`, `ErrUpstreamUnavailable`). `handler.Error` maps them, plus Postgres SQLSTATEs, to HTTP status codes — `internal/handler/respond.go` is the single place status codes are decided, so add new mappings there rather than writing status codes in handlers.
+
+**Commands** — from `backend/`: `make build`, `make test`, `make lint`, `make license-check`, `make db-migrate`. From `frontend/`: `npm run dev`, `npm run build`, `npm run lint`, `npm run format`.
+
 ## Terminology
 
 The legacy platform used inconsistent vocabulary for the same concepts. The rewrite standardises it. **These terms are banned in new code, comments, docs, tests, and UI copy:**
