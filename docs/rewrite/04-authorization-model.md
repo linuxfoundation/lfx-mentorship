@@ -59,45 +59,55 @@ flowchart TB
 
 ### FGA types and derived permissions (sketch)
 
-Written in the platform's DSL conventions ([model.fga](https://github.com/linuxfoundation/lfx-v2-helm/blob/main/charts/lfx-platform/files/model.fga)): the parent relation is named after the parent *type*, and each rule resolves to a **single** relation so Heimdall checks one thing per route.
+Written in the platform's DSL conventions ([model.fga](https://github.com/linuxfoundation/lfx-v2-helm/blob/main/charts/lfx-platform/files/model.fga)): the parent relation is named after the parent *type*; each Heimdall rule checks a **single** relation; actions are documented as `@fgadoc:jtbd` annotations (from which `PERMISSIONS.md` is generated); and no relation is defined as a mere alias of another — per the model's own guidance on `vote_response`: *"we don't need to create a 'writer' relation that is defined as just 'owner': we just use the 'owner' relation in our access checks."* The closest existing analogs to applications/tasks are `vote_response` and `survey_response` (single owner + parent, owner-or-staff access).
 
 ```
 type project
-  # added to the existing type, mirroring meetings_creator
-  define mentorship_program_creator: writer or mentorship_coordinator
+  # added to the existing type, mirroring meeting_coordinator / meetings_creator
   define mentorship_coordinator: [user]
+  # @fgadoc:jtbd Create a mentorship program
+  define mentorship_program_creator: writer or mentorship_coordinator
 
 type mentorship_program
   relations
     define project: [project]
     # program admins: directly assigned AND inherited from the project
+    # @fgadoc:jtbd Update & delete a mentorship program
+    # @fgadoc:jtbd Manage program terms, mentors & settings
     define writer: [user] or writer from project
-    # mentors are directly assigned only
+    # mentors are directly assigned only (via accepted invitation)
     define mentor: [user]
-    # single relation for "may act on this program's children"
+    # union helper (cf. meetings_creator, inviter): "may act on this program's children"
     define manager: writer or mentor
+    # @fgadoc:jtbd View program settings & member lists
     define auditor: [user] or manager or auditor from project
-    define viewer: [user:*] or auditor          # programs are publicly discoverable
+    # @fgadoc:jtbd View & discover a mentorship program
+    define viewer: [user:*] or auditor
 
 type mentorship_application
   relations
     define mentorship_program: [mentorship_program]
+    # @fgadoc:alias Applicant
     define applicant: [user]
-    # view/evaluate/accept/decline
+    # @fgadoc:jtbd Evaluate, accept & decline an application
     define manager: manager from mentorship_program
-    define viewer: applicant or manager
-    # withdraw: the applicant, or staff acting on their behalf
-    define withdrawer: applicant or manager
+    # @fgadoc:jtbd View & withdraw an application
+    # withdraw covers the applicant and staff-assisted (white-glove) withdrawal
+    define writer: applicant or manager
 
 type mentorship_task
   relations
     define mentorship_program: [mentorship_program]
+    # @fgadoc:alias Mentee
+    # @fgadoc:jtbd Complete & submit a task
     define assignee: [user]
-    # create/edit/review tasks
+    # @fgadoc:jtbd Create, update & review tasks
     define manager: manager from mentorship_program
-    define submitter: assignee
-    define viewer: assignee or manager
+    # @fgadoc:jtbd View a task
+    define auditor: assignee or manager
 ```
+
+Submission checks `assignee` directly and review checks `manager` — no wrapper relations. On `viewer: [user:*] or auditor`: the wildcard is not "always public" — it is a **per-object tuple** written by fga-sync when the object carries `public: true`, so unpublished/archived programs simply don't get it.
 
 Two tuples per application/task (owner + parent), a handful per program. At Mentorship's volumes (thousands of rows) this is trivial for FGA.
 
@@ -107,7 +117,8 @@ Two tuples per application/task (owner + parent), a handful per program. At Ment
 - **Who creates a program**: `mentorship_program_creator` on the **project**, defined as `writer or mentorship_coordinator` — the same shape as `meetings_creator`. Project writers get it by default; the extra direct relation exists so LF staff can be granted program-creation on a project without full write access. Heimdall extracts the project ID from the POST payload and checks this relation.
 - **Who creates applications and tasks**: **tasks** are created by `manager` on the parent program (mentors and admins). **Applications** are created by the applicant themselves — any authenticated user may apply to a program whose application window is open, so creation is authorized by authentication alone (window state is a Postgres business rule, not an access rule), with the applicant's LFID taken from the JWT rather than the payload.
 - **Single-relation rules**: rather than have Heimdall evaluate "mentor from parent or writer from parent", the model defines **`manager`** on the program (`writer or mentor`) and children resolve `manager from mentorship_program`. Every child route checks exactly one relation.
-- **Staff-assisted withdrawal**: yes, needed — support and program admins do withdraw applications on a mentee's behalf. Hence `withdrawer: applicant or manager` rather than applicant-only.
+- **Staff-assisted withdrawal**: yes, needed — support and program admins do withdraw applications on a mentee's behalf. Hence the application's `writer: applicant or manager` rather than applicant-only; the manager-only actions (accept/decline) check `manager` directly.
+- **Business-rule boundary, confirmed by the platform model**: the `meeting.participant` comment notes committee members aren't automatically participants because that filtering "is managed by the backend services and therefore can't be a relationship in the authorization model" — the same line this proposal draws for application windows and graduation gates (Postgres state, not FGA).
 
 ## Deliberate modeling decisions
 
