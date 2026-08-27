@@ -24,7 +24,7 @@ export const ENROLL_PROGRAM_HERO_SUBTITLE_PARTS: Array<{ text: string; bold?: bo
 export const ENROLL_PROGRAM_CTA_LABEL = 'Enroll a Program in LFX';
 
 export const ENROLL_PROGRAM_CTA_HELPER =
-  'Opens the Admin area of LFX. You will need to be signed in as a maintainer.';
+  'Opens the Admin area of LFX. You will need to be signed in as a Program Admin.';
 
 export const ENROLL_PROGRAM_WHY_TITLE = 'Why Offer a Program';
 

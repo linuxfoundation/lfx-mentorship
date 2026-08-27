@@ -120,7 +120,7 @@ invited │ requested │ active ──manual-hold──► pending
 |--------|------|-------|
 | `id` | UUID | PK |
 | `user_id` | UUID | FK → users, CASCADE |
-| `profile_type` | TEXT | `mentor \| apprentice` |
+| `profile_type` | TEXT | `mentor \| mentee` |
 | `slug` | TEXT | UNIQUE |
 | `first_name`, `last_name` | TEXT | |
 | `email`, `phone` | TEXT | |
@@ -133,10 +133,10 @@ invited │ requested │ active ──manual-hold──► pending
 | `skill_set` | JSONB | `{skills[], improvementSkills[], comments}` |
 | `profile_links` | JSONB | `{resumeLink, linkedinProfileLink, githubProfileLink}` |
 
-**Eligibility gate (enforced before `apprentice` profile creation)**:
+**Eligibility gate (enforced before `mentee` profile creation)**:
 1. Will be ≥ 18 by program start date
 2. Eligible to work in country of residence for program duration
-3. No existing active `apprentice` profile in another LF mentorship
+3. No existing active `mentee` profile in another LF mentorship
 
 ---
 
