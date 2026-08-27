@@ -292,3 +292,19 @@ func TestTaskService_Update_InvalidDenormalisedStatuses_Rejected(t *testing.T) {
 		t.Errorf("expected ErrInvalidInput for unknown program_term_status, got %v", err)
 	}
 }
+
+func TestTaskService_InvalidCategory_Rejected(t *testing.T) {
+	svc := newTaskSvc(&stubTaskRepo{}, &stubAppRepo{}, &stubTermRepo{}, &stubMemberRepo{})
+	bad := models.TaskCategory("optional") // not a member of the enum
+
+	if _, err := svc.Create(context.Background(), "app-1", models.TaskCreateInput{
+		AssigneeID: "u1",
+		Category:   &bad,
+	}); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput for unknown category on create, got %v", err)
+	}
+
+	if _, err := svc.Update(context.Background(), "task-1", models.TaskUpdateInput{Category: &bad}); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput for unknown category on update, got %v", err)
+	}
+}

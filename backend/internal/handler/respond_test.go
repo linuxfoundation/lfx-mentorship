@@ -94,11 +94,9 @@ func TestError_WritesJSONBody(t *testing.T) {
 // A CHECK constraint violation is bad client input, not a server fault, so it
 // must not surface as a 500.
 func TestError_CheckViolation_IsNotInternalError(t *testing.T) {
-	rec := httptest.NewRecorder()
-	handler.Error(rec, &pgconn.PgError{Code: "23514", ConstraintName: "applications_attendance_check"})
-
-	if rec.Code != http.StatusUnprocessableEntity {
-		t.Errorf("expected 422 for check_violation, got %d", rec.Code)
+	w := callError(&pgconn.PgError{Code: "23514", ConstraintName: "applications_attendance_check"})
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("expected 422 for check_violation, got %d", w.Code)
 	}
 }
 
@@ -112,10 +110,9 @@ func TestError_PgErrorMappings(t *testing.T) {
 		{"23514", http.StatusUnprocessableEntity}, // check_violation
 	}
 	for _, tc := range cases {
-		rec := httptest.NewRecorder()
-		handler.Error(rec, &pgconn.PgError{Code: tc.code})
-		if rec.Code != tc.want {
-			t.Errorf("SQLSTATE %s: expected %d, got %d", tc.code, tc.want, rec.Code)
+		w := callError(&pgconn.PgError{Code: tc.code})
+		if w.Code != tc.want {
+			t.Errorf("SQLSTATE %s: expected %d, got %d", tc.code, tc.want, w.Code)
 		}
 	}
 }

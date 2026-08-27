@@ -512,3 +512,16 @@ func TestApplicationService_Create_InvalidAttendanceType_Rejected(t *testing.T) 
 		t.Errorf("expected ErrInvalidInput for unknown attendance_type, got %v", err)
 	}
 }
+
+func TestApplicationService_Create_InvalidProgramTermStatus_Rejected(t *testing.T) {
+	svc := newApplicationSvc(&stubAppRepo{}, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{})
+	bad := models.ProgramTermStatus("ajar") // not a member of the enum
+	_, err := svc.Create(context.Background(), "term-1", models.ApplicationCreateInput{
+		UserID:            "u1",
+		Role:              models.ApplicationRoleMentee,
+		ProgramTermStatus: &bad,
+	})
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput for unknown program_term_status, got %v", err)
+	}
+}

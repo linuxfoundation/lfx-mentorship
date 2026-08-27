@@ -92,6 +92,9 @@ func (s *TaskService) Create(ctx context.Context, applicationID string, input mo
 	if !input.Status.IsValid() {
 		return nil, fmt.Errorf("%w: invalid status %q", domain.ErrInvalidInput, input.Status)
 	}
+	if input.Category != nil && !input.Category.IsValid() {
+		return nil, fmt.Errorf("%w: invalid category %q", domain.ErrInvalidInput, *input.Category)
+	}
 	input.ID = uuid.New().String()
 
 	t, err := s.repo.Create(ctx, applicationID, input)
@@ -119,6 +122,9 @@ func (s *TaskService) Update(ctx context.Context, id string, input models.TaskUp
 	}
 	if input.ProgramTermStatus != nil && !input.ProgramTermStatus.IsValid() {
 		return nil, fmt.Errorf("%w: invalid program term status %q", domain.ErrInvalidInput, *input.ProgramTermStatus)
+	}
+	if input.Category != nil && !input.Category.IsValid() {
+		return nil, fmt.Errorf("%w: invalid category %q", domain.ErrInvalidInput, *input.Category)
 	}
 
 	// FR-033: enforce state transitions and actor permissions when ActorID is known.
