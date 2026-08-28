@@ -4,7 +4,7 @@
 # Mentorship Rewrite — 02: Target Architecture
 
 Status: Proposal — for Architecture team review
-Related: [01-current-system.md](./01-current-system.md), [03-migration-plan.md](./03-migration-plan.md)
+Related: [01-current-system.md](./01-current-system.md), [03-migration-plan.md](./03-migration-plan.md), [04-authorization-model.md](./04-authorization-model.md)
 
 ## Summary
 
@@ -13,6 +13,7 @@ Rewrite LFX Mentorship following the pattern proven by the Crowdfunding rewrite 
 - **This repo (`lfx-mentorship`)** — public monorepo, Go backend + Nuxt frontend, same layout as `lfx-crowdfunding`.
 - **PostgreSQL** (own `mentorship` schema on the shared LFX v2 RDS) replaces DynamoDB + Elasticsearch.
 - **Kubernetes** (LFX v2 cluster, Helm charts, ArgoCD GitOps) replaces Lambda + Serverless Framework.
+- **Behind the v2 API Gateway**, with Heimdall + OpenFGA authorizing at the edge — the idiomatic v2 pattern, since Mentorship programs are always subordinated under LF projects. See [04](./04-authorization-model.md).
 - **Nuxt 4 SSR BFF** replaces the Angular 15 SPA for the public site; management moves to **LFX Self Serve**.
 - **Feature parity** with today's user-facing behavior (with the explicit exclusions listed below). Milestone 1 epic: [linuxfoundation/lfx-self-serve#1477](https://github.com/linuxfoundation/lfx-self-serve/issues/1477) (Mentee public site).
 
@@ -20,9 +21,14 @@ Rewrite LFX Mentorship following the pattern proven by the Crowdfunding rewrite 
 
 ```mermaid
 flowchart TB
-    ADMIN(["Mentorship Admin<br/>(program_admin)"])
+    ADMIN(["Program Admin"])
     USERS(["Mentee / Mentor"])
-    SUPER(["Mentorship Super-Admin"])
+    SUPER(["LF Staff<br/>(program_approver)"])
+
+    subgraph GW["LFX v2 API Gateway"]
+        HEIMDALL["Heimdall<br/>authN + authZ at the edge"]
+        FGA[("OpenFGA")]
+    end
 
     subgraph K8S["NEW — lfx-mentorship on LFX v2 Kubernetes"]
         NUXT["Nuxt 4 Server (BFF)<br/>public discovery · apply · initial program creation"]
@@ -32,6 +38,7 @@ flowchart TB
     end
 
     SS["LFX Self Serve<br/>manage programs, applications, tasks"]
+    SYNC["fga-sync"]
     AUTH0["Auth0"]
     S3[("S3 uploads")]
     MANDRILL["Mandrill"]
@@ -41,19 +48,24 @@ flowchart TB
 
     ADMIN & USERS --> NUXT
     ADMIN & USERS & SUPER --> SS
-    NUXT <--> API
+    NUXT --> HEIMDALL
+    SS --> HEIMDALL
+    HEIMDALL <--> FGA
+    HEIMDALL -- "authorized requests<br/>+ principal claim" --> API
     NUXT --> AUTH0
     API --> PG
     API --> S3
     API --> MANDRILL
-    API -- "email on program submission" --> SUPER
-    SS -- "access:me tokens<br/>my programs/applications/tasks<br/>admin routes if allowlisted" --> API
+    API -- "outbox → NATS" --> SYNC
+    SYNC --> FGA
     CRONS --> PG
     CRONS -- "M2M: funding stats" --> CFAPI
     PG -- "Fivetran (Postgres connector)" --> SF
     SF --> DASH
     SF --> CFAPI
 ```
+
+Every request carrying a resource ID is authorized by Heimdall against OpenFGA before it reaches the API; the service itself makes no authorization decisions. Tuples flow the other way — the API emits them via a transactional outbox to fga-sync. See [04](./04-authorization-model.md) for the model and the emission contract.
 
 ## Repository layout
 
@@ -91,9 +103,7 @@ erDiagram
     programs ||--o{ program_skills : requires
     programs ||--|| program_funding_stats : "caches CF stats"
     program_terms ||--o{ applications : receives
-    program_terms ||--o{ enrollments : has
-    enrollments ||--o{ tasks : "works on"
-    enrollments }o--o{ program_members : "mentored by (enrollment_mentors)"
+    applications ||--o{ tasks : "works on"
     programs ||--o{ invitation_tokens : issues
 
     users {
@@ -120,7 +130,7 @@ erDiagram
         uuid program_term_id FK
         uuid user_id FK
         text role "mentor | mentee"
-        text status "pending | accepted | declined | withdrawn"
+        text status "pending | accepted | declined | withdrawn | graduated | hold"
     }
     program_members {
         uuid id PK
@@ -129,15 +139,10 @@ erDiagram
         text member_type "program_admin | mentor"
         text status
     }
-    enrollments {
-        uuid id PK
-        uuid program_term_id FK
-        uuid mentee_user_id FK
-        text status "active | graduated | withdrawn | hold"
-    }
     tasks {
         uuid id PK
-        uuid enrollment_id FK
+        uuid application_id FK
+        text category "prerequisite | program"
         text status "incomplete | in_progress | completed | on_hold"
         date due_date
     }
@@ -148,7 +153,7 @@ Notes:
 - **Search**: PostgreSQL full-text search (`tsvector` + GIN indexes) over programs, skills, and profiles replaces the Elasticsearch cluster and its 8 sync jobs. Data volume (thousands of rows) is far below where a dedicated search engine pays for itself.
 - **Denormalization jobs eliminated**: mentor lists, skill mappings, and counts become queries/views instead of cron-materialized copies.
 - **Funding stats**: `program_funding_stats` is an hourly-refreshed local cache of Crowdfunding data (see Integrations) — the same pattern Crowdfunding uses for Ledger stats.
-- **Mentor assignment**: the `enrollment_mentors` join table links each enrollment to its assigned mentor(s) — the relational equivalent of the legacy mentee-mentor relationships — so task-submission review routes to the right mentor, not just "any mentor on the program".
+- **No enrollment entity, and no mentor assignment.** The application *is* the lifecycle object — one row per user per term, whose status runs `pending → accepted → graduated`. This matches legacy, where acceptance and graduation are status changes on a single `project-members` row and mentors relate to the **program**, not to individual mentees (the legacy per-mentee "mentors" list is a cron-denormalized copy of the program's approved mentors). Tasks therefore hang off the application, with `category` distinguishing prerequisite from program tasks. Introducing `enrollments` + `enrollment_mentors` would add a parity feature nobody asked for; see decision 1 in [04](./04-authorization-model.md).
 - Exact column-level schema is an implementation-phase deliverable; this ERD fixes the entity boundaries.
 
 ## Frontend split: Nuxt public site + Self Serve management
@@ -164,23 +169,30 @@ Frontend stack mirrors Crowdfunding: Nuxt 4 + Vue 3, TypeScript, Tailwind + Prim
 
 ## Authentication and authorization
 
-Identical to Crowdfunding's documented auth architecture. **Authentication** (who is calling) is carried by Auth0 scopes; **authorization** (what they may do) is a role check in the service layer. Scopes alone never grant privileged access.
+**Authorization happens at the edge, not in the service.** Mentorship programs are always subordinated under LF projects, so this service adopts the idiomatic v2 pattern — behind the API Gateway, with Heimdall authorizing each route against OpenFGA — rather than Crowdfunding's interim standalone-API model. [04-authorization-model.md](./04-authorization-model.md) is the detailed proposal; the summary:
 
 ### Authentication
 
-- **Users**: OAuth2 PKCE via Auth0; tokens in HTTP-only session cookies (never exposed to JS); LFID from the `https://sso.linuxfoundation.org/claims/username` claim.
-- **Scopes** on one resource server: `access:me` (user tokens — `/v1/me/*` and `/v1/admin/*`) and `access:manage` (M2M only — `/v1/internal/*`, e.g. the CF funding-stats sync).
-- **Self Serve**: silent secondary auth for the Mentorship audience, token forwarded to the Mentorship API — same mechanism Self Serve already uses for Crowdfunding.
+- **Users**: OAuth2 PKCE via Auth0; tokens in HTTP-only session cookies (never exposed to JS).
+- **Identity**: the **`principal`** claim on the Heimdall-issued JWT, populated by the platform's `create_jwt` finalizer. The upstream Auth0 `sub` is deliberately not forwarded to services, so `principal` is both the caller's identity and the key for `user:{lfid}` tuples.
+- **M2M**: client-credentials for `/v1/internal/*` (the CF funding-stats sync).
+- **Self Serve**: silent secondary auth for the Mentorship audience, same mechanism it already uses for Crowdfunding.
 
 ### Authorization
 
-Three tiers, all evaluated server-side against the caller's LFID:
+- **Every route carrying a resource ID gets a Heimdall RuleSet** checking a single FGA relation. The service performs no ownership or role checks.
+- **Relations live in OpenFGA, derived from Postgres.** Postgres remains the system of record for membership; the API emits tuples through a transactional outbox to fga-sync at each state transition.
+- **The one residue** is `/me/*` **list** endpoints, where the service filters rows by the caller's `principal` — data scoping on the caller's own records, not a grant/deny decision. `/me/*` is never a second way to fetch an individual object.
 
-1. **Ownership / membership** — enforced in the service layer: program admins and mentors via `program_members.member_type`, mentees via `enrollments.mentee_user_id`. A user with `access:me` can only reach their own programs, applications, and tasks.
-2. **Super-admin** — platform-wide approval and management (program submissions, cross-program administration) on `/v1/admin/*`. Authorized by an **LFID allowlist injected at deploy time** (config, not an Auth0 role), checked against the caller's `access:me` principal. This is the pattern Crowdfunding uses for its initiative approver (`ALLOWED_APPROVERS`); it means Self Serve forwards an ordinary user token and the API decides, so no admin-only scope or elevated client is needed.
-3. **Email approval links** — the program-submission notification to super-admins carries an HMAC-signed, expiring link. The signature is the sole authorization for that action and requires no login, matching Crowdfunding's approval-link flow.
+Three things this replaces from the Crowdfunding-derived design:
 
-Exact route lists and the allowlist's source (secret manager key, per-environment values) are an implementation-phase deliverable.
+| Was | Now |
+| --- | --- |
+| Service-layer role checks against `program_members` / `enrollments` | Heimdall + FGA relations at the edge |
+| Super-admin LFID allowlist injected at deploy time | `program_approver` relation on the program (AQ-5 in [04](./04-authorization-model.md)) |
+| HMAC-signed email approval links, no login | Authenticated approval in Self Serve, gated on `program_approver` |
+
+The allowlist and the HMAC links were each a second authorization mechanism outside the model; both are retired.
 
 ## Integrations
 
@@ -189,9 +201,9 @@ Exact route lists and the allowlist's source (secret manager key, per-environmen
 | Crowdfunding   | Mentorship → CF       | **CronJob calls CF API (M2M `access:manage`), caches funding stats (`amountRaised`, etc.) in `program_funding_stats`.** Replaces legacy SNS/SQS eventing and the Snowflake round-trip for serving-path data. If CF is unavailable, Mentorship serves the last cached values. The funding-stats endpoint is a **new Crowdfunding-repo deliverable** (no such M2M route exists in CF today): exposed under `access:manage`, keyed by `cf_initiative_id`, contract defined with the CF team during Build. |
 | Snowflake      | Mentorship → SF       | Fivetran **Postgres** connector (replacing the DynamoDB connector); existing `fivetran_mentorship_*` dbt models repointed. Feeds dashboards and CF analytics. Analytics-plane only — never in the serving path.                                                              |
 | Auth0          | both                  | PKCE (users), client-credentials (M2M), JWKS validation in API middleware                                                                                                                                                                                                    |
-| Mandrill       | Mentorship → Mandrill | All transactional email (invitations, application status, task notifications, program-submission notification to super-admins). **SES is dropped**; existing Mandrill templates are audited and migrated.                                                                    |
+| Mandrill       | Mentorship → Mandrill | All transactional email (invitations, application status, task notifications, program-submission notification to LF staff — a notification only, no longer a signed approval link). **SES is dropped**; existing Mandrill templates are audited and migrated.                                                                    |
 | S3             | Mentorship → S3       | Program logos, task submission files (presigned URLs, as in CF)                                                                                                                                                                                                              |
-| LFX Self Serve | SS → Mentorship       | User-issued `access:me` tokens against `/v1/me/*`, and `/v1/admin/*` for callers on the super-admin allowlist                                                                                                                                                                 |
+| LFX Self Serve | SS → Mentorship       | User tokens through the API Gateway; Heimdall authorizes each route against FGA before it reaches the service                                                                                                                                                                |
 
 ## Kubernetes resources
 
