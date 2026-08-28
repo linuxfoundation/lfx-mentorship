@@ -1,62 +1,37 @@
-# Copyright The Linux Foundation and each contributor to LFX.
-# SPDX-License-Identifier: MIT
-
 name: Mentorship Authorization Model Tests
 model_file: model.fga
 tuple_file: tuples.yaml
 
 tests:
-  - name: platform-level program creation and approval rights
+  - name: project-level program creation and approval rights
     check:
       - user: user:carla
-        object: platform:lfx
+        object: project:linux-foundation
         assertions:
           can_create_program: true
           can_approve_program: false
       - user: user:priya
-        object: platform:lfx
+        object: project:linux-foundation
         assertions:
           can_create_program: false
           can_approve_program: true
       - user: user:aisha
-        object: platform:lfx
+        object: project:linux-foundation
         assertions:
           can_create_program: true
           can_approve_program: true
       - user: user:miguel
-        object: platform:lfx
+        object: project:linux-foundation
         assertions:
           can_create_program: false
 
-  - name: only registered mentees (or super_admin) are eligible to apply
+  - name: super_admin has unrestricted access to every project, program, application, and task
     check:
-      - user: user:mia
-        object: platform:lfx
-        assertions:
-          can_apply: true
-      - user: user:noah
-        object: platform:lfx
-        assertions:
-          can_apply: true
-      - user: user:carla
-        object: platform:lfx
-        assertions:
-          can_apply: false   # program_admin is not automatically a mentee
-      - user: user:miguel
-        object: platform:lfx
-        assertions:
-          can_apply: false   # mentor is not automatically a mentee
       - user: user:aisha
-        object: platform:lfx
+        object: project:linux-foundation
         assertions:
-          can_apply: true    # super_admin override
-      - user: user:zoe
-        object: platform:lfx
-        assertions:
-          can_apply: false   # unregistered user with no tuples at all
-
-  - name: super_admin has unrestricted access to every program, application, and task
-    check:
+          can_create_program: true
+          can_approve_program: true
       - user: user:aisha
         object: program:go-2026
         assertions:
@@ -106,17 +81,18 @@ tests:
           can_view_applications: false
           can_decide_application: false
 
-  - name: mentor inherits program_admin-equivalent rights on the program they accepted
+  - name: mentor can view their program and applications but cannot manage or decide
     check:
       - user: user:miguel
         object: program:go-2026
         assertions:
           can_view: true
-          can_create_term: true
           can_view_applications: true
-          can_decide_application: true
-          can_invite_mentor: true
           can_approve: false
+          can_create_term: true
+          can_invite_mentor: false
+          can_add_prerequisite_task: true
+          can_decide_application: false
 
   - name: mentor has zero access to a program they were never invited to
     check:
@@ -127,22 +103,20 @@ tests:
           can_view_applications: false
           can_decide_application: false
 
-  - name: mentee can view and submit only their own application
+  - name: mentee can view only their own application
     check:
       - user: user:mia
         object: application:app-mia
         assertions:
           can_view: true
-          can_submit: true
           can_decide: false
       - user: user:mia
         object: application:app-noah
         assertions:
           can_view: false
-          can_submit: false
           can_decide: false
 
-  - name: program_admin and mentor can view and decide on applications within their program
+  - name: program_admin and mentor can both decide applications
     check:
       - user: user:carla
         object: application:app-mia
@@ -168,16 +142,38 @@ tests:
           can_view: false
           can_update_status: false
 
-  - name: program_admin and mentor can view tasks tied to applications in their program
+  - name: program_admin and mentor can view and update tasks in their program
     check:
       - user: user:carla
         object: task:task-mia-1
         assertions:
           can_view: true
+          can_update_status: true
       - user: user:miguel
         object: task:task-mia-1
         assertions:
           can_view: true
+          can_update_status: true
+
+  - name: mentor can add both prerequisite and non-prerequisite tasks
+    check:
+      - user: user:miguel
+        object: application:app-mia
+        assertions:
+          can_add_task: true
+      - user: user:carla
+        object: application:app-mia
+        assertions:
+          can_add_task: true
+      - user: user:miguel
+        object: program:go-2026
+        assertions:
+          can_add_task: true
+          can_add_prerequisite_task: true
+      - user: user:mia
+        object: application:app-mia
+        assertions:
+          can_add_task: false
 
   - name: program_approver can view and approve, but cannot manage program operations
     check:

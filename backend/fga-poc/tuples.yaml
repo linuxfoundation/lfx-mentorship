@@ -1,36 +1,23 @@
-# Copyright The Linux Foundation and each contributor to LFX.
-# SPDX-License-Identifier: MIT
-
-# --- Platform-level (global) role assignments ---
+# --- Project: linux-foundation (global root) ---
 - user: user:aisha
   relation: super_admin
-  object: platform:lfx
+  object: project:linux-foundation
 
 - user: user:priya
   relation: program_approver
-  object: platform:lfx
+  object: project:linux-foundation
 
 - user: user:carla
   relation: program_admin
-  object: platform:lfx
+  object: project:linux-foundation
 
 - user: user:derek
   relation: program_admin
-  object: platform:lfx
-
-# Registered mentees (platform-level eligibility pool, granted once a
-# mentee profile is created — independent of which programs they apply to).
-- user: user:mia
-  relation: mentee
-  object: platform:lfx
-
-- user: user:noah
-  relation: mentee
-  object: platform:lfx
+  object: project:linux-foundation
 
 # --- Program: go-2026, created and administered by Carla ---
-- user: platform:lfx
-  relation: platform
+- user: project:linux-foundation
+  relation: project
   object: program:go-2026
 
 - user: user:carla
@@ -43,8 +30,8 @@
 
 # --- Program: rust-2026, created and administered by Derek ---
 # (Deliberately has no overlap with go-2026's mentors/admins, to test scoping)
-- user: platform:lfx
-  relation: platform
+- user: project:linux-foundation
+  relation: project
   object: program:rust-2026
 
 - user: user:derek
