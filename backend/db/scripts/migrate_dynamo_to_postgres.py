@@ -470,6 +470,10 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
             suffix += 1
         seen_slugs.add(slug)
 
+        # Older records carry this as apprenticeNeeds; newer ones as menteeNeeds.
+        # Resolve once so the programs row and the skill rows below agree.
+        needs = p.get("menteeNeeds") or p.get("apprenticeNeeds")
+
         prog_rows.append(
             (
                 pid,
@@ -491,15 +495,14 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
                 (p.get("programTermStatus") or "").strip() or None,
                 _as_int(p.get("discoverSortRank")),
                 amount,
-                _to_jsonb(p.get("menteeNeeds")),  # DynamoDB field was apprenticeNeeds
+                _to_jsonb(needs),
                 _to_jsonb(p.get("taskTemplates")),
                 _parse_ts(p.get("createdOn")),
                 _parse_ts(p.get("updatedOn")),
             )
         )
 
-        needs = p.get("menteeNeeds") or p.get("apprenticeNeeds") or {}  # field renamed in new data
-        for skill in needs.get("skills") or []:
+        for skill in (needs or {}).get("skills") or []:
             if skill and str(skill).strip():
                 skill_rows.append(
                     (
