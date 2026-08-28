@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
@@ -78,6 +79,92 @@ func (s *ProgramService) List(ctx context.Context, filter models.ProgramFilter) 
 		return nil, nil, fmt.Errorf("list programs: %w", err)
 	}
 	return programs, meta, nil
+}
+
+func applyCatalogLabels(items []*models.ProgramCatalogItem, now time.Time) {
+	for _, item := range items {
+		if item.Skills == nil {
+			item.Skills = []string{}
+		}
+		if item.Terms == nil {
+			item.Terms = []models.ProgramCatalogTerm{}
+		}
+		if item.Mentors == nil {
+			item.Mentors = []models.ProgramCatalogMentor{}
+		}
+		for i := range item.Terms {
+			item.Terms[i].DiscoveryLabel = item.Terms[i].ProgramTerm.DiscoveryLabel(now)
+		}
+	}
+}
+
+// ListCatalog returns a paginated public catalog of programs with nested skills, terms, and mentors.
+func (s *ProgramService) ListCatalog(ctx context.Context, filter models.ProgramFilter) ([]*models.ProgramCatalogItem, *models.PaginationMeta, error) {
+	ctx, span := programSvcTracer.Start(ctx, "ProgramService.ListCatalog")
+	defer span.End()
+
+	filter = normalizeCatalogFilter(filter)
+
+	items, meta, err := s.repo.ListCatalog(ctx, filter)
+	if err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("list program catalog: %w", err)
+	}
+	applyCatalogLabels(items, time.Now())
+	return items, meta, nil
+}
+
+func normalizeCatalogFilter(filter models.ProgramFilter) models.ProgramFilter {
+	filter.Search = strings.TrimSpace(filter.Search)
+	filter.Skill = strings.TrimSpace(filter.Skill)
+	if strings.EqualFold(filter.Skill, "all") {
+		filter.Skill = ""
+	}
+	// Public catalog is published programs only.
+	filter.Status = string(models.ProgramStatusPublished)
+
+	switch strings.ToLower(strings.TrimSpace(filter.DiscoveryStatus)) {
+	case "acceptance", "in-progress", "completed":
+		filter.DiscoveryStatus = strings.ToLower(strings.TrimSpace(filter.DiscoveryStatus))
+	default:
+		filter.DiscoveryStatus = ""
+	}
+
+	switch filter.SortBy {
+	case "accepting_first", "completed_first", "name_asc", "name_desc", "updated_oldest", "updated_newest":
+	default:
+		filter.SortBy = "accepting_first"
+	}
+	return filter
+}
+
+// GetCatalog returns one catalog item by UUID or slug.
+func (s *ProgramService) GetCatalog(ctx context.Context, id string) (*models.ProgramCatalogItem, error) {
+	ctx, span := programSvcTracer.Start(ctx, "ProgramService.GetCatalog")
+	defer span.End()
+	span.SetAttributes(attribute.String("program.id", id))
+
+	item, err := s.repo.GetCatalog(ctx, id)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("get program catalog: %w", err)
+	}
+	applyCatalogLabels([]*models.ProgramCatalogItem{item}, time.Now())
+	return item, nil
+}
+
+// ListCatalogMentees returns accepted/active/graduated mentees for a program.
+func (s *ProgramService) ListCatalogMentees(ctx context.Context, programID string) ([]*models.ProgramCatalogMentee, error) {
+	ctx, span := programSvcTracer.Start(ctx, "ProgramService.ListCatalogMentees")
+	defer span.End()
+	span.SetAttributes(attribute.String("program.id", programID))
+
+	mentees, err := s.repo.ListCatalogMentees(ctx, programID)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("list catalog mentees: %w", err)
+	}
+	return mentees, nil
 }
 
 // Create validates input and creates a program.

@@ -20,7 +20,11 @@ SPDX-License-Identifier: MIT
 
         <div class="flex min-w-0 flex-1 flex-col gap-4">
           <div class="flex flex-wrap items-center gap-3">
-            <span class="text-xs text-neutral-500">{{ program.foundation.name }}</span>
+            <span
+              v-if="program.foundation.name"
+              class="text-xs text-neutral-500"
+              >{{ program.foundation.name }}</span
+            >
             <lfx-tag
               :variation="statusConfig.variation"
               size="small"
@@ -67,7 +71,7 @@ SPDX-License-Identifier: MIT
               @click="$emit('open-repository')"
             />
             <lfx-button
-              v-if="program.crowdfundingInitiativeId"
+              v-if="program.slug"
               label="Donate"
               icon="heart"
               icon-type="solid"
