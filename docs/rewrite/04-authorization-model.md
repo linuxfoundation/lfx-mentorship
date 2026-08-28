@@ -64,7 +64,7 @@ flowchart TB
 
 **Legend:** ═══ blue = Postgres **and** FGA (via fga-sync) · - - - grey = Postgres only. Blue edges read *object → relation → subject*, the same direction as the tuple: `application ==applicant==> mentee` is `mentorship_application:{uid}#applicant@user:{lfid}`.
 
-**Statuses**: mentee applications run `pending → accepted → graduated`, or `declined` / `withdrawn`, with `hold` for a mentorship paused mid-term. The backfill maps legacy variants onto this set explicitly (see [03](./03-migration-plan.md)).
+**Statuses**: mentee applications run `pending → accepted → graduated`, or `declined` / `withdrawn`. A mentorship paused mid-term (`hold`) is a state of the accepted mentorship, not an application outcome — legacy keeps both in one `ProjectMemberStatus` column, and the backfill has to preserve it without conflating the two (see [03](./03-migration-plan.md)). None of this is visible to FGA either way: statuses are Postgres business state (decision 3).
 
 **Applications carry an applicant type.** Mentors can *apply* to a program as well as be invited (legacy `project-members` uses one `pending` row for either, per `01`), so `mentorship_application` covers both and the row records whether the applicant is a prospective mentee or mentor. This does not change the FGA type — the `applicant` relation is the same either way — but it does change what acceptance *emits*, and it is why the accept route is `manager`-gated regardless of applicant type. See the lifecycle table.
 

@@ -130,7 +130,7 @@ erDiagram
         uuid program_term_id FK
         uuid user_id FK
         text role "mentor | mentee"
-        text status "pending | accepted | declined | withdrawn | graduated | hold"
+        text status "pending | accepted | declined | withdrawn | graduated"
     }
     program_members {
         uuid id PK
