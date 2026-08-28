@@ -60,7 +60,20 @@ Two further rules on status vocabulary:
 - **`declined` is the shared term for a turned-down application**, for both mentor and mentee roles — `applications` unifies them via a `role` column, so the status vocabulary must not fork by role.
 - **`rejected` is reserved for `ProgramStatus`** (program moderation) and must not be reused for applications or members.
 
-The one exception: `docs/rewrite/01-current-system.md` and other passages *describing the legacy system* may use the old terms where they are historically accurate. Do not rewrite history — the ban applies to anything describing the new system.
+### Who does what
+
+Getting the word right is not enough — the actor has to be right too. UI copy has claimed that maintainers enrol programs, which uses no banned term but is still wrong:
+
+- **Program Admins** create and administer mentorship programs, usually several of them. Anything about enrolling, configuring, or running a program is addressed to them.
+- **Open-source maintainers** maintain the upstream project. They do not normally create programs; they work with a Program Admin who does. A maintainer often becomes a **mentor**, since they know the project well.
+
+### Exemptions
+
+The ban applies to anything describing the new system. It does **not** apply to:
+
+- **Descriptions of the legacy platform** — `docs/rewrite/01-current-system.md` and similar passages may use the old terms where historically accurate. Do not rewrite history.
+- **Identifiers owned by someone else** — third-party schema keys and external field names are not ours to rename. Helm defines `maintainers:` in `Chart.yaml` (renaming it silently drops the field). `backend/db/scripts/migrate_dynamo_to_postgres.py` reads `apprenticeNeeds` as a fallback for legacy DynamoDB records that predate the `menteeNeeds` rename; removing it loses data for those rows.
+- **`maintainer` in its ordinary English sense** — someone who maintains an open-source project. Mentees are paired with maintainers (who serve as mentors) and may become maintainers themselves. Rewriting these to "Program Admin" makes the copy false. The ban targets `maintainer` used as the name of an *LFX Mentorship role*.
 
 ## Code Style
 
@@ -79,7 +92,7 @@ Before creating or updating a PR, review the entire diff and verify:
 - **Best practices** — idiomatic Go, consistent with existing patterns in this repo; use named constants for repeated string/numeric values (error codes, status values, source names, event types) rather than inline literals — see **Code Style** above
 - **Tests** — every non-trivial behavior is covered; error paths tested alongside happy paths
 - **Clear architecture** — interfaces, packages, and responsibilities are well-defined and easy to follow
-- **Terminology** — no banned terms (see **Terminology** above)
+- **Terminology** — no banned terms, and the right actor performs each action (see **Terminology** above; check **Exemptions** before renaming anything)
 
 ## Status
 
