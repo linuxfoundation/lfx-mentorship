@@ -8,14 +8,14 @@ Related: [02-target-architecture.md](./02-target-architecture.md), [03-migration
 
 Follow-up to the Architecture-call feedback: Mentorship programs are always subordinated under LF projects, so the service goes **behind the v2 API Gateway** with Heimdall edge authorization and OpenFGA — the idiomatic v2 pattern — rather than Crowdfunding's interim standalone-API model. This doc proposes the FGA model and the Postgres/FGA split.
 
-Positions carried over from the follow-up Architecture call are marked inline: the FGA-inclusion test and the `vote` precedent (below), one canonical route per object (AQ-1), per-object vs. direct grants (AQ-2), and the storage deviation (AQ-3). Decision 6 records a platform constraint — no attribute-level access control — that shapes the endpoint layout.
+Positions carried over from the follow-up Architecture call are marked inline: the FGA-inclusion test and the `vote` precedent (below), no attribute-level access control (decision 6), one canonical route per object (AQ-1), direct grants vs. inheritance (AQ-2), and the storage deviation (AQ-3).
 
 ## Principle
 
 **PostgreSQL is the system of record for all data — including memberships and ownership. OpenFGA holds a derived authorization index: only the relations Heimdall needs to answer "may this caller act on this object" at the edge.**
 
 - The service publishes tuples to [fga-sync](https://github.com/linuxfoundation/lfx-v2-fga-sync) (`GenericFGAMessage` over NATS) **at state transitions**, and once as a bulk seed after the DynamoDB → Postgres backfill (re-runnable: `update_access` is a full-state sync per object).
-- **Delivery is via a transactional outbox, not a bare publish.** A Postgres commit and a NATS publish cannot be made atomic: if the process dies after the status change commits but before the broker acknowledges, a grant would be silently missing — or worse, a revocation lost, leaving access live after removal. The state transition therefore writes the outgoing message to an `fga_outbox` table *inside the same transaction* as the state change, and a relay publishes and marks rows sent, retrying until the broker acknowledges. On top of that, a periodic reconciliation job re-derives each object's expected relations from Postgres and re-emits `update_access` where FGA has drifted; because `update_access` is a full-state sync per object, replaying it is always safe and self-healing. Revocation lag is the metric to alert on.
+- **Delivery is via a transactional outbox, not a bare publish.** A Postgres commit and a NATS publish cannot be made atomic — a process death between them loses a grant, or worse a revocation, leaving access live after removal. The transition writes the message to an `fga_outbox` table *in the same transaction* as the state change; a relay publishes and marks rows sent, retrying until acknowledged. A periodic reconciliation job re-derives expected relations from Postgres and re-emits where FGA has drifted — safe to replay, since `update_access` is a full-state sync per object. Revocation lag is the metric to alert on.
 - FGA is never queried by the Mentorship service and never holds business state (statuses, dates, categories, history).
 - Backend services make **no authorization decisions**. The single residue is `/me/*` **list** endpoints ("my applications", "my tasks"), where the service filters rows by the caller's LFID from the Heimdall-issued JWT — data scoping on the caller's own records, not a grant/deny decision on an identified resource. Every route that carries a resource ID gets a Heimdall rule instead, and `/me/*` never becomes a second way to fetch an individual object (see AQ-1). The identifier is the **`principal`** claim, which the platform's `create_jwt` finalizer populates from the subject's `username` attribute ([values.yaml](https://github.com/linuxfoundation/lfx-v2-helm/blob/main/charts/lfx-platform/values.yaml)); the upstream Auth0 `sub` is deliberately *not* forwarded to services, so `principal` is also the identity that must key the `user:{lfid}` tuples below.
 
@@ -39,19 +39,19 @@ flowchart TB
     PROJECT["LF Project<br/><i>(exists in FGA today)</i>"]
     PROGRAM["Program"]
     TERM["Program Term"]
-    APP["Application<br/><i>(status: pending → accepted →<br/>graduated | declined | withdrawn)</i>"]
+    APP["Application"]
     TASK["Task<br/><i>(category: prerequisite | program)</i>"]
     ADMIN(["Program Admin<br/>(maintainer)"])
     MENTOR(["Mentor"])
     MENTEE(["Applicant / Mentee"])
 
     PROGRAM ==>|"project"| PROJECT
-    ADMIN ==>|"writer (direct + from project)"| PROGRAM
-    MENTOR ==>|"mentor (direct only)"| PROGRAM
+    PROGRAM ==>|"writer (direct + from project)"| ADMIN
+    PROGRAM ==>|"mentor (direct only)"| MENTOR
     APP ==>|"mentorship_program"| PROGRAM
-    MENTEE ==>|"applicant"| APP
+    APP ==>|"applicant"| MENTEE
     TASK ==>|"mentorship_program"| PROGRAM
-    MENTEE ==>|"assignee"| TASK
+    TASK ==>|"assignee"| MENTEE
 
     PROGRAM -.->|"has terms"| TERM
     TERM -.->|"receives"| APP
@@ -61,11 +61,11 @@ flowchart TB
     linkStyle 7,8,9 stroke:#9ca3af,stroke-dasharray:5 5
 ```
 
-**Legend:** ═══ blue = Postgres **and** FGA (via fga-sync) · - - - grey = Postgres only. Edge labels on blue edges are the FGA **relation names** — e.g. `mentee ==applicant==> application` is the direct tuple `mentorship_application:{uid}#applicant@user:{lfid}`, not an intermediate hop.
+**Legend:** ═══ blue = Postgres **and** FGA (via fga-sync) · - - - grey = Postgres only. Blue edges read *object → relation → subject*, the same direction as the tuple: `application ==applicant==> mentee` is `mentorship_application:{uid}#applicant@user:{lfid}`.
 
-**Statuses**: mentee applications run pending/accepted/declined/graduated/withdrawn; declined mentor invitations use the same `declined` vocabulary. The backfill inventory maps any legacy status variants onto this set explicitly.
+**Statuses**: mentee applications run `pending → accepted → graduated`, or `declined` / `withdrawn`; declined mentor invitations reuse `declined`. The backfill maps legacy variants onto this set explicitly.
 
-**Vocabulary**: the new model uses **mentee** throughout, including as the member-type value. Legacy's internal `apprentice` (never surfaced in the UI, which already says "mentee") is mapped to `mentee` by the backfill; it appears in these docs only when quoting legacy data.
+**Vocabulary**: the new model uses **mentee** throughout, including as the member-type value. Legacy's internal `apprentice` (never surfaced in the UI, which already says "mentee") is mapped by the backfill; it appears here only when quoting legacy data.
 
 **No enrollment entity.** In the legacy system the application *is* the lifecycle object: one `project-members` row (memberType `apprentice` → `mentee`, keyed by user + program term) whose status runs the full journey `pending → accepted → graduated`. Acceptance and graduation are status changes on that row, and mentors relate to the **program**, not to individual mentees (a mentee's "mentors" list is a cron-denormalized copy of the program's approved mentors). The rewrite keeps that shape — no `enrollments` table, no mentor-mentee assignment — and the ERD in [02](./02-target-architecture.md) will be corrected accordingly.
 
@@ -131,15 +131,12 @@ Submission checks `assignee` directly and review checks `manager` — no wrapper
 
 Two tuples per application/task (owner + parent), a handful per program. At Mentorship's volumes (thousands of rows) this is trivial for FGA.
 
-**Answers to the review questions on this sketch:**
+**Notes on the sketch:**
 
-- **Where `writer` on a program comes from**: **both** — directly assigned (the legacy `maintainer` who created the program) *and* inherited via `writer from project`, so project writers can administer their programs without a separate grant. `mentor` is **directly assigned only**, matching the invite flow.
-- **Who creates a program**: the model defines `mentorship_program_creator` on the **project** as `writer or mentorship_coordinator` — the same shape as `meetings_creator`. Project writers get it by default; the extra direct relation exists so LF staff can be granted program-creation on a project without full write access. Whether the create route actually *checks* it at launch is AQ-6: the proposed launch default keeps legacy parity (authenticated-only creation, publication gated by super-admin approval), with this relation defined up front so tightening the route later is a RuleSet change rather than a model migration. If AQ-6 resolves the other way, Heimdall extracts the project ID from the POST payload and checks this relation.
-- **Who creates applications and tasks**: **tasks** are created by `manager` on the parent program — mentors and admins, both of whom also update and review tasks (verified in legacy: task modification is open to the assignee, any project mentor, or the maintainer). **Applications** are created by the applicant themselves — any authenticated user may apply to a program whose application window is open, so creation is authorized by authentication alone (window state is a Postgres business rule, not an access rule), with the applicant's LFID taken from the JWT rather than the payload.
-- **Application status is admin-only**: mentors view (`auditor`) and evaluate (`reviewer`) applications but cannot accept/decline or otherwise change status (`manager: writer from mentorship_program`) — matching legacy, where the status dropdown exists only in maintainer-gated views. The legacy approve/disapprove endpoints are wired without auth middleware; the new model closes that by construction.
-- **Single-relation rules**: rather than have Heimdall evaluate "mentor from parent or writer from parent", the model defines **`manager`** on the program (`writer or mentor`) and children resolve `manager from mentorship_program`. Every child route checks exactly one relation.
-- **Staff-assisted withdrawal**: yes, needed — support and program admins do withdraw applications on a mentee's behalf. Hence the application's `writer: applicant or manager` rather than applicant-only; the admin-only actions (accept/decline) check `manager` directly.
-- **Business-rule boundary, confirmed by the platform model**: the `meeting.participant` comment notes committee members aren't automatically participants because that filtering "is managed by the backend services and therefore can't be a relationship in the authorization model" — the same line this proposal draws for application windows and graduation gates (Postgres state, not FGA).
+- **Creation.** Programs: `mentorship_program_creator` on the **project** (`writer or mentorship_coordinator`, the `meetings_creator` shape) — whether the create route *checks* it at launch is AQ-6; defining it now makes tightening later a RuleSet change, not a model migration. Tasks: `manager` on the parent program. Applications: the applicant themselves, authorized by authentication alone — the application window is a Postgres business rule, and the applicant's LFID comes from the JWT, not the payload.
+- **Staff-assisted withdrawal** is a real requirement (support and admins withdraw on a mentee's behalf), hence `writer: applicant or manager` rather than applicant-only.
+- **Business-rule boundary, confirmed by the platform model**: the `meeting.participant` comment notes committee members aren't automatically participants because that filtering "is managed by the backend services and therefore can't be a relationship in the authorization model" — the same line drawn here for application windows and graduation gates.
+- **Legacy gap closed by construction**: the legacy approve/disapprove endpoints are wired without auth middleware. Under this model every status route carries a Heimdall rule.
 
 ## Deliberate modeling decisions
 
@@ -165,7 +162,7 @@ Two tuples per application/task (owner + parent), a handful per program. At Ment
 | Transition | Postgres | FGA (via fga-sync) |
 | --- | --- | --- |
 | Program approved/created | `programs` + `program_members` rows | `update_access`: writers, mentors, `project` reference |
-| Program published / unpublished / archived | `programs.status` change | `update_access` with the new `public` value — the wildcard `viewer@user:*` tuple is per-object, so it must be re-emitted (added on publish, dropped on unpublish/archive) or an archived program stays publicly authorized |
+| Program published / unpublished / archived | `programs.status` change | `update_access` with the new `public` value — the `viewer@user:*` tuple is per-object, so without re-emitting it an archived program stays publicly authorized |
 | Mentor **or admin** added (invite accepted, or admin granted later) | `program_members` row | `member_put` mentor→program / writer→program |
 | Application submitted | `applications` row | `update_access`: applicant + `mentorship_program` reference |
 | Prerequisite/program task created | `tasks` row | `update_access`: assignee + `mentorship_program` reference |
@@ -181,9 +178,9 @@ Because removed mentors and admins are kept in `program_members` as history, **e
 
 | # | Question | Proposed default |
 | --- | --- | --- |
-| AQ-1 | **One canonical route per object (Route 1), with `/me/*` as lists only.** The Architecture call framed this as a choice: (1) applications are a real FGA type with a single `GET /applications/{uid}` that any authorized caller uses, or (2) a `/my-applications` endpoint that "backdoors" the object via a service-side data filter — "easier… faster… but not necessarily better", and *"choose one"*, not both. The V1 mistake was having two ways to fetch one object by ID; the GitHub model is one issue endpoint whether you filed it or you're an admin. Confirm the reading below. | **Route 1.** Every object has exactly one ID-addressed route, Heimdall-checked. `/me/*` endpoints exist **only** as collections ("my applications", "my tasks") and never as a second path to an individual object — following each result to `GET /applications/{uid}` hits the same authorized route as an admin would. Jordan endorsed Route 1 on the call and offered his team's help with the relations. Open sub-question: should the `/me` collections be served by the **query service** (FGA-aware, consistent with the platform) rather than by Mentorship filtering on `principal`? |
-| AQ-2 | Confirm per-object tuples for applications/tasks (parent + owner), vs. modeling only program-level relations and nesting *all* routes under `/programs/{uid}/…`. Related: Jordan raised **stamping program admins/mentors directly onto each child object** rather than resolving `manager from mentorship_program`, "much, much more efficient" for listing than resolving through the parent. | **Keep the parent tuple**, and resolve `manager` through it for now. Dropping the parent would force nested routes *and* a service-side "does this task belong to that program" guard — moving authorization logic back into the service. On direct grants: it trades write amplification (every admin change rewrites every child object's tuples) for read speed, and it is the same denormalization the platform is weighing globally for project trees (flattened root relations). At Mentorship's volumes the parent hop is not a bottleneck, so the recommendation is to start with inheritance and adopt direct grants only if listing measures slow — but if the platform standardizes on flattening, we should follow rather than diverge. |
-| AQ-3 | Storage: PostgreSQL (relational lifecycle data, FTS, Fivetran→Snowflake feed) as an explicit deviation from the NATS-KV idiom of native v2 services. | **Keep Postgres**, per [02](./02-target-architecture.md) — and this is a smaller deviation than first framed. The Architecture call was explicit that Goa and NATS-KV are *"patterns and recommendations, but not the only way to build things"*, and that a service counts as idiomatic when it is Heimdall-fronted with NATS notifications, without being cookie-cutter: *"it doesn't mean a rewrite from scratch."* The acknowledged trade is velocity now against homogeneity later (shared tooling, SDK/MCP generation). Crowdfunding is heading for the same target shape, so Mentorship is not a one-off exception. |
+| AQ-1 | **One canonical route per object (Route 1), with `/me/*` as lists only.** The call framed it as a choice: (1) applications are a real FGA type with one `GET /applications/{uid}` for every authorized caller, or (2) a `/my-applications` endpoint that backdoors the object via a service-side filter — "easier… faster… but not necessarily better", and *"choose one"*, not both. Confirm the reading opposite. | **Route 1** (Jordan endorsed it on the call). One ID-addressed route per object, Heimdall-checked; `/me/*` exists only as collections, never as a second path to an individual object — following a result to `GET /applications/{uid}` hits the same route an admin would. This is the V1 mistake avoided: two ways to fetch one object by ID. **Open sub-question:** should `/me` collections be served by the **query service** (FGA-aware, platform-consistent) rather than by Mentorship filtering on `principal`? |
+| AQ-2 | Confirm per-object tuples for applications/tasks (parent + owner), vs. program-level relations only with *all* routes nested under `/programs/{uid}/…`. Related: Jordan raised **stamping admins/mentors directly onto each child** instead of resolving `manager from mentorship_program` — "much, much more efficient" for listing. | **Keep the parent tuple** and resolve `manager` through it. Dropping it would force nested routes *and* a service-side "does this task belong to that program" guard — authorization logic back in the service. Direct grants trade write amplification (every admin change rewrites every child) for read speed; it is the same denormalization the platform is weighing for project trees. At our volumes the parent hop is not a bottleneck, so start with inheritance — but follow the platform if it standardizes on flattening. |
+| AQ-3 | Storage: PostgreSQL (relational lifecycle data, FTS, Fivetran→Snowflake feed) as an explicit deviation from the NATS-KV idiom of native v2 services. | **Keep Postgres**, per [02](./02-target-architecture.md) — a smaller deviation than first framed. The call was explicit that Goa and NATS-KV are *"patterns and recommendations, but not the only way to build things"*, and that Heimdall-fronted with NATS notifications is what makes a service idiomatic: *"it doesn't mean a rewrite from scratch."* The trade is velocity now against homogeneity later (shared tooling, SDK/MCP generation). Crowdfunding is heading for the same shape, so this is not a one-off. |
 | AQ-4 | The model adds two relations to the existing `project` type (`mentorship_program_creator`, `mentorship_coordinator`), mirroring `meetings_creator`/`meeting_coordinator`. Confirm that shape and whether the coordinator grant is wanted at launch. | Add both; coordinator lets LF staff be granted program creation without full project write |
 | AQ-5 | Drop the HMAC email-approval links in favor of super-admins approving via a logged-in Self Serve page (super-admin as a platform-level FGA relation)? | Drop them — one authorization model |
 | AQ-6 | Program creation policy: gate creation on `mentorship_program_creator` and drop super-admin approval, or keep legacy behavior (any authenticated user creates; approval publishes)? Most legacy creators are community maintainers who likely hold no FGA relation on their project, and approval is also an editorial/brand gate (product call), not just anti-spam. | Launch with parity: authenticated-only creation (program stays `pending`/non-public until approved). Keep the creator relations in the model as the lever for later permission-tiered auto-publish. |
