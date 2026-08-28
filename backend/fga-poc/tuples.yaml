@@ -1,3 +1,6 @@
+# Copyright The Linux Foundation and each contributor to LFX.
+# SPDX-License-Identifier: MIT
+
 # --- Project: linux-foundation (global root) ---
 - user: user:aisha
   relation: super_admin
