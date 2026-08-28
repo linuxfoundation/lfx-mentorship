@@ -90,7 +90,7 @@ the program_admin can manage the program's visibility and terms throughout its l
 14. **Given** a prospective mentee who confirms all three eligibility criteria
     (minimum age at program start, work eligibility for the program duration, and no
     existing active mentee profile in another LF mentorship), **When** they proceed,
-    **Then** they may create a `user_profile` with `profile_type = apprentice`.
+    **Then** they may create a `user_profile` with `profile_type = mentee`.
     **When** any criterion fails, **Then** profile creation is blocked.
 
 15. **Given** an existing mentee profile, **When** that mentee applies to a program,
@@ -252,7 +252,7 @@ the program_admin can manage the program's visibility and terms throughout its l
 - **FR-026**: System MUST block participation if any eligibility criterion (FR-025)
   is not met.
 - **FR-027**: System MUST allow a new mentee to create a `user_profile` with
-  `profile_type = apprentice`, capturing identity, phone, address, a validated GitHub
+  `profile_type = mentee`, capturing identity, phone, address, a validated GitHub
   URL, LinkedIn, resume, current skills, skills to improve, and optional demographic
   and socioeconomic data.
 - **FR-028**: System MUST allow an existing mentee to skip profile creation and apply
@@ -324,7 +324,7 @@ the program_admin can manage the program's visibility and terms throughout its l
   program. Key attributes: `member_type` (`mentor`, etc.), `status` (`invited` |
   `requested` → `active` | `declined` | `withdrawn`; `pending` as a manual hold).
   Belongs to one Program.
-- **UserProfile**: A mentee's (`profile_type = apprentice`) or other user's profile.
+- **UserProfile**: A mentee's (`profile_type = mentee`) or other user's profile.
   Key attributes: identity, phone, address, GitHub URL (validated), LinkedIn, resume,
   current skills, skills to improve, optional demographics/socioeconomics.
 - **Application**: A mentee's request to join a specific ProgramTerm. Key attributes:
