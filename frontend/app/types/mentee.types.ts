@@ -78,7 +78,6 @@ export interface MenteeDetail extends Mentee {
 export interface MenteesListResponse {
   data: Mentee[];
   total: number;
-  skills: string[];
   /** Unfiltered catalog size for header summary. */
   menteeCount: number;
   /** Unique projects in the catalog for header summary. */

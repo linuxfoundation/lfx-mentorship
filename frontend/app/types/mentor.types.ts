@@ -48,7 +48,6 @@ export interface MentorDetail extends Mentor {
 export interface MentorsListResponse {
   data: Mentor[];
   total: number;
-  skills: string[];
   /** Unfiltered catalog size for header summary. */
   mentorCount: number;
   /** Unique projects across mentors for header summary. */
