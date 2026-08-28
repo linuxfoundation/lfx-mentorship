@@ -16,7 +16,7 @@ Source → Target mapping
                                         (recordKind='github-profile-reservation'
                                         rows are skipped)
   jobspring-prod-projects             → programs
-                                      → program_skills   (menteeNeeds.skills[])
+                                      → program_skills   (apprenticeNeeds.skills[])
                                       → program_funding_stats (amountRaised)
   jobspring-prod-program-terms        → program_terms
   jobspring-prod-project-members      → program_members
@@ -473,8 +473,10 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
             suffix += 1
         seen_slugs.add(slug)
 
-        # Older records carry this as apprenticeNeeds; newer ones as menteeNeeds.
-        # Resolve once so the programs row and the skill rows below agree.
+        # The legacy platform persists this as apprenticeNeeds (see jobspring
+        # backend/user/user.go: `json:"apprenticeNeeds"`); menteeNeeds is the
+        # rewrite's name for it. Accept either, preferring the new one, and
+        # resolve once so the programs row and the skill rows below agree.
         needs = p.get("menteeNeeds") or p.get("apprenticeNeeds")
 
         prog_rows.append(
