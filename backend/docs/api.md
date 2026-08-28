@@ -45,7 +45,7 @@ Handler  →  Service  →  Repository  →  PostgreSQL (pgx/v5)
 
 ```
 users
-  └── user_profiles           (1:many; profile_type = mentor | apprentice)
+  └── user_profiles           (1:many; profile_type = mentor | mentee)
 
 programs
   ├── program_skills           (many:1)
@@ -288,7 +288,7 @@ List all applications submitted by a user across all programs.
 
 ## 7. User Profiles
 
-User profiles represent a participant's mentorship identity. `profile_type = apprentice` (mentee) or `mentor`.
+User profiles represent a participant's mentorship identity. `profile_type = mentee` or `mentor`.
 
 ### UserProfile Object
 
@@ -296,7 +296,7 @@ User profiles represent a participant's mentorship identity. `profile_type = app
 {
   "id":                  "uuid",
   "user_id":             "uuid",
-  "profile_type":        "apprentice",
+  "profile_type":        "mentee",
   "slug":                "alice-smith",
   "first_name":          "Alice",
   "last_name":           "Smith",
@@ -347,7 +347,7 @@ The `address`, `demographics`, `socioeconomics`, `skill_set`, and `profile_links
 | Parameter | Values | Description |
 |---|---|---|
 | `user_id` | UUID | Filter to one user's profiles |
-| `profile_type` | `mentor\|apprentice` | Filter by type |
+| `profile_type` | `mentor\|mentee` | Filter by type |
 | `limit` / `offset` | — | Pagination |
 
 **Response** `200`
@@ -377,14 +377,14 @@ Look up a profile by its unique slug.
 
 Create a user profile.
 
-**Eligibility gate (apprentice only)**: A user may not hold more than one active `apprentice` profile. The request is rejected with `422` if the user already has one.
+**Eligibility gate (mentee only)**: A user may not hold more than one active `mentee` profile. The request is rejected with `422` if the user already has one.
 
 **Request body**
 ```json
 {
   "id":           "uuid",           // required; caller-supplied UUID
   "user_id":      "uuid",           // required
-  "profile_type": "apprentice",     // required; "mentor" | "apprentice"
+  "profile_type": "mentee",         // required; "mentor" | "mentee"
   "slug":         "alice-smith",
   "first_name":   "Alice",
   "last_name":    "Smith",
@@ -451,7 +451,7 @@ Programs are the top-level entity for a mentorship offering.
   "program_term_status": "open",
   "discover_sort_rank":  1,
   "amount_raised":       50000.00,
-  "apprentice_needs":    { ... },
+  "mentee_needs":        { ... },
   "task_templates": [
     {
       "name": "Contribution PR",
@@ -1438,7 +1438,7 @@ incomplete ──► in_progress ──► submitted ──► complete
 | FR-016 | Apply only when term is open AND within window | `ApplicationService.Create` |
 | FR-017 | Discovery label derived from status + window | `ProgramTerm.DiscoveryLabel()` |
 | FR-022 | Member removal sets status=withdrawn (no hard delete) | `ProgramMemberHandler.Delete` |
-| FR-025 | One active apprentice profile per user max | `UserProfileService.Create` |
+| FR-025 | One active mentee profile per user max | `UserProfileService.Create` |
 | FR-029 | New applications start at status=pending | `ApplicationService.Create` |
 | FR-030 | No reapplication from declined; withdrawn OK while window open | `ApplicationService.Create` |
 | FR-032 | Task templates cloned on application create | `ApplicationService.Create` |
@@ -1496,9 +1496,9 @@ GET /v1/programs/{id}/catalog
 
 #### Applying to a Term (Mentee)
 
-1. Check that the user has an apprentice profile:
+1. Check that the user has a mentee profile:
    ```
-   GET /v1/user-profiles?user_id=<uid>&profile_type=apprentice
+   GET /v1/user-profiles?user_id=<uid>&profile_type=mentee
    ```
 2. If no profile exists, create one (enforce eligibility checks client-side before calling):
    ```
