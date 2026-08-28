@@ -140,7 +140,6 @@ import { menteePath } from '~/config/routes';
 import type { Mentee } from '~/types/mentee.types';
 import ProfileInitialsAvatar from '~/components/shared/directory/profile-initials-avatar.vue';
 import LfxButton from '~/components/uikit/button/button.vue';
-import LfxChip from '~/components/uikit/chip/chip.vue';
 import LfxTag from '~/components/uikit/tag/tag.vue';
 import LfxTooltip from '~/components/uikit/tooltip/tooltip.vue';
 

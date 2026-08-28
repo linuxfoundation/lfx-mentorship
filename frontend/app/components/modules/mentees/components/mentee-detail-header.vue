@@ -10,7 +10,10 @@ SPDX-License-Identifier: MIT
       class="mb-6"
     />
     <div class="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between lg:gap-0">
-      <div class="flex min-w-0 flex-1 gap-4 md:gap-5 lg:border-r lg:border-neutral-100 lg:pr-6">
+      <div
+        class="flex min-w-0 flex-1 gap-4 md:gap-5"
+        :class="{ 'lg:border-r lg:border-neutral-100 lg:pr-6': mentee.skills.length }"
+      >
         <div class="flex min-w-0 flex-1 flex-col gap-3">
           <div class="flex flex-wrap items-center gap-4 mb-5">
             <profile-initials-avatar
@@ -68,11 +71,11 @@ SPDX-License-Identifier: MIT
         </div>
       </div>
 
-      <aside class="w-full shrink-0 lg:w-56 space-y-6 lg:pl-6">
-        <div
-          v-if="mentee.skills.length"
-          class="flex flex-col gap-3"
-        >
+      <aside
+        v-if="mentee.skills.length"
+        class="w-full shrink-0 lg:w-56 space-y-6 lg:pl-6"
+      >
+        <div class="flex flex-col gap-3">
           <p class="text-xs font-semibold uppercase tracking-wide text-neutral-500">Featured skills</p>
           <div class="flex flex-wrap gap-2">
             <lfx-tag

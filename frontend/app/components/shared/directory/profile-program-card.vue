@@ -4,20 +4,20 @@ SPDX-License-Identifier: MIT
 -->
 <template>
   <article class="border border-neutral-200 rounded-2xl bg-white p-5 md:p-6 flex flex-col gap-5 h-full">
-    <div class="flex items-center gap-3 relative">
+    <div class="flex items-start gap-3">
       <lfx-avatar
         :src="program.logoUrl"
         size="large"
         type="organization"
       />
-      <div class="flex flex-col gap-1">
-        <p class="text-xs text-neutral-500 leading-4 truncate pr-12">{{ program.foundationLabel }}</p>
+      <div class="flex min-w-0 flex-1 flex-col gap-1">
+        <p class="text-xs text-neutral-500 leading-4 truncate">{{ program.foundationLabel }}</p>
         <h3 class="text-base font-normal text-neutral-900 leading-6 break-words">
           {{ program.title }}
         </h3>
       </div>
       <lfx-tag
-        class="shrink-0 absolute top-0 right-0"
+        class="shrink-0"
         :variation="statusConfig.variation"
         size="small"
         type="solid"
