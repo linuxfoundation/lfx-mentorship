@@ -115,7 +115,7 @@ erDiagram
         uuid id PK
         text name
         text slug
-        text status "pending | published | archived"
+        text status "draft | submitted | published | rejected | archived | hidden"
         text project_uid "LF project this program belongs to"
         uuid cf_initiative_id "link to Crowdfunding initiative"
     }
@@ -131,7 +131,7 @@ erDiagram
         uuid program_term_id FK
         uuid user_id FK
         text role "mentor | mentee"
-        text status "pending | accepted | declined | withdrawn | graduated"
+        text status "pending | accepted | active | declined | withdrawn | graduated"
     }
     program_members {
         uuid id PK
