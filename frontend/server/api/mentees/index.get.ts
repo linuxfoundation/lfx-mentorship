@@ -1,7 +1,6 @@
 // Copyright The Linux Foundation and each contributor to LFX.
 // SPDX-License-Identifier: MIT
 
-import { SKILL_LIST } from '../../../app/config/skills';
 import { MOCK_MENTEES } from '../../mock-data/directory';
 import type { Mentee, MenteeStatus, MenteesListResponse } from '../../../app/types/mentee.types';
 import { MENTEE_STATUSES } from '../../../app/types/mentee.types';
@@ -53,7 +52,6 @@ export default defineEventHandler((event): MenteesListResponse => {
   return {
     data,
     total: data.length,
-    skills: SKILL_LIST,
     menteeCount: MOCK_MENTEES.length,
     projectCount,
   };

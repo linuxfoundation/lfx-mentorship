@@ -3,7 +3,7 @@
 
 import type { MenteeStatus } from './mentee.types';
 
-export const PROGRAM_STATUSES = ['acceptance', 'in-progress', 'completed'] as const;
+export const PROGRAM_STATUSES = ['open-soon', 'acceptance', 'in-progress', 'completed'] as const;
 
 export type ProgramStatus = (typeof PROGRAM_STATUSES)[number];
 
@@ -18,6 +18,7 @@ export type ProgramSortBy =
   | 'updated_newest';
 
 export interface ProgramMember {
+  /** User id used for profile links, not the membership or application row. */
   id: string;
   name: string;
   intro?: string;
@@ -28,6 +29,8 @@ export interface ProgramMember {
 export interface ProgramMentee extends ProgramMember {
   status: MenteeStatus;
   email: string;
+  /** Term id used with `id` for list keys when a user appears on more than one term. */
+  termId?: string;
   /** Display term, e.g. "Fall 2026". */
   termLabel: string;
 }
@@ -85,24 +88,16 @@ export interface Program {
   activeTerms: ProgramTerm[];
   updatedAt: string;
   repositoryUrl?: string;
-  /**
-   * Crowdfunding initiative id/slug used for Donate deep-link:
-   * `${crowdfundingUrl}/initiatives/${crowdfundingInitiativeId}`
-   */
-  crowdfundingInitiativeId?: string;
-  whatYouWillWorkOn?: string;
-  prerequisites?: string;
   mentees: ProgramMentee[];
   mentors: ProgramMember[];
   sponsors: ProgramSponsor[];
+  isPaid?: boolean;
 }
 
 export interface ProgramsListResponse {
   data: Program[];
+  /** Total matching programs after filters (used for pagination). */
   total: number;
-  skills: string[];
-  /** Unfiltered catalog size, used by the programs header summary. */
-  programCount: number;
   /** Unique foundations in the catalog, used by the programs header summary. */
   foundationCount: number;
 }

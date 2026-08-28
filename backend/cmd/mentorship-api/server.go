@@ -110,7 +110,10 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		r.Get("/user-profiles/slug/{slug}", userProfileH.GetBySlug)
 
 		r.Get("/programs", programH.List)
+		r.Get("/programs/catalog", programH.ListCatalog)
 		r.Get("/programs/{id}", programH.GetByID)
+		r.Get("/programs/{id}/catalog", programH.GetCatalog)
+		r.Get("/programs/{id}/mentees", programH.ListCatalogMentees)
 		r.Get("/programs/{id}/skills", programH.ListSkills)
 		r.Get("/programs/{id}/funding-stats", programH.GetFundingStats)
 		r.Get("/programs/{id}/terms", programTermH.ListByProgram)

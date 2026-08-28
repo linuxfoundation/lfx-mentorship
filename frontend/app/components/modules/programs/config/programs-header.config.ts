@@ -15,7 +15,8 @@ export const DEFAULT_PROGRAM_FILTER: ProgramStatusFilter = 'all';
 
 export const ALL_SKILLS_OPTION = { value: 'all', label: 'All skills' } as const;
 
-export const PROGRAM_PAGE_SIZE = 6;
+export const PROGRAM_PAGE_SIZE = 15;
+export const PROGRAM_SEARCH_DEBOUNCE_MS = 300;
 
 export interface ProgramSortOption {
   value: ProgramSortBy;

@@ -11,7 +11,7 @@ import EnrollProgramView from '~/components/modules/enroll-program/view/enroll-p
 
 const title = 'Enroll a Program';
 const description =
-  'Maintainers of Linux Foundation projects can enroll a mentorship program on LFX. Learn what enrollment asks for and how to prepare.';
+  'Program Admins can enroll a mentorship program for a Linux Foundation project on LFX. Learn what enrollment asks for and how to prepare.';
 
 useHead({ title });
 useSeoMeta({
