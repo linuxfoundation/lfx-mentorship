@@ -56,7 +56,7 @@ Core entities (DynamoDB tables, prefix `jobspring-{stage}-`):
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | `users`           | Accounts linked to Auth0/LFID (id, lfid, email, name, avatar)                                                                               |
 | `projects`        | Mentorship programs: metadata, acceptance settings, **program terms embedded as nested documents**, materialized mentor/opportunity lists   |
-| `project-members` | Many-to-many user↔program: memberType (mentor / maintainer / apprentice), status lifecycle                                                  |
+| `project-members` | Many-to-many user↔program: memberType (`mentor` / `maintainer` → program admin / `apprentice` → mentee), status lifecycle                    |
 | `tasks`           | Mentee tasks/milestones: owner, assignee, status, due date, submissions                                                                     |
 | `user-profiles`   | Extended mentor/mentee profiles: skills, address, employment authorization                                                                  |
 | `project-skills`  | Denormalized skill→program mapping for search                                                                                               |
@@ -67,11 +67,11 @@ Core entities (DynamoDB tables, prefix `jobspring-{stage}-`):
 
 ```mermaid
 stateDiagram-v2
-    [*] --> ProgramPending: maintainer creates program
+    [*] --> ProgramPending: program admin creates program
     ProgramPending --> ProgramPublished: LF admin approves
     ProgramPublished --> TermOpen: program term application window opens (cron)
     TermOpen --> ApplicationPending: mentee/mentor applies
-    ApplicationPending --> Accepted: maintainer/admin approves
+    ApplicationPending --> Accepted: program admin approves
     ApplicationPending --> Declined
     Accepted --> ActiveMentorship: term starts, tasks assigned
     ActiveMentorship --> Graduated: term ends, tasks complete
@@ -79,7 +79,9 @@ stateDiagram-v2
     ActiveMentorship --> Hold
 ```
 
-Roles: **maintainer** (creates/manages programs, approves applications, assigns tasks), **mentor** (applies or is invited, reviews task submissions), **mentee/apprentice** (discovers, applies, completes tasks, graduates), **LF admin** (approves programs, manages platform).
+Roles: **program admin** (creates/manages programs, decides applications, assigns tasks), **mentor** (applies or is invited, assigns and reviews tasks for accepted mentees), **mentee** (discovers, applies, completes tasks, graduates), **LF admin** (approves programs, manages platform). The stored `memberType` values are `maintainer`, `mentor` and `apprentice`; the first and last are renamed by the backfill (see [03](./03-migration-plan.md)) and this series uses the target terms except when quoting legacy data.
+
+**Only program admins decide applications.** The product states the boundary on the mentees tab itself — *"project admin gets notified via email to review the submission and make the admission decision. Mentors can assign tasks and milestones to accepted mentees."* Verified against the running dev site: a user holding only `mentor` on a program sees the application status as a static badge, not an editable control. Note that the **API does not enforce this** — `UpdateMenteeStatus` (`project/service_project_member.go`) accepts any `mentor` or `maintainer` row without a status filter, so admin-only is enforced by the frontend alone. That is a legacy defect to fix in the rewrite, not behavior to reproduce; the target model gates the status route on the admin relation ([04](./04-authorization-model.md)).
 
 ## Background jobs (15+ Lambda cron jobs)
 
