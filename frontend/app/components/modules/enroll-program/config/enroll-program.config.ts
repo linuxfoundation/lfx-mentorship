@@ -7,13 +7,13 @@ import type {
   EnrollProgramStep,
 } from '~/types/enroll-program.types';
 
-export const ENROLL_PROGRAM_BADGE = 'For maintainers';
+export const ENROLL_PROGRAM_BADGE = 'For Program Admins';
 
 export const ENROLL_PROGRAM_HERO_TITLE = 'Offer a mentorship program for your project.';
 
 export const ENROLL_PROGRAM_HERO_SUBTITLE_PARTS: Array<{ text: string; bold?: boolean }> = [
   {
-    text: 'Maintainers of Linux Foundation projects can enroll a program and bring on paid, mentored contributors for a ',
+    text: 'Program Admins can enroll a program for a Linux Foundation project and bring on paid, mentored contributors for a ',
   },
   { text: 'multi-week term', bold: true },
   {
