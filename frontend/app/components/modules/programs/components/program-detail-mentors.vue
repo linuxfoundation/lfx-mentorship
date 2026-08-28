@@ -34,7 +34,7 @@ SPDX-License-Identifier: MIT
             size="normal"
           />
           <NuxtLink
-            :to="mentorProfilePath(member.id)"
+            :to="mentorPath(member.id)"
             class="block text-sm font-semibold text-brand-700 truncate hover:underline"
           >
             {{ member.name }}
@@ -53,6 +53,7 @@ SPDX-License-Identifier: MIT
 
 <script setup lang="ts">
 import type { ProgramMember } from '~/types/program.types';
+import { mentorPath } from '~/config/routes';
 import LfxAvatar from '~/components/uikit/avatar/avatar.vue';
 
 defineProps<{
@@ -60,8 +61,6 @@ defineProps<{
   emptyLabel: string;
   heading?: string;
 }>();
-
-const mentorProfilePath = (mentorId: string) => `/mentor/${mentorId}`;
 </script>
 
 <script lang="ts">

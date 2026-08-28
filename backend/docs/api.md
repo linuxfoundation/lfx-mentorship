@@ -45,7 +45,7 @@ Handler  →  Service  →  Repository  →  PostgreSQL (pgx/v5)
 
 ```
 users
-  └── user_profiles           (1:many; profile_type = mentor | apprentice)
+  └── user_profiles           (1:many; profile_type = mentor | mentee)
 
 programs
   ├── program_skills           (many:1)
@@ -288,7 +288,7 @@ List all applications submitted by a user across all programs.
 
 ## 7. User Profiles
 
-User profiles represent a participant's mentorship identity. `profile_type = apprentice` (mentee) or `mentor`.
+User profiles represent a participant's mentorship identity. `profile_type = mentee` or `mentor`.
 
 ### UserProfile Object
 
@@ -296,7 +296,7 @@ User profiles represent a participant's mentorship identity. `profile_type = app
 {
   "id":                  "uuid",
   "user_id":             "uuid",
-  "profile_type":        "apprentice",
+  "profile_type":        "mentee",
   "slug":                "alice-smith",
   "first_name":          "Alice",
   "last_name":           "Smith",
@@ -347,7 +347,7 @@ The `address`, `demographics`, `socioeconomics`, `skill_set`, and `profile_links
 | Parameter | Values | Description |
 |---|---|---|
 | `user_id` | UUID | Filter to one user's profiles |
-| `profile_type` | `mentor\|apprentice` | Filter by type |
+| `profile_type` | `mentor\|mentee` | Filter by type |
 | `limit` / `offset` | — | Pagination |
 
 **Response** `200`
@@ -377,14 +377,14 @@ Look up a profile by its unique slug.
 
 Create a user profile.
 
-**Eligibility gate (apprentice only)**: A user may not hold more than one active `apprentice` profile. The request is rejected with `422` if the user already has one.
+**Eligibility gate (mentee only)**: A user may not hold more than one active `mentee` profile. The request is rejected with `422` if the user already has one.
 
 **Request body**
 ```json
 {
   "id":           "uuid",           // required; caller-supplied UUID
   "user_id":      "uuid",           // required
-  "profile_type": "apprentice",     // required; "mentor" | "apprentice"
+  "profile_type": "mentee",         // required; "mentor" | "mentee"
   "slug":         "alice-smith",
   "first_name":   "Alice",
   "last_name":    "Smith",
@@ -451,7 +451,7 @@ Programs are the top-level entity for a mentorship offering.
   "program_term_status": "open",
   "discover_sort_rank":  1,
   "amount_raised":       50000.00,
-  "apprentice_needs":    { ... },
+  "mentee_needs":        { ... },
   "task_templates": [
     {
       "name": "Contribution PR",
@@ -516,6 +516,109 @@ Programs are the top-level entity for a mentorship offering.
 ```json
 { "data": [<Program>, ...], "meta": {...} }
 ```
+
+---
+
+#### `GET /v1/programs/catalog` 🔓
+
+Paginated public catalog of programs with nested skills, terms, and active mentors in a single response. The existing `GET /v1/programs`, `/skills`, `/terms`, and `/members` endpoints are unchanged.
+
+**Query parameters**
+
+| Parameter | Values | Description |
+|---|---|---|
+| `search` | string | Case-insensitive match on program name|
+| `skill` | string | Case-insensitive exact match on a program skill (`all` is ignored) |
+| `status` | `acceptance\|in-progress\|completed` | Public discovery status derived from terms. Omit or `all` for every published program. |
+| `sort_by` / `sortBy` | `accepting_first\|completed_first\|name_asc\|name_desc\|updated_oldest\|updated_newest` | Sort order. Defaults to `accepting_first`. |
+| `limit` / `offset` | — | Pagination |
+
+Always returns `status = published` programs. Draft, hidden, and other statuses are omitted.
+
+**Response** `200`
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "name": "Kubernetes Contributors",
+      "slug": "kubernetes-contributors",
+      "status": "published",
+      "is_paid": true,
+      "description": "...",
+      "logo_url": "https://...",
+      "repo_link": "https://github.com/...",
+      "created_on": "2026-01-01T00:00:00Z",
+      "updated_on": "2026-01-01T00:00:00Z",
+      "skills": ["Go", "Kubernetes"],
+      "terms": [
+        {
+          "id": "uuid",
+          "program_id": "uuid",
+          "name": "Spring 2026",
+          "status": "open",
+          "start_date_time": "2026-03-02T00:00:00Z",
+          "end_date_time": "2026-05-25T00:00:00Z",
+          "application_start_date": "2025-11-03T00:00:00Z",
+          "application_end_date": "2026-01-15T00:00:00Z",
+          "discovery_label": "Apply Now"
+        }
+      ],
+      "mentors": [
+        {
+          "id": "uuid",
+          "user_id": "uuid",
+          "name": "Jane Mentor",
+          "avatar_url": "https://...",
+          "introduction": "I mentor kernel contributors..."
+        }
+      ]
+    }
+  ],
+  "meta": { "total": 42, "limit": 20, "offset": 0 }
+}
+```
+
+Nested `terms` omit soft-deleted terms. Nested `mentors` are `member_type = mentor` and `status = active`, joined to `users` for name and avatar, and to the mentor `user_profiles` row for `introduction`.
+
+LF project / foundation is not included yet — `programs.lfid` remains the owner username.
+
+---
+
+#### `GET /v1/programs/{id}/catalog` 🔓
+
+Same catalog shape as `GET /v1/programs/catalog` for a single program (UUID or slug). Hidden programs follow the same FR-009 404 rule as `GET /v1/programs/{id}`.
+
+**Response** `200` → `<ProgramCatalogItem>`  
+**Errors** `404`
+
+---
+
+#### `GET /v1/programs/{id}/mentees` 🔓
+
+Public list of accepted, active, and graduated mentees for a program (UUID or slug). Hidden programs follow the same FR-009 404 rule as `GET /v1/programs/{id}`. Pending, declined, withdrawn, and hold applications are omitted.
+
+**Response** `200`
+```json
+{
+  "data": [
+    {
+      "user_id": "uuid",
+      "name": "Alex Mentee",
+      "avatar_url": "https://...",
+      "introduction": "I contribute to Kubernetes...",
+      "email": "alex@example.com",
+      "status": "active",
+      "term_id": "uuid",
+      "term_name": "Spring 2026"
+    }
+  ]
+}
+```
+
+`status` is the application status: `accepted`, `active`, or `graduated`. Display fields come from `users` and the mentee `user_profiles` row. `term_name` is `program_terms.name`.
+
+**Errors** `404`
 
 ---
 
@@ -1335,7 +1438,7 @@ incomplete ──► in_progress ──► submitted ──► complete
 | FR-016 | Apply only when term is open AND within window | `ApplicationService.Create` |
 | FR-017 | Discovery label derived from status + window | `ProgramTerm.DiscoveryLabel()` |
 | FR-022 | Member removal sets status=withdrawn (no hard delete) | `ProgramMemberHandler.Delete` |
-| FR-025 | One active apprentice profile per user max | `UserProfileService.Create` |
+| FR-025 | One active mentee profile per user max | `UserProfileService.Create` |
 | FR-029 | New applications start at status=pending | `ApplicationService.Create` |
 | FR-030 | No reapplication from declined; withdrawn OK while window open | `ApplicationService.Create` |
 | FR-032 | Task templates cloned on application create | `ApplicationService.Create` |
@@ -1372,6 +1475,11 @@ GET /v1/programs/{id}/terms?status=open
 → Use term.discovery_label to show "Apply Now", "Coming Soon", etc.
 ```
 
+Alternatively, a single catalog request includes skills, terms, and active mentors:
+```
+GET /v1/programs/catalog?limit=20
+```
+
 #### Program Detail Page
 
 ```
@@ -1381,11 +1489,16 @@ GET /v1/programs/{id}/skills
 GET /v1/programs/{id}/members?member_type=mentor&status=active
 ```
 
+Alternatively, the same nested shape in one request:
+```
+GET /v1/programs/{id}/catalog
+```
+
 #### Applying to a Term (Mentee)
 
-1. Check that the user has an apprentice profile:
+1. Check that the user has a mentee profile:
    ```
-   GET /v1/user-profiles?user_id=<uid>&profile_type=apprentice
+   GET /v1/user-profiles?user_id=<uid>&profile_type=mentee
    ```
 2. If no profile exists, create one (enforce eligibility checks client-side before calling):
    ```

@@ -144,7 +144,6 @@ const PROGRAM_SEEDS: Omit<Program, 'activeTerms'>[] = [
     ],
     updatedAt: '2026-08-10T12:00:00.000Z',
     repositoryUrl: 'https://github.com/kubernetes/community',
-    crowdfundingInitiativeId: '9b4080d9-701a-4513-85e6-a162beb3773a',
     mentees: [
       mentee(
         'me-1',
@@ -232,7 +231,6 @@ const PROGRAM_SEEDS: Omit<Program, 'activeTerms'>[] = [
     ],
     updatedAt: '2026-08-01T09:30:00.000Z',
     repositoryUrl: 'https://github.com/ossf',
-    crowdfundingInitiativeId: '9b4080d9-701a-4513-85e6-a162beb3773a',
     mentees: [
       mentee(
         'me-4',
@@ -283,7 +281,6 @@ const PROGRAM_SEEDS: Omit<Program, 'activeTerms'>[] = [
     terms: [term('t3-1', 'Term 1', 'Jan-Mar 2026', '2025-12-10T00:00:00.000Z', 'closed')],
     updatedAt: '2026-06-15T16:00:00.000Z',
     repositoryUrl: 'https://github.com/linuxfoundation',
-    crowdfundingInitiativeId: '9b4080d9-701a-4513-85e6-a162beb3773a',
     mentees: [
       mentee(
         'me-6',
@@ -342,7 +339,6 @@ const PROGRAM_SEEDS: Omit<Program, 'activeTerms'>[] = [
     ],
     updatedAt: '2026-08-12T08:00:00.000Z',
     repositoryUrl: 'https://github.com/Apicurio/apicurio-registry',
-    crowdfundingInitiativeId: '9b4080d9-701a-4513-85e6-a162beb3773a',
     mentees: [
       mentee(
         'me-7',
@@ -413,7 +409,6 @@ const PROGRAM_SEEDS: Omit<Program, 'activeTerms'>[] = [
     ],
     updatedAt: '2026-07-20T11:00:00.000Z',
     repositoryUrl: 'https://git.kernel.org',
-    crowdfundingInitiativeId: '9b4080d9-701a-4513-85e6-a162beb3773a',
     mentees: [
       mentee(
         'me-11',
@@ -462,7 +457,6 @@ const PROGRAM_SEEDS: Omit<Program, 'activeTerms'>[] = [
       term('t6-3', 'Term 3', 'Sep-Nov 2025', '2025-07-15T00:00:00.000Z', 'closed'),
     ],
     updatedAt: '2026-05-01T10:00:00.000Z',
-    crowdfundingInitiativeId: '9b4080d9-701a-4513-85e6-a162beb3773a',
     mentees: [
       mentee(
         'me-13',
@@ -524,7 +518,6 @@ const PROGRAM_SEEDS: Omit<Program, 'activeTerms'>[] = [
     ],
     updatedAt: '2026-08-12T10:00:00.000Z',
     repositoryUrl: 'https://github.com/prometheus',
-    crowdfundingInitiativeId: '9b4080d9-701a-4513-85e6-a162beb3773a',
     mentees: [
       mentee(
         'me-16',
@@ -559,7 +552,6 @@ const PROGRAM_SEEDS: Omit<Program, 'activeTerms'>[] = [
     ],
     updatedAt: '2026-07-28T14:00:00.000Z',
     repositoryUrl: 'https://github.com/rust-lang',
-    crowdfundingInitiativeId: '9b4080d9-701a-4513-85e6-a162beb3773a',
     mentees: [
       mentee(
         'me-17',

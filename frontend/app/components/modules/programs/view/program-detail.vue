@@ -70,6 +70,8 @@ SPDX-License-Identifier: MIT
             v-else-if="activeTab === 'mentees'"
             :current-mentees="currentMentees"
             :graduated-mentees="graduatedMentees"
+            :is-loading="isMenteesLoading"
+            :load-failed="Boolean(menteesError)"
           />
           <program-detail-sponsors
             v-else
@@ -91,8 +93,12 @@ import ProgramDetailSponsors from '../components/program-detail-sponsors.vue';
 import ProgramDetailTerms from '../components/program-detail-terms.vue';
 import { DEFAULT_PROGRAM_DETAIL_TAB, PROGRAM_DETAIL_TABS } from '../config/program-detail.config';
 import { useProgram } from '~/composables/programs/useProgram';
+import { useProgramMentees } from '~/composables/programs/useProgramMentees';
 import LfxButton from '~/components/uikit/button/button.vue';
 import LfxSpinner from '~/components/uikit/spinner/spinner.vue';
+import { ToastTypesEnum } from '~/components/uikit/toast/types/toast.types';
+import useToastService from '~/components/uikit/toast/toast.service';
+import { getFetchErrorMessage } from '~/utils/fetch-error';
 
 const props = defineProps<{
   programId: string;
@@ -100,14 +106,36 @@ const props = defineProps<{
 
 const programId = computed(() => props.programId);
 const { data: program, isLoading, error } = useProgram(programId);
+const { showToast } = useToastService();
 const {
   public: { crowdfundingUrl },
 } = useRuntimeConfig();
 
-const activeTab = ref(DEFAULT_PROGRAM_DETAIL_TAB);
+watch(error, (err) => {
+  if (!import.meta.client || !err) return;
+  const statusCode =
+    typeof err === 'object' && err !== null && 'statusCode' in err
+      ? Number((err as { statusCode?: number }).statusCode)
+      : 0;
+  const fallback = statusCode === 404 ? 'Program not found.' : 'Failed to load program. Please try again.';
+  showToast(getFetchErrorMessage(err, fallback), ToastTypesEnum.negative);
+});
 
-const currentMentees = computed(() => program.value?.mentees.filter((mentee) => mentee.status === 'active') ?? []);
-const graduatedMentees = computed(() => program.value?.mentees.filter((mentee) => mentee.status === 'graduated') ?? []);
+const activeTab = ref(DEFAULT_PROGRAM_DETAIL_TAB);
+const menteesEnabled = computed(() => activeTab.value === 'mentees');
+const {
+  data: mentees,
+  isLoading: isMenteesLoading,
+  error: menteesError,
+} = useProgramMentees(programId, menteesEnabled);
+
+watch(menteesError, (err) => {
+  if (!import.meta.client || !err) return;
+  showToast(getFetchErrorMessage(err, 'Failed to load mentees. Please try again.'), ToastTypesEnum.negative);
+});
+
+const currentMentees = computed(() => mentees.value?.filter((mentee) => mentee.status === 'active') ?? []);
+const graduatedMentees = computed(() => mentees.value?.filter((mentee) => mentee.status === 'graduated') ?? []);
 
 watch(programId, () => {
   activeTab.value = DEFAULT_PROGRAM_DETAIL_TAB;
@@ -120,11 +148,11 @@ function openRepository() {
 }
 
 function openDonate() {
-  const initiativeId = program.value?.crowdfundingInitiativeId;
-  if (!initiativeId || !import.meta.client) return;
+  const programSlug = program.value?.slug;
+  if (!programSlug || !import.meta.client) return;
 
   const base = String(crowdfundingUrl).replace(/\/$/, '');
-  window.open(`${base}/initiatives/${initiativeId}`, '_blank', 'noopener,noreferrer');
+  window.open(`${base}/initiatives/${programSlug}`, '_blank', 'noopener,noreferrer');
 }
 
 useHead({
