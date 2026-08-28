@@ -519,6 +519,109 @@ Programs are the top-level entity for a mentorship offering.
 
 ---
 
+#### `GET /v1/programs/catalog` 🔓
+
+Paginated public catalog of programs with nested skills, terms, and active mentors in a single response. The existing `GET /v1/programs`, `/skills`, `/terms`, and `/members` endpoints are unchanged.
+
+**Query parameters**
+
+| Parameter | Values | Description |
+|---|---|---|
+| `search` | string | Case-insensitive match on program name|
+| `skill` | string | Case-insensitive exact match on a program skill (`all` is ignored) |
+| `status` | `acceptance\|in-progress\|completed` | Public discovery status derived from terms. Omit or `all` for every published program. |
+| `sort_by` / `sortBy` | `accepting_first\|completed_first\|name_asc\|name_desc\|updated_oldest\|updated_newest` | Sort order. Defaults to `accepting_first`. |
+| `limit` / `offset` | — | Pagination |
+
+Always returns `status = published` programs. Draft, hidden, and other statuses are omitted.
+
+**Response** `200`
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "name": "Kubernetes Contributors",
+      "slug": "kubernetes-contributors",
+      "status": "published",
+      "is_paid": true,
+      "description": "...",
+      "logo_url": "https://...",
+      "repo_link": "https://github.com/...",
+      "created_on": "2026-01-01T00:00:00Z",
+      "updated_on": "2026-01-01T00:00:00Z",
+      "skills": ["Go", "Kubernetes"],
+      "terms": [
+        {
+          "id": "uuid",
+          "program_id": "uuid",
+          "name": "Spring 2026",
+          "status": "open",
+          "start_date_time": "2026-03-02T00:00:00Z",
+          "end_date_time": "2026-05-25T00:00:00Z",
+          "application_start_date": "2025-11-03T00:00:00Z",
+          "application_end_date": "2026-01-15T00:00:00Z",
+          "discovery_label": "Apply Now"
+        }
+      ],
+      "mentors": [
+        {
+          "id": "uuid",
+          "user_id": "uuid",
+          "name": "Jane Mentor",
+          "avatar_url": "https://...",
+          "introduction": "I mentor kernel contributors..."
+        }
+      ]
+    }
+  ],
+  "meta": { "total": 42, "limit": 20, "offset": 0 }
+}
+```
+
+Nested `terms` omit soft-deleted terms. Nested `mentors` are `member_type = mentor` and `status = active`, joined to `users` for name and avatar, and to the mentor `user_profiles` row for `introduction`.
+
+LF project / foundation is not included yet — `programs.lfid` remains the owner username.
+
+---
+
+#### `GET /v1/programs/{id}/catalog` 🔓
+
+Same catalog shape as `GET /v1/programs/catalog` for a single program (UUID or slug). Hidden programs follow the same FR-009 404 rule as `GET /v1/programs/{id}`.
+
+**Response** `200` → `<ProgramCatalogItem>`  
+**Errors** `404`
+
+---
+
+#### `GET /v1/programs/{id}/mentees` 🔓
+
+Public list of accepted, active, and graduated mentees for a program (UUID or slug). Hidden programs follow the same FR-009 404 rule as `GET /v1/programs/{id}`. Pending, declined, withdrawn, and hold applications are omitted.
+
+**Response** `200`
+```json
+{
+  "data": [
+    {
+      "user_id": "uuid",
+      "name": "Alex Mentee",
+      "avatar_url": "https://...",
+      "introduction": "I contribute to Kubernetes...",
+      "email": "alex@example.com",
+      "status": "active",
+      "term_id": "uuid",
+      "term_name": "Spring 2026"
+    }
+  ]
+}
+```
+
+`status` is the application status: `accepted`, `active`, or `graduated`. Display fields come from `users` and the mentee `user_profiles` row. `term_name` is `program_terms.name`.
+
+**Errors** `404`
+
+---
+
 #### `GET /v1/programs/{id}` 🔓
 
 Fetch a program by UUID or slug.
@@ -1372,6 +1475,11 @@ GET /v1/programs/{id}/terms?status=open
 → Use term.discovery_label to show "Apply Now", "Coming Soon", etc.
 ```
 
+Alternatively, a single catalog request includes skills, terms, and active mentors:
+```
+GET /v1/programs/catalog?limit=20
+```
+
 #### Program Detail Page
 
 ```
@@ -1379,6 +1487,11 @@ GET /v1/programs/{id}
 GET /v1/programs/{id}/terms
 GET /v1/programs/{id}/skills
 GET /v1/programs/{id}/members?member_type=mentor&status=active
+```
+
+Alternatively, the same nested shape in one request:
+```
+GET /v1/programs/{id}/catalog
 ```
 
 #### Applying to a Term (Mentee)

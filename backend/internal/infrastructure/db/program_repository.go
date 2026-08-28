@@ -148,6 +148,344 @@ func (r *ProgramRepository) List(ctx context.Context, filter models.ProgramFilte
 	return programs, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, nil
 }
 
+func catalogLimitOffset(filter models.ProgramFilter) (limit, offset int) {
+	limit = filter.Limit
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	offset = filter.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	return limit, offset
+}
+
+// Term-derived discovery predicates, matching ProgramTerm.DiscoveryLabel / public catalog status.
+const (
+	sqlHasAcceptingTerm = `EXISTS (
+		SELECT 1 FROM program_terms pt
+		WHERE pt.program_id = programs.id
+		  AND pt.status = 'open'
+		  AND pt.application_start_date IS NOT NULL
+		  AND pt.application_end_date IS NOT NULL
+		  AND pt.application_start_date <= NOW()
+		  AND pt.application_end_date >= NOW()
+	)`
+	sqlHasComingSoonTerm = `EXISTS (
+		SELECT 1 FROM program_terms pt
+		WHERE pt.program_id = programs.id
+		  AND pt.status = 'open'
+		  AND pt.application_start_date IS NOT NULL
+		  AND pt.application_end_date IS NOT NULL
+		  AND pt.application_start_date > NOW()
+	)`
+	sqlHasOpenTerm = `EXISTS (
+		SELECT 1 FROM program_terms pt
+		WHERE pt.program_id = programs.id
+		  AND pt.status = 'open'
+	)`
+)
+
+func catalogWhere(filter models.ProgramFilter) (where string, args []any) {
+	args = []any{}
+	where = ` WHERE 1=1`
+	if filter.Status != "" {
+		args = append(args, filter.Status)
+		where += fmt.Sprintf(` AND status = $%d`, len(args))
+	} else {
+		where += ` AND status = 'published'`
+	}
+	if filter.Search != "" {
+		args = append(args, "%"+filter.Search+"%")
+		n := len(args)
+		where += fmt.Sprintf(` AND name ILIKE $%d`, n)
+	}
+	if filter.Skill != "" {
+		args = append(args, filter.Skill)
+		where += fmt.Sprintf(` AND EXISTS (
+			SELECT 1 FROM program_skills ps
+			WHERE ps.program_id = programs.id AND LOWER(ps.skill) = LOWER($%d)
+		)`, len(args))
+	}
+	switch filter.DiscoveryStatus {
+	case "acceptance":
+		where += ` AND ` + sqlHasAcceptingTerm
+	case "in-progress":
+		where += ` AND ` + sqlHasOpenTerm + ` AND NOT ` + sqlHasAcceptingTerm
+	case "completed":
+		where += ` AND NOT ` + sqlHasOpenTerm
+	}
+	return where, args
+}
+
+func catalogOrderBy(sortBy string) string {
+	acceptingRank := `CASE WHEN ` + sqlHasAcceptingTerm + ` THEN 0 WHEN ` + sqlHasComingSoonTerm + ` THEN 1 WHEN ` + sqlHasOpenTerm + ` THEN 2 ELSE 3 END`
+	completedRank := `CASE WHEN NOT (` + sqlHasOpenTerm + `) THEN 0 WHEN ` + sqlHasOpenTerm + ` AND NOT (` + sqlHasAcceptingTerm + `) AND NOT (` + sqlHasComingSoonTerm + `) THEN 1 WHEN ` + sqlHasAcceptingTerm + ` THEN 2 ELSE 3 END`
+	switch sortBy {
+	case "name_asc":
+		return `name ASC, id ASC`
+	case "name_desc":
+		return `name DESC, id ASC`
+	case "updated_oldest":
+		return `updated_on ASC, id ASC`
+	case "updated_newest":
+		return `updated_on DESC, id ASC`
+	case "completed_first":
+		return completedRank + `, name ASC, id ASC`
+	default:
+		return acceptingRank + `, name ASC, id ASC`
+	}
+}
+
+// ListCatalog returns a paginated catalog of programs with nested skills, terms, and mentors.
+func (r *ProgramRepository) ListCatalog(ctx context.Context, filter models.ProgramFilter) ([]*models.ProgramCatalogItem, *models.PaginationMeta, error) {
+	ctx, span := programTracer.Start(ctx, "db.programs.ListCatalog")
+	defer span.End()
+
+	limit, offset := catalogLimitOffset(filter)
+	where, args := catalogWhere(filter)
+
+	var total int
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM programs`+where, args...).Scan(&total); err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("count catalog programs: %w", err)
+	}
+
+	args = append(args, limit, offset)
+	listQ := `SELECT` + programCols + ` FROM programs` + where +
+		fmt.Sprintf(` ORDER BY %s LIMIT $%d OFFSET $%d`, catalogOrderBy(filter.SortBy), len(args)-1, len(args))
+
+	rows, err := r.pool.Query(ctx, listQ, args...)
+	if err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("list catalog programs: %w", err)
+	}
+	defer rows.Close()
+
+	var programs []*models.Program
+	for rows.Next() {
+		p, err := scanProgram(rows)
+		if err != nil {
+			span.RecordError(err)
+			return nil, nil, fmt.Errorf("scan catalog program: %w", err)
+		}
+		programs = append(programs, p)
+	}
+	if err := rows.Err(); err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("catalog rows error: %w", err)
+	}
+
+	items, err := r.attachCatalog(ctx, programs)
+	if err != nil {
+		span.RecordError(err)
+		return nil, nil, err
+	}
+	return items, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, nil
+}
+
+// GetCatalog returns one catalog item by UUID or slug.
+func (r *ProgramRepository) GetCatalog(ctx context.Context, id string) (*models.ProgramCatalogItem, error) {
+	ctx, span := programTracer.Start(ctx, "db.programs.GetCatalog")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.program_id", id))
+
+	p, err := r.GetByID(ctx, id)
+	if err != nil {
+		p, err = r.GetBySlug(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	items, err := r.attachCatalog(ctx, []*models.Program{p})
+	if err != nil {
+		span.RecordError(err)
+		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, domain.ErrProgramNotFound
+	}
+	return items[0], nil
+}
+
+// ListCatalogMentees returns accepted/active/graduated mentees for a program.
+func (r *ProgramRepository) ListCatalogMentees(ctx context.Context, programID string) ([]*models.ProgramCatalogMentee, error) {
+	ctx, span := programTracer.Start(ctx, "db.programs.ListCatalogMentees")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.program_id", programID))
+
+	rows, err := r.pool.Query(ctx, `
+		SELECT a.user_id, u.name, u.avatar_url, u.email, up.introduction, a.status, pt.id, pt.name
+		FROM applications a
+		JOIN program_terms pt ON pt.id = a.program_term_id
+		LEFT JOIN users u ON u.id = a.user_id
+		LEFT JOIN LATERAL (
+			SELECT introduction
+			FROM user_profiles
+			WHERE user_id = a.user_id
+			  AND profile_type = 'mentee'
+			ORDER BY updated_on DESC
+			LIMIT 1
+		) up ON true
+		WHERE pt.program_id = $1
+		  AND pt.status <> 'deleted'
+		  AND a.role = 'mentee'
+		  AND a.status IN ('accepted', 'active', 'graduated')
+		ORDER BY CASE WHEN a.status = 'graduated' THEN 1 ELSE 0 END,
+		         u.name NULLS LAST,
+		         pt.start_date_time DESC NULLS LAST`, programID)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("list catalog mentees: %w", err)
+	}
+	defer rows.Close()
+
+	var mentees []*models.ProgramCatalogMentee
+	for rows.Next() {
+		var m models.ProgramCatalogMentee
+		if err := rows.Scan(&m.UserID, &m.Name, &m.AvatarURL, &m.Email, &m.Introduction, &m.Status, &m.TermID, &m.TermName); err != nil {
+			span.RecordError(err)
+			return nil, fmt.Errorf("scan catalog mentee: %w", err)
+		}
+		mentees = append(mentees, &m)
+	}
+	if err := rows.Err(); err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("catalog mentees rows: %w", err)
+	}
+	if mentees == nil {
+		mentees = []*models.ProgramCatalogMentee{}
+	}
+	return mentees, nil
+}
+
+func (r *ProgramRepository) attachCatalog(ctx context.Context, programs []*models.Program) ([]*models.ProgramCatalogItem, error) {
+	items := make([]*models.ProgramCatalogItem, 0, len(programs))
+	if len(programs) == 0 {
+		return items, nil
+	}
+
+	ids := make([]string, len(programs))
+	for i, p := range programs {
+		ids[i] = p.ID
+	}
+
+	skillsBy, err := r.loadCatalogSkills(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	termsBy, err := r.loadCatalogTerms(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	mentorsBy, err := r.loadCatalogMentors(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, p := range programs {
+		skills := skillsBy[p.ID]
+		if skills == nil {
+			skills = []string{}
+		}
+		terms := termsBy[p.ID]
+		if terms == nil {
+			terms = []models.ProgramCatalogTerm{}
+		}
+		mentors := mentorsBy[p.ID]
+		if mentors == nil {
+			mentors = []models.ProgramCatalogMentor{}
+		}
+		items = append(items, &models.ProgramCatalogItem{
+			Program: *p,
+			Skills:  skills,
+			Terms:   terms,
+			Mentors: mentors,
+		})
+	}
+	return items, nil
+}
+
+func (r *ProgramRepository) loadCatalogSkills(ctx context.Context, ids []string) (map[string][]string, error) {
+	out := map[string][]string{}
+	rows, err := r.pool.Query(ctx, `
+		SELECT program_id, skill
+		FROM program_skills
+		WHERE program_id = ANY($1::uuid[])
+		ORDER BY skill`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("list catalog skills: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var programID, skill string
+		if err := rows.Scan(&programID, &skill); err != nil {
+			return nil, fmt.Errorf("scan catalog skill: %w", err)
+		}
+		out[programID] = append(out[programID], skill)
+	}
+	return out, rows.Err()
+}
+
+func (r *ProgramRepository) loadCatalogTerms(ctx context.Context, ids []string) (map[string][]models.ProgramCatalogTerm, error) {
+	out := map[string][]models.ProgramCatalogTerm{}
+	rows, err := r.pool.Query(ctx, `
+		SELECT`+programTermCols+`
+		FROM program_terms
+		WHERE program_id = ANY($1::uuid[])
+		  AND status <> 'deleted'
+		ORDER BY start_date_time DESC NULLS LAST`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("list catalog terms: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		t, err := scanProgramTerm(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan catalog term: %w", err)
+		}
+		out[t.ProgramID] = append(out[t.ProgramID], models.ProgramCatalogTerm{ProgramTerm: *t})
+	}
+	return out, rows.Err()
+}
+
+func (r *ProgramRepository) loadCatalogMentors(ctx context.Context, ids []string) (map[string][]models.ProgramCatalogMentor, error) {
+	out := map[string][]models.ProgramCatalogMentor{}
+	rows, err := r.pool.Query(ctx, `
+		SELECT pm.id, pm.program_id, pm.user_id, u.name, u.avatar_url, up.introduction
+		FROM program_members pm
+		LEFT JOIN users u ON u.id = pm.user_id
+		LEFT JOIN LATERAL (
+			SELECT introduction
+			FROM user_profiles
+			WHERE user_id = pm.user_id
+			  AND profile_type = 'mentor'
+			ORDER BY updated_on DESC
+			LIMIT 1
+		) up ON true
+		WHERE pm.program_id = ANY($1::uuid[])
+		  AND pm.member_type = 'mentor'
+		  AND pm.status = 'active'
+		ORDER BY u.name NULLS LAST, pm.created_on`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("list catalog mentors: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var programID string
+		var m models.ProgramCatalogMentor
+		if err := rows.Scan(&m.ID, &programID, &m.UserID, &m.Name, &m.AvatarURL, &m.Introduction); err != nil {
+			return nil, fmt.Errorf("scan catalog mentor: %w", err)
+		}
+		out[programID] = append(out[programID], m)
+	}
+	return out, rows.Err()
+}
+
 // Create inserts a new program and returns the persisted record.
 func (r *ProgramRepository) Create(ctx context.Context, input models.ProgramCreateInput) (*models.Program, error) {
 	ctx, span := programTracer.Start(ctx, "db.programs.Create")

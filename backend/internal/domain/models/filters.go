@@ -27,10 +27,13 @@ type UserProfileFilter struct {
 
 // ProgramFilter constrains list queries for programs.
 type ProgramFilter struct {
-	Limit  int
-	Offset int
-	Status string // pending | published | archived
-	Search string // ilike on name
+	Limit           int
+	Offset          int
+	Status          string // programs.status: draft | submitted | published | hidden | rejected | archived
+	Search          string // ilike on name
+	Skill           string // catalog only: case-insensitive exact match on a program skill
+	DiscoveryStatus string // catalog only: acceptance | in-progress | completed
+	SortBy          string // catalog only: accepting_first | completed_first | name_asc | name_desc | updated_oldest | updated_newest
 }
 
 // ProgramTermFilter constrains list queries for program terms.
