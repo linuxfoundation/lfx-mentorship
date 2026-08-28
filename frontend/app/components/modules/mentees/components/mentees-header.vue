@@ -20,7 +20,7 @@ SPDX-License-Identifier: MIT
           />
           <span class="text-lg font-medium leading-7 text-accent-800">Mentees</span>
         </div>
-        <h1 class="font-secondary font-light md:text-5xl text-4xl leading-normal text-neutral-900">
+        <h1 class="font-secondary font-light md:text-4xl text-3xl leading-normal text-neutral-900">
           Mentees
           <p
             v-if="catalogSummary"
