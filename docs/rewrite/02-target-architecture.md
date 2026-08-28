@@ -116,6 +116,7 @@ erDiagram
         text name
         text slug
         text status "pending | published | archived"
+        text project_uid "LF project this program belongs to"
         uuid cf_initiative_id "link to Crowdfunding initiative"
     }
     program_terms {
@@ -142,7 +143,7 @@ erDiagram
     tasks {
         uuid id PK
         uuid application_id FK
-        text category "prerequisite | program"
+        text category "prerequisite | non_prerequisite"
         text status "incomplete | in_progress | completed | on_hold"
         date due_date
     }
@@ -153,7 +154,7 @@ Notes:
 - **Search**: PostgreSQL full-text search (`tsvector` + GIN indexes) over programs, skills, and profiles replaces the Elasticsearch cluster and its 8 sync jobs. Data volume (thousands of rows) is far below where a dedicated search engine pays for itself.
 - **Denormalization jobs eliminated**: mentor lists, skill mappings, and counts become queries/views instead of cron-materialized copies.
 - **Funding stats**: `program_funding_stats` is an hourly-refreshed local cache of Crowdfunding data (see Integrations) — the same pattern Crowdfunding uses for Ledger stats.
-- **No enrollment entity, and no mentor assignment.** The application *is* the lifecycle object — one row per user per term, whose status runs `pending → accepted → graduated`. This matches legacy, where acceptance and graduation are status changes on a single `project-members` row and mentors relate to the **program**, not to individual mentees (the legacy per-mentee "mentors" list is a cron-denormalized copy of the program's approved mentors). Tasks therefore hang off the application, with `category` distinguishing prerequisite from program tasks. Introducing `enrollments` + `enrollment_mentors` would add a parity feature nobody asked for; see decision 1 in [04](./04-authorization-model.md).
+- **No enrollment entity, and no mentor assignment.** The application *is* the lifecycle object — one row per user per term, whose status runs `pending → accepted → active → graduated`. This matches legacy, where acceptance and graduation are status changes on a single `project-members` row and mentors relate to the **program**, not to individual mentees (the legacy per-mentee "mentors" list is a cron-denormalized copy of the program's approved mentors). Tasks therefore hang off the application, with `category` distinguishing `prerequisite` from `non_prerequisite` tasks. Introducing `enrollments` + `enrollment_mentors` would add a parity feature nobody asked for; see decision 1 in [04](./04-authorization-model.md).
 - Exact column-level schema is an implementation-phase deliverable; this ERD fixes the entity boundaries.
 
 ## Frontend split: Nuxt public site + Self Serve management
@@ -182,6 +183,7 @@ Frontend stack mirrors Crowdfunding: Nuxt 4 + Vue 3, TypeScript, Tailwind + Prim
 
 - **Every route carrying a resource ID gets a Heimdall RuleSet** checking a single FGA relation. The service performs no ownership or role checks.
 - **Relations live in OpenFGA, derived from Postgres.** Postgres remains the system of record for membership; the API emits tuples through a transactional outbox to fga-sync at each state transition.
+- **`programs.project_uid` is what makes the project link derivable.** Inherited permissions depend on a `mentorship_program#project@project:{uid}` tuple, so the owning LF project must be a persisted column — the outbox re-derives payloads from current Postgres state and cannot invent it. Legacy already carries this as `lfProjectId`, and `CreateProject` requires it (`project/service.go:195`), but programs created before that rule predate it — legacy has a dedicated `GetProgramsWithLFProjectID` query precisely because the field is not universally populated. The backfill must therefore report unmapped programs rather than silently importing them: a program with no `project_uid` has no parent to inherit from and would be authorized only by its direct grants. Making the column `NOT NULL` is the forcing function; resolving the stragglers is a Backfill-phase task ([03](./03-migration-plan.md)).
 - **The one residue** is `/me/*` **list** endpoints, where the service filters rows by the caller's `principal` — data scoping on the caller's own records, not a grant/deny decision. `/me/*` is never a second way to fetch an individual object.
 
 Three things this replaces from the Crowdfunding-derived design:
