@@ -1,25 +1,25 @@
 # Copyright The Linux Foundation and each contributor to LFX.
 # SPDX-License-Identifier: MIT
 
-# --- Project: linux-foundation (global root) ---
+# --- Project-level (per-project) role assignments ---
 - user: user:aisha
   relation: super_admin
-  object: project:linux-foundation
+  object: project:lfx
 
 - user: user:priya
   relation: program_approver
-  object: project:linux-foundation
+  object: project:lfx
 
 - user: user:carla
   relation: program_admin
-  object: project:linux-foundation
+  object: project:lfx
 
 - user: user:derek
   relation: program_admin
-  object: project:linux-foundation
+  object: project:lfx
 
 # --- Program: go-2026, created and administered by Carla ---
-- user: project:linux-foundation
+- user: project:lfx
   relation: project
   object: program:go-2026
 
@@ -32,8 +32,7 @@
   object: program:go-2026
 
 # --- Program: rust-2026, created and administered by Derek ---
-# (Deliberately has no overlap with go-2026's mentors/admins, to test scoping)
-- user: project:linux-foundation
+- user: project:lfx
   relation: project
   object: program:rust-2026
 

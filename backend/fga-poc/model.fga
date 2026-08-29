@@ -3,27 +3,28 @@ model
 
 type user
 
-# Project is the global root — holds super_admin, program_approver, and program_admin.
 type project
   relations
     define super_admin: [user]
     define program_approver: [user]
     define program_admin: [user]
+
     define can_create_program: program_admin or super_admin
     define can_approve_program: program_approver or super_admin
 
 type program
   relations
-    # Link to the parent project; global roles flow down from there.
     define project: [project]
-
     define program_admin: [user]
     define mentor: [user]
 
     define super_admin: super_admin from project
+
+    # Deliberately kept separate from "admin" below, per review: a
+    # program_admin must not be able to approve their own program.
     define approver: program_approver from project
 
-    # admin excludes mentor — mentors have a narrower, explicitly defined permission set.
+    # "admin" = full administrative control ("manager" in review shorthand).
     define admin: program_admin or super_admin
 
     define can_invite_mentor: admin
@@ -32,35 +33,45 @@ type program
     define can_add_task: admin or mentor
     define can_view: admin or approver or mentor
     define can_view_applications: admin or mentor
+    # Mentors cannot accept/reject applications — admin-only, per review.
     define can_decide_application: admin
     define can_approve: approver or super_admin
 
 type application
   relations
     define program: [program]
-
-    # The mentee who submitted this specific application.
-    # Named "mentee" rather than a generic "applicant" — per the
-    # requirements, the applicant IS the mentee, so the relation says so.
+    # The mentee who submitted this application ("applicant" in review shorthand).
     define mentee: [user]
 
-    # Projected relations from the parent program.
     define admin: admin from program
     define approver: approver from program
     define mentor: mentor from program
 
     define can_view: mentee or admin or approver or mentor
-    define can_decide: admin or mentor
+    # Reverted per review: mentors cannot decide applications. Admin-only.
+    define can_decide: admin
     define can_add_task: admin or mentor
+
+    # Ownership-gated write access for withdrawal / re-apply, per review:
+    # "writer: applicant or manager" — the application ID alone is not a
+    # credential, so the caller must be the applicant themselves or staff
+    # (admin), never a mentor acting alone.
+    define writer: mentee or admin
+    define can_withdraw: writer
+    define can_reapply: writer
 
 type task
   relations
     define application: [application]
     define assignee: [user]
 
-    # Projected relations from the parent application.
     define admin: admin from application
     define mentor: mentor from application
 
     define can_view: assignee or admin or mentor
     define can_update_status: assignee or admin or mentor
+
+# Note (enforced outside FGA, per review): mentors may only add tasks to
+# applications in the "Accepted" state. FGA has no notion of application
+# lifecycle state, so this check belongs in the mentorship service's business
+# logic, layered on top of the can_add_task permission above.
