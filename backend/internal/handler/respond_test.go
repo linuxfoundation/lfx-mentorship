@@ -29,6 +29,7 @@ func TestError_NotFoundErrors(t *testing.T) {
 	notFound := []error{
 		domain.ErrUserNotFound,
 		domain.ErrUserProfileNotFound,
+		domain.ErrMenteeNotFound,
 		domain.ErrProgramNotFound,
 		domain.ErrProgramTermNotFound,
 		domain.ErrProgramMemberNotFound,
