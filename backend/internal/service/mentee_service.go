@@ -96,7 +96,7 @@ func (s *MenteeService) List(ctx context.Context, filter models.MenteeFilter) (*
 	return page, nil
 }
 
-// Summary returns unfiltered mentee and project totals.
+// Summary returns unfiltered mentee and program totals.
 func (s *MenteeService) Summary(ctx context.Context) (*models.MenteeSummary, error) {
 	ctx, span := menteeSvcTracer.Start(ctx, "MenteeService.Summary")
 	defer span.End()

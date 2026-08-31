@@ -81,7 +81,7 @@ const menteeEligibleCTE = `
 			f.program_name,
 			f.program_slug,
 			f.program_logo_url,
-			NULLIF(TRIM(COALESCE(u.name, CONCAT_WS(' ', up.first_name, up.last_name))), '') AS name,
+			NULLIF(TRIM(COALESCE(NULLIF(TRIM(u.name), ''), CONCAT_WS(' ', up.first_name, up.last_name))), '') AS name,
 			COALESCE(u.avatar_url, up.logo_url) AS avatar_url,
 			up.introduction,
 			COALESCE((
@@ -238,7 +238,7 @@ func (r *MenteeRepository) List(ctx context.Context, filter models.MenteeFilter)
 	}, nil
 }
 
-// Summary returns unfiltered mentee and project totals for the directory header.
+// Summary returns unfiltered mentee and program totals for the directory header.
 func (r *MenteeRepository) Summary(ctx context.Context) (*models.MenteeSummary, error) {
 	ctx, span := menteeTracer.Start(ctx, "db.mentees.Summary")
 	defer span.End()
