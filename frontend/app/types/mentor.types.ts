@@ -12,8 +12,6 @@ export interface Mentor {
   sinceLabel: string;
   /** ISO date used for sorting. */
   joinedAt: string;
-  /** Mock-only program names; live list search is name-only. */
-  projects?: string[];
   avatarUrl?: string;
 }
 
