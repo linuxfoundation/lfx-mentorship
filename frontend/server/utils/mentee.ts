@@ -21,7 +21,7 @@ export interface MenteeMentor {
   introduction?: string;
 }
 
-export interface MenteeProject {
+export interface MenteeProgramRef {
   id: string;
   name: string;
   slug: string;
@@ -56,7 +56,7 @@ export interface MenteeItem {
   skills?: string[];
   status?: string;
   joined_at: string;
-  program?: MenteeProject;
+  program?: MenteeProgramRef;
   mentors?: MenteeMentor[];
 }
 

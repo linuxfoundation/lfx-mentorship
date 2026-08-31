@@ -5,8 +5,8 @@ package models
 
 import "time"
 
-// MenteeProject is the featured (or listed) program on a mentee card.
-type MenteeProject struct {
+// MenteeProgramRef  is the featured (or listed) program on a mentee card.
+type MenteeProgramRef struct {
 	ID      string  `json:"id"`
 	Name    string  `json:"name"`
 	Slug    string  `json:"slug"`
@@ -44,7 +44,7 @@ type MenteeItem struct {
 	Skills       []string               `json:"skills"`
 	Status       string                 `json:"status,omitempty"` // accepted | active | graduated
 	JoinedAt     time.Time              `json:"joined_at"`
-	Program      *MenteeProject         `json:"program,omitempty"`
+	Program      *MenteeProgramRef      `json:"program,omitempty"`
 	Mentors      []ProgramCatalogMentor `json:"mentors"`
 }
 

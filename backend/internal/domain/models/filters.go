@@ -29,7 +29,7 @@ type UserProfileFilter struct {
 type MenteeFilter struct {
 	Limit  int
 	Offset int
-	Search string // name, introduction, program name, or skill
+	Search string // case-insensitive match on mentee name
 	Skill  string // case-insensitive exact match on a mentee skill
 	Status string // active | graduated; omit or all for every accepted mentee
 }

@@ -132,7 +132,7 @@ func scanMenteeItem(row pgx.Row) (*models.MenteeItem, error) {
 		item.JoinedAt = *joinedAt
 	}
 	if programID != nil && programName != nil && programSlug != nil {
-		item.Program = &models.MenteeProject{
+		item.Program = &models.MenteeProgramRef{
 			ID:      *programID,
 			Name:    *programName,
 			Slug:    *programSlug,

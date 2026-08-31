@@ -676,13 +676,13 @@ Paginated public directory of mentees on **published** programs. Includes `accep
 
 #### `GET /v1/mentees/summary` 🔓
 
-Unfiltered directory totals for the header (“18 mentees across 7 projects”). Ignores search, skill, and status. Call once; it does not change when the list is filtered.
+Unfiltered directory totals for the header (“18 mentees across 7 programs”). Ignores search, skill, and status. Call once; it does not change when the list is filtered.
 
 **Response** `200`
 ```json
 {
   "mentee_count": 18,
-  "project_count": 7
+  "program_count": 7
 }
 ```
 
@@ -706,7 +706,6 @@ Public mentee profile by **user ID**. Programs, skills, terms, and mentors are l
   "mentors": [],
   "github_url": "https://github.com/alex",
   "linkedin_url": "https://linkedin.com/in/alex",
-  "stats": { "programs": 2, "terms_completed": 1, "mentors": 3 },
   "programs": [
     {
       "id": "uuid",
