@@ -314,6 +314,31 @@ func (r *ApplicationRepository) FindByTermAndUser(ctx context.Context, termID, u
 	return a, nil
 }
 
+// FindCommittedMenteeByUser returns a mentee application that already binds the
+// user to one program (accepted, active, or graduated), or nil.
+func (r *ApplicationRepository) FindCommittedMenteeByUser(ctx context.Context, userID string) (*models.Application, error) {
+	ctx, span := applicationTracer.Start(ctx, "db.applications.FindCommittedMenteeByUser")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.user_id", userID))
+
+	q := `SELECT ` + applicationCols + `
+		FROM applications
+		WHERE user_id = $1
+		  AND role = 'mentee'
+		  AND status IN ('accepted', 'active', 'graduated')
+		ORDER BY created_on DESC
+		LIMIT 1`
+	a, err := scanApplication(r.pool.QueryRow(ctx, q, userID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("find committed mentee application: %w", err)
+	}
+	return a, nil
+}
+
 // BulkDeclineByTerm moves all pending/submitted applications in a term to declined.
 func (r *ApplicationRepository) BulkDeclineByTerm(ctx context.Context, termID string) (int, error) {
 	ctx, span := applicationTracer.Start(ctx, "db.applications.BulkDeclineByTerm")

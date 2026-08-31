@@ -122,6 +122,7 @@ func (s *ApplicationService) ListByUser(ctx context.Context, userID string, filt
 // Create validates input and creates an application.
 // Guards enforced:
 //   - The term must be within its application window.
+//   - A mentee who is already accepted, active, or graduated cannot apply to another program.
 //   - The user must not already have a pending/submitted application for the same term.
 func (s *ApplicationService) Create(ctx context.Context, programTermID string, input models.ApplicationCreateInput) (*models.Application, error) {
 	ctx, span := applicationSvcTracer.Start(ctx, "ApplicationService.Create")
@@ -150,6 +151,18 @@ func (s *ApplicationService) Create(ctx context.Context, programTermID string, i
 	}
 	if term.ApplicationEndDate != nil && now.After(*term.ApplicationEndDate) {
 		return nil, fmt.Errorf("%w: application window has closed", domain.ErrIneligible)
+	}
+
+	// One-program mentee rule: accepted / active / graduated locks the user to that program.
+	if input.Role == "mentee" {
+		committed, err := s.repo.FindCommittedMenteeByUser(ctx, input.UserID)
+		if err != nil {
+			span.RecordError(err)
+			return nil, fmt.Errorf("check committed mentee application: %w", err)
+		}
+		if committed != nil {
+			return nil, fmt.Errorf("%w: mentee already has an %s application and cannot apply to another program", domain.ErrIneligible, committed.Status)
+		}
 	}
 
 	// Reapply guard: no existing non-terminal application for this term+user.

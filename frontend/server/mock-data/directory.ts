@@ -8,12 +8,13 @@ export const MOCK_MENTEES: Mentee[] = [
   {
     id: 'me-1',
     name: 'Hana Suzuki',
-    bio: 'Backend engineer focused on observability and distributed systems. Contributing to Thanos query-path improvements and mentoring docs for first-time contributors.',
+    introduction:
+      'Backend engineer focused on observability and distributed systems. Contributing to Thanos query-path improvements and mentoring docs for first-time contributors.',
     skills: ['GO', 'Monitoring', 'Kubernetes', 'API'],
     status: 'graduated',
     sinceLabel: 'Since Aug. 2023',
     joinedAt: '2023-08-01T00:00:00.000Z',
-    project: { id: 'p-thanos', name: 'Thanos', foundationLabel: 'CNCF' },
+    program: { id: 'p-thanos', name: 'Thanos', foundationLabel: 'CNCF' },
     mentors: [
       { id: 'mo-1', name: 'Dana Okafor' },
       { id: 'mo-2', name: 'Amina Reyes' },
@@ -22,23 +23,25 @@ export const MOCK_MENTEES: Mentee[] = [
   {
     id: 'me-2',
     name: 'Diego Alvarez',
-    bio: 'Full-stack contributor building developer tooling. Currently improving React dashboards and API ergonomics for CloudEvents tooling.',
+    introduction:
+      'Full-stack contributor building developer tooling. Currently improving React dashboards and API ergonomics for CloudEvents tooling.',
     skills: ['React', 'TypeScript', 'Node.js'],
     status: 'active',
     sinceLabel: 'Since Jan. 2024',
     joinedAt: '2024-01-15T00:00:00.000Z',
-    project: { id: 'p-cloudevents', name: 'CloudEvents', foundationLabel: 'CNCF' },
+    program: { id: 'p-cloudevents', name: 'CloudEvents', foundationLabel: 'CNCF' },
     mentors: [{ id: 'mo-3', name: 'Jordan Blake' }],
   },
   {
     id: 'me-3',
     name: 'Imani Okonkwo',
-    bio: 'Security-minded mentee hardening CI pipelines and supply-chain checks. Exploring Rust and OpenSSF best practices with mentors.',
+    introduction:
+      'Security-minded mentee hardening CI pipelines and supply-chain checks. Exploring Rust and OpenSSF best practices with mentors.',
     skills: ['Rust', 'Security', 'Continuous integration'],
     status: 'active',
     sinceLabel: 'Since Mar. 2024',
     joinedAt: '2024-03-01T00:00:00.000Z',
-    project: { id: 'p-openssf', name: 'OpenSSF Scorecard', foundationLabel: 'OpenSSF' },
+    program: { id: 'p-openssf', name: 'OpenSSF Scorecard', foundationLabel: 'OpenSSF' },
     mentors: [
       { id: 'mo-4', name: 'Priya Shah' },
       { id: 'mo-1', name: 'Dana Okafor' },
@@ -47,23 +50,25 @@ export const MOCK_MENTEES: Mentee[] = [
   {
     id: 'me-4',
     name: 'Noah Berg',
-    bio: 'Docs and DX mentee rewriting onboarding guides and examples so new contributors can land their first PR faster.',
+    introduction:
+      'Docs and DX mentee rewriting onboarding guides and examples so new contributors can land their first PR faster.',
     skills: ['Markdown', 'Documentation', 'Vue.js'],
     status: 'graduated',
     sinceLabel: 'Since Sep. 2022',
     joinedAt: '2022-09-10T00:00:00.000Z',
-    project: { id: 'p-lfdx', name: 'LF Developer Experience', foundationLabel: 'LF' },
+    program: { id: 'p-lfdx', name: 'LF Developer Experience', foundationLabel: 'LF' },
     mentors: [{ id: 'mo-5', name: 'Avery Kim' }],
   },
   {
     id: 'me-5',
     name: 'Sofia Mendes',
-    bio: 'Cloud-native networking mentee working on Cilium datapath tests and community office hours content.',
+    introduction:
+      'Cloud-native networking mentee working on Cilium datapath tests and community office hours content.',
     skills: ['Linux', 'Software-defined networking', 'GO'],
     status: 'active',
     sinceLabel: 'Since May 2024',
     joinedAt: '2024-05-01T00:00:00.000Z',
-    project: { id: 'p-cilium', name: 'Cilium', foundationLabel: 'CNCF' },
+    program: { id: 'p-cilium', name: 'Cilium', foundationLabel: 'CNCF' },
     mentors: [
       { id: 'mo-6', name: 'Chris Okonkwo' },
       { id: 'mo-2', name: 'Amina Reyes' },
@@ -73,34 +78,37 @@ export const MOCK_MENTEES: Mentee[] = [
   {
     id: 'me-6',
     name: 'Kenji Watanabe',
-    bio: 'AI/ML mentee improving dataset pipelines and model evaluation docs for LF AI & Data projects.',
+    introduction:
+      'AI/ML mentee improving dataset pipelines and model evaluation docs for LF AI & Data programs.',
     skills: ['Python', 'Machine Learning', 'Tensorflow'],
     status: 'graduated',
     sinceLabel: 'Since Feb. 2023',
     joinedAt: '2023-02-20T00:00:00.000Z',
-    project: { id: 'p-lfai', name: 'LF AI Model Garden', foundationLabel: 'LF AI' },
+    program: { id: 'p-lfai', name: 'LF AI Model Garden', foundationLabel: 'LF AI' },
     mentors: [{ id: 'mo-7', name: 'Elena Volkov' }],
   },
   {
     id: 'me-7',
     name: 'Maya Patel',
-    bio: 'Frontend mentee shipping accessible UI patterns and Storybook coverage for mentorship dashboards.',
+    introduction:
+      'Frontend mentee shipping accessible UI patterns and Storybook coverage for mentorship dashboards.',
     skills: ['Vue.js', 'CSS', 'TypeScript'],
     status: 'active',
     sinceLabel: 'Since Jun. 2024',
     joinedAt: '2024-06-12T00:00:00.000Z',
-    project: { id: 'p-lfdx', name: 'LF Developer Experience', foundationLabel: 'LF' },
+    program: { id: 'p-lfdx', name: 'LF Developer Experience', foundationLabel: 'LF' },
     mentors: [{ id: 'mo-5', name: 'Avery Kim' }],
   },
   {
     id: 'me-8',
     name: 'Omar Hassan',
-    bio: 'Infrastructure mentee automating Kind-based test clusters and improving contributor local-dev scripts.',
+    introduction:
+      'Infrastructure mentee automating Kind-based test clusters and improving contributor local-dev scripts.',
     skills: ['Kubernetes', 'Bash', 'Docker', 'Git'],
     status: 'active',
     sinceLabel: 'Since Apr. 2024',
     joinedAt: '2024-04-08T00:00:00.000Z',
-    project: { id: 'p-kubernetes', name: 'Kubernetes', foundationLabel: 'CNCF' },
+    program: { id: 'p-kubernetes', name: 'Kubernetes', foundationLabel: 'CNCF' },
     mentors: [
       { id: 'mo-6', name: 'Chris Okonkwo' },
       { id: 'mo-4', name: 'Priya Shah' },

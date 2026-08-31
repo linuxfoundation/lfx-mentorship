@@ -66,11 +66,11 @@ function menteeSummary(
 export const MOCK_MENTEE_DETAILS: Record<string, MenteeDetail> = {
   'me-1': {
     ...MOCK_MENTEES[0]!,
-    bio: 'Final-year computer science student focused on distributed systems. I contribute to observability tooling and want to keep working on cloud native projects after graduation.',
+    introduction:
+      'Final-year computer science student focused on distributed systems. I contribute to observability tooling and want to keep working on cloud native projects after graduation.',
     skills: ['GO', 'React', 'Monitoring', 'Kubernetes', 'TypeScript'],
     githubUrl: 'https://github.com/',
     linkedinUrl: 'https://www.linkedin.com/',
-    stats: { programs: 1, termsCompleted: 1, mentors: 2 },
     programs: [THANOS_PROGRAM],
     mentors: [
       { id: 'mo-1', name: 'Dana Okafor', title: 'Staff Engineer, Equinix' },
@@ -138,22 +138,17 @@ function fallbackMenteeDetail(id: string): MenteeDetail | undefined {
   const mentee = MOCK_MENTEES.find((item) => item.id === id);
   if (!mentee) return undefined;
 
-  const initials = mentee.project.name.slice(0, 2).toUpperCase();
+  const initials = mentee.program.name.slice(0, 2).toUpperCase();
   return {
     ...mentee,
     githubUrl: 'https://github.com/',
     linkedinUrl: 'https://www.linkedin.com/',
-    stats: {
-      programs: 1,
-      termsCompleted: mentee.status === 'graduated' ? 1 : 0,
-      mentors: mentee.mentors.length,
-    },
     programs: [
       {
-        id: `pp-${mentee.project.id}`,
-        title: `${mentee.project.name}: Mentorship project`,
-        description: mentee.bio,
-        foundationLabel: mentee.project.foundationLabel,
+        id: `pp-${mentee.program.id}`,
+        title: `${mentee.program.name}: Mentorship program`,
+        description: mentee.introduction,
+        foundationLabel: mentee.program.foundationLabel,
         status: mentee.status === 'graduated' ? 'graduated' : 'active',
         skills: mentee.skills.slice(0, 4),
         terms: [
@@ -207,10 +202,14 @@ function fallbackMentorDetail(id: string): MentorDetail | undefined {
     })),
     currentMentees: relatedMentees
       .filter((m) => m.status === 'active')
-      .map((m) => menteeSummary(m.id, m.name, m.bio, `${m.project.name} · Term 3: Sep–Nov`)),
+      .map((m) =>
+        menteeSummary(m.id, m.name, m.introduction, `${m.program.name} · Term 3: Sep–Nov`),
+      ),
     graduatedMentees: relatedMentees
       .filter((m) => m.status === 'graduated')
-      .map((m) => menteeSummary(m.id, m.name, m.bio, `${m.project.name} · Term 3: Sep–Nov`)),
+      .map((m) =>
+        menteeSummary(m.id, m.name, m.introduction, `${m.program.name} · Term 3: Sep–Nov`),
+      ),
   };
 }
 

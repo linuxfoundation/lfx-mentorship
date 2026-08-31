@@ -10,6 +10,7 @@ import "errors"
 var (
 	ErrUserNotFound          = errors.New("user not found")
 	ErrUserProfileNotFound   = errors.New("user profile not found")
+	ErrMenteeNotFound        = errors.New("mentee not found")
 	ErrProgramNotFound       = errors.New("program not found")
 	ErrProgramTermNotFound   = errors.New("program term not found")
 	ErrProgramMemberNotFound = errors.New("program member not found")

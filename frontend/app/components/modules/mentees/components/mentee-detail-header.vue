@@ -27,6 +27,7 @@ SPDX-License-Identifier: MIT
                   {{ mentee.name }}
                 </h1>
                 <lfx-tag
+                  v-if="statusConfig"
                   :variation="statusConfig.variation"
                   size="small"
                   type="solid"
@@ -35,14 +36,13 @@ SPDX-License-Identifier: MIT
                 </lfx-tag>
               </div>
               <p class="text-xs text-neutral-500 leading-4">
-                {{ mentee.sinceLabel }} · {{ mentee.project.foundationLabel }} ·
-                {{ mentee.project.name }}
+                {{ [mentee.sinceLabel, programLabel].filter(Boolean).join(' · ') }}
               </p>
             </div>
           </div>
 
           <p class="text-sm text-neutral-600 leading-5 max-w-xl">
-            {{ mentee.bio }}
+            {{ mentee.introduction }}
           </p>
 
           <div class="flex flex-wrap items-center gap-3 pt-1">
@@ -105,7 +105,14 @@ import LfxTag from '~/components/uikit/tag/tag.vue';
 
 const props = defineProps<{ mentee: MenteeDetail }>();
 
-const statusConfig = computed(() => MENTEE_STATUS_CONFIG[props.mentee.status]);
+const statusConfig = computed(() => (props.mentee.status ? MENTEE_STATUS_CONFIG[props.mentee.status] : undefined));
+const programLabel = computed(() => {
+  if (!props.mentee.program) {
+    return '';
+  }
+  const { foundationLabel, name } = props.mentee.program;
+  return foundationLabel ? `${foundationLabel} · ${name}` : name;
+});
 
 function openExternal(url: string) {
   if (!import.meta.client) return;

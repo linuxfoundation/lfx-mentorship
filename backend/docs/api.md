@@ -622,6 +622,119 @@ Public list of accepted, active, and graduated mentees for a program (UUID or sl
 
 ---
 
+#### `GET /v1/mentees` 🔓
+
+Paginated public directory of mentees on **published** programs. Includes `accepted`, `active`, and `graduated` only. Pending, hold, declined, and withdrawn applications are omitted, as are mentees with no enrollment. The list is one row per mentee.
+
+`GET /v1/user-profiles` and `GET /v1/programs/{id}/mentees` are unchanged.
+
+**Query parameters**
+
+| Parameter | Values | Description |
+|---|---|---|
+| `search` | string | Case-insensitive match on mentee name |
+| `skill` | string | Case-insensitive exact match on a mentee profile skill (`all` is ignored) |
+| `status` | `active\|graduated` | `active` includes `accepted` and `active`. Omit or `all` for every listed mentee |
+| `limit` / `offset` | — | Pagination |
+
+**Response** `200`
+```json
+{
+  "data": [
+    {
+      "user_id": "uuid",
+      "name": "Alex Mentee",
+      "avatar_url": "https://...",
+      "introduction": "I contribute to Kubernetes...",
+      "skills": ["Go", "Kubernetes"],
+      "status": "active",
+      "joined_at": "2024-01-15T00:00:00Z",
+      "program": {
+        "id": "uuid",
+        "name": "Kubernetes Contributors",
+        "slug": "kubernetes-contributors",
+        "logo_url": "https://..."
+      },
+      "mentors": [
+        {
+          "id": "uuid",
+          "user_id": "uuid",
+          "name": "Jane Mentor",
+          "avatar_url": "https://...",
+          "introduction": "I mentor kernel contributors..."
+        }
+      ]
+    }
+  ],
+  "meta": { "total": 12, "limit": 20, "offset": 0 }
+}
+```
+
+`meta.total` is the filtered count. Unfiltered header totals live on `GET /v1/mentees/summary`. Email is not included.
+
+---
+
+#### `GET /v1/mentees/summary` 🔓
+
+Unfiltered directory totals for the header (“18 mentees across 7 projects”). Ignores search, skill, and status. Call once; it does not change when the list is filtered.
+
+**Response** `200`
+```json
+{
+  "mentee_count": 18,
+  "project_count": 7
+}
+```
+
+---
+
+#### `GET /v1/mentees/{id}` 🔓
+
+Public mentee profile by **user ID**. Programs, skills, terms, and mentors are loaded in separate queries and returned in one response.
+
+**Response** `200` → list item fields plus:
+```json
+{
+  "user_id": "uuid",
+  "name": "Alex Mentee",
+  "avatar_url": "https://...",
+  "introduction": "...",
+  "skills": ["Go"],
+  "status": "active",
+  "joined_at": "2024-01-15T00:00:00Z",
+  "program": { "id": "uuid", "name": "Kubernetes Contributors", "slug": "kubernetes-contributors" },
+  "mentors": [],
+  "github_url": "https://github.com/alex",
+  "linkedin_url": "https://linkedin.com/in/alex",
+  "stats": { "programs": 2, "terms_completed": 1, "mentors": 3 },
+  "programs": [
+    {
+      "id": "uuid",
+      "name": "Kubernetes Contributors",
+      "slug": "kubernetes-contributors",
+      "description": "...",
+      "logo_url": "https://...",
+      "status": "active",
+      "skills": ["Go", "Kubernetes"],
+      "terms": [
+        {
+          "id": "uuid",
+          "name": "Spring 2026",
+          "start_date_time": "2026-03-02T00:00:00Z",
+          "end_date_time": "2026-05-25T00:00:00Z",
+          "application_status": "active"
+        }
+      ],
+      "mentors": []
+    }
+  ]
+}
+```
+
+**Errors** `404` when the user has no accepted, active, or graduated mentee application on a published program.
+
+---
+
 #### `GET /v1/programs/{id}` 🔓
 
 Fetch a program by UUID or slug.
@@ -1086,7 +1199,8 @@ Submit an application to a term.
 **Guards enforced**:
 1. Term must have `status = "open"`.
 2. Current date must fall within `application_start_date` and `application_end_date`.
-3. No existing non-withdrawn application for this user+term (reapplication from `declined` is permanently blocked; reapplication from `withdrawn` is allowed while the window is open).
+3. A mentee who already has an `accepted`, `active`, or `graduated` application cannot apply to another program. Pending, declined, withdrawn, and hold do not lock them. Mentors are not affected.
+4. No existing non-withdrawn application for this user+term (reapplication from `declined` is permanently blocked; reapplication from `withdrawn` is allowed while the window is open).
 
 **After creation**: The program's `task_templates` JSONB array is cloned as individual `prerequisite` tasks linked to the new application.
 
@@ -1099,7 +1213,7 @@ Submit an application to a term.
 ```
 
 **Response** `201` → `<Application>`  
-**Errors** `400`, `401`, `409` (duplicate / blocked reapplication), `422` (window closed or term not open)
+**Errors** `400`, `401`, `409` (duplicate / blocked reapplication), `422` (window closed, term not open, or mentee already accepted/active/graduated)
 
 ---
 
@@ -1441,6 +1555,7 @@ incomplete ──► in_progress ──► submitted ──► complete
 | FR-025 | One active mentee profile per user max | `UserProfileService.Create` |
 | FR-029 | New applications start at status=pending | `ApplicationService.Create` |
 | FR-030 | No reapplication from declined; withdrawn OK while window open | `ApplicationService.Create` |
+| — | Mentee accepted/active/graduated on one program cannot apply to another | `ApplicationService.Create` |
 | FR-032 | Task templates cloned on application create | `ApplicationService.Create` |
 | FR-033 | Task status transitions restricted by actor role | `TaskService.Update` |
 | FR-034 | tasks_submitted auto-set + admin notified when all prereqs done | `TaskService.Update` |
@@ -1493,6 +1608,23 @@ Alternatively, the same nested shape in one request:
 ```
 GET /v1/programs/{id}/catalog
 ```
+
+#### Mentees Directory
+
+```
+GET /v1/mentees/summary
+→ Header: mentee_count and project_count (call once; not affected by filters)
+
+GET /v1/mentees?search=&skill=&status=&limit=20&offset=0
+→ Card list: name, introduction, skills, featured program, mentors, joined_at
+```
+
+```
+GET /v1/mentees/{user_id}
+→ Profile: same card fields plus github_url, linkedin_url, stats, and programs[]
+```
+
+Do not compose the directory from `GET /v1/user-profiles` or by calling `GET /v1/programs/{id}/mentees` for every program.
 
 #### Applying to a Term (Mentee)
 

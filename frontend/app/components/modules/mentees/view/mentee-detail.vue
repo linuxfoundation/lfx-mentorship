@@ -43,16 +43,30 @@ SPDX-License-Identifier: MIT
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, watch } from 'vue';
 import MenteeDetailHeader from '../components/mentee-detail-header.vue';
 import ProfileProgramCard from '~/components/shared/directory/profile-program-card.vue';
 import { useMentee } from '~/composables/mentees/useMentee';
 import LfxSpinner from '~/components/uikit/spinner/spinner.vue';
+import { ToastTypesEnum } from '~/components/uikit/toast/types/toast.types';
+import useToastService from '~/components/uikit/toast/toast.service';
+import { getFetchErrorMessage } from '~/utils/fetch-error';
 
 const props = defineProps<{ menteeId: string }>();
 
 const menteeId = computed(() => props.menteeId);
 const { data: mentee, isLoading, error } = useMentee(menteeId);
+const { showToast } = useToastService();
+
+watch(error, (err) => {
+  if (!import.meta.client || !err) return;
+  const statusCode =
+    typeof err === 'object' && err !== null && 'statusCode' in err
+      ? Number((err as { statusCode?: number }).statusCode)
+      : 0;
+  const fallback = statusCode === 404 ? 'Mentee not found.' : 'Failed to load mentee. Please try again.';
+  showToast(getFetchErrorMessage(err, fallback), ToastTypesEnum.negative);
+});
 
 useHead({
   title: computed(() => mentee.value?.name ?? 'Mentee'),

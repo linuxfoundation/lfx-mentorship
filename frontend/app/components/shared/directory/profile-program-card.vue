@@ -26,8 +26,8 @@ SPDX-License-Identifier: MIT
       </lfx-tag>
     </div>
 
-    <p class="text-sm text-neutral-600 leading-5">
-      {{ program.description }}
+    <p class="text-sm text-neutral-600 leading-5 line-clamp-3">
+      {{ plainDescription }}
     </p>
 
     <div
@@ -108,8 +108,9 @@ import ProfileInitialsAvatar from '~/components/shared/directory/profile-initial
 import type { ProfileProgram } from '~/types/mentee.types';
 import LfxTag from '~/components/uikit/tag/tag.vue';
 
+const { stripHtml } = useSanitize();
 const props = defineProps<{ program: ProfileProgram }>();
-
+const plainDescription = computed(() => stripHtml(props.program.description ?? ''));
 const statusConfig = computed(() => PROFILE_PROGRAM_STATUS_CONFIG[props.program.status]);
 </script>
 

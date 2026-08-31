@@ -31,6 +31,13 @@ type UserProfileRepository interface {
 	CountActiveMenteeProfiles(ctx context.Context, userID string) (int, error)
 }
 
+// MenteeRepository defines public directory reads for mentees.
+type MenteeRepository interface {
+	List(ctx context.Context, filter models.MenteeFilter) (*models.MenteePage, error)
+	Summary(ctx context.Context) (*models.MenteeSummary, error)
+	GetByUserID(ctx context.Context, userID string) (*models.MenteeDetail, error)
+}
+
 // ProgramRepository defines persistence operations for programs and related sub-resources.
 type ProgramRepository interface {
 	GetByID(ctx context.Context, id string) (*models.Program, error)
@@ -89,6 +96,9 @@ type ApplicationRepository interface {
 	CountAcceptedByTerm(ctx context.Context, termID string) (int, error)
 	// FindByTermAndUser returns an application for a specific term and user, or nil.
 	FindByTermAndUser(ctx context.Context, termID, userID string) (*models.Application, error)
+	// FindCommittedMenteeByUser returns a mentee application in accepted, active, or
+	// graduated status for the user, or nil if they may still apply to a program.
+	FindCommittedMenteeByUser(ctx context.Context, userID string) (*models.Application, error)
 	// BulkDeclineByTerm moves all pending/submitted applications in a term to declined.
 	BulkDeclineByTerm(ctx context.Context, termID string) (int, error)
 	// ListPastMenteesByTerm returns accepted/graduated application user IDs for a term.
