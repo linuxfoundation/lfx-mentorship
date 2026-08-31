@@ -4,25 +4,42 @@ SPDX-License-Identifier: MIT
 -->
 <template>
   <div
-    class="inline-flex shrink-0 items-center justify-center rounded-full bg-brand-50 text-brand-700 font-semibold select-none"
+    class="inline-flex shrink-0 items-center justify-center rounded-full bg-brand-50 text-brand-700 font-semibold select-none overflow-hidden"
     :class="sizeClass"
     :aria-label="name"
     role="img"
   >
-    {{ initial }}
+    <img
+      v-if="src && !imageFailed"
+      :src="src"
+      :alt="name"
+      class="h-full w-full object-cover"
+      @error="imageFailed = true"
+    />
+    <template v-else>{{ initial }}</template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, watch } from 'vue';
 
 const props = withDefaults(
   defineProps<{
     name: string;
-    size?: 'xlarge' | 'large' | 'normal' | 'small';
+    src?: string;
+    size?: 'xlarge' | 'large' | 'normal' | 'small' | 'xsmall';
   }>(),
   {
     size: 'large',
+  },
+);
+
+const imageFailed = ref(false);
+
+watch(
+  () => props.src,
+  () => {
+    imageFailed.value = false;
   },
 );
 
@@ -39,6 +56,8 @@ const sizeClass = computed(() => {
       return 'h-12 w-12 text-base';
     case 'small':
       return 'h-8 w-8 text-xs';
+      case 'xsmall':
+        return 'h-6 w-6 text-xs';
     default:
       return 'h-10 w-10 text-sm';
   }
