@@ -7,23 +7,25 @@ SPDX-License-Identifier: MIT
     :to="menteePath(mentee.id)"
     class="block border border-neutral-200 rounded-2xl bg-white p-4 h-full transition-shadow hover:shadow-md"
   >
-    <div class="flex items-start gap-3">
-      <profile-initials-avatar
-        :name="mentee.name"
-        :src="mentee.avatarUrl"
-        size="large"
-      />
-      <div class="min-w-0 flex flex-col gap-1">
-        <h3 class="text-sm font-semibold text-neutral-900 truncate">
-          {{ mentee.name }}
-        </h3>
-        <p class="text-xs text-neutral-500 truncate">
-          {{ mentee.programLabel }}
-        </p>
-        <p class="text-sm text-neutral-600 leading-5 line-clamp-3 mt-1">
-          {{ mentee.bio }}
-        </p>
+    <div class="flex flex-col gap-3">
+      <div class="flex items-start gap-3">
+        <profile-initials-avatar
+          :name="mentee.name"
+          :src="mentee.avatarUrl"
+          size="normal"
+        />
+        <div class="min-w-0 flex flex-col gap-1">
+          <h3 class="text-sm font-semibold text-neutral-900 truncate">
+            {{ mentee.name }}
+          </h3>
+          <p class="text-xs text-neutral-500 truncate">
+            {{ mentee.programLabel }}
+          </p>
+        </div>
       </div>
+      <p class="text-xs text-neutral-600 leading-4 line-clamp-3 mt-1">
+        {{ mentee.bio }}
+      </p>
     </div>
   </NuxtLink>
 </template>
