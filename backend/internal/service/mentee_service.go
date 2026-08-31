@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
 	"go.opentelemetry.io/otel"
@@ -26,19 +27,22 @@ func NewMenteeService(repo domain.MenteeRepository) *MenteeService {
 	return &MenteeService{repo: repo}
 }
 
-func normalizeMenteeFilter(filter models.MenteeFilter) models.MenteeFilter {
+func normalizeMenteeFilter(filter models.MenteeFilter) (models.MenteeFilter, error) {
 	filter.Search = strings.TrimSpace(filter.Search)
 	filter.Skill = strings.TrimSpace(filter.Skill)
 	if strings.EqualFold(filter.Skill, "all") {
 		filter.Skill = ""
 	}
-	switch strings.ToLower(strings.TrimSpace(filter.Status)) {
-	case "active", "graduated":
-		filter.Status = strings.ToLower(strings.TrimSpace(filter.Status))
-	default:
+	status := strings.ToLower(strings.TrimSpace(filter.Status))
+	switch status {
+	case "", "all":
 		filter.Status = ""
+	case "active", "graduated":
+		filter.Status = status
+	default:
+		return filter, fmt.Errorf("%w: status must be active, graduated, or all", domain.ErrInvalidInput)
 	}
-	return filter
+	return filter, nil
 }
 
 func normalizeMenteeItem(item *models.MenteeItem) {
@@ -73,7 +77,12 @@ func (s *MenteeService) List(ctx context.Context, filter models.MenteeFilter) (*
 	ctx, span := menteeSvcTracer.Start(ctx, "MenteeService.List")
 	defer span.End()
 
-	page, err := s.repo.List(ctx, normalizeMenteeFilter(filter))
+	filter, err := normalizeMenteeFilter(filter)
+	if err != nil {
+		span.RecordError(err)
+		return nil, err
+	}
+	page, err := s.repo.List(ctx, filter)
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("list mentees: %w", err)
@@ -106,8 +115,12 @@ func (s *MenteeService) GetByUserID(ctx context.Context, userID string) (*models
 	defer span.End()
 	span.SetAttributes(attribute.String("mentee.user_id", userID))
 
-	if strings.TrimSpace(userID) == "" {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
 		return nil, fmt.Errorf("%w: mentee id is required", domain.ErrInvalidInput)
+	}
+	if _, err := uuid.Parse(userID); err != nil {
+		return nil, fmt.Errorf("%w: mentee id must be a UUID", domain.ErrInvalidInput)
 	}
 
 	detail, err := s.repo.GetByUserID(ctx, userID)

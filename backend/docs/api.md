@@ -634,7 +634,7 @@ Paginated public directory of mentees on **published** programs. Includes `accep
 |---|---|---|
 | `search` | string | Case-insensitive match on mentee name |
 | `skill` | string | Case-insensitive exact match on a mentee profile skill (`all` is ignored) |
-| `status` | `active\|graduated` | `active` includes `accepted` and `active`. Omit or `all` for every listed mentee |
+| `status` | `active\|graduated` | `active` includes `accepted` and `active`. Omit or `all` for every listed mentee. Other values return `400` |
 | `limit` / `offset` | — | Pagination |
 
 **Response** `200`
@@ -730,7 +730,7 @@ Public mentee profile by **user ID**. Programs, skills, terms, and mentors are l
 }
 ```
 
-**Errors** `404` when the user has no accepted, active, or graduated mentee application on a published program.
+**Errors** `400` when `{id}` is not a UUID. `404` when the user has no accepted, active, or graduated mentee application on a published program.
 
 ---
 
@@ -1611,7 +1611,7 @@ GET /v1/programs/{id}/catalog
 
 ```
 GET /v1/mentees/summary
-→ Header: mentee_count and project_count (call once; not affected by filters)
+→ Header: mentee_count and program_count (call once; not affected by filters)
 
 GET /v1/mentees?search=&skill=&status=&limit=20&offset=0
 → Card list: name, introduction, skills, featured program, mentors, joined_at
@@ -1619,7 +1619,7 @@ GET /v1/mentees?search=&skill=&status=&limit=20&offset=0
 
 ```
 GET /v1/mentees/{user_id}
-→ Profile: same card fields plus github_url, linkedin_url, stats, and programs[]
+→ Profile: same card fields plus github_url, linkedin_url, and programs[]
 ```
 
 Do not compose the directory from `GET /v1/user-profiles` or by calling `GET /v1/programs/{id}/mentees` for every program.

@@ -53,7 +53,7 @@ func TestMenteeHandler_List_OK(t *testing.T) {
 				Data: []*models.MenteeItem{{
 					UserID: "u1",
 					Name:   &name,
-					Status: "active",
+					Status: models.MenteeStatusActive,
 					Skills: []string{"Go"},
 				}},
 				Meta: models.PaginationMeta{Total: 1, Limit: 20, Offset: 0},
@@ -99,6 +99,20 @@ func TestMenteeHandler_Summary_OK(t *testing.T) {
 	}
 }
 
+func TestMenteeHandler_List_InvalidStatus(t *testing.T) {
+	h := handler.NewMenteeHandler(&stubMenteeSvc{
+		list: func(context.Context, models.MenteeFilter) (*models.MenteePage, error) {
+			return nil, domain.ErrInvalidInput
+		},
+	})
+	r := httptest.NewRequest(http.MethodGet, "/v1/mentees?status=activ", nil)
+	w := httptest.NewRecorder()
+	h.List(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("got %d; want 400", w.Code)
+	}
+}
+
 func TestMenteeHandler_List_InvalidLimit(t *testing.T) {
 	h := handler.NewMenteeHandler(&stubMenteeSvc{})
 	r := httptest.NewRequest(http.MethodGet, "/v1/mentees?limit=abc", nil)
@@ -116,7 +130,7 @@ func TestMenteeHandler_GetByID_OK(t *testing.T) {
 				t.Errorf("id = %q; want u1", id)
 			}
 			return &models.MenteeDetail{
-				MenteeItem: models.MenteeItem{UserID: id, Status: "active", JoinedAt: time.Unix(0, 0).UTC()},
+				MenteeItem: models.MenteeItem{UserID: id, Status: models.MenteeStatusActive, JoinedAt: time.Unix(0, 0).UTC()},
 				Programs:   []models.MenteeProgram{},
 			}, nil
 		},

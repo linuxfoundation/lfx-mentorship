@@ -86,7 +86,12 @@ const menteeEligibleCTE = `
 			up.introduction,
 			COALESCE((
 				SELECT ARRAY_AGG(s ORDER BY s)
-				FROM jsonb_array_elements_text(COALESCE(up.skill_set->'skills', '[]'::jsonb)) AS s
+				FROM jsonb_array_elements_text(
+					CASE
+						WHEN jsonb_typeof(up.skill_set->'skills') = 'array' THEN up.skill_set->'skills'
+						ELSE '[]'::jsonb
+					END
+				) AS s
 			), '{}') AS skills
 		FROM featured f
 		LEFT JOIN users u ON u.id = f.user_id
@@ -126,7 +131,7 @@ func scanMenteeItem(row pgx.Row) (*models.MenteeItem, error) {
 		return nil, err
 	}
 	if status != nil {
-		item.Status = *status
+		item.Status = models.MenteeStatus(*status)
 	}
 	if joinedAt != nil {
 		item.JoinedAt = *joinedAt
@@ -380,7 +385,7 @@ func (r *MenteeRepository) loadMenteePrograms(ctx context.Context, userID string
 			order = append(order, program.ID)
 		}
 		existing.Terms = append(existing.Terms, term)
-		if existing.Status == "graduated" && term.ApplicationStatus != "graduated" {
+		if existing.Status == models.MenteeStatusGraduated && term.ApplicationStatus != models.MenteeStatusGraduated {
 			existing.Status = term.ApplicationStatus
 		}
 	}

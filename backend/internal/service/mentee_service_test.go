@@ -64,6 +64,23 @@ func TestMenteeService_List_NormalizesFilter(t *testing.T) {
 	}
 }
 
+func TestMenteeService_List_RejectsInvalidStatus(t *testing.T) {
+	called := false
+	svc := service.NewMenteeService(&stubMenteeRepo{
+		list: func(context.Context, models.MenteeFilter) (*models.MenteePage, error) {
+			called = true
+			return &models.MenteePage{}, nil
+		},
+	})
+	_, err := svc.List(context.Background(), models.MenteeFilter{Status: "activ"})
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Errorf("got %v; want ErrInvalidInput", err)
+	}
+	if called {
+		t.Error("repo.List should not be called for an invalid status")
+	}
+}
+
 func TestMenteeService_List_KeepsActiveStatus(t *testing.T) {
 	var captured models.MenteeFilter
 	svc := service.NewMenteeService(&stubMenteeRepo{
@@ -103,13 +120,30 @@ func TestMenteeService_GetByUserID_EmptyID(t *testing.T) {
 	}
 }
 
+func TestMenteeService_GetByUserID_InvalidUUID(t *testing.T) {
+	called := false
+	svc := service.NewMenteeService(&stubMenteeRepo{
+		getByUserID: func(context.Context, string) (*models.MenteeDetail, error) {
+			called = true
+			return nil, domain.ErrMenteeNotFound
+		},
+	})
+	_, err := svc.GetByUserID(context.Background(), "not-a-uuid")
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Errorf("got %v; want ErrInvalidInput", err)
+	}
+	if called {
+		t.Error("repo.GetByUserID should not be called for a malformed id")
+	}
+}
+
 func TestMenteeService_GetByUserID_NotFound(t *testing.T) {
 	svc := service.NewMenteeService(&stubMenteeRepo{
 		getByUserID: func(context.Context, string) (*models.MenteeDetail, error) {
 			return nil, domain.ErrMenteeNotFound
 		},
 	})
-	_, err := svc.GetByUserID(context.Background(), "missing")
+	_, err := svc.GetByUserID(context.Background(), "455f4f53-fe87-4c99-a174-9f86ccdcf0be")
 	if !errors.Is(err, domain.ErrMenteeNotFound) {
 		t.Errorf("got %v; want ErrMenteeNotFound", err)
 	}
@@ -127,7 +161,7 @@ func TestMenteeService_GetByUserID_FillsEmptySlices(t *testing.T) {
 			}, nil
 		},
 	})
-	detail, err := svc.GetByUserID(context.Background(), "u1")
+	detail, err := svc.GetByUserID(context.Background(), "455f4f53-fe87-4c99-a174-9f86ccdcf0be")
 	if err != nil {
 		t.Fatalf("GetByUserID: %v", err)
 	}
