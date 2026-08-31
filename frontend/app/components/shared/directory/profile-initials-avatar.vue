@@ -31,6 +31,7 @@ const props = withDefaults(
   }>(),
   {
     size: 'large',
+    src: undefined,
   },
 );
 
@@ -56,8 +57,8 @@ const sizeClass = computed(() => {
       return 'h-12 w-12 text-base';
     case 'small':
       return 'h-8 w-8 text-xs';
-      case 'xsmall':
-        return 'h-6 w-6 text-xs';
+    case 'xsmall':
+      return 'h-6 w-6 text-xs';
     default:
       return 'h-10 w-10 text-sm';
   }

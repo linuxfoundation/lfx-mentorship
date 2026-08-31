@@ -34,7 +34,6 @@ SPDX-License-Identifier: MIT
                   {{ statusConfig.label }}
                 </lfx-tag>
               </div>
-  
               <p class="text-xs text-neutral-500 leading-4">
                 {{ mentee.sinceLabel }} · {{ mentee.project.foundationLabel }} ·
                 {{ mentee.project.name }}
