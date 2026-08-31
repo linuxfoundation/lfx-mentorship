@@ -19,19 +19,20 @@ SPDX-License-Identifier: MIT
       <div class="flex items-start gap-3 pr-24">
         <profile-initials-avatar
           :name="mentee.name"
-          size="large"
+          :src="mentee.avatarUrl"
+          size="normal"
         />
         <div class="flex flex-col gap-0.5 min-w-0">
-          <h3 class="text-lg font-semibold text-neutral-900 leading-7 truncate">
+          <h3 class="text-base font-normal text-neutral-900 leading-5 truncate">
             {{ mentee.name }}
           </h3>
-          <p class="text-sm text-neutral-500 leading-5">
+          <p class="text-xs text-neutral-500 leading-4">
             {{ mentee.sinceLabel }}
           </p>
         </div>
       </div>
 
-      <p class="text-sm text-neutral-600 leading-5 line-clamp-3">
+      <p class="text-sm text-neutral-600 leading-5 line-clamp-4">
         {{ mentee.bio }}
       </p>
 
@@ -39,25 +40,27 @@ SPDX-License-Identifier: MIT
         v-if="mentee.skills.length"
         class="flex flex-wrap gap-2"
       >
-        <lfx-chip
+        <lfx-tag
           v-for="skill in visibleSkills"
           :key="skill"
-          type="default"
-          size="xsmall"
+          variation="neutral"
+          type="outline"
+          size="small"
         >
           {{ skill }}
-        </lfx-chip>
+        </lfx-tag>
         <lfx-tooltip
           v-if="overflowSkills.length"
           placement="top"
           class="inline-flex"
         >
-          <lfx-chip
-            type="default"
-            size="xsmall"
+          <lfx-tag
+            variation="neutral"
+            type="outline"
+            size="small"
           >
             +{{ overflowSkills.length }}
-          </lfx-chip>
+          </lfx-tag>
           <template #content>
             <div class="flex flex-col gap-1 text-xs">
               <span
@@ -76,7 +79,7 @@ SPDX-License-Identifier: MIT
       <div class="grid grid-cols-2 gap-4">
         <div class="flex flex-col gap-1 min-w-0">
           <p class="text-xs font-semibold uppercase tracking-wide text-neutral-500">Project</p>
-          <p class="text-sm font-medium text-neutral-900 truncate">
+          <p class="text-xs font-normal text-neutral-900 truncate">
             {{ mentee.project.foundationLabel }} · {{ mentee.project.name }}
           </p>
         </div>
@@ -90,12 +93,13 @@ SPDX-License-Identifier: MIT
               v-for="mentor in visibleMentors"
               :key="mentor.id"
               :name="mentor.name"
-              size="small"
+              :src="mentor.avatarUrl"
+              size="xsmall"
               class="ring-2 ring-white"
             />
             <span
               v-if="overflowMentors.length"
-              class="inline-flex h-8 w-8 items-center justify-center rounded-full bg-neutral-100 text-xs font-medium text-neutral-600 ring-2 ring-white"
+              class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-neutral-100 text-xs font-medium text-neutral-600 ring-2 ring-white"
             >
               +{{ overflowMentors.length }}
             </span>
@@ -136,7 +140,6 @@ import { menteePath } from '~/config/routes';
 import type { Mentee } from '~/types/mentee.types';
 import ProfileInitialsAvatar from '~/components/shared/directory/profile-initials-avatar.vue';
 import LfxButton from '~/components/uikit/button/button.vue';
-import LfxChip from '~/components/uikit/chip/chip.vue';
 import LfxTag from '~/components/uikit/tag/tag.vue';
 import LfxTooltip from '~/components/uikit/tooltip/tooltip.vue';
 

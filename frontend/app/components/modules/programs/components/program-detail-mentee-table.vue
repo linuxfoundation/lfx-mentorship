@@ -19,6 +19,7 @@ SPDX-License-Identifier: MIT
           <div class="flex items-center gap-3 min-w-0">
             <profile-initials-avatar
               :name="mentee.name"
+              :src="mentee.avatarUrl"
               size="normal"
             />
             <div class="min-w-0">
