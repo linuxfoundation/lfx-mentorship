@@ -142,7 +142,7 @@ SPDX-License-Identifier: MIT
       </div>
       <lfx-button
         label="View program"
-        type="outline"
+        type="secondary"
         button-style="rounded"
         size="small"
       />
