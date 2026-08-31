@@ -7,6 +7,7 @@ SPDX-License-Identifier: MIT
     class="relative flex flex-col justify-between border border-neutral-200 rounded-2xl p-6 h-full min-h-[360px] bg-white transition-shadow duration-200 hover:shadow-lg"
   >
     <lfx-tag
+      v-if="statusConfig"
       class="absolute top-6 right-6"
       :variation="statusConfig.variation"
       size="small"
@@ -15,7 +16,7 @@ SPDX-License-Identifier: MIT
       {{ statusConfig.label }}
     </lfx-tag>
 
-    <div class="flex flex-col gap-5 w-full">
+    <div class="flex flex-col gap-5 w-full justify-between flex-grow">
       <div class="flex items-start gap-3 pr-24">
         <profile-initials-avatar
           :name="mentee.name"
@@ -33,7 +34,7 @@ SPDX-License-Identifier: MIT
       </div>
 
       <p class="text-sm text-neutral-600 leading-5 line-clamp-4">
-        {{ mentee.bio }}
+        {{ mentee.introduction }}
       </p>
 
       <div
@@ -78,9 +79,9 @@ SPDX-License-Identifier: MIT
     <div class="flex flex-col gap-4 w-full pt-6 mt-6 border-t border-neutral-100">
       <div class="grid grid-cols-2 gap-4">
         <div class="flex flex-col gap-1 min-w-0">
-          <p class="text-xs font-semibold uppercase tracking-wide text-neutral-500">Project</p>
+          <p class="text-xs font-semibold uppercase tracking-wide text-neutral-500">Program</p>
           <p class="text-xs font-normal text-neutral-900 truncate">
-            {{ mentee.project.foundationLabel }} · {{ mentee.project.name }}
+            {{ programLabel }}
           </p>
         </div>
         <div class="flex flex-col gap-1">
@@ -145,7 +146,14 @@ import LfxTooltip from '~/components/uikit/tooltip/tooltip.vue';
 
 const props = defineProps<{ mentee: Mentee }>();
 
-const statusConfig = computed(() => MENTEE_STATUS_CONFIG[props.mentee.status]);
+const statusConfig = computed(() => (props.mentee.status ? MENTEE_STATUS_CONFIG[props.mentee.status] : undefined));
+const programLabel = computed(() => {
+  if (!props.mentee.program) {
+    return 'None yet';
+  }
+  const { foundationLabel, name } = props.mentee.program;
+  return foundationLabel ? `${foundationLabel} · ${name}` : name;
+});
 const visibleSkills = computed(() => props.mentee.skills.slice(0, MENTEE_SKILLS_VISIBLE_COUNT));
 const overflowSkills = computed(() => props.mentee.skills.slice(MENTEE_SKILLS_VISIBLE_COUNT));
 const visibleMentors = computed(() => props.mentee.mentors.slice(0, MENTEE_MENTORS_VISIBLE_COUNT));

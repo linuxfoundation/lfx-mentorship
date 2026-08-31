@@ -23,10 +23,10 @@ SPDX-License-Identifier: MIT
         <h1 class="font-secondary font-light md:text-4xl text-3xl leading-normal text-neutral-900">
           Mentees
           <p
-            v-if="catalogSummary"
+            v-if="menteesSummary"
             class="text-sm text-neutral-600"
           >
-            {{ catalogSummary }}
+            {{ menteesSummary }}
           </p>
         </h1>
       </div>
@@ -36,7 +36,7 @@ SPDX-License-Identifier: MIT
       <lfx-input
         :model-value="searchTerm"
         class="!rounded-full flex-1"
-        placeholder="Search mentees by name, skill or project"
+        placeholder="Search mentees by name"
         @update:model-value="$emit('update:searchTerm', String($event))"
       >
         <template #prefix>
@@ -94,7 +94,7 @@ SPDX-License-Identifier: MIT
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted } from 'vue';
-import { MENTEE_FILTER_TABS, formatMenteesCatalogSummary } from '../config/mentees-header.config';
+import { MENTEE_FILTER_TABS, formatMenteesSummary } from '../config/mentees-header.config';
 import LfxIcon from '~/components/uikit/icon/icon.vue';
 import LfxInput from '~/components/uikit/input/input.vue';
 import LfxTabs from '~/components/uikit/tabs/tabs.vue';
@@ -111,15 +111,15 @@ const props = defineProps<{
   skill: string;
   skillOptions: string[];
   menteeCount?: number;
-  projectCount?: number;
+  programCount?: number;
 }>();
 
-const catalogSummary = computed(() => {
-  if (props.menteeCount == null || props.projectCount == null) {
+const menteesSummary = computed(() => {
+  if (props.menteeCount == null || props.programCount == null) {
     return '';
   }
 
-  return formatMenteesCatalogSummary(props.menteeCount, props.projectCount);
+  return formatMenteesSummary(props.menteeCount, props.programCount);
 });
 
 defineEmits<{

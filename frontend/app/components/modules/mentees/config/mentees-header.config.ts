@@ -14,12 +14,13 @@ export const DEFAULT_MENTEE_FILTER: MenteeStatusFilter = 'all';
 
 export const ALL_SKILLS_OPTION = { value: 'all', label: 'All skills' } as const;
 
-export const DIRECTORY_PAGE_SIZE = 6;
+export const MENTEE_PAGE_SIZE = 6;
+export const MENTEE_SEARCH_DEBOUNCE_MS = 300;
 
-/** Builds the header catalog summary, e.g. "8 mentees across 6 projects". */
-export function formatMenteesCatalogSummary(menteeCount: number, projectCount: number): string {
+/** Builds the header summary, e.g. "8 mentees across 6 programs". */
+export function formatMenteesSummary(menteeCount: number, programCount: number): string {
   const menteesLabel = menteeCount === 1 ? 'mentee' : 'mentees';
-  const projectsLabel = projectCount === 1 ? 'project' : 'projects';
+  const programsLabel = programCount === 1 ? 'program' : 'programs';
 
-  return `${menteeCount.toLocaleString()} ${menteesLabel} across ${projectCount.toLocaleString()} ${projectsLabel}`;
+  return `${menteeCount.toLocaleString()} ${menteesLabel} across ${programCount.toLocaleString()} ${programsLabel}`;
 }

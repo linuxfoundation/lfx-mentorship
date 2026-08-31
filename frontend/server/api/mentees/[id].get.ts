@@ -1,16 +1,14 @@
 // Copyright The Linux Foundation and each contributor to LFX.
 // SPDX-License-Identifier: MIT
 
-import { getMenteeDetail } from '../../mock-data/directory-details';
 import type { MenteeDetail } from '../../../app/types/mentee.types';
+import { fetchMentee, mapMenteeDetail } from '../../utils/mentee';
 
-export default defineEventHandler((event): MenteeDetail => {
+export default defineEventHandler(async (event): Promise<MenteeDetail> => {
   const id = getRouterParam(event, 'id');
-  const mentee = id ? getMenteeDetail(id) : undefined;
-
-  if (!mentee) {
-    throw createError({ statusCode: 404, statusMessage: 'Mentee not found' });
+  if (!id) {
+    throw createError({ statusCode: 400, message: 'Missing mentee id' });
   }
-
-  return mentee;
+  const detail = await fetchMentee(id);
+  return mapMenteeDetail(detail);
 });
