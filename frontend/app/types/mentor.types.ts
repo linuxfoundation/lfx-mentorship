@@ -12,8 +12,8 @@ export interface Mentor {
   sinceLabel: string;
   /** ISO date used for sorting. */
   joinedAt: string;
-  /** Project names used for search / summary. */
-  projects: string[];
+  /** Mock-only program names; live list search is name-only. */
+  projects?: string[];
   avatarUrl?: string;
 }
 
@@ -48,8 +48,9 @@ export interface MentorDetail extends Mentor {
 export interface MentorsListResponse {
   data: Mentor[];
   total: number;
-  /** Unfiltered catalog size for header summary. */
+}
+
+export interface MentorsSummaryResponse {
   mentorCount: number;
-  /** Unique projects across mentors for header summary. */
-  projectCount: number;
+  programCount: number;
 }

@@ -34,6 +34,14 @@ type MenteeFilter struct {
 	Status string // active | graduated; omit or all for every accepted mentee
 }
 
+// MentorFilter constrains public mentor directory queries.
+type MentorFilter struct {
+	Limit  int
+	Offset int
+	Search string // case-insensitive match on mentor name
+	Skill  string // case-insensitive exact match on a mentor skill
+}
+
 // ProgramFilter constrains list queries for programs.
 type ProgramFilter struct {
 	Limit           int
