@@ -18,18 +18,17 @@ import (
 // ── stubs ───────────────────────────────────────────────────────────────────
 
 type stubAppRepo struct {
-	getByID                   func(context.Context, string) (*models.Application, error)
-	listByProgramTerm         func(context.Context, string, models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error)
-	listByUser                func(context.Context, string, models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error)
-	create                    func(context.Context, string, models.ApplicationCreateInput) (*models.Application, error)
-	update                    func(context.Context, string, models.ApplicationUpdateInput) (*models.Application, error)
-	delete                    func(context.Context, string) error
-	countBlocking             func(context.Context, string) (int, error)
-	countAccepted             func(context.Context, string) (int, error)
-	findByTermAndUser         func(context.Context, string, string) (*models.Application, error)
-	findCommittedMenteeByUser func(context.Context, string) (*models.Application, error)
-	bulkDecline               func(context.Context, string) (int, error)
-	listPastMentees           func(context.Context, string) ([]*models.Application, error)
+	getByID           func(context.Context, string) (*models.Application, error)
+	listByProgramTerm func(context.Context, string, models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error)
+	listByUser        func(context.Context, string, models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error)
+	create            func(context.Context, string, models.ApplicationCreateInput) (*models.Application, error)
+	update            func(context.Context, string, models.ApplicationUpdateInput) (*models.Application, error)
+	delete            func(context.Context, string) error
+	countBlocking     func(context.Context, string) (int, error)
+	countAccepted     func(context.Context, string) (int, error)
+	findByTermAndUser func(context.Context, string, string) (*models.Application, error)
+	bulkDecline       func(context.Context, string) (int, error)
+	listPastMentees   func(context.Context, string) ([]*models.Application, error)
 }
 
 func (m *stubAppRepo) GetByID(ctx context.Context, id string) (*models.Application, error) {
@@ -83,12 +82,6 @@ func (m *stubAppRepo) CountAcceptedByTerm(ctx context.Context, id string) (int, 
 func (m *stubAppRepo) FindByTermAndUser(ctx context.Context, termID, userID string) (*models.Application, error) {
 	if m.findByTermAndUser != nil {
 		return m.findByTermAndUser(ctx, termID, userID)
-	}
-	return nil, nil
-}
-func (m *stubAppRepo) FindCommittedMenteeByUser(ctx context.Context, userID string) (*models.Application, error) {
-	if m.findCommittedMenteeByUser != nil {
-		return m.findCommittedMenteeByUser(ctx, userID)
 	}
 	return nil, nil
 }
@@ -452,49 +445,6 @@ func TestApplicationService_Create_WithdrawnReapply_DeletesOld(t *testing.T) {
 	}
 	if deleted != "old" {
 		t.Errorf("old withdrawn application was not deleted; got deleted=%q", deleted)
-	}
-}
-
-func TestApplicationService_Create_CommittedMentee_Blocked(t *testing.T) {
-	termRepo := &stubTermRepo{getByID: func(_ context.Context, _ string) (*models.ProgramTerm, error) {
-		return openTerm(time.Now()), nil
-	}}
-	var created bool
-	repo := &stubAppRepo{
-		findCommittedMenteeByUser: func(_ context.Context, userID string) (*models.Application, error) {
-			if userID != "u1" {
-				t.Errorf("userID = %q; want u1", userID)
-			}
-			return &models.Application{ID: "existing", Status: "accepted", Role: "mentee"}, nil
-		},
-		create: func(_ context.Context, _ string, _ models.ApplicationCreateInput) (*models.Application, error) {
-			created = true
-			return &models.Application{}, nil
-		},
-	}
-	svc := newApplicationSvc(repo, &stubTaskRepo{}, termRepo, &stubProgRepo{})
-	_, err := svc.Create(context.Background(), "t2", models.ApplicationCreateInput{UserID: "u1", Role: "mentee"})
-	if !errors.Is(err, domain.ErrIneligible) {
-		t.Errorf("expected ErrIneligible, got %v", err)
-	}
-	if created {
-		t.Error("Create should not insert when mentee is already committed")
-	}
-}
-
-func TestApplicationService_Create_MentorIgnoresCommittedMentee(t *testing.T) {
-	termRepo := &stubTermRepo{getByID: func(_ context.Context, _ string) (*models.ProgramTerm, error) {
-		return openTerm(time.Now()), nil
-	}}
-	repo := &stubAppRepo{
-		findCommittedMenteeByUser: func(context.Context, string) (*models.Application, error) {
-			t.Fatal("mentors must not run the mentee one-program check")
-			return nil, nil
-		},
-	}
-	svc := newApplicationSvc(repo, &stubTaskRepo{}, termRepo, &stubProgRepo{})
-	if _, err := svc.Create(context.Background(), "t1", models.ApplicationCreateInput{UserID: "u1", Role: "mentor"}); err != nil {
-		t.Fatalf("Create mentor: %v", err)
 	}
 }
 

@@ -1199,8 +1199,7 @@ Submit an application to a term.
 **Guards enforced**:
 1. Term must have `status = "open"`.
 2. Current date must fall within `application_start_date` and `application_end_date`.
-3. A mentee who already has an `accepted`, `active`, or `graduated` application cannot apply to another program. Pending, declined, withdrawn, and hold do not lock them. Mentors are not affected.
-4. No existing non-withdrawn application for this user+term (reapplication from `declined` is permanently blocked; reapplication from `withdrawn` is allowed while the window is open).
+3. No existing non-withdrawn application for this user+term (reapplication from `declined` is permanently blocked; reapplication from `withdrawn` is allowed while the window is open).
 
 **After creation**: The program's `task_templates` JSONB array is cloned as individual `prerequisite` tasks linked to the new application.
 
@@ -1213,7 +1212,7 @@ Submit an application to a term.
 ```
 
 **Response** `201` → `<Application>`  
-**Errors** `400`, `401`, `409` (duplicate / blocked reapplication), `422` (window closed, term not open, or mentee already accepted/active/graduated)
+**Errors** `400`, `401`, `409` (duplicate / blocked reapplication), `422` (window closed, term not open)
 
 ---
 

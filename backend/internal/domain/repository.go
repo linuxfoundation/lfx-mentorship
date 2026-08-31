@@ -96,9 +96,6 @@ type ApplicationRepository interface {
 	CountAcceptedByTerm(ctx context.Context, termID string) (int, error)
 	// FindByTermAndUser returns an application for a specific term and user, or nil.
 	FindByTermAndUser(ctx context.Context, termID, userID string) (*models.Application, error)
-	// FindCommittedMenteeByUser returns a mentee application in accepted, active, or
-	// graduated status for the user, or nil if they may still apply to a program.
-	FindCommittedMenteeByUser(ctx context.Context, userID string) (*models.Application, error)
 	// BulkDeclineByTerm moves all pending/submitted applications in a term to declined.
 	BulkDeclineByTerm(ctx context.Context, termID string) (int, error)
 	// ListPastMenteesByTerm returns accepted/graduated application user IDs for a term.
