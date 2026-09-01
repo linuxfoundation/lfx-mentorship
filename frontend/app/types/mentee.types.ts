@@ -7,7 +7,16 @@ export type MenteeStatus = (typeof MENTEE_STATUSES)[number];
 
 export type MenteeStatusFilter = 'all' | MenteeStatus;
 
-export const PROFILE_PROGRAM_STATUSES = ['accepting', 'closed', 'graduated', 'active'] as const;
+export const PROFILE_PROGRAM_STATUSES = [
+  'accepting',
+  'closed',
+  'graduated',
+  'active',
+  'open-soon',
+  'acceptance',
+  'in-progress',
+  'completed',
+] as const;
 
 export type ProfileProgramStatus = (typeof PROFILE_PROGRAM_STATUSES)[number];
 

@@ -734,6 +734,111 @@ Public mentee profile by **user ID**. Programs, skills, terms, and mentors are l
 
 ---
 
+#### `GET /v1/mentors` 🔓
+
+Paginated public directory of **active** mentors on **published** programs. Invited, pending, declined, and withdrawn memberships are omitted, as are mentor-profile-only users with no membership. The list is one row per mentor.
+
+`GET /v1/user-profiles` and `GET /v1/programs/{id}/members` are unchanged.
+
+**Query parameters**
+
+| Parameter | Values | Description |
+|---|---|---|
+| `search` | string | Case-insensitive match on mentor name |
+| `skill` | string | Case-insensitive exact match on a mentor profile skill (`all` is ignored) |
+| `limit` / `offset` | — | Pagination |
+
+**Response** `200`
+```json
+{
+  "data": [
+    {
+      "user_id": "uuid",
+      "name": "Jane Mentor",
+      "avatar_url": "https://...",
+      "introduction": "I mentor kernel contributors...",
+      "skills": ["Go", "Kubernetes"],
+      "joined_at": "2024-01-15T00:00:00Z"
+    }
+  ],
+  "meta": { "total": 8, "limit": 20, "offset": 0 }
+}
+```
+
+`meta.total` is the filtered count. Unfiltered header totals live on `GET /v1/mentors/summary`. Email is not included.
+
+---
+
+#### `GET /v1/mentors/summary` 🔓
+
+Unfiltered directory totals for the header (“8 mentors across 7 programs”). Ignores search and skill. Call once; it does not change when the list is filtered.
+
+**Response** `200`
+```json
+{
+  "mentor_count": 8,
+  "program_count": 7
+}
+```
+
+---
+
+#### `GET /v1/mentors/{id}` 🔓
+
+Public mentor profile by **user ID**. Programs, mentees, and profile links are loaded in separate queries and returned in one response.
+
+**Response** `200` → list item fields plus:
+```json
+{
+  "user_id": "uuid",
+  "name": "Jane Mentor",
+  "avatar_url": "https://...",
+  "introduction": "...",
+  "skills": ["Go"],
+  "joined_at": "2024-01-15T00:00:00Z",
+  "github_url": "https://github.com/jane",
+  "linkedin_url": "https://linkedin.com/in/jane",
+  "stats": { "programs_mentoring": 2, "current_mentees": 3, "mentees_graduated": 1 },
+  "programs": [
+    {
+      "id": "uuid",
+      "name": "Kubernetes Contributors",
+      "slug": "kubernetes-contributors",
+      "description": "...",
+      "logo_url": "https://...",
+      "skills": ["Go", "Kubernetes"],
+      "terms": [
+        {
+          "id": "uuid",
+          "name": "Spring 2026",
+          "status": "open",
+          "start_date_time": "2026-03-02T00:00:00Z",
+          "end_date_time": "2026-05-25T00:00:00Z",
+          "application_start_date": "2026-01-15T00:00:00Z",
+          "application_end_date": "2026-02-28T00:00:00Z"
+        }
+      ],
+      "mentors": []
+    }
+  ],
+  "current_mentees": [
+    {
+      "user_id": "uuid",
+      "name": "Alex Mentee",
+      "introduction": "...",
+      "program_name": "Kubernetes Contributors",
+      "term_name": "Spring 2026",
+      "status": "active"
+    }
+  ],
+  "graduated_mentees": []
+}
+```
+
+**Errors** `400` when `{id}` is not a UUID. `404` when the user is not an active mentor on a published program.
+
+---
+
 #### `GET /v1/programs/{id}` 🔓
 
 Fetch a program by UUID or slug.
@@ -1623,6 +1728,23 @@ GET /v1/mentees/{user_id}
 ```
 
 Do not compose the directory from `GET /v1/user-profiles` or by calling `GET /v1/programs/{id}/mentees` for every program.
+
+#### Mentors Directory
+
+```
+GET /v1/mentors/summary
+→ Header: mentor_count and program_count (call once; not affected by filters)
+
+GET /v1/mentors?search=&skill=&limit=20&offset=0
+→ Card list: name, introduction, skills, joined_at
+```
+
+```
+GET /v1/mentors/{user_id}
+→ Profile: same card fields plus github_url, linkedin_url, stats, programs[], current_mentees[], and graduated_mentees[]
+```
+
+Do not compose the directory from `GET /v1/user-profiles` or by calling `GET /v1/programs/{id}/members` for every program.
 
 #### Applying to a Term (Mentee)
 
