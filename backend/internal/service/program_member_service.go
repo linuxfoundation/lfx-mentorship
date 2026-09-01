@@ -113,6 +113,8 @@ func (s *ProgramMemberService) Create(ctx context.Context, programID string, inp
 			defaultStatus = models.ProgramMemberStatusInvited
 		}
 		input.Status = &defaultStatus
+	} else if !input.Status.IsValid() {
+		return nil, fmt.Errorf("%w: invalid member status %q", domain.ErrInvalidInput, *input.Status)
 	}
 
 	input.ID = uuid.New().String()
@@ -143,6 +145,12 @@ func (s *ProgramMemberService) Update(ctx context.Context, id string, input mode
 	span.SetAttributes(attribute.String("member.id", id))
 
 	if input.Status != nil {
+		// Validate before the transition lookup: an unknown status matches no
+		// edge in memberTransitions and would otherwise surface as a 409
+		// conflict rather than a 400 naming the field.
+		if !input.Status.IsValid() {
+			return nil, fmt.Errorf("%w: invalid member status %q", domain.ErrInvalidInput, *input.Status)
+		}
 		current, err := s.repo.GetByID(ctx, id)
 		if err != nil {
 			span.RecordError(err)

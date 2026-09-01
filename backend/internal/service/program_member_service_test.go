@@ -51,6 +51,24 @@ func TestProgramMemberService_Create_InvalidMemberType(t *testing.T) {
 	}
 }
 
+func TestProgramMemberService_Create_InvalidStatus(t *testing.T) {
+	progRepo := &stubProgRepo{
+		getByID: func(_ context.Context, _ string) (*models.Program, error) {
+			return &models.Program{Status: models.ProgramStatusPublished}, nil
+		},
+	}
+	svc := newMemberSvc(&stubMemberRepo{}, progRepo, &stubNotifier{})
+	bad := models.ProgramMemberStatus("teleported")
+	_, err := svc.Create(context.Background(), "prog-1", models.ProgramMemberCreateInput{
+		UserID:     "user-1",
+		MemberType: models.MemberTypeMentor,
+		Status:     &bad,
+	})
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput for invalid status, got %v", err)
+	}
+}
+
 func TestProgramMemberService_Create_MissingUserID(t *testing.T) {
 	progRepo := &stubProgRepo{
 		getByID: func(_ context.Context, _ string) (*models.Program, error) {
@@ -170,6 +188,28 @@ func TestProgramMemberService_Update_InvalidTransition_WithdrawnTerminal(t *test
 	_, err := svc.Update(context.Background(), "member-1", models.ProgramMemberUpdateInput{Status: &next})
 	if !errors.Is(err, domain.ErrInvalidStateTransition) {
 		t.Errorf("expected ErrInvalidStateTransition for withdrawn→active, got %v", err)
+	}
+}
+
+// An unknown status matches no edge in memberTransitions, so it must be
+// rejected as invalid input before the lifecycle check turns it into a
+// conflict — and before the member is ever fetched.
+func TestProgramMemberService_Update_InvalidStatus(t *testing.T) {
+	fetched := false
+	memberRepo := &stubMemberRepo{
+		getByID: func(_ context.Context, id string) (*models.ProgramMember, error) {
+			fetched = true
+			return &models.ProgramMember{ID: id}, nil
+		},
+	}
+	svc := newMemberSvc(memberRepo, &stubProgRepo{}, &stubNotifier{})
+	bad := models.ProgramMemberStatus("teleported")
+	_, err := svc.Update(context.Background(), "member-1", models.ProgramMemberUpdateInput{Status: &bad})
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput for invalid status, got %v", err)
+	}
+	if fetched {
+		t.Error("expected validation to reject before fetching the member")
 	}
 }
 
