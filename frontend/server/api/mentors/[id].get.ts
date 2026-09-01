@@ -1,16 +1,14 @@
 // Copyright The Linux Foundation and each contributor to LFX.
 // SPDX-License-Identifier: MIT
 
-import { getMentorDetail } from '../../mock-data/directory-details';
 import type { MentorDetail } from '../../../app/types/mentor.types';
+import { fetchMentor, mapMentorDetail } from '../../utils/mentor';
 
-export default defineEventHandler((event): MentorDetail => {
+export default defineEventHandler(async (event): Promise<MentorDetail> => {
   const id = getRouterParam(event, 'id');
-  const mentor = id ? getMentorDetail(id) : undefined;
-
-  if (!mentor) {
-    throw createError({ statusCode: 404, statusMessage: 'Mentor not found' });
+  if (!id) {
+    throw createError({ statusCode: 400, message: 'Missing mentor id' });
   }
-
-  return mentor;
+  const detail = await fetchMentor(id);
+  return mapMentorDetail(detail);
 });

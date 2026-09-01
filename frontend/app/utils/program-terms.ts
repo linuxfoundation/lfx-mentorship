@@ -1,7 +1,7 @@
 // Copyright The Linux Foundation and each contributor to LFX.
 // SPDX-License-Identifier: MIT
 
-import type { Program, ProgramTerm } from '../types/program.types';
+import type { Program, ProgramStatus, ProgramTerm } from '../types/program.types';
 
 /** Public-facing term lifecycle shown on the program Terms tab. */
 export const PROGRAM_TERM_DISPLAY_STATUSES = ['opens-soon', 'accepting', 'completed'] as const;
@@ -72,6 +72,18 @@ export function getProgramTermDisplayStatus(
   }
 
   // Application window passed but term not finished — treat as completed for listing.
+  return 'completed';
+}
+
+/**
+ * Catalog / program-card badge: derived from term application windows
+ * the same way `GET /v1/programs/catalog` is mapped for the programs list.
+ */
+export function toProgramCardStatus(terms: ProgramTerm[]): ProgramStatus {
+  const displays = terms.map((term) => getProgramTermDisplayStatus(term));
+  if (displays.some((status) => status === 'accepting')) return 'acceptance';
+  if (displays.some((status) => status === 'opens-soon')) return 'open-soon';
+  if (terms.some((term) => term.status === 'open')) return 'in-progress';
   return 'completed';
 }
 

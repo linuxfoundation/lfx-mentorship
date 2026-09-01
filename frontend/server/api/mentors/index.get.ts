@@ -1,41 +1,22 @@
 // Copyright The Linux Foundation and each contributor to LFX.
 // SPDX-License-Identifier: MIT
 
-import { MOCK_MENTORS } from '../../mock-data/directory';
-import type { Mentor, MentorsListResponse } from '../../../app/types/mentor.types';
+import type { MentorsListResponse } from '../../../app/types/mentor.types';
+import { fetchMentors, toMentorsListResponse } from '../../utils/mentor';
 
-export default defineEventHandler((event): MentorsListResponse => {
+function toOptionalInt(value: unknown): number | undefined {
+  if (value == null || value === '') return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+export default defineEventHandler(async (event): Promise<MentorsListResponse> => {
   const query = getQuery(event);
-  const search = String(query.search ?? '')
-    .trim()
-    .toLowerCase();
-  const skill = String(query.skill ?? 'all');
-
-  let data: Mentor[] = [...MOCK_MENTORS];
-
-  if (skill && skill !== 'all') {
-    data = data.filter((mentor) =>
-      mentor.skills.some((item) => item.toLowerCase() === skill.toLowerCase()),
-    );
-  }
-
-  if (search) {
-    data = data.filter((mentor) => {
-      const haystack = [mentor.name, mentor.bio, ...mentor.skills, ...mentor.projects]
-        .join(' ')
-        .toLowerCase();
-      return haystack.includes(search);
-    });
-  }
-
-  data = data.sort((a, b) => a.name.localeCompare(b.name));
-
-  const projectCount = new Set(MOCK_MENTORS.flatMap((mentor) => mentor.projects)).size;
-
-  return {
-    data,
-    total: data.length,
-    mentorCount: MOCK_MENTORS.length,
-    projectCount,
-  };
+  const page = await fetchMentors({
+    search: String(query.search ?? '').trim(),
+    skill: String(query.skill ?? ''),
+    limit: toOptionalInt(query.limit),
+    offset: toOptionalInt(query.offset),
+  });
+  return toMentorsListResponse(page);
 });
