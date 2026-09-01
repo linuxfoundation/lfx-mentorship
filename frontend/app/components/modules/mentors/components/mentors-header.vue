@@ -20,7 +20,7 @@ SPDX-License-Identifier: MIT
           />
           <span class="text-lg font-medium leading-7 text-accent-800">Mentors</span>
         </div>
-        <h1 class="font-secondary font-light md:text-5xl text-4xl leading-normal text-neutral-900">
+        <h1 class="font-secondary font-light md:text-4xl text-3xl leading-normal text-neutral-900">
           Mentors
           <p
             v-if="catalogSummary"
@@ -36,7 +36,7 @@ SPDX-License-Identifier: MIT
       <lfx-input
         :model-value="searchTerm"
         class="!rounded-full flex-1"
-        placeholder="Search mentors by name, skill or project"
+        placeholder="Search mentors by name"
         @update:model-value="$emit('update:searchTerm', String($event))"
       >
         <template #prefix>

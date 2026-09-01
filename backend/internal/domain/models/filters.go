@@ -25,6 +25,15 @@ type UserProfileFilter struct {
 	ProfileType string // mentor | mentee
 }
 
+// MenteeFilter constrains public mentee directory queries.
+type MenteeFilter struct {
+	Limit  int
+	Offset int
+	Search string // case-insensitive match on mentee name
+	Skill  string // case-insensitive exact match on a mentee skill
+	Status string // active | graduated; omit or all for every accepted mentee
+}
+
 // ProgramFilter constrains list queries for programs.
 type ProgramFilter struct {
 	Limit           int

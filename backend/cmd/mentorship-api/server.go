@@ -51,6 +51,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	programMemberRepo := db.NewProgramMemberRepository(pool)
 	applicationRepo := db.NewApplicationRepository(pool)
 	taskRepo := db.NewTaskRepository(pool)
+	menteeRepo := db.NewMenteeRepository(pool)
 
 	// Notifier
 	notifier := infrastructure.NewLogNotifier(logger)
@@ -63,6 +64,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	programMemberSvc := service.NewProgramMemberService(programMemberRepo, programRepo, notifier, cfg.Local.InviteSecret)
 	applicationSvc := service.NewApplicationService(applicationRepo, taskRepo, programTermRepo, programRepo, notifier)
 	taskSvc := service.NewTaskService(taskRepo, applicationRepo, programTermRepo, programMemberRepo, notifier)
+	menteeSvc := service.NewMenteeService(menteeRepo)
 
 	// Handlers
 	userH := handler.NewUserHandler(userSvc)
@@ -73,6 +75,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	applicationH := handler.NewApplicationHandler(applicationSvc)
 	taskH := handler.NewTaskHandler(taskSvc)
 	mentorInviteH := handler.NewMentorInviteHandler(programMemberSvc)
+	menteeH := handler.NewMenteeHandler(menteeSvc)
 
 	// JWT authenticator
 	jwtAuth, err := auth.NewJWTAuthenticator(ctx, cfg.jwtAuthConfig(), logger)
@@ -115,6 +118,10 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		r.Get("/programs/{id}/catalog", programH.GetCatalog)
 		r.Get("/programs/{id}/mentees", programH.ListCatalogMentees)
 		r.Get("/programs/{id}/skills", programH.ListSkills)
+
+		r.Get("/mentees", menteeH.List)
+		r.Get("/mentees/summary", menteeH.Summary)
+		r.Get("/mentees/{id}", menteeH.GetByID)
 		r.Get("/programs/{id}/funding-stats", programH.GetFundingStats)
 		r.Get("/programs/{id}/terms", programTermH.ListByProgram)
 		r.Get("/programs/{id}/members", programMemberH.List)
