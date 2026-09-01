@@ -31,6 +31,13 @@ type UserProfileRepository interface {
 	CountActiveMenteeProfiles(ctx context.Context, userID string) (int, error)
 }
 
+// MenteeRepository defines public directory reads for mentees.
+type MenteeRepository interface {
+	List(ctx context.Context, filter models.MenteeFilter) (*models.MenteePage, error)
+	Summary(ctx context.Context) (*models.MenteeSummary, error)
+	GetByUserID(ctx context.Context, userID string) (*models.MenteeDetail, error)
+}
+
 // ProgramRepository defines persistence operations for programs and related sub-resources.
 type ProgramRepository interface {
 	GetByID(ctx context.Context, id string) (*models.Program, error)

@@ -35,6 +35,7 @@ Key notes
   lifecycle (pending → accepted → active → graduated|withdrawn).
 - attendance_type is not captured in DynamoDB; it is migrated as NULL.
 - DynamoDB member/mentee status "approved" maps to Postgres "active".
+- DynamoDB user-profile type for mentees maps to Postgres profile_type "mentee".
 - tasks.application_id is resolved post-scan by matching (program_term_id, assignee_id)
   against inserted applications. Tasks with no match get application_id=NULL.
 - All INSERTs use ON CONFLICT … DO UPDATE (idempotent; safe to re-run).
@@ -264,6 +265,13 @@ def _map_application_status(dynamo_status: str | None) -> str:
     return s if s in _VALID_APP_STATUSES else "pending"
 
 
+def _map_profile_type(dynamo_type: str | None) -> str:
+    """Map DynamoDB user-profile type → user_profiles.profile_type."""
+    if (dynamo_type or "").strip().lower() == "mentor":
+        return "mentor"
+    return "mentee"
+
+
 # ---------------------------------------------------------------------------
 # Migration: users
 # ---------------------------------------------------------------------------
@@ -380,7 +388,7 @@ def migrate_user_profiles(cur, profiles: list, known_user_ids: set) -> dict:
             (
                 pid,
                 uid,
-                (p.get("type") or "mentee").strip(),
+                _map_profile_type(p.get("type")),
                 slug,
                 (p.get("firstName") or "").strip() or None,
                 (p.get("lastName") or "").strip() or None,
