@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
@@ -27,6 +28,8 @@ func (s *stubPlatformSummarySvc) Summary(ctx context.Context) (*models.PlatformS
 }
 
 func TestPlatformSummaryHandler_Get_OK(t *testing.T) {
+	john, jane := "John Doe", "Jane Doe"
+	avatar := "https://example.com/avatar.jpg"
 	h := handler.NewPlatformSummaryHandler(&stubPlatformSummarySvc{
 		summary: func(context.Context) (*models.PlatformSummary, error) {
 			return &models.PlatformSummary{
@@ -34,6 +37,10 @@ func TestPlatformSummaryHandler_Get_OK(t *testing.T) {
 				AcceptingProgramCount: 3,
 				MentorCount:           7,
 				GraduatedMenteeCount:  42,
+				GraduatedMenteeUsers: []models.PlatformSummaryMentee{
+					{Name: &john, AvatarURL: &avatar},
+					{Name: &jane, AvatarURL: &avatar},
+				},
 			}, nil
 		},
 	})
@@ -52,8 +59,12 @@ func TestPlatformSummaryHandler_Get_OK(t *testing.T) {
 		AcceptingProgramCount: 3,
 		MentorCount:           7,
 		GraduatedMenteeCount:  42,
+		GraduatedMenteeUsers: []models.PlatformSummaryMentee{
+			{Name: &john, AvatarURL: &avatar},
+			{Name: &jane, AvatarURL: &avatar},
+		},
 	}
-	if body != want {
+	if !reflect.DeepEqual(body, want) {
 		t.Errorf("body = %+v; want %+v", body, want)
 	}
 }

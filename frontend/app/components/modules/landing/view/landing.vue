@@ -39,6 +39,7 @@ const summary = computed(() => {
       graduatedMenteeCount: 0,
       foundationCount: 0,
       stipendsPaid: 0,
+      graduatedMentees: [],
     }
   );
 });

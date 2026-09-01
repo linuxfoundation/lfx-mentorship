@@ -34,5 +34,8 @@ func (s *PlatformSummaryService) Summary(ctx context.Context) (*models.PlatformS
 		span.RecordError(err)
 		return nil, fmt.Errorf("get platform summary: %w", err)
 	}
+	if summary.GraduatedMenteeUsers == nil {
+		summary.GraduatedMenteeUsers = []models.PlatformSummaryMentee{}
+	}
 	return summary, nil
 }

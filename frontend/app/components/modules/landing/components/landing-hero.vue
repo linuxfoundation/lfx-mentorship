@@ -6,12 +6,15 @@ SPDX-License-Identifier: MIT
   <section class="container px-5 pt-12 pb-10 md:px-10 md:pt-16 md:pb-12">
     <div class="flex flex-col gap-8 max-w-3xl">
       <div class="flex items-center gap-3">
-        <lfx-avatar-group type="member">
+        <lfx-avatar-group
+          v-if="summary.graduatedMentees.length"
+          type="member"
+        >
           <lfx-avatar
-            v-for="(avatar, i) in LANDING_HERO_AVATARS"
-            :key="i"
+            v-for="(mentee, i) in summary.graduatedMentees"
+            :key="mentee.avatarUrl ?? mentee.name ?? i"
             type="member"
-            :src="avatar"
+            :src="mentee.avatarUrl"
             size="small"
           />
         </lfx-avatar-group>
@@ -69,7 +72,6 @@ SPDX-License-Identifier: MIT
 <script setup lang="ts">
 import {
   LANDING_GRADUATED_COUNT_LABEL,
-  LANDING_HERO_AVATARS,
   LANDING_HERO_FEATURES,
   LANDING_HERO_SUBTITLE,
   LANDING_HERO_TITLE,

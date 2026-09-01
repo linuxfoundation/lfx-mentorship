@@ -3,6 +3,12 @@
 
 package models
 
+// PlatformSummaryMentee is a compact public preview of a graduated mentee.
+type PlatformSummaryMentee struct {
+	Name      *string `json:"name,omitempty"`
+	AvatarURL *string `json:"avatar_url,omitempty"`
+}
+
 // PlatformSummary is the aggregated marketing/landing summary counts.
 // All counts are unfiltered by any caller-supplied criteria.
 type PlatformSummary struct {
@@ -19,4 +25,7 @@ type PlatformSummary struct {
 	// one mentee application in status='graduated' on a non-deleted term
 	// of a published program.
 	GraduatedMenteeCount int `json:"graduated_mentee_count"`
+	// GraduatedMenteeUsers is a preview of the most recently graduated
+	// mentees (name + avatar) for the landing hero.
+	GraduatedMenteeUsers []PlatformSummaryMentee `json:"graduated_mentee_users"`
 }

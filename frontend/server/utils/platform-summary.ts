@@ -4,11 +4,17 @@
 import type { LandingSummaryResponse } from '../../app/types/landing.types';
 
 // Raw shape returned by `GET /v1/summary` on the backend.
+interface PlatformSummaryMenteeApi {
+  name?: string | null;
+  avatar_url?: string | null;
+}
+
 interface PlatformSummaryApi {
   program_count: number;
   accepting_program_count: number;
   mentor_count: number;
   graduated_mentee_count: number;
+  graduated_mentee_users?: PlatformSummaryMenteeApi[];
 }
 
 function fetchErrorStatus(error: unknown): number {
@@ -32,8 +38,12 @@ export async function fetchPlatformSummary(): Promise<LandingSummaryResponse> {
       acceptingProgramCount: summary.accepting_program_count,
       mentorCount: summary.mentor_count,
       graduatedMenteeCount: summary.graduated_mentee_count,
-      foundationCount: 42, // TODO: Implement this
-      stipendsPaid: 6100000, // TODO: Implement this
+      foundationCount: 0, // TODO: Implement this
+      stipendsPaid: 0, // TODO: Implement this
+      graduatedMentees: (summary.graduated_mentee_users ?? []).map((mentee) => ({
+        name: mentee.name ?? undefined,
+        avatarUrl: mentee.avatar_url ?? undefined,
+      })),
     };
   } catch (error) {
     throw createError({

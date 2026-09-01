@@ -41,6 +41,11 @@ export interface LandingFaqItem {
  * Aggregated marketing counts served by the BFF `/api/summary` endpoint,
  * which proxies the backend `GET /v1/summary`.
  */
+export interface LandingGraduatedMentee {
+  name?: string;
+  avatarUrl?: string;
+}
+
 export interface LandingSummaryResponse {
   programCount: number;
   acceptingProgramCount: number;
@@ -48,4 +53,5 @@ export interface LandingSummaryResponse {
   graduatedMenteeCount: number;
   foundationCount: number;
   stipendsPaid: number;
+  graduatedMentees: LandingGraduatedMentee[];
 }

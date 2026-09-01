@@ -13,13 +13,6 @@ import type {
 
 export const LANDING_GRADUATED_COUNT_LABEL = 'mentees graduated since 2019';
 
-export const LANDING_HERO_AVATARS = [
-  'https://i.pravatar.cc/40?img=12',
-  'https://i.pravatar.cc/40?img=32',
-  'https://i.pravatar.cc/40?img=47',
-  'https://i.pravatar.cc/40?img=5',
-] as const;
-
 export const LANDING_HERO_TITLE = 'Learn open source by building it.';
 
 export const LANDING_HERO_SUBTITLE =
