@@ -12,9 +12,11 @@ SPDX-License-Identifier: MIT
       />
       <div class="flex min-w-0 flex-1 flex-col gap-1">
         <p class="text-xs text-neutral-500 leading-4 truncate">{{ program.foundationLabel }}</p>
-        <h3 class="text-base font-normal text-neutral-900 leading-6 break-words">
-          {{ program.title }}
-        </h3>
+        <NuxtLink :to="programPath(program.id)">
+          <h3 class="text-base font-normal text-neutral-900 leading-6 break-words">
+            {{ program.title }}
+          </h3>
+        </NuxtLink>
       </div>
       <lfx-tag
         class="shrink-0"
@@ -107,6 +109,7 @@ import { PROFILE_PROGRAM_STATUS_CONFIG } from '~/components/modules/mentees/conf
 import ProfileInitialsAvatar from '~/components/shared/directory/profile-initials-avatar.vue';
 import type { ProfileProgram } from '~/types/mentee.types';
 import LfxTag from '~/components/uikit/tag/tag.vue';
+import { programPath } from '~/config/routes';
 
 const { stripHtml } = useSanitize();
 const props = defineProps<{ program: ProfileProgram }>();

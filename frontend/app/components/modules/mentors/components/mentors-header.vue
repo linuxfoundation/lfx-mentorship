@@ -60,7 +60,7 @@ SPDX-License-Identifier: MIT
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted } from 'vue';
-import { formatMentorsCatalogSummary } from '../config/mentors-header.config';
+import { formatMentorsSummary } from '../config/mentors-header.config';
 import LfxIcon from '~/components/uikit/icon/icon.vue';
 import LfxInput from '~/components/uikit/input/input.vue';
 import SkillFilterSelect from '~/components/shared/skill-filter-select.vue';
@@ -71,15 +71,15 @@ const props = defineProps<{
   skill: string;
   skillOptions: string[];
   mentorCount?: number;
-  projectCount?: number;
+  programCount?: number;
 }>();
 
 const catalogSummary = computed(() => {
-  if (props.mentorCount == null || props.projectCount == null) {
+  if (props.mentorCount == null || props.programCount == null) {
     return '';
   }
 
-  return formatMentorsCatalogSummary(props.mentorCount, props.projectCount);
+  return formatMentorsSummary(props.mentorCount, props.programCount);
 });
 
 defineEmits<{

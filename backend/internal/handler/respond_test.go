@@ -30,6 +30,7 @@ func TestError_NotFoundErrors(t *testing.T) {
 		domain.ErrUserNotFound,
 		domain.ErrUserProfileNotFound,
 		domain.ErrMenteeNotFound,
+		domain.ErrMentorNotFound,
 		domain.ErrProgramNotFound,
 		domain.ErrProgramTermNotFound,
 		domain.ErrProgramMemberNotFound,
