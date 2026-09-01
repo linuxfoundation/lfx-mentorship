@@ -8,6 +8,7 @@ export interface LandingHeroFeature {
 }
 
 export interface LandingStat {
+  key: keyof LandingSummaryResponse;
   value: string;
   label: string;
 }
@@ -34,4 +35,17 @@ export interface LandingBenefit {
 export interface LandingFaqItem {
   question: string;
   answer: string;
+}
+
+/**
+ * Aggregated marketing counts served by the BFF `/api/summary` endpoint,
+ * which proxies the backend `GET /v1/summary`.
+ */
+export interface LandingSummaryResponse {
+  programCount: number;
+  acceptingProgramCount: number;
+  mentorCount: number;
+  graduatedMenteeCount: number;
+  foundationCount: number;
+  stipendsPaid: number;
 }

@@ -15,7 +15,7 @@ SPDX-License-Identifier: MIT
             size="small"
           />
         </lfx-avatar-group>
-        <span class="text-sm text-neutral-600">{{ LANDING_GRADUATED_COUNT_LABEL }}</span>
+        <span class="text-sm text-neutral-600">{{ summary.graduatedMenteeCount + ' ' + LANDING_GRADUATED_COUNT_LABEL }}</span>
       </div>
 
       <div class="flex flex-col gap-4">
@@ -29,7 +29,7 @@ SPDX-License-Identifier: MIT
 
       <ul class="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:gap-x-8 sm:gap-y-3">
         <li
-          v-for="feature in LANDING_HERO_FEATURES"
+          v-for="feature in LANDING_HERO_FEATURES(summary)"
           :key="feature.label"
           class="flex items-center gap-2.5 text-sm text-neutral-800"
         >
@@ -79,6 +79,11 @@ import LfxAvatar from '~/components/uikit/avatar/avatar.vue';
 import LfxAvatarGroup from '~/components/uikit/avatar-group/avatar-group.vue';
 import LfxButton from '~/components/uikit/button/button.vue';
 import LfxIcon from '~/components/uikit/icon/icon.vue';
+import type { LandingSummaryResponse } from '~/types/landing.types';
+
+const props = defineProps<{
+  summary: LandingSummaryResponse;
+}>();
 </script>
 
 <script lang="ts">

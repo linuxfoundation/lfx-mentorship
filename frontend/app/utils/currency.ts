@@ -9,3 +9,14 @@ export function formatUsdFromCents(cents: number): string {
     maximumFractionDigits: 0,
   }).format(cents / 100);
 }
+
+/** Formats dollars as compact USD (e.g. "$1.3K", "$6.1M"). */
+export function formatCompactUsd(dollars: number): string {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    notation: 'compact',
+    compactDisplay: 'short',
+    maximumFractionDigits: 1,
+  }).format(dollars);
+}

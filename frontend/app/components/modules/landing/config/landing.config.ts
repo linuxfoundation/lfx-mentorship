@@ -8,9 +8,10 @@ import type {
   LandingHeroFeature,
   LandingHowItWorksStep,
   LandingStat,
+  LandingSummaryResponse,
 } from '~/types/landing.types';
 
-export const LANDING_GRADUATED_COUNT_LABEL = '2,057 mentees graduated since 2019';
+export const LANDING_GRADUATED_COUNT_LABEL = 'mentees graduated since 2019';
 
 export const LANDING_HERO_AVATARS = [
   'https://i.pravatar.cc/40?img=12',
@@ -24,17 +25,17 @@ export const LANDING_HERO_TITLE = 'Learn open source by building it.';
 export const LANDING_HERO_SUBTITLE =
   'LFX Mentorship pairs contributors with maintainers of the projects that run modern infrastructure. Over the course of a term you take on real, scoped work and review it with your mentor.';
 
-export const LANDING_HERO_FEATURES: LandingHeroFeature[] = [
+export const LANDING_HERO_FEATURES = (summary: LandingSummaryResponse): LandingHeroFeature[] => [
   { icon: 'sack-dollar', label: 'Many programs offer a stipend' },
   { icon: 'calendar', iconType: 'solid', label: 'Multi-week programs' },
-  { icon: 'layer-group', label: '128 programs across 42 foundations' },
+  { icon: 'layer-group', label: `${summary.programCount} programs across ${summary.foundationCount} foundations` },
 ];
 
 export const LANDING_STATS: LandingStat[] = [
-  { value: '128', label: 'Programs Accepting' },
-  { value: '2,057', label: 'Mentees Graduated' },
-  { value: '$6.1M', label: 'Stipends Paid' },
-  { value: '840', label: 'Active Mentors' },
+  { value: '128', label: 'Programs Accepting', key: 'acceptingProgramCount' },
+  { value: '2,057', label: 'Mentees Graduated', key: 'graduatedMenteeCount' },
+  { value: '$6.1M', label: 'Stipends Paid', key: 'stipendsPaid' },
+  { value: '840', label: 'Active Mentors', key: 'mentorCount' },
 ];
 
 export const LANDING_HOW_IT_WORKS_STEPS: LandingHowItWorksStep[] = [
@@ -150,7 +151,7 @@ export const LANDING_FAQ_ITEMS: LandingFaqItem[] = [
   },
 ];
 
-export const LANDING_CTA_TITLE = '128 programs are accepting applications';
+export const LANDING_CTA_TITLE = (acceptingProgramCount: number): string => `${acceptingProgramCount} programs are accepting applications`;
 
 export const LANDING_CTA_SUBTITLE =
   'Browse by foundation, skill or term. You can have up to three applications at a time.';

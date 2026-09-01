@@ -839,6 +839,27 @@ Public mentor profile by **user ID**. Programs, mentees, and profile links are l
 
 ---
 
+#### `GET /v1/summary` 🔓
+
+Aggregated marketing/landing counts. Returns four totals in a single query. All counts are scoped to programs with `status = "published"`.
+
+- `program_count` — number of published programs.
+- `accepting_program_count` — subset of published programs with at least one open term whose `application_start_date` ≤ `NOW()` ≤ `application_end_date`.
+- `mentor_count` — distinct users who are an `active` `mentor` member of any published program.
+- `graduated_mentee_count` — distinct users with at least one mentee application in status `graduated` on a non-deleted term of a published program.
+
+**Response** `200`
+```json
+{
+  "program_count": 18,
+  "accepting_program_count": 3,
+  "mentor_count": 7,
+  "graduated_mentee_count": 42
+}
+```
+
+---
+
 #### `GET /v1/programs/{id}` 🔓
 
 Fetch a program by UUID or slug.
