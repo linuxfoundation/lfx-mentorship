@@ -125,6 +125,12 @@ type ProgramFundingStats struct {
 	UpdatedOn    time.Time `json:"updated_on"`
 }
 
+// ProgramFundingStatsUpsert is the payload used by the funding sync job.
+type ProgramFundingStatsUpsert struct {
+	ProgramID         string
+	AmountRaisedCents int64
+}
+
 // ProgramCatalogTerm is a program term with the computed public discovery label.
 type ProgramCatalogTerm struct {
 	ProgramTerm
