@@ -106,7 +106,8 @@ function formatSinceLabel(iso: string): string {
 function formatDateRange(start?: string, end?: string): string {
   const startDate = start ? new Date(start) : undefined;
   const endDate = end ? new Date(end) : undefined;
-  const format = (value: Date) => value.toLocaleString('en-US', { month: 'short', year: 'numeric' });
+  const format = (value: Date) =>
+    value.toLocaleString('en-US', { month: 'short', year: 'numeric' });
   if (
     startDate &&
     !Number.isNaN(startDate.getTime()) &&
@@ -212,7 +213,10 @@ export function mapMentorDetail(detail: MentorApiDetail): MentorDetail {
   const programs = (detail.programs ?? []).map(mapProgram);
   return {
     ...mapMentorItem(detail),
-    affiliationsLabel: programs.map((program) => program.title).filter(Boolean).join(', '),
+    affiliationsLabel: programs
+      .map((program) => program.title)
+      .filter(Boolean)
+      .join(', '),
     githubUrl: detail.github_url,
     linkedinUrl: detail.linkedin_url,
     stats: mapStats(detail.stats),
