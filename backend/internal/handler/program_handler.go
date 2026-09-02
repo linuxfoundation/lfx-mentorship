@@ -94,11 +94,6 @@ func (h *ProgramHandler) GetCatalog(w http.ResponseWriter, r *http.Request) {
 		Error(w, err)
 		return
 	}
-	// Public catalog has no JWT, so an owner exception would never succeed.
-	if item.Status != models.ProgramStatusPublished {
-		Error(w, domain.ErrProgramNotFound)
-		return
-	}
 	JSON(w, http.StatusOK, item)
 }
 

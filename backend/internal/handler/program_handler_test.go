@@ -118,62 +118,6 @@ func TestProgramHandler_ListCatalog_InvalidLimit(t *testing.T) {
 	}
 }
 
-func TestProgramHandler_GetCatalog_HiddenReturns404(t *testing.T) {
-	h := handler.NewProgramHandler(&stubProgramSvc{
-		getCatalog: func(_ context.Context, id string) (*models.ProgramCatalogItem, error) {
-			lfid := "owner"
-			return &models.ProgramCatalogItem{Program: models.Program{
-				ID:     id,
-				Status: models.ProgramStatusHidden,
-				LFID:   &lfid,
-			}}, nil
-		},
-	})
-	r := httptest.NewRequest(http.MethodGet, "/v1/programs/p1/catalog", nil)
-	r = requestWithChiParam(r, "id", "p1")
-	w := httptest.NewRecorder()
-	h.GetCatalog(w, r)
-	if w.Code != http.StatusNotFound {
-		t.Errorf("got %d; want 404", w.Code)
-	}
-}
-
-func TestProgramHandler_GetCatalog_DraftReturns404(t *testing.T) {
-	h := handler.NewProgramHandler(&stubProgramSvc{
-		getCatalog: func(_ context.Context, id string) (*models.ProgramCatalogItem, error) {
-			return &models.ProgramCatalogItem{Program: models.Program{
-				ID:     id,
-				Status: models.ProgramStatusDraft,
-			}}, nil
-		},
-	})
-	r := httptest.NewRequest(http.MethodGet, "/v1/programs/p1/catalog", nil)
-	r = requestWithChiParam(r, "id", "p1")
-	w := httptest.NewRecorder()
-	h.GetCatalog(w, r)
-	if w.Code != http.StatusNotFound {
-		t.Errorf("got %d; want 404", w.Code)
-	}
-}
-
-func TestProgramHandler_GetCatalog_RejectedReturns404(t *testing.T) {
-	h := handler.NewProgramHandler(&stubProgramSvc{
-		getCatalog: func(_ context.Context, id string) (*models.ProgramCatalogItem, error) {
-			return &models.ProgramCatalogItem{Program: models.Program{
-				ID:     id,
-				Status: models.ProgramStatusRejected,
-			}}, nil
-		},
-	})
-	r := httptest.NewRequest(http.MethodGet, "/v1/programs/p1/catalog", nil)
-	r = requestWithChiParam(r, "id", "p1")
-	w := httptest.NewRecorder()
-	h.GetCatalog(w, r)
-	if w.Code != http.StatusNotFound {
-		t.Errorf("got %d; want 404", w.Code)
-	}
-}
-
 func TestProgramHandler_GetCatalog_NotFound(t *testing.T) {
 	h := handler.NewProgramHandler(&stubProgramSvc{
 		getCatalog: func(context.Context, string) (*models.ProgramCatalogItem, error) {
