@@ -26,7 +26,7 @@ type LedgerConfig struct {
 // LedgerTransaction is the minimal wire model needed for funding stats sync.
 type LedgerTransaction struct {
 	ProjectID   string `json:"projectID"`
-	TxnCategory string `json:"txnCategory"`
+	TxnCategory models.MentorshipCategoryType `json:"txnCategory"`
 	Amount      int64  `json:"amount"`
 }
 

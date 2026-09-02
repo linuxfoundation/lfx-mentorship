@@ -553,7 +553,7 @@ func (r *ProgramRepository) Update(ctx context.Context, id string, input models.
 			mentee_needs        = COALESCE($19, mentee_needs),
 			task_templates      = COALESCE($20, task_templates)
 		WHERE id = $1
-		RETURNING` + programReturningCols
+		RETURNING id`
 
 	var statusVal *string
 	if input.Status != nil {
@@ -561,19 +561,26 @@ func (r *ProgramRepository) Update(ctx context.Context, id string, input models.
 		statusVal = &s
 	}
 
-	p, err := scanProgram(r.pool.QueryRow(ctx, q,
+	var updatedID string
+	err := r.pool.QueryRow(ctx, q,
 		id, input.Name, input.Slug, statusVal, input.IsPaid,
 		input.Description, input.LogoURL, input.WebsiteURL, input.RepoLink,
 		input.CodeOfConduct, input.Industry, input.Color, input.LFID, input.CIIProjectID,
 		input.AcceptApplications, input.TermsAndConditions, input.ProgramTermStatus, input.DiscoverSortRank,
 		nilIfEmpty(input.MenteeNeeds), nilIfEmpty(input.TaskTemplates),
-	))
+	).Scan(&updatedID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrProgramNotFound
 	}
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("update program: %w", err)
+	}
+
+	p, err := r.GetByID(ctx, updatedID)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("reload updated program: %w", err)
 	}
 	return p, nil
 }

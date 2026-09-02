@@ -99,6 +99,9 @@ func loadConfig() (*config, error) {
 		if err != nil {
 			return nil, fmt.Errorf("LEDGER_TIMEOUT: invalid duration %q: %w", v, err)
 		}
+		if d <= 0 {
+			return nil, fmt.Errorf("LEDGER_TIMEOUT: must be greater than 0 (got %q)", v)
+		}
 		ledgerTimeout = d
 	}
 

@@ -121,6 +121,10 @@ createPlaceholderSecret: false
 fundingStatsSyncCronJob:
   enabled: false
   schedule: "0 * * * *"
+  # Maximum allowed runtime for each job execution.
+  activeDeadlineSeconds: 3300
+  # Maximum retries for a failed job before it is marked failed.
+  backoffLimit: 1
   image:
     # Defaults to same repository and tag as the main API image.
     # Override only if building a separate image for the CronJob.

@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/clients"
@@ -118,7 +117,10 @@ func (s *syncer) fetchTotals(ctx context.Context, programIDs []string) (map[stri
 				if txn.Amount <= 0 {
 					continue
 				}
-				if !strings.EqualFold(txn.TxnCategory, string(models.MentorshipCategory)) {
+				if !txn.TxnCategory.IsValid() {
+					continue
+				}
+				if txn.TxnCategory != models.MentorshipCategory {
 					continue
 				}
 				if txn.ProjectID != "" && txn.ProjectID != programID {

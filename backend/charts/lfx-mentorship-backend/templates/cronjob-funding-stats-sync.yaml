@@ -16,6 +16,8 @@ spec:
   failedJobsHistoryLimit: {{ .Values.fundingStatsSyncCronJob.failedJobsHistoryLimit }}
   jobTemplate:
     spec:
+      activeDeadlineSeconds: {{ .Values.fundingStatsSyncCronJob.activeDeadlineSeconds }}
+      backoffLimit: {{ .Values.fundingStatsSyncCronJob.backoffLimit }}
       template:
         metadata:
           labels:
