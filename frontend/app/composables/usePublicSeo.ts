@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import { computed, toValue, type MaybeRefOrGetter } from 'vue';
-import { SITE_NAME, siteOrigin, toAbsoluteUrl, truncateMetaDescription } from '~/utils/seo';
+import { absoluteOgImage, SITE_NAME, siteOrigin, truncateMetaDescription } from '~/utils/seo';
 
 export type PublicOgType = 'website' | 'profile' | 'article';
 
@@ -37,7 +37,7 @@ export function usePublicSeo(options: PublicSeoOptions) {
     const normalized = path.startsWith('/') ? path : `/${path}`;
     return `${origin.value}${normalized}`;
   });
-  const image = computed(() => toAbsoluteUrl(toValue(options.image), origin.value));
+  const image = computed(() => absoluteOgImage(toValue(options.image), origin.value));
   const type = computed(() => toValue(options.type) ?? 'website');
   const noindex = computed(() => Boolean(toValue(options.noindex)));
 

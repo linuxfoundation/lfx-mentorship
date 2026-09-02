@@ -9,12 +9,10 @@ import { defineNitroPlugin } from 'nitropack/runtime';
 // the module's runtime hook, reads the real env at request time.
 export default defineNitroPlugin((nitroApp) => {
   nitroApp.hooks.hook('robots:config', (ctx) => {
-    const appEnv = process.env.NUXT_PUBLIC_APP_ENV;
-    const isProduction = appEnv === 'production';
-    // Unset or `development` is local; deployed non-prod (staging/dev) stays noindex.
-    const isLocal = !appEnv || appEnv === 'development';
-
-    if (isProduction || isLocal) return;
+    const isProduction = process.env.NUXT_PUBLIC_APP_ENV === 'production';
+    // `import.meta.dev` is local Nuxt only. A deployed pod with
+    // NUXT_PUBLIC_APP_ENV=development must stay noindex.
+    if (import.meta.dev || isProduction) return;
 
     ctx.groups = [{ userAgent: ['*'], disallow: ['/'], allow: [], comment: [] }];
   });

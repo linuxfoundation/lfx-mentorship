@@ -15,7 +15,8 @@ export function useJsonLd(
         {
           key,
           type: 'application/ld+json',
-          innerHTML: JSON.stringify(value),
+          // Escape `<` so program-controlled text cannot break out of the script tag.
+          innerHTML: JSON.stringify(value).replace(/</g, '\\u003c'),
         },
       ];
     }),
