@@ -10,7 +10,7 @@ export interface MenteeStatusConfig {
 }
 
 export const MENTEE_STATUS_CONFIG: Record<MenteeStatus, MenteeStatusConfig> = {
-  active: { label: 'Active', variation: 'info' },
+  active: { label: 'Current', variation: 'info' },
   graduated: { label: 'Graduated', variation: 'positive' },
 };
 
