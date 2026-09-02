@@ -38,7 +38,7 @@ type LedgerTransactionsPage struct {
 
 // LedgerClient fetches data from the Ledger HTTP API.
 type LedgerClient interface {
-	GetTransactionsPage(ctx context.Context, page int, perPage int) (*LedgerTransactionsPage, error)
+	GetTransactionsPage(ctx context.Context, projectID string, page int, perPage int) (*LedgerTransactionsPage, error)
 }
 
 type ledgerHTTPClient struct {
@@ -59,7 +59,7 @@ func NewLedgerClient(cfg LedgerConfig) LedgerClient {
 }
 
 // GetTransactionsPage returns one filtered /transactions page for mentorship credits.
-func (c *ledgerHTTPClient) GetTransactionsPage(ctx context.Context, page int, perPage int) (*LedgerTransactionsPage, error) {
+func (c *ledgerHTTPClient) GetTransactionsPage(ctx context.Context, projectID string, page int, perPage int) (*LedgerTransactionsPage, error) {
 	if page <= 0 {
 		page = 1
 	}
@@ -76,6 +76,9 @@ func (c *ledgerHTTPClient) GetTransactionsPage(ctx context.Context, page int, pe
 	q.Set("perPage", fmt.Sprintf("%d", perPage))
 	q.Set("txnType", "credit")
 	q.Set("txnCategory", string(models.MentorshipCategory))
+	if strings.TrimSpace(projectID) != "" {
+		q.Set("projectID", projectID)
+	}
 
 	endpoint := fmt.Sprintf("%s/transactions?%s", c.baseURL, q.Encode())
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)

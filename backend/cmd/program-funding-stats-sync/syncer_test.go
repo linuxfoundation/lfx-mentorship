@@ -30,35 +30,45 @@ func (f *fakeFundingRepo) BulkUpsertFundingStats(_ context.Context, rows []model
 }
 
 type fakeLedger struct {
-	pages []*clients.LedgerTransactionsPage
+	pagesByProject map[string][]*clients.LedgerTransactionsPage
 }
 
-func (f *fakeLedger) GetTransactionsPage(_ context.Context, page int, _ int) (*clients.LedgerTransactionsPage, error) {
-	if page-1 >= len(f.pages) {
+func (f *fakeLedger) GetTransactionsPage(_ context.Context, projectID string, page int, _ int) (*clients.LedgerTransactionsPage, error) {
+	pages := f.pagesByProject[projectID]
+	if page-1 >= len(pages) {
 		return &clients.LedgerTransactionsPage{HasNext: false, Transactions: []clients.LedgerTransaction{}}, nil
 	}
-	return f.pages[page-1], nil
+	return pages[page-1], nil
 }
 
 func TestSyncerAggregatesMentorshipCredits(t *testing.T) {
 	t.Parallel()
 
 	repo := &fakeFundingRepo{programIDs: []string{"p1", "p2"}}
-	ledger := &fakeLedger{pages: []*clients.LedgerTransactionsPage{
-		{
-			HasNext: true,
-			Transactions: []clients.LedgerTransaction{
-				{ProjectID: "p1", TxnCategory: "mentorship", Amount: 100},
-				{ProjectID: "p1", TxnCategory: "mentorship", Amount: -25},
-				{ProjectID: "p2", TxnCategory: "mentee", Amount: 500},
-				{ProjectID: "outside", TxnCategory: "mentorship", Amount: 1000},
-				{ProjectID: "p2", TxnCategory: "mentorship", Amount: 250},
+	ledger := &fakeLedger{pagesByProject: map[string][]*clients.LedgerTransactionsPage{
+		"p1": {
+			{
+				HasNext: false,
+				Transactions: []clients.LedgerTransaction{
+					{ProjectID: "p1", TxnCategory: "mentorship", Amount: 100},
+					{ProjectID: "p1", TxnCategory: "mentorship", Amount: -25},
+					{ProjectID: "outside", TxnCategory: "mentorship", Amount: 1000},
+					{ProjectID: "p1", TxnCategory: "mentee", Amount: 200},
+				},
 			},
 		},
-		{
-			HasNext: false,
-			Transactions: []clients.LedgerTransaction{
-				{ProjectID: "p2", TxnCategory: "mentorship", Amount: 50},
+		"p2": {
+			{
+				HasNext: true,
+				Transactions: []clients.LedgerTransaction{
+					{ProjectID: "p2", TxnCategory: "mentorship", Amount: 250},
+				},
+			},
+			{
+				HasNext: false,
+				Transactions: []clients.LedgerTransaction{
+					{ProjectID: "p2", TxnCategory: "mentorship", Amount: 50},
+				},
 			},
 		},
 	}}
@@ -84,7 +94,7 @@ func TestSyncerAggregatesMentorshipCredits(t *testing.T) {
 	if got, want := result.unmappedTxns, 1; got != want {
 		t.Fatalf("unmappedTxns = %d, want %d", got, want)
 	}
-	if got, want := result.pagesFetched, 2; got != want {
+	if got, want := result.pagesFetched, 3; got != want {
 		t.Fatalf("pagesFetched = %d, want %d", got, want)
 	}
 	if got, want := result.plannedUpserts, 2; got != want {
@@ -113,7 +123,10 @@ func TestSyncerCreatesZeroRowsForProgramsWithoutTransactions(t *testing.T) {
 	t.Parallel()
 
 	repo := &fakeFundingRepo{programIDs: []string{"p1", "p2"}}
-	ledger := &fakeLedger{pages: []*clients.LedgerTransactionsPage{{HasNext: false, Transactions: []clients.LedgerTransaction{}}}}
+	ledger := &fakeLedger{pagesByProject: map[string][]*clients.LedgerTransactionsPage{
+		"p1": {{HasNext: false, Transactions: []clients.LedgerTransaction{}}},
+		"p2": {{HasNext: false, Transactions: []clients.LedgerTransaction{}}},
+	}}
 
 	s := newSyncer(repo, ledger, slog.New(slog.NewTextHandler(io.Discard, nil)), 100)
 	result, err := s.Run(context.Background())
@@ -148,13 +161,20 @@ func TestSyncerDryRunSkipsUpsert(t *testing.T) {
 	t.Parallel()
 
 	repo := &fakeFundingRepo{programIDs: []string{"p1", "p2"}}
-	ledger := &fakeLedger{pages: []*clients.LedgerTransactionsPage{{
-		HasNext: false,
-		Transactions: []clients.LedgerTransaction{
-			{ProjectID: "p1", TxnCategory: "mentorship", Amount: 100},
-			{ProjectID: "p2", TxnCategory: "mentorship", Amount: 50},
-		},
-	}}}
+	ledger := &fakeLedger{pagesByProject: map[string][]*clients.LedgerTransactionsPage{
+		"p1": {{
+			HasNext: false,
+			Transactions: []clients.LedgerTransaction{
+				{ProjectID: "p1", TxnCategory: "mentorship", Amount: 100},
+			},
+		}},
+		"p2": {{
+			HasNext: false,
+			Transactions: []clients.LedgerTransaction{
+				{ProjectID: "p2", TxnCategory: "mentorship", Amount: 50},
+			},
+		}},
+	}}
 
 	s := newSyncer(repo, ledger, slog.New(slog.NewTextHandler(io.Discard, nil)), 100)
 	s.dryRun = true

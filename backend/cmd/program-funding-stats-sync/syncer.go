@@ -19,7 +19,7 @@ type fundingStatsRepository interface {
 }
 
 type ledgerSource interface {
-	GetTransactionsPage(ctx context.Context, page int, perPage int) (*clients.LedgerTransactionsPage, error)
+	GetTransactionsPage(ctx context.Context, projectID string, page int, perPage int) (*clients.LedgerTransactionsPage, error)
 }
 
 type syncResult struct {
@@ -63,12 +63,7 @@ func (s *syncer) Run(ctx context.Context) (syncResult, error) {
 		return result, nil
 	}
 
-	active := make(map[string]struct{}, len(programIDs))
-	for _, id := range programIDs {
-		active[id] = struct{}{}
-	}
-
-	totals, pagesFetched, processedTxns, unmappedTxns, err := s.fetchTotals(ctx, active)
+	totals, pagesFetched, processedTxns, unmappedTxns, err := s.fetchTotals(ctx, programIDs)
 	if err != nil {
 		return syncResult{}, err
 	}
@@ -104,40 +99,41 @@ func (s *syncer) Run(ctx context.Context) (syncResult, error) {
 	return result, nil
 }
 
-func (s *syncer) fetchTotals(ctx context.Context, active map[string]struct{}) (map[string]int64, int, int, int, error) {
-	totals := make(map[string]int64, len(active))
-	page := 1
+func (s *syncer) fetchTotals(ctx context.Context, programIDs []string) (map[string]int64, int, int, int, error) {
+	totals := make(map[string]int64, len(programIDs))
 	pagesFetched := 0
 	processedTxns := 0
 	unmappedTxns := 0
 
-	for {
-		resp, err := s.ledger.GetTransactionsPage(ctx, page, s.perPage)
-		if err != nil {
-			return nil, pagesFetched, processedTxns, unmappedTxns, fmt.Errorf("fetch ledger page %d: %w", page, err)
-		}
-		pagesFetched++
+	for _, programID := range programIDs {
+		page := 1
+		for {
+			resp, err := s.ledger.GetTransactionsPage(ctx, programID, page, s.perPage)
+			if err != nil {
+				return nil, pagesFetched, processedTxns, unmappedTxns, fmt.Errorf("fetch ledger page %d for project %s: %w", page, programID, err)
+			}
+			pagesFetched++
 
-		for _, txn := range resp.Transactions {
-			if txn.Amount <= 0 {
-				continue
+			for _, txn := range resp.Transactions {
+				if txn.Amount <= 0 {
+					continue
+				}
+				if !strings.EqualFold(txn.TxnCategory, string(models.MentorshipCategory)) {
+					continue
+				}
+				if txn.ProjectID != "" && txn.ProjectID != programID {
+					unmappedTxns++
+					continue
+				}
+				totals[programID] += txn.Amount
+				processedTxns++
 			}
-			if !strings.EqualFold(txn.TxnCategory, string(models.MentorshipCategory)) {
-				continue
-			}
-			// Ledger project_id is expected to contain mentorship program IDs.
-			if _, ok := active[txn.ProjectID]; !ok {
-				unmappedTxns++
-				continue
-			}
-			totals[txn.ProjectID] += txn.Amount
-			processedTxns++
-		}
 
-		if !resp.HasNext {
-			break
+			if !resp.HasNext {
+				break
+			}
+			page++
 		}
-		page++
 	}
 
 	return totals, pagesFetched, processedTxns, unmappedTxns, nil
