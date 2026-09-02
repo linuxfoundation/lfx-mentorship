@@ -105,7 +105,7 @@ func (h *ProgramMemberHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	memberID := chi.URLParam(r, "memberId")
-	withdrawn := "withdrawn"
+	withdrawn := models.ProgramMemberStatusWithdrawn
 	if _, err := h.svc.Update(r.Context(), memberID, models.ProgramMemberUpdateInput{Status: &withdrawn}); err != nil {
 		Error(w, err)
 		return

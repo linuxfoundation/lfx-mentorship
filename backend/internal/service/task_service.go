@@ -36,13 +36,6 @@ func NewTaskService(
 	return &TaskService{repo: repo, appRepo: appRepo, termRepo: termRepo, memberRepo: memberRepo, notifier: notifier}
 }
 
-var validTaskStatuses = map[string]bool{
-	"incomplete":  true,
-	"in_progress": true,
-	"complete":    true,
-	"submitted":   true,
-}
-
 // GetByID returns the task with the given ID.
 func (s *TaskService) GetByID(ctx context.Context, id string) (*models.Task, error) {
 	ctx, span := taskSvcTracer.Start(ctx, "TaskService.GetByID")
@@ -94,10 +87,13 @@ func (s *TaskService) Create(ctx context.Context, applicationID string, input mo
 		return nil, fmt.Errorf("%w: assignee_id is required", domain.ErrInvalidInput)
 	}
 	if input.Status == "" {
-		input.Status = "incomplete"
+		input.Status = models.TaskStatusIncomplete
 	}
-	if !validTaskStatuses[input.Status] {
+	if !input.Status.IsValid() {
 		return nil, fmt.Errorf("%w: invalid status %q", domain.ErrInvalidInput, input.Status)
+	}
+	if input.Category != nil && !input.Category.IsValid() {
+		return nil, fmt.Errorf("%w: invalid category %q", domain.ErrInvalidInput, *input.Category)
 	}
 	input.ID = uuid.New().String()
 
@@ -118,8 +114,17 @@ func (s *TaskService) Update(ctx context.Context, id string, input models.TaskUp
 	defer span.End()
 	span.SetAttributes(attribute.String("task.id", id))
 
-	if input.Status != nil && !validTaskStatuses[*input.Status] {
+	if input.Status != nil && !input.Status.IsValid() {
 		return nil, fmt.Errorf("%w: invalid status %q", domain.ErrInvalidInput, *input.Status)
+	}
+	if input.ApplicationStatus != nil && !input.ApplicationStatus.IsValid() {
+		return nil, fmt.Errorf("%w: invalid application status %q", domain.ErrInvalidInput, *input.ApplicationStatus)
+	}
+	if input.ProgramTermStatus != nil && !input.ProgramTermStatus.IsValid() {
+		return nil, fmt.Errorf("%w: invalid program term status %q", domain.ErrInvalidInput, *input.ProgramTermStatus)
+	}
+	if input.Category != nil && !input.Category.IsValid() {
+		return nil, fmt.Errorf("%w: invalid category %q", domain.ErrInvalidInput, *input.Category)
 	}
 
 	// FR-033: enforce state transitions and actor permissions when ActorID is known.
@@ -133,15 +138,15 @@ func (s *TaskService) Update(ctx context.Context, id string, input models.TaskUp
 		next := *input.Status
 
 		// State transition guard: only incomplete (reset) is unrestricted direction-wise.
-		if next != "incomplete" {
+		if next != models.TaskStatusIncomplete {
 			var validTransition bool
 			switch current.Status {
-			case "incomplete":
-				validTransition = next == "in_progress"
-			case "in_progress":
-				validTransition = next == "submitted"
-			case "submitted":
-				validTransition = next == "complete"
+			case models.TaskStatusIncomplete:
+				validTransition = next == models.TaskStatusInProgress
+			case models.TaskStatusInProgress:
+				validTransition = next == models.TaskStatusSubmitted
+			case models.TaskStatusSubmitted:
+				validTransition = next == models.TaskStatusComplete
 			}
 			if !validTransition {
 				return nil, fmt.Errorf("%w: cannot transition task from %q to %q", domain.ErrInvalidStateTransition, current.Status, next)
@@ -150,11 +155,11 @@ func (s *TaskService) Update(ctx context.Context, id string, input models.TaskUp
 
 		// Actor permission: mentee (assignee) may only advance; reviewer may complete or reset.
 		switch next {
-		case "in_progress", "submitted":
+		case models.TaskStatusInProgress, models.TaskStatusSubmitted:
 			if !isAssignee {
 				return nil, fmt.Errorf("%w: only the task assignee may mark it %s", domain.ErrForbidden, next)
 			}
-		case "complete", "incomplete":
+		case models.TaskStatusComplete, models.TaskStatusIncomplete:
 			if isAssignee {
 				return nil, fmt.Errorf("%w: only a reviewer may mark a task %s", domain.ErrForbidden, next)
 			}
@@ -174,7 +179,7 @@ func (s *TaskService) Update(ctx context.Context, id string, input models.TaskUp
 
 	// tasks_submitted side-effect (FR-034): if all prerequisite tasks are now
 	// submitted or complete, mark the application and notify the admin.
-	if input.Status != nil && (*input.Status == "complete" || *input.Status == "submitted") && t.ApplicationID != nil {
+	if input.Status != nil && (*input.Status == models.TaskStatusComplete || *input.Status == models.TaskStatusSubmitted) && t.ApplicationID != nil {
 		total, complete, countErr := s.repo.CountPrerequisiteTasksByApplication(ctx, *t.ApplicationID)
 		if countErr == nil && total > 0 && total == complete {
 			trueBool := true
@@ -204,10 +209,10 @@ func (s *TaskService) assertReviewer(ctx context.Context, task *models.Task, act
 	if err != nil {
 		return fmt.Errorf("%w: actor is not a member of this program", domain.ErrForbidden)
 	}
-	if member.MemberType != "mentor" && member.MemberType != "program_admin" {
+	if member.MemberType != models.MemberTypeMentor && member.MemberType != models.MemberTypeProgramAdmin {
 		return fmt.Errorf("%w: actor must be mentor or program_admin to review tasks", domain.ErrForbidden)
 	}
-	if member.Status != nil && *member.Status != "active" {
+	if member.Status != nil && *member.Status != models.ProgramMemberStatusActive {
 		return fmt.Errorf("%w: actor's program membership is not active", domain.ErrForbidden)
 	}
 	return nil

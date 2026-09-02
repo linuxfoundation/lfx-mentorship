@@ -293,3 +293,12 @@ func TestProgramService_ListCatalogMentees(t *testing.T) {
 		t.Errorf("mentees = %+v captured = %q", mentees, captured)
 	}
 }
+
+func TestProgramService_Update_InvalidProgramTermStatus_Rejected(t *testing.T) {
+	svc := newProgramSvc(&stubProgRepo{}, &stubTermRepo{}, &stubAppRepo{})
+	bad := models.ProgramTermStatus("ajar") // not a member of the enum
+	_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{ProgramTermStatus: &bad})
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput for unknown program_term_status, got %v", err)
+	}
+}

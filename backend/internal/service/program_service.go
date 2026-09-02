@@ -198,6 +198,9 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 	if input.Status != nil && !input.Status.IsValid() {
 		return nil, fmt.Errorf("%w: invalid status %q", domain.ErrInvalidInput, *input.Status)
 	}
+	if input.ProgramTermStatus != nil && !input.ProgramTermStatus.IsValid() {
+		return nil, fmt.Errorf("%w: invalid program term status %q", domain.ErrInvalidInput, *input.ProgramTermStatus)
+	}
 
 	if input.Status != nil {
 		current, err := s.repo.GetByID(ctx, id)

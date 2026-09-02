@@ -105,6 +105,7 @@ func (r *ProgramRepository) List(ctx context.Context, filter models.ProgramFilte
 		args = append(args, filter.Status)
 		where += fmt.Sprintf(` AND status = $%d`, len(args))
 	} else {
+		// NOTE: status literal must stay in sync with models.ProgramStatus.
 		where += ` AND status = 'published'` // public list only shows published programs
 	}
 	if filter.Search != "" {

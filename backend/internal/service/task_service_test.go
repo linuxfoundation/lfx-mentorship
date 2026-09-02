@@ -78,7 +78,7 @@ func TestTaskService_Update_Assignee_CanMarkInProgress(t *testing.T) {
 		},
 	}
 	svc := newTaskSvc(taskRepo, &stubAppRepo{}, &stubTermRepo{}, &stubMemberRepo{})
-	next := "in_progress"
+	next := models.TaskStatusInProgress
 	_, err := svc.Update(context.Background(), "task-1", models.TaskUpdateInput{
 		Status:  &next,
 		ActorID: "user-1",
@@ -96,7 +96,7 @@ func TestTaskService_Update_Assignee_CannotMarkComplete(t *testing.T) {
 		},
 	}
 	svc := newTaskSvc(taskRepo, &stubAppRepo{}, &stubTermRepo{}, &stubMemberRepo{})
-	next := "complete"
+	next := models.TaskStatusComplete
 	_, err := svc.Update(context.Background(), "task-1", models.TaskUpdateInput{
 		Status:  &next,
 		ActorID: "user-1",
@@ -114,7 +114,7 @@ func TestTaskService_Update_Assignee_CannotMarkIncomplete(t *testing.T) {
 		},
 	}
 	svc := newTaskSvc(taskRepo, &stubAppRepo{}, &stubTermRepo{}, &stubMemberRepo{})
-	next := "incomplete"
+	next := models.TaskStatusIncomplete
 	_, err := svc.Update(context.Background(), "task-1", models.TaskUpdateInput{
 		Status:  &next,
 		ActorID: "user-1",
@@ -132,7 +132,7 @@ func TestTaskService_Update_NonAssignee_CannotMarkInProgress(t *testing.T) {
 		},
 	}
 	svc := newTaskSvc(taskRepo, &stubAppRepo{}, &stubTermRepo{}, &stubMemberRepo{})
-	next := "in_progress"
+	next := models.TaskStatusInProgress
 	_, err := svc.Update(context.Background(), "task-1", models.TaskUpdateInput{
 		Status:  &next,
 		ActorID: "reviewer-99",
@@ -145,7 +145,7 @@ func TestTaskService_Update_NonAssignee_CannotMarkInProgress(t *testing.T) {
 func TestTaskService_Update_Reviewer_CanMarkComplete_WhenActiveMember(t *testing.T) {
 	appID := "app-1"
 	termID := "term-1"
-	activeStatus := "active"
+	activeStatus := models.ProgramMemberStatusActive
 	taskRepo := &stubTaskRepo{
 		getByID: func(_ context.Context, id string) (*models.Task, error) {
 			return &models.Task{ID: id, AssigneeID: "mentee-1", Status: "submitted", ApplicationID: &appID}, nil
@@ -170,7 +170,7 @@ func TestTaskService_Update_Reviewer_CanMarkComplete_WhenActiveMember(t *testing
 		},
 	}
 	svc := newTaskSvc(taskRepo, appRepo, termRepo, memberRepo)
-	next := "complete"
+	next := models.TaskStatusComplete
 	_, err := svc.Update(context.Background(), "task-1", models.TaskUpdateInput{
 		Status:  &next,
 		ActorID: "mentor-1",
@@ -205,7 +205,7 @@ func TestTaskService_Update_Reviewer_CannotMarkComplete_NotMember(t *testing.T) 
 		},
 	}
 	svc := newTaskSvc(taskRepo, appRepo, termRepo, memberRepo)
-	next := "complete"
+	next := models.TaskStatusComplete
 	_, err := svc.Update(context.Background(), "task-1", models.TaskUpdateInput{
 		Status:  &next,
 		ActorID: "stranger-99",
@@ -218,7 +218,7 @@ func TestTaskService_Update_Reviewer_CannotMarkComplete_NotMember(t *testing.T) 
 func TestTaskService_Update_Reviewer_CannotMarkComplete_WrongRole(t *testing.T) {
 	appID := "app-1"
 	termID := "term-1"
-	activeStatus := "active"
+	activeStatus := models.ProgramMemberStatusActive
 	taskRepo := &stubTaskRepo{
 		getByID: func(_ context.Context, id string) (*models.Task, error) {
 			return &models.Task{ID: id, AssigneeID: "mentee-1", Status: "submitted", ApplicationID: &appID}, nil
@@ -241,7 +241,7 @@ func TestTaskService_Update_Reviewer_CannotMarkComplete_WrongRole(t *testing.T) 
 		},
 	}
 	svc := newTaskSvc(taskRepo, appRepo, termRepo, memberRepo)
-	next := "complete"
+	next := models.TaskStatusComplete
 	_, err := svc.Update(context.Background(), "task-1", models.TaskUpdateInput{
 		Status:  &next,
 		ActorID: "mentee-2",
@@ -259,7 +259,7 @@ func TestTaskService_Update_InvalidTransition(t *testing.T) {
 		},
 	}
 	svc := newTaskSvc(taskRepo, &stubAppRepo{}, &stubTermRepo{}, &stubMemberRepo{})
-	next := "complete" // incomplete → complete skips intermediate steps
+	next := models.TaskStatusComplete // incomplete → complete skips intermediate steps
 	_, err := svc.Update(context.Background(), "task-1", models.TaskUpdateInput{
 		Status:  &next,
 		ActorID: "mentee-1",
@@ -272,9 +272,39 @@ func TestTaskService_Update_InvalidTransition(t *testing.T) {
 
 func TestTaskService_Update_InvalidStatus_Rejected(t *testing.T) {
 	svc := newTaskSvc(&stubTaskRepo{}, &stubAppRepo{}, &stubTermRepo{}, &stubMemberRepo{})
-	bad := "flying"
+	bad := models.TaskStatus("flying") // not a member of the enum
 	_, err := svc.Update(context.Background(), "task-1", models.TaskUpdateInput{Status: &bad})
 	if !errors.Is(err, domain.ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for unknown status, got %v", err)
+	}
+}
+
+func TestTaskService_Update_InvalidDenormalisedStatuses_Rejected(t *testing.T) {
+	svc := newTaskSvc(&stubTaskRepo{}, &stubAppRepo{}, &stubTermRepo{}, &stubMemberRepo{})
+
+	badApp := models.ApplicationStatus("teleported") // not a member of the enum
+	if _, err := svc.Update(context.Background(), "task-1", models.TaskUpdateInput{ApplicationStatus: &badApp}); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput for unknown application_status, got %v", err)
+	}
+
+	badTerm := models.ProgramTermStatus("ajar") // not a member of the enum
+	if _, err := svc.Update(context.Background(), "task-1", models.TaskUpdateInput{ProgramTermStatus: &badTerm}); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput for unknown program_term_status, got %v", err)
+	}
+}
+
+func TestTaskService_InvalidCategory_Rejected(t *testing.T) {
+	svc := newTaskSvc(&stubTaskRepo{}, &stubAppRepo{}, &stubTermRepo{}, &stubMemberRepo{})
+	bad := models.TaskCategory("optional") // not a member of the enum
+
+	if _, err := svc.Create(context.Background(), "app-1", models.TaskCreateInput{
+		AssigneeID: "u1",
+		Category:   &bad,
+	}); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput for unknown category on create, got %v", err)
+	}
+
+	if _, err := svc.Update(context.Background(), "task-1", models.TaskUpdateInput{Category: &bad}); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput for unknown category on update, got %v", err)
 	}
 }
