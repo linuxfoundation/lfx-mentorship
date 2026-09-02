@@ -6,8 +6,10 @@ kind: Deployment
 metadata:
   name: {{ include "lfx-mentorship-frontend.fullname" . }}
   namespace: {{ .Release.Namespace }}
+  {{- with .Values.annotations }}
   annotations:
-    reloader.stakater.com/auto: "true"
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   labels:
     {{- include "lfx-mentorship-frontend.labels" . | nindent 4 }}
 spec:
