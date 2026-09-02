@@ -28,9 +28,9 @@ SPDX-License-Identifier: MIT
           :class="{ 'text-brand-500': isActive }"
           :size="16"
         />
-        <p class="hidden lg:block">
+        <span class="sr-only lg:not-sr-only">
           {{ item.label }}
-        </p>
+        </span>
       </a>
     </NuxtLink>
 
