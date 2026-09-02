@@ -66,7 +66,7 @@ sequenceDiagram
 
     C->>T: PATCH /mentorship/v1/applications/{uid}/status<br/>Authorization: Bearer (Auth0)
     T->>H: forward-auth (heimdall-forward-body middleware)
-    H->>H: authenticate — Auth0 JWKS, gateway audience;<br/>subject = lfx username claim (fallback: sub)
+    H->>H: authenticate — Auth0 JWKS, gateway audience,<br/>subject = lfx username claim (fallback: sub)
     H->>F: check: manager on mentorship_application:{uid}
     F-->>H: allowed
     H->>H: finalizer create_jwt — mint JWT<br/>(principal, aud: lfx-mentorship-backend)
