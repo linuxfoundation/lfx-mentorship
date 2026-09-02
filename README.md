@@ -26,7 +26,14 @@ Authorization is expected to move to the platform's Heimdall/OpenFGA edge — se
 
 ## Local development
 
-Backend (from `backend/`) — requires a local Postgres:
+Start a local Postgres first (from the repo root) — it listens on **5433** to avoid
+clashing with a system Postgres on 5432:
+
+```bash
+docker compose up -d     # Postgres only; `down -v` wipes the volume
+```
+
+Then, from `backend/` — with `DATABASE_DSN` in `backend/.env` pointing at it:
 
 ```bash
 make db-migrate   # apply migrations (refuses any non-localhost DATABASE_DSN)
@@ -34,6 +41,9 @@ make run          # start the API on :8080
 make test         # unit tests
 make lint
 ```
+
+Running `cmd/program-funding-stats-sync` against this database populates the
+program funding stats table locally.
 
 Frontend (from `frontend/`) — requires Node 22+ and pnpm:
 
