@@ -29,11 +29,13 @@ func NewProgramRepository(pool *pgxpool.Pool) *ProgramRepository {
 }
 
 const programSelectCols = `
-	id, name, slug, status, is_paid, description, logo_url, website_url, repo_link,
-	code_of_conduct, industry, color, lfid, cii_project_id, accept_applications,
-	terms_and_conditions, program_term_status, discover_sort_rank,
+	programs.id, programs.name, programs.slug, programs.status, programs.is_paid,
+	programs.description, programs.logo_url, programs.website_url, programs.repo_link,
+	programs.code_of_conduct, programs.industry, programs.color, programs.lfid,
+	programs.cii_project_id, programs.accept_applications,
+	programs.terms_and_conditions, programs.program_term_status, programs.discover_sort_rank,
 	COALESCE(pfs.amount_raised, programs.amount_raised) AS amount_raised,
-	mentee_needs, task_templates, created_on, updated_on`
+	programs.mentee_needs, programs.task_templates, programs.created_on, programs.updated_on`
 
 const programReturningCols = `
 	id, name, slug, status, is_paid, description, logo_url, website_url, repo_link,
@@ -683,10 +685,10 @@ func (r *ProgramRepository) ListFundingSyncProgramIDs(ctx context.Context) ([]st
 	defer span.End()
 
 	const q = `
-		SELECT id
+		SELECT programs.id
 		FROM programs
 		WHERE status NOT IN ('archived', 'draft')
-		ORDER BY id`
+		ORDER BY programs.id`
 
 	rows, err := r.pool.Query(ctx, q)
 	if err != nil {

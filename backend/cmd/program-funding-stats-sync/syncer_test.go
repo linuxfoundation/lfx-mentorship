@@ -81,6 +81,9 @@ func TestSyncerAggregatesMentorshipCredits(t *testing.T) {
 	if got, want := result.processedTxns, 3; got != want {
 		t.Fatalf("processedTxns = %d, want %d", got, want)
 	}
+	if got, want := result.unmappedTxns, 1; got != want {
+		t.Fatalf("unmappedTxns = %d, want %d", got, want)
+	}
 	if got, want := result.pagesFetched, 2; got != want {
 		t.Fatalf("pagesFetched = %d, want %d", got, want)
 	}
@@ -124,6 +127,9 @@ func TestSyncerCreatesZeroRowsForProgramsWithoutTransactions(t *testing.T) {
 	if got, want := result.skippedPrograms, 2; got != want {
 		t.Fatalf("skippedPrograms = %d, want %d", got, want)
 	}
+	if got, want := result.unmappedTxns, 0; got != want {
+		t.Fatalf("unmappedTxns = %d, want %d", got, want)
+	}
 
 	if got, want := len(repo.upserts), 2; got != want {
 		t.Fatalf("upsert count = %d, want %d", got, want)
@@ -160,6 +166,9 @@ func TestSyncerDryRunSkipsUpsert(t *testing.T) {
 
 	if got, want := result.plannedUpserts, 2; got != want {
 		t.Fatalf("plannedUpserts = %d, want %d", got, want)
+	}
+	if got, want := result.unmappedTxns, 0; got != want {
+		t.Fatalf("unmappedTxns = %d, want %d", got, want)
 	}
 	if got, want := result.upserted, 0; got != want {
 		t.Fatalf("upserted = %d, want %d", got, want)

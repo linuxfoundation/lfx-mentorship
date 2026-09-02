@@ -68,6 +68,7 @@ func run(logger *slog.Logger) error {
 		"matched_programs", result.matchedPrograms,
 		"skipped_programs", result.skippedPrograms,
 		"processed_transactions", result.processedTxns,
+		"unmapped_transactions", result.unmappedTxns,
 		"pages_fetched", result.pagesFetched,
 		"planned_upserts", result.plannedUpserts,
 		"upserted", result.upserted,

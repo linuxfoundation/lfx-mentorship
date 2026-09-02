@@ -27,6 +27,7 @@ type syncResult struct {
 	matchedPrograms int
 	skippedPrograms int
 	processedTxns   int
+	unmappedTxns    int
 	pagesFetched    int
 	plannedUpserts  int
 	upserted        int
@@ -67,12 +68,13 @@ func (s *syncer) Run(ctx context.Context) (syncResult, error) {
 		active[id] = struct{}{}
 	}
 
-	totals, pagesFetched, processedTxns, err := s.fetchTotals(ctx, active)
+	totals, pagesFetched, processedTxns, unmappedTxns, err := s.fetchTotals(ctx, active)
 	if err != nil {
 		return syncResult{}, err
 	}
 	result.pagesFetched = pagesFetched
 	result.processedTxns = processedTxns
+	result.unmappedTxns = unmappedTxns
 
 	rows := make([]models.ProgramFundingStatsUpsert, 0, len(programIDs))
 	for _, id := range programIDs {
@@ -102,16 +104,17 @@ func (s *syncer) Run(ctx context.Context) (syncResult, error) {
 	return result, nil
 }
 
-func (s *syncer) fetchTotals(ctx context.Context, active map[string]struct{}) (map[string]int64, int, int, error) {
+func (s *syncer) fetchTotals(ctx context.Context, active map[string]struct{}) (map[string]int64, int, int, int, error) {
 	totals := make(map[string]int64, len(active))
 	page := 1
 	pagesFetched := 0
 	processedTxns := 0
+	unmappedTxns := 0
 
 	for {
 		resp, err := s.ledger.GetTransactionsPage(ctx, page, s.perPage)
 		if err != nil {
-			return nil, pagesFetched, processedTxns, fmt.Errorf("fetch ledger page %d: %w", page, err)
+			return nil, pagesFetched, processedTxns, unmappedTxns, fmt.Errorf("fetch ledger page %d: %w", page, err)
 		}
 		pagesFetched++
 
@@ -122,7 +125,9 @@ func (s *syncer) fetchTotals(ctx context.Context, active map[string]struct{}) (m
 			if !strings.EqualFold(txn.TxnCategory, string(models.MentorshipCategory)) {
 				continue
 			}
+			// Ledger project_id is expected to contain mentorship program IDs.
 			if _, ok := active[txn.ProjectID]; !ok {
+				unmappedTxns++
 				continue
 			}
 			totals[txn.ProjectID] += txn.Amount
@@ -135,5 +140,5 @@ func (s *syncer) fetchTotals(ctx context.Context, active map[string]struct{}) (m
 		page++
 	}
 
-	return totals, pagesFetched, processedTxns, nil
+	return totals, pagesFetched, processedTxns, unmappedTxns, nil
 }
