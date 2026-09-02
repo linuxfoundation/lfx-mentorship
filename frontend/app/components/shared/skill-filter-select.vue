@@ -15,7 +15,7 @@ SPDX-License-Identifier: MIT
       <lfx-button
         :label="triggerLabel(selectedOption)"
         type="outline"
-        button-style="pill"
+        button-style="rounded"
         icon="tags"
       />
     </template>

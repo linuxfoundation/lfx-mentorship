@@ -39,7 +39,7 @@ SPDX-License-Identifier: MIT
           <lfx-button
             :label="ENROLL_PROGRAM_CTA_LABEL"
             type="primary"
-            button-style="pill"
+            button-style="rounded"
             icon="arrow-right"
             icon-position="right"
             class="justify-center"

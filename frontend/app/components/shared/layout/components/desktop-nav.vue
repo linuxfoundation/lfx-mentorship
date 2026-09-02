@@ -13,7 +13,7 @@ SPDX-License-Identifier: MIT
     >
       <a
         :href="href"
-        class="inline-flex items-center gap-2 rounded-full px-3 py-2 text-sm"
+        class="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm"
         :class="
           isActive
             ? 'bg-brand-50 font-semibold text-neutral-900'
@@ -28,7 +28,9 @@ SPDX-License-Identifier: MIT
           :class="{ 'text-brand-500': isActive }"
           :size="16"
         />
-        {{ item.label }}
+        <p class="hidden lg:block">
+          {{ item.label }}
+        </p>
       </a>
     </NuxtLink>
 
@@ -42,7 +44,7 @@ SPDX-License-Identifier: MIT
       <template #trigger>
         <lfx-button
           type="nav"
-          button-style="pill"
+          button-style="rounded"
           :class="moreOpen ? '!bg-neutral-50 !text-neutral-600' : ''"
         >
           <lfx-icon

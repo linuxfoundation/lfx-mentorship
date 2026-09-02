@@ -20,7 +20,7 @@ SPDX-License-Identifier: MIT
               v-for="item in regularMenuItems"
               :key="item.label"
               :to="item.to!"
-              class="inline-flex items-center gap-2 rounded-full px-3 py-2 text-sm font-medium text-neutral-500 hover:bg-neutral-50 hover:text-neutral-700"
+              class="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-neutral-500 hover:bg-neutral-50 hover:text-neutral-700"
               active-class="!bg-neutral-100 !text-neutral-900"
               @click="close"
             >
@@ -57,7 +57,7 @@ SPDX-License-Identifier: MIT
                 <lfx-button
                   :label="cta.label"
                   :type="cta.type"
-                  button-style="pill"
+                  button-style="rounded"
                   size="small"
                   class="w-full justify-center"
                 />
@@ -76,7 +76,7 @@ SPDX-License-Identifier: MIT
               v-for="child in moreItem.children"
               :key="child.label"
               :to="child.to"
-              class="inline-flex items-center gap-2 rounded-full px-3 py-2 text-sm font-medium text-neutral-500 hover:bg-neutral-50 hover:text-neutral-700"
+              class="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-neutral-500 hover:bg-neutral-50 hover:text-neutral-700"
               active-class="!bg-neutral-100 !text-neutral-900"
               @click="close"
             >
