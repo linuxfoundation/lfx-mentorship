@@ -235,17 +235,17 @@ func catalogOrderBy(sortBy string) string {
 	completedRank := `CASE WHEN NOT (` + sqlHasOpenTerm + `) THEN 0 WHEN ` + sqlHasOpenTerm + ` AND NOT (` + sqlHasAcceptingTerm + `) AND NOT (` + sqlHasComingSoonTerm + `) THEN 1 WHEN ` + sqlHasAcceptingTerm + ` THEN 2 ELSE 3 END`
 	switch sortBy {
 	case "name_asc":
-		return `programs.name ASC, programs.id ASC`
+		return `LOWER(programs.name) ASC, programs.id ASC`
 	case "name_desc":
-		return `programs.name DESC, programs.id ASC`
+		return `LOWER(programs.name) DESC, programs.id ASC`
 	case "updated_oldest":
 		return `programs.updated_on ASC, programs.id ASC`
 	case "updated_newest":
 		return `programs.updated_on DESC, programs.id ASC`
 	case "completed_first":
-		return completedRank + `, programs.name ASC, programs.id ASC`
+		return completedRank + `, LOWER(programs.name) ASC, programs.id ASC`
 	default:
-		return acceptingRank + `, programs.name ASC, programs.id ASC`
+		return acceptingRank + `, LOWER(programs.name) ASC, programs.id ASC`
 	}
 }
 

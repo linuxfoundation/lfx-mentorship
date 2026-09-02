@@ -21,7 +21,7 @@
 
   &.type-organization {
     &.has-image {
-      @apply border border-solid border-neutral-200 bg-white;
+      @apply  bg-white;
     }
     img {
       @apply object-contain;

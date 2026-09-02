@@ -18,7 +18,7 @@ SPDX-License-Identifier: MIT
             size="small"
           />
         </lfx-avatar-group>
-        <span class="text-sm text-neutral-600">{{ summary.graduatedMenteeCount + ' ' + LANDING_GRADUATED_COUNT_LABEL }}</span>
+        <span class="text-sm text-neutral-600">{{ formatCount(summary.graduatedMenteeCount) + ' ' + LANDING_GRADUATED_COUNT_LABEL }}</span>
       </div>
 
       <div class="flex flex-col gap-4">
