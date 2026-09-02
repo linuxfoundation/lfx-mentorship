@@ -21,7 +21,7 @@ SPDX-License-Identifier: MIT
         props.tabStyle === 'pill' ? 'rounded-full' : 'rounded-lg',
         modelValue === tab.value
           ? 'bg-accent-100 text-neutral-900 font-semibold'
-          : 'text-neutral-900 font-medium hover:bg-neutral-50'
+          : 'text-neutral-900 font-medium hover:bg-neutral-50',
       ]"
       @click="emit('update:modelValue', tab.value)"
     >

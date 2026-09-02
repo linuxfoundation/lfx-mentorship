@@ -743,13 +743,20 @@ func (r *ProgramRepository) BulkUpsertFundingStats(ctx context.Context, rows []m
 	}
 
 	br := r.pool.SendBatch(ctx, batch)
-	defer br.Close()
+	defer func() { _ = br.Close() }()
 
 	for i := range rows {
 		if _, err := br.Exec(); err != nil {
 			span.RecordError(err)
 			return i, fmt.Errorf("upsert program_funding_stats[%d] %s: %w", i, rows[i].ProgramID, err)
 		}
+	}
+
+	// Close before returning success: it reports errors the per-statement Exec
+	// loop cannot, and the deferred close above would otherwise discard them.
+	if err := br.Close(); err != nil {
+		span.RecordError(err)
+		return len(rows), fmt.Errorf("close program_funding_stats batch: %w", err)
 	}
 
 	return len(rows), nil

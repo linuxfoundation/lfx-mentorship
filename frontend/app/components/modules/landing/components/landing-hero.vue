@@ -18,7 +18,9 @@ SPDX-License-Identifier: MIT
             size="small"
           />
         </lfx-avatar-group>
-        <span class="text-sm text-neutral-600">{{ formatCount(summary.graduatedMenteeCount) + ' ' + LANDING_GRADUATED_COUNT_LABEL }}</span>
+        <span class="text-sm text-neutral-600">{{
+          formatCount(summary.graduatedMenteeCount) + ' ' + LANDING_GRADUATED_COUNT_LABEL
+        }}</span>
       </div>
 
       <div class="flex flex-col gap-4">
@@ -83,7 +85,7 @@ import LfxButton from '~/components/uikit/button/button.vue';
 import LfxIcon from '~/components/uikit/icon/icon.vue';
 import type { LandingSummaryResponse } from '~/types/landing.types';
 
-const props = defineProps<{
+defineProps<{
   summary: LandingSummaryResponse;
 }>();
 </script>
