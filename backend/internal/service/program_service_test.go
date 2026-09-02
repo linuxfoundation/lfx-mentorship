@@ -276,6 +276,29 @@ func TestProgramService_GetCatalog_NotFound(t *testing.T) {
 	}
 }
 
+func TestProgramService_GetCatalog_Unpublished(t *testing.T) {
+	for _, status := range []models.ProgramStatus{
+		models.ProgramStatusDraft,
+		models.ProgramStatusRejected,
+		models.ProgramStatusHidden,
+		models.ProgramStatusArchived,
+		models.ProgramStatusSubmitted,
+	} {
+		t.Run(string(status), func(t *testing.T) {
+			repo := &stubProgRepo{
+				getCatalog: func(_ context.Context, id string) (*models.ProgramCatalogItem, error) {
+					return &models.ProgramCatalogItem{Program: models.Program{ID: id, Status: status}}, nil
+				},
+			}
+			svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+			_, err := svc.GetCatalog(context.Background(), "p1")
+			if !errors.Is(err, domain.ErrProgramNotFound) {
+				t.Errorf("status %s: expected ErrProgramNotFound, got %v", status, err)
+			}
+		})
+	}
+}
+
 func TestProgramService_ListCatalogMentees(t *testing.T) {
 	var captured string
 	repo := &stubProgRepo{
