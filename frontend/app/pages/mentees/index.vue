@@ -8,18 +8,12 @@ SPDX-License-Identifier: MIT
 
 <script setup lang="ts">
 import MenteesView from '~/components/modules/mentees/view/mentees.vue';
+import { FunnelEvent } from '~/composables/useFunnelAnalytics';
 
-const title = 'Mentees';
-const description = 'Browse LFX Mentorship mentees. Find contributors by skill, project, and status.';
-
-useHead({ title });
-useSeoMeta({
-  description,
-  ogTitle: `${title} | LFX Mentorship`,
-  ogDescription: description,
-  ogType: 'website',
-  twitterCard: 'summary_large_image',
-  twitterTitle: `${title} | LFX Mentorship`,
-  twitterDescription: description,
+usePublicSeo({
+  title: 'Mentees',
+  description: 'Browse LFX Mentorship mentees. Find contributors by skill, project, and status.',
 });
+
+useFunnelPageView(FunnelEvent.DirectoryViewed, { directory: 'mentees' }, 'directory_viewed:mentees');
 </script>
