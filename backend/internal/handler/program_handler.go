@@ -94,7 +94,7 @@ func (h *ProgramHandler) GetCatalog(w http.ResponseWriter, r *http.Request) {
 		Error(w, err)
 		return
 	}
-	if item.Status == models.ProgramStatusHidden {
+	if item.Status != models.ProgramStatusPublished {
 		principal := auth.PrincipalFromContext(r.Context())
 		isOwner := principal != nil && item.LFID != nil && *item.LFID == principal.Username
 		if !isOwner {
