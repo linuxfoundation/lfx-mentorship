@@ -15,7 +15,7 @@ export const PROFILE_PROGRAM_STATUS_CONFIG: Record<
 > = {
   accepting: { label: 'Accepting', variation: 'positive' },
   closed: { label: 'Closed', variation: 'neutral' },
-  graduated: { label: 'Graduated', variation: 'positive' },
+  graduated: { label: 'Completed', variation: 'positive' },
   active: { label: 'Active', variation: 'info' },
   acceptance: { label: 'Accepting', variation: 'positive' },
   'open-soon': { label: 'Opens soon', variation: 'info' },

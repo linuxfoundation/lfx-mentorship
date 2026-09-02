@@ -47,7 +47,7 @@ SPDX-License-Identifier: MIT
             <lfx-button
               :label="cta.label"
               :type="cta.type"
-              button-style="pill"
+              button-style="rounded"
               size="small"
             />
           </NuxtLink>

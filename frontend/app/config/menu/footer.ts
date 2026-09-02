@@ -16,10 +16,6 @@ export const lfxFooterMenu: FooterMenuSection[] = [
     ],
   },
   {
-    title: 'Solutions',
-    links: [],
-  },
-  {
     title: 'The Linux Foundation',
     links: [
       { name: 'LFX Self Serve', link: 'https://lfx.linuxfoundation.org' },

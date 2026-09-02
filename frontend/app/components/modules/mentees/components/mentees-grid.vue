@@ -44,7 +44,7 @@ SPDX-License-Identifier: MIT
         <lfx-button
           label="Load More"
           type="tertiary"
-          button-style="pill"
+          button-style="rounded"
           :loading="isLoadingMore"
           @click="$emit('load-more')"
         />
