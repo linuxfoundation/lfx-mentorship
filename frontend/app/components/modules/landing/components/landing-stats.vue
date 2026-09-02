@@ -23,7 +23,7 @@ SPDX-License-Identifier: MIT
 import { computed } from 'vue';
 import { LANDING_STATS } from '../config/landing.config';
 import type { LandingStat, LandingSummaryResponse } from '~/types/landing.types';
-import { formatCompactUsd } from '~/utils/currency';
+import { formatCompactUsd, formatCount } from '~/utils/currency';
 
 
 const props = defineProps<{
@@ -37,16 +37,16 @@ const stats = computed(() => {
     const value = props.summary[stat.key] ?? stat.value;
     return {
       ...stat,
-      value: typeof value === 'number' ? formatCount(value, stat.key) : stat.value,
+      value: typeof value === 'number' ? format(value, stat.key) : stat.value,
     };
   });
 });
 
-function formatCount(value: number, key: LandingStat['key']): string {
+function format(value: number, key: LandingStat['key']): string {
   if (key === 'stipendsPaid') {
     return formatCompactUsd(value);
   }
-  return new Intl.NumberFormat('en-US').format(value);
+  return formatCount(value);
 }
 </script>
 

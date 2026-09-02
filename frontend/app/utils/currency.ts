@@ -20,3 +20,7 @@ export function formatCompactUsd(dollars: number): string {
     maximumFractionDigits: 1,
   }).format(dollars);
 }
+
+export function formatCount(count: number): string {
+  return new Intl.NumberFormat('en-US').format(count);
+}

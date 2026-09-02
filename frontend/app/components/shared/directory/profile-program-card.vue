@@ -37,13 +37,15 @@ SPDX-License-Identifier: MIT
       class="flex flex-col gap-2"
     >
       <p class="text-xs font-semibold uppercase tracking-wide text-neutral-500">Required skills</p>
-      <div class="flex flex-wrap gap-2">
+      <div class="flex flex-wrap gap-2 flex-grow">
         <lfx-tag
           v-for="skill in program.skills"
           :key="skill"
           variation="neutral"
           type="outline"
           size="small"
+          :title="skill"
+          class="truncate !block leading-5"
         >
           {{ skill }}
         </lfx-tag>

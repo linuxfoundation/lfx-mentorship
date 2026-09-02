@@ -42,7 +42,7 @@ SPDX-License-Identifier: MIT
 
         <div
           v-if="program.skills.length"
-          class="flex flex-wrap gap-2"
+          class="flex flex-wrap gap-2 flex-grow"
         >
           <lfx-tag
             v-for="skill in visibleSkills"
@@ -50,6 +50,8 @@ SPDX-License-Identifier: MIT
             variation="neutral"
             type="outline"
             size="small"
+            :title="skill"
+            class="truncate !block leading-5"
           >
             {{ skill }}
           </lfx-tag>
