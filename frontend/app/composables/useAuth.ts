@@ -39,7 +39,7 @@ export const setRefreshAuth = (fn: () => Promise<unknown>) => {
   refreshAuthFn = fn;
 };
 
-export const login = async (redirectTo?: string) => {
+export const login = async (redirectTo?: string, options?: { screenHint?: 'signup' }) => {
   if (!isAuthEnabled) return;
 
   isAuthLoading.value = true;
@@ -58,7 +58,10 @@ export const login = async (redirectTo?: string) => {
       '/api/auth/login',
       {
         method: 'GET',
-        query: currentPath !== '/' ? { redirectTo: currentPath } : undefined,
+        query: {
+          ...(currentPath !== '/' ? { redirectTo: currentPath } : {}),
+          ...(options?.screenHint ? { screenHint: options.screenHint } : {}),
+        },
         credentials: 'include',
       },
     );

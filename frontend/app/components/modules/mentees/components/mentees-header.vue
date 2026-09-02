@@ -1,5 +1,5 @@
 <!--
-Copyright (c) 2025 The Linux Foundation and each contributor.
+Copyright The Linux Foundation and each contributor to LFX.
 SPDX-License-Identifier: MIT
 -->
 <template>
@@ -61,7 +61,7 @@ SPDX-License-Identifier: MIT
         <lfx-tabs
           :model-value="activeStatus"
           :tabs="MENTEE_FILTER_TABS"
-          tab-style="rounded"
+          tab-style="pill"
           @update:model-value="$emit('update:activeStatus', $event as MenteeStatusFilter)"
         />
       </div>
