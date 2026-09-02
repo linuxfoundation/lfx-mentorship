@@ -1,0 +1,20 @@
+# Copyright The Linux Foundation and each contributor to LFX.
+# SPDX-License-Identifier: MIT
+{{/*
+Validation template — aborts helm install/upgrade when required values are missing.
+No Kubernetes resource is rendered; this file only produces errors.
+*/}}
+
+{{- if not .Values.image.tag }}
+{{- fail "\n\nvalues.yaml: image.tag is required.\nSet it to the image tag to deploy, e.g.:\n  image:\n    tag: \"abc1234\"" }}
+{{- end }}
+
+{{/*
+NUXT_API_BASE_URL points the Nuxt server at the backend API. It has a
+localhost default in setup/runtime-config.ts, so an unset value in a cluster
+fails as confusing empty responses at request time rather than at startup —
+catch it at render time instead.
+*/}}
+{{- if not .Values.config.NUXT_API_BASE_URL }}
+{{- fail "\n\nvalues.yaml: config.NUXT_API_BASE_URL is required — it must point at the backend Service,\ne.g. http://lfx-mentorship-backend.mentorship-backend.svc.cluster.local" }}
+{{- end }}

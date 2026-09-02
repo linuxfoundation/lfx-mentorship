@@ -1,0 +1,105 @@
+# Copyright The Linux Foundation and each contributor to LFX.
+# SPDX-License-Identifier: MIT
+---
+replicaCount: 2
+
+image:
+  repository: ghcr.io/linuxfoundation/lfx-mentorship-frontend
+  pullPolicy: Always
+  tag: "" # required — set per environment via ArgoCD values
+
+imagePullSecrets: []
+
+serviceAccount:
+  create: true
+  automount: false
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false # Nuxt/Nitro writes tmp files at runtime
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 3000
+
+ingress:
+  enabled: false
+  className: traefik
+  annotations: {}
+  hosts: []
+  tls: []
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+livenessProbe:
+  httpGet:
+    path: /api/health
+    port: http
+  initialDelaySeconds: 15
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /api/health
+    port: http
+  initialDelaySeconds: 20
+  periodSeconds: 10
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+
+# ── Non-secret environment variables ────────────────────────────────────────
+# Rendered into a ConfigMap and mounted via envFrom.
+config:
+  NODE_ENV: "production"
+  NITRO_HOST: "0.0.0.0"
+  NITRO_PORT: "3000"
+  # Server-side base URL for the backend API. Required — see templates/validate.yaml.
+  NUXT_API_BASE_URL: ""
+  NUXT_PUBLIC_APP_ENV: "" # set per environment, e.g. development / production
+  NUXT_APP_URL: "" # set per environment, e.g. https://mentorship.dev.lfx.dev
+  NUXT_PUBLIC_SELF_SERVE_URL: ""
+  NUXT_PUBLIC_CROWDFUNDING_URL: ""
+
+# ── Additional environment variables ─────────────────────────────────────────
+# Rendered as a Kubernetes env: list on the Deployment. Supports the full env
+# entry schema (value:, valueFrom:, etc.).
+env: []
+
+# ── Secret environment variables ─────────────────────────────────────────────
+# Optional: the public site currently needs no secrets, so this is empty and
+# no secretRef is mounted. Set it to a Secret name (managed by ESO) once the
+# frontend gains credentials, e.g. an Auth0 client secret.
+secretName: ""
