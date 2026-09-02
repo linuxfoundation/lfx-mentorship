@@ -1,5 +1,5 @@
 <!--
-Copyright (c) 2025 The Linux Foundation and each contributor.
+Copyright The Linux Foundation and each contributor to LFX.
 SPDX-License-Identifier: MIT
 -->
 <template>
@@ -40,7 +40,7 @@ SPDX-License-Identifier: MIT
 
           <div
             v-if="program.skills.length"
-            class="flex flex-wrap gap-2"
+            class="flex flex-wrap gap-2 flex-grow"
           >
             <lfx-tag
               v-for="skill in program.skills"
@@ -48,6 +48,8 @@ SPDX-License-Identifier: MIT
               variation="neutral"
               type="outline"
               size="small"
+              :title="skill"
+              class="truncate !block leading-5"
             >
               {{ skill }}
             </lfx-tag>
@@ -60,7 +62,7 @@ SPDX-License-Identifier: MIT
               icon="paper-plane"
               type="primary"
               button-style="rounded"
-              @click="$emit('apply')"
+              @click="$emit('apply', displayTerms[0]!)"
             />
             <lfx-button
               v-if="program.repositoryUrl"
@@ -124,7 +126,7 @@ SPDX-License-Identifier: MIT
           type="primary"
           button-style="rounded"
           class="mt-3"
-          @click="$emit('apply')"
+          @click="$emit('apply', term)"
         />
       </aside>
     </div>
@@ -134,13 +136,14 @@ SPDX-License-Identifier: MIT
 <script setup lang="ts">
 import { PROGRAM_STATUS_CONFIG } from '../config/program-card.config';
 import { AppRoute } from '~/config/routes';
-import type { Program } from '~/types/program.types';
+import type { Program, ProgramTerm } from '~/types/program.types';
 import { formatTermLabel } from '~/utils/program-terms';
 
 const props = defineProps<{ program: Program }>();
 
 defineEmits<{
-  (e: 'open-repository' | 'donate' | 'apply'): void;
+  (e: 'open-repository' | 'donate'): void;
+  (e: 'apply', term: ProgramTerm): void;
 }>();
 
 const statusConfig = computed(() => PROGRAM_STATUS_CONFIG[props.program.status]);

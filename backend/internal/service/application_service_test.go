@@ -326,7 +326,7 @@ func openTerm(t time.Time) *models.ProgramTerm {
 // ── tests ────────────────────────────────────────────────────────────────────
 
 func TestApplicationService_Create_ForcesStatusPending(t *testing.T) {
-	var capturedStatus string
+	var capturedStatus models.ApplicationStatus
 	repo := &stubAppRepo{
 		create: func(_ context.Context, _ string, in models.ApplicationCreateInput) (*models.Application, error) {
 			capturedStatus = in.Status
@@ -455,8 +455,8 @@ func TestApplicationService_Update_ValidTransition(t *testing.T) {
 		},
 	}
 	svc := newApplicationSvc(repo, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{})
-	next := "accepted"
-	attType := "full_time"
+	next := models.ApplicationStatusAccepted
+	attType := models.AttendanceTypeFullTime
 	_, err := svc.Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &next, AttendanceType: &attType})
 	if err != nil {
 		t.Errorf("expected valid transition pending→accepted, got %v", err)
@@ -470,7 +470,7 @@ func TestApplicationService_Update_InvalidTransition(t *testing.T) {
 		},
 	}
 	svc := newApplicationSvc(repo, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{})
-	next := "graduated"
+	next := models.ApplicationStatusGraduated
 	_, err := svc.Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &next})
 	if !errors.Is(err, domain.ErrInvalidStateTransition) {
 		t.Errorf("expected ErrInvalidStateTransition, got %v", err)
@@ -484,9 +484,44 @@ func TestApplicationService_Update_WithdrawnTerminal(t *testing.T) {
 		},
 	}
 	svc := newApplicationSvc(repo, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{})
-	next := "pending"
+	next := models.ApplicationStatusPending
 	_, err := svc.Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &next})
 	if !errors.Is(err, domain.ErrInvalidStateTransition) {
 		t.Errorf("expected ErrInvalidStateTransition for terminal withdrawn, got %v", err)
+	}
+}
+
+func TestApplicationService_Update_InvalidProgramTermStatus_Rejected(t *testing.T) {
+	svc := newApplicationSvc(&stubAppRepo{}, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{})
+	bad := models.ProgramTermStatus("ajar") // not a member of the enum
+	_, err := svc.Update(context.Background(), "app-1", models.ApplicationUpdateInput{ProgramTermStatus: &bad})
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput for unknown program_term_status, got %v", err)
+	}
+}
+
+func TestApplicationService_Create_InvalidAttendanceType_Rejected(t *testing.T) {
+	svc := newApplicationSvc(&stubAppRepo{}, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{})
+	bad := models.AttendanceType("weekends") // not a member of the enum
+	_, err := svc.Create(context.Background(), "term-1", models.ApplicationCreateInput{
+		UserID:         "u1",
+		Role:           models.ApplicationRoleMentee,
+		AttendanceType: &bad,
+	})
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput for unknown attendance_type, got %v", err)
+	}
+}
+
+func TestApplicationService_Create_InvalidProgramTermStatus_Rejected(t *testing.T) {
+	svc := newApplicationSvc(&stubAppRepo{}, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{})
+	bad := models.ProgramTermStatus("ajar") // not a member of the enum
+	_, err := svc.Create(context.Background(), "term-1", models.ApplicationCreateInput{
+		UserID:            "u1",
+		Role:              models.ApplicationRoleMentee,
+		ProgramTermStatus: &bad,
+	})
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput for unknown program_term_status, got %v", err)
 	}
 }

@@ -1,5 +1,5 @@
 <!--
-Copyright (c) 2025 The Linux Foundation and each contributor.
+Copyright The Linux Foundation and each contributor to LFX.
 SPDX-License-Identifier: MIT
 -->
 <template>
@@ -35,7 +35,7 @@ SPDX-License-Identifier: MIT
     <div class="flex flex-col gap-4 lg:flex-row lg:items-center">
       <lfx-input
         :model-value="searchTerm"
-        class="!rounded-full flex-1"
+        class="!rounded-lg flex-1"
         placeholder="Search mentors by name"
         @update:model-value="$emit('update:searchTerm', String($event))"
       >

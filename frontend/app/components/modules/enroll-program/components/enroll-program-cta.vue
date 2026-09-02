@@ -1,5 +1,5 @@
 <!--
-Copyright (c) 2025 The Linux Foundation and each contributor.
+Copyright The Linux Foundation and each contributor to LFX.
 SPDX-License-Identifier: MIT
 -->
 <template>
@@ -17,7 +17,7 @@ SPDX-License-Identifier: MIT
         <lfx-button
           :label="ENROLL_PROGRAM_CTA_LABEL"
           type="primary"
-          button-style="pill"
+          button-style="rounded"
           icon="arrow-right"
           icon-position="right"
         />

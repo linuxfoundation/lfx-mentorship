@@ -1,5 +1,5 @@
 <!--
-Copyright (c) 2025 The Linux Foundation and each contributor.
+Copyright The Linux Foundation and each contributor to LFX.
 SPDX-License-Identifier: MIT
 -->
 <template>
@@ -37,7 +37,7 @@ import { focusFirst, lockBodyScroll, trapFocus, unlockBodyScroll } from '~/compo
 const props = withDefaults(
   defineProps<{
     modelValue: boolean;
-    type?: 'default' | 'floating' | 'cover' | 'mobile-cover';
+    type?: 'default' | 'centered' | 'floating' | 'cover' | 'mobile-cover';
     contentClass?: string;
     width?: string;
     height?: string;
@@ -87,6 +87,7 @@ const onEscapeKeyUp = (event: KeyboardEvent) => {
 
 const modalClass = computed(() => {
   return {
+    'c-modal--centered': props.type === 'centered',
     'c-modal--floating': props.type === 'floating',
     'c-modal--cover': props.type === 'cover',
     'c-modal--mobile-cover': props.type === 'mobile-cover',

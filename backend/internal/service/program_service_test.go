@@ -276,6 +276,29 @@ func TestProgramService_GetCatalog_NotFound(t *testing.T) {
 	}
 }
 
+func TestProgramService_GetCatalog_Unpublished(t *testing.T) {
+	for _, status := range []models.ProgramStatus{
+		models.ProgramStatusDraft,
+		models.ProgramStatusRejected,
+		models.ProgramStatusHidden,
+		models.ProgramStatusArchived,
+		models.ProgramStatusSubmitted,
+	} {
+		t.Run(string(status), func(t *testing.T) {
+			repo := &stubProgRepo{
+				getCatalog: func(_ context.Context, id string) (*models.ProgramCatalogItem, error) {
+					return &models.ProgramCatalogItem{Program: models.Program{ID: id, Status: status}}, nil
+				},
+			}
+			svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+			_, err := svc.GetCatalog(context.Background(), "p1")
+			if !errors.Is(err, domain.ErrProgramNotFound) {
+				t.Errorf("status %s: expected ErrProgramNotFound, got %v", status, err)
+			}
+		})
+	}
+}
+
 func TestProgramService_ListCatalogMentees(t *testing.T) {
 	var captured string
 	repo := &stubProgRepo{
@@ -291,5 +314,14 @@ func TestProgramService_ListCatalogMentees(t *testing.T) {
 	}
 	if captured != "prog-1" || len(mentees) != 1 || mentees[0].UserID != "u1" {
 		t.Errorf("mentees = %+v captured = %q", mentees, captured)
+	}
+}
+
+func TestProgramService_Update_InvalidProgramTermStatus_Rejected(t *testing.T) {
+	svc := newProgramSvc(&stubProgRepo{}, &stubTermRepo{}, &stubAppRepo{})
+	bad := models.ProgramTermStatus("ajar") // not a member of the enum
+	_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{ProgramTermStatus: &bad})
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput for unknown program_term_status, got %v", err)
 	}
 }

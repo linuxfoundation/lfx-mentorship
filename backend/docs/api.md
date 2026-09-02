@@ -839,6 +839,32 @@ Public mentor profile by **user ID**. Programs, mentees, and profile links are l
 
 ---
 
+#### `GET /v1/summary` 🔓
+
+Aggregated marketing/landing counts plus a small graduated-mentee preview. All counts are scoped to programs with `status = "published"`.
+
+- `program_count` — number of published programs.
+- `accepting_program_count` — subset of published programs with at least one open term whose `application_start_date` ≤ `NOW()` ≤ `application_end_date`.
+- `mentor_count` — distinct users who are an `active` `mentor` member of any published program.
+- `graduated_mentee_count` — distinct users with at least one mentee application in status `graduated` on a non-deleted term of a published program.
+- `graduated_mentee_users` — up to four most recently graduated mentees (`name`, `avatar_url`) for the landing hero.
+
+**Response** `200`
+```json
+{
+  "program_count": 18,
+  "accepting_program_count": 3,
+  "mentor_count": 7,
+  "graduated_mentee_count": 42,
+  "graduated_mentee_users": [
+    { "name": "Alex Mentee", "avatar_url": "https://..." },
+    { "name": "Sam Graduate", "avatar_url": "https://..." }
+  ]
+}
+```
+
+---
+
 #### `GET /v1/programs/{id}` 🔓
 
 Fetch a program by UUID or slug.
@@ -1745,6 +1771,16 @@ GET /v1/mentors/{user_id}
 ```
 
 Do not compose the directory from `GET /v1/user-profiles` or by calling `GET /v1/programs/{id}/members` for every program.
+
+#### Landing Page
+
+```
+GET /v1/summary
+→ Hero and stats: program_count, accepting_program_count, mentor_count,
+  graduated_mentee_count, and graduated_mentee_users (up to four avatars)
+```
+
+Foundations and stipend totals are not on this endpoint yet — keep those as static marketing copy until they are modeled.
 
 #### Applying to a Term (Mentee)
 

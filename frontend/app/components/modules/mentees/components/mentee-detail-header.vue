@@ -1,5 +1,5 @@
 <!--
-Copyright (c) 2025 The Linux Foundation and each contributor.
+Copyright The Linux Foundation and each contributor to LFX.
 SPDX-License-Identifier: MIT
 -->
 <template>
@@ -41,7 +41,7 @@ SPDX-License-Identifier: MIT
             </div>
           </div>
 
-          <p class="text-sm text-neutral-600 leading-5 max-w-xl">
+          <p class="text-sm text-neutral-600 leading-5 max-w-[80%]">
             {{ mentee.introduction }}
           </p>
 
@@ -76,13 +76,15 @@ SPDX-License-Identifier: MIT
       >
         <div class="flex flex-col gap-3">
           <p class="text-xs font-semibold uppercase tracking-wide text-neutral-500">Featured skills</p>
-          <div class="flex flex-wrap gap-2">
+          <div class="flex flex-wrap gap-2 flex-grow">
             <lfx-tag
               v-for="skill in mentee.skills"
               :key="skill"
               variation="neutral"
               type="outline"
               size="small"
+              :title="skill"
+              class="truncate !block leading-5"
             >
               {{ skill }}
             </lfx-tag>

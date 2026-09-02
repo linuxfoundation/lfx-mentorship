@@ -71,14 +71,15 @@ func (s *ProgramTermService) Create(ctx context.Context, input models.ProgramTer
 	if input.ProgramID == "" {
 		return nil, fmt.Errorf("%w: program_id is required", domain.ErrInvalidInput)
 	}
+	// Terms may only be created open or closed; "deleted" is reachable via Update.
 	if input.Status == "" {
-		input.Status = "open"
-	} else if input.Status != "open" && input.Status != "closed" {
+		input.Status = models.ProgramTermStatusOpen
+	} else if input.Status != models.ProgramTermStatusOpen && input.Status != models.ProgramTermStatusClosed {
 		return nil, fmt.Errorf("%w: status must be open or closed", domain.ErrInvalidInput)
 	}
 
 	// Open-term cap guard.
-	if input.Status == "open" {
+	if input.Status == models.ProgramTermStatusOpen {
 		count, err := s.repo.CountOpenTermsByProgram(ctx, input.ProgramID)
 		if err != nil {
 			span.RecordError(err)
@@ -105,14 +106,11 @@ func (s *ProgramTermService) Update(ctx context.Context, id string, input models
 	span.SetAttributes(attribute.String("term.id", id))
 
 	if input.Status != nil {
-		switch *input.Status {
-		case "open", "closed", "deleted":
-			// valid
-		default:
+		if !input.Status.IsValid() {
 			return nil, fmt.Errorf("%w: status must be open, closed, or deleted", domain.ErrInvalidInput)
 		}
 
-		if *input.Status == "open" {
+		if *input.Status == models.ProgramTermStatusOpen {
 			current, err := s.repo.GetByID(ctx, id)
 			if err != nil {
 				span.RecordError(err)
@@ -123,7 +121,7 @@ func (s *ProgramTermService) Update(ctx context.Context, id string, input models
 				return nil, fmt.Errorf("%w: term end date has passed and cannot be reopened", domain.ErrStateLocked)
 			}
 			// Reopen guard: cannot reopen if max open terms already reached.
-			if current.Status != "open" {
+			if current.Status != models.ProgramTermStatusOpen {
 				count, err := s.repo.CountOpenTermsByProgram(ctx, current.ProgramID)
 				if err != nil {
 					span.RecordError(err)
@@ -135,7 +133,7 @@ func (s *ProgramTermService) Update(ctx context.Context, id string, input models
 			}
 		}
 
-		if *input.Status == "closed" {
+		if *input.Status == models.ProgramTermStatusClosed {
 			// Close guard: cannot close a term that has active/accepted applications.
 			count, err := s.appRepo.CountAcceptedByTerm(ctx, id)
 			if err != nil {

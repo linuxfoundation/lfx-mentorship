@@ -1,5 +1,5 @@
 <!--
-Copyright (c) 2025 The Linux Foundation and each contributor.
+Copyright The Linux Foundation and each contributor to LFX.
 SPDX-License-Identifier: MIT
 -->
 <template>
@@ -31,7 +31,7 @@ SPDX-License-Identifier: MIT
 
     <lfx-input
       :model-value="searchTerm"
-      class="!rounded-full"
+      class="!rounded-lg"
       placeholder="Search programs..."
       @update:model-value="$emit('update:searchTerm', String($event))"
     >
@@ -65,7 +65,7 @@ SPDX-License-Identifier: MIT
             <lfx-button
               :label="selectedOption?.label ?? 'All programs'"
               type="outline"
-              button-style="pill"
+              button-style="rounded"
               icon="arrow-up-arrow-down"
             />
           </template>
@@ -95,7 +95,7 @@ SPDX-License-Identifier: MIT
             <lfx-button
               :label="selectedOption?.label ?? DEFAULT_PROGRAM_SORT.label"
               type="outline"
-              button-style="pill"
+              button-style="rounded"
               icon="arrow-down-wide-short"
             />
           </template>

@@ -22,8 +22,11 @@ export interface HeaderCtaItem {
   type: 'primary' | 'outline';
 }
 
-export const lfxHeaderCtas: HeaderCtaItem[] = [];
-
+export const lfxHeaderCtas: HeaderCtaItem[] = [
+  { label: 'Enroll a Program', to: AppRoute.EnrollProgram, type: 'outline' },
+  { label: 'Become a Mentor', to: AppRoute.Mentors, type: 'outline' },
+  { label: 'My Mentorship', to: AppRoute.Mentees, type: 'primary' },
+];
 export const lfxHeaderMenu: HeaderMenuItem[] = [
   { label: 'Find a Program', icon: 'magnifying-glass', to: AppRoute.FindProgram },
   { label: 'Mentees', icon: 'user-graduate', to: AppRoute.Mentees },

@@ -94,14 +94,6 @@ func (h *ProgramHandler) GetCatalog(w http.ResponseWriter, r *http.Request) {
 		Error(w, err)
 		return
 	}
-	if item.Status == models.ProgramStatusHidden {
-		principal := auth.PrincipalFromContext(r.Context())
-		isOwner := principal != nil && item.LFID != nil && *item.LFID == principal.Username
-		if !isOwner {
-			Error(w, domain.ErrProgramNotFound)
-			return
-		}
-	}
 	JSON(w, http.StatusOK, item)
 }
 
