@@ -1772,6 +1772,16 @@ GET /v1/mentors/{user_id}
 
 Do not compose the directory from `GET /v1/user-profiles` or by calling `GET /v1/programs/{id}/members` for every program.
 
+#### Landing Page
+
+```
+GET /v1/summary
+→ Hero and stats: program_count, accepting_program_count, mentor_count,
+  graduated_mentee_count, and graduated_mentee_users (up to four avatars)
+```
+
+Foundations and stipend totals are not on this endpoint yet — keep those as static marketing copy until they are modeled.
+
 #### Applying to a Term (Mentee)
 
 1. Check that the user has a mentee profile:
