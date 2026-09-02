@@ -89,7 +89,7 @@ config:
   # Server-side base URL for the backend API. Required — see templates/validate.yaml.
   NUXT_API_BASE_URL: ""
   NUXT_PUBLIC_APP_ENV: "" # set per environment, e.g. development / production
-  NUXT_APP_URL: "" # set per environment, e.g. https://mentorship.dev.lfx.dev
+  NUXT_PUBLIC_APP_URL: "" # set per environment, e.g. https://mentorship.dev.lfx.dev
   NUXT_PUBLIC_SELF_SERVE_URL: ""
   NUXT_PUBLIC_CROWDFUNDING_URL: ""
 

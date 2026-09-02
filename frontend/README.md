@@ -45,7 +45,7 @@ must be set per environment:
 | ------------------------------ | --------------------------------------- |
 | `NUXT_API_BASE_URL`            | Server-side base URL of the backend API |
 | `NUXT_PUBLIC_APP_ENV`          | `development` or `production`           |
-| `NUXT_APP_URL`                 | Public URL of this site                 |
+| `NUXT_PUBLIC_APP_URL`          | Public URL of this site                 |
 | `NUXT_PUBLIC_SELF_SERVE_URL`   | Link target for management surfaces     |
 | `NUXT_PUBLIC_CROWDFUNDING_URL` | Link target for Crowdfunding            |
 

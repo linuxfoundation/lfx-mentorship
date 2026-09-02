@@ -2,10 +2,13 @@
 # SPDX-License-Identifier: MIT
 
 # ── Build stage ──────────────────────────────────────────────────────────────
-FROM node:22-alpine AS builder
+# Digest-pinned (multi-arch index) so rebuilds are reproducible.
+FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS builder
 
-# Enable corepack so pnpm is available without a separate install step
-RUN corepack enable
+# Enable corepack and activate the pnpm version pinned in package.json's
+# packageManager field, so the image resolves dependencies with the same pnpm
+# the lockfile and CI were verified against rather than Corepack's latest.
+RUN corepack enable && corepack install --global pnpm@11.1.2
 
 WORKDIR /build
 
@@ -20,7 +23,7 @@ COPY . .
 RUN pnpm install --frozen-lockfile --prefer-offline && pnpm build
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────
-FROM node:22-alpine AS runtime
+FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS runtime
 
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup -u 65532
 
