@@ -1,0 +1,216 @@
+# Copyright The Linux Foundation and each contributor to LFX.
+# SPDX-License-Identifier: MIT
+
+name: Mentorship Authorization Model Tests
+model_file: model.fga
+tuple_file: tuples.yaml
+
+tests:
+  - name: project-level program creation and approval rights
+    check:
+      - user: user:carla
+        object: project:lfx
+        assertions:
+          can_create_program: true
+          can_approve_program: false
+      - user: user:priya
+        object: project:lfx
+        assertions:
+          can_create_program: false
+          can_approve_program: true
+      - user: user:aisha
+        object: project:lfx
+        assertions:
+          can_create_program: true
+          can_approve_program: true
+      - user: user:miguel
+        object: project:lfx
+        assertions:
+          can_create_program: false
+
+  - name: super_admin has unrestricted access to every object
+    check:
+      - user: user:aisha
+        object: program:go-2026
+        assertions:
+          can_view: true
+          can_invite_mentor: true
+          can_create_term: true
+          can_add_prerequisite_task: true
+          can_add_task: true
+          can_view_applications: true
+          can_decide_application: true
+          can_approve: true
+      - user: user:aisha
+        object: application:app-mia
+        assertions:
+          can_view: true
+          can_decide: true
+          can_add_task: true
+          can_withdraw: true
+          can_reapply: true
+      - user: user:aisha
+        object: task:task-mia-1
+        assertions:
+          can_view: true
+          can_update_status: true
+
+  - name: program_admin has full control over the program they created
+    check:
+      - user: user:carla
+        object: program:go-2026
+        assertions:
+          can_invite_mentor: true
+          can_create_term: true
+          can_add_prerequisite_task: true
+          can_add_task: true
+          can_view_applications: true
+          can_decide_application: true
+          can_view: true
+          can_approve: false
+
+  - name: program_admin has no access to a program they do not administer
+    check:
+      - user: user:carla
+        object: program:rust-2026
+        assertions:
+          can_view: false
+          can_invite_mentor: false
+          can_view_applications: false
+          can_decide_application: false
+
+  - name: mentor can view, create terms, and add tasks, but cannot invite mentors or decide applications
+    check:
+      - user: user:miguel
+        object: program:go-2026
+        assertions:
+          can_view: true
+          can_view_applications: true
+          can_create_term: true
+          can_add_prerequisite_task: true
+          can_add_task: true
+          can_invite_mentor: false
+          can_decide_application: false
+
+  - name: mentor has zero access to a program they were never invited to
+    check:
+      - user: user:miguel
+        object: program:rust-2026
+        assertions:
+          can_view: false
+          can_view_applications: false
+
+  - name: mentee can view only their own application
+    check:
+      - user: user:mia
+        object: application:app-mia
+        assertions:
+          can_view: true
+      - user: user:mia
+        object: application:app-noah
+        assertions:
+          can_view: false
+
+  - name: only admin decides applications — mentor cannot, per review correction
+    check:
+      - user: user:carla
+        object: application:app-mia
+        assertions:
+          can_view: true
+          can_decide: true
+      - user: user:miguel
+        object: application:app-mia
+        assertions:
+          can_view: true
+          can_decide: false
+
+  - name: mentor can add both prerequisite and non-prerequisite tasks
+    check:
+      - user: user:miguel
+        object: program:go-2026
+        assertions:
+          can_add_task: true
+          can_add_prerequisite_task: true
+
+  - name: mentor can add tasks to applications and update task status
+    check:
+      - user: user:miguel
+        object: application:app-mia
+        assertions:
+          can_add_task: true
+      - user: user:miguel
+        object: task:task-mia-1
+        assertions:
+          can_update_status: true
+
+  - name: mentee can view and update only their own tasks
+    check:
+      - user: user:mia
+        object: task:task-mia-1
+        assertions:
+          can_view: true
+          can_update_status: true
+      - user: user:noah
+        object: task:task-mia-1
+        assertions:
+          can_view: false
+          can_update_status: false
+
+  - name: program_admin and mentor can view and update tasks in their program
+    check:
+      - user: user:carla
+        object: task:task-mia-1
+        assertions:
+          can_view: true
+      - user: user:miguel
+        object: task:task-mia-1
+        assertions:
+          can_view: true
+
+  - name: program_approver can view and approve but not manage
+    check:
+      - user: user:priya
+        object: program:go-2026
+        assertions:
+          can_view: true
+          can_approve: true
+          can_invite_mentor: false
+          can_create_term: false
+          can_view_applications: false
+          can_decide_application: false
+
+  - name: program_approver can see applications but not decide
+    check:
+      - user: user:priya
+        object: application:app-mia
+        assertions:
+          can_view: true
+          can_decide: false
+
+  - name: withdraw and re-apply require an ownership check — applicant or admin only, never mentor alone
+    check:
+      - user: user:mia
+        object: application:app-mia
+        assertions:
+          can_withdraw: true
+          can_reapply: true
+      - user: user:mia
+        object: application:app-noah
+        assertions:
+          can_withdraw: false
+          can_reapply: false
+      - user: user:noah
+        object: application:app-noah
+        assertions:
+          can_withdraw: true
+          can_reapply: true
+      - user: user:carla
+        object: application:app-mia
+        assertions:
+          can_withdraw: true
+          can_reapply: true
+      - user: user:miguel
+        object: application:app-mia
+        assertions:
+          can_withdraw: false
+          can_reapply: false

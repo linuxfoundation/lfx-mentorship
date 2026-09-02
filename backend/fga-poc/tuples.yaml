@@ -1,0 +1,67 @@
+# Copyright The Linux Foundation and each contributor to LFX.
+# SPDX-License-Identifier: MIT
+
+# --- Project-level (per-project) role assignments ---
+- user: user:aisha
+  relation: super_admin
+  object: project:lfx
+
+- user: user:priya
+  relation: program_approver
+  object: project:lfx
+
+- user: user:carla
+  relation: program_admin
+  object: project:lfx
+
+- user: user:derek
+  relation: program_admin
+  object: project:lfx
+
+# --- Program: go-2026, created and administered by Carla ---
+- user: project:lfx
+  relation: project
+  object: program:go-2026
+
+- user: user:carla
+  relation: program_admin
+  object: program:go-2026
+
+- user: user:miguel
+  relation: mentor
+  object: program:go-2026
+
+# --- Program: rust-2026, created and administered by Derek ---
+- user: project:lfx
+  relation: project
+  object: program:rust-2026
+
+- user: user:derek
+  relation: program_admin
+  object: program:rust-2026
+
+# --- Applications to go-2026 ---
+- user: program:go-2026
+  relation: program
+  object: application:app-mia
+
+- user: user:mia
+  relation: mentee
+  object: application:app-mia
+
+- user: program:go-2026
+  relation: program
+  object: application:app-noah
+
+- user: user:noah
+  relation: mentee
+  object: application:app-noah
+
+# --- Task assigned to Mia's application ---
+- user: application:app-mia
+  relation: application
+  object: task:task-mia-1
+
+- user: user:mia
+  relation: assignee
+  object: task:task-mia-1
