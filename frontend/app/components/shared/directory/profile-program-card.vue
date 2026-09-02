@@ -4,15 +4,19 @@ SPDX-License-Identifier: MIT
 -->
 <template>
   <article class="border border-neutral-200 rounded-2xl bg-white p-5 md:p-6 flex flex-col gap-5 h-full">
-    <div class="flex items-start justify-between gap-3">
-      <div class="flex items-center gap-3 min-w-0">
-        <div
-          class="shrink-0 flex h-11 w-11 items-center justify-center rounded-lg bg-neutral-100 text-xs font-semibold text-neutral-700"
-          aria-hidden="true"
-        >
-          {{ program.logoInitials }}
-        </div>
-        <p class="text-sm text-neutral-500 truncate">{{ program.foundationLabel }}</p>
+    <div class="flex items-start gap-3">
+      <lfx-avatar
+        :src="program.logoUrl"
+        size="large"
+        type="organization"
+      />
+      <div class="flex min-w-0 flex-1 flex-col gap-1">
+        <p class="text-xs text-neutral-500 leading-4 truncate">{{ program.foundationLabel }}</p>
+        <NuxtLink :to="programPath(program.id)">
+          <h3 class="text-base font-normal text-neutral-900 leading-6 break-words">
+            {{ program.title }}
+          </h3>
+        </NuxtLink>
       </div>
       <lfx-tag
         class="shrink-0"
@@ -24,12 +28,8 @@ SPDX-License-Identifier: MIT
       </lfx-tag>
     </div>
 
-    <h3 class="text-lg font-semibold text-neutral-900 leading-6 break-words">
-      {{ program.title }}
-    </h3>
-
-    <p class="text-sm text-neutral-600 leading-5">
-      {{ program.description }}
+    <p class="text-sm text-neutral-600 leading-5 line-clamp-3">
+      {{ plainDescription }}
     </p>
 
     <div
@@ -38,14 +38,15 @@ SPDX-License-Identifier: MIT
     >
       <p class="text-xs font-semibold uppercase tracking-wide text-neutral-500">Required skills</p>
       <div class="flex flex-wrap gap-2">
-        <lfx-chip
+        <lfx-tag
           v-for="skill in program.skills"
           :key="skill"
-          type="default"
-          size="xsmall"
+          variation="neutral"
+          type="outline"
+          size="small"
         >
           {{ skill }}
-        </lfx-chip>
+        </lfx-tag>
       </div>
     </div>
 
@@ -60,10 +61,10 @@ SPDX-License-Identifier: MIT
           :key="term.id"
           class="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 min-w-[9rem]"
         >
-          <p class="text-sm font-semibold text-neutral-900">{{ term.label }}</p>
+          <p class="text-xs font-normal text-neutral-900">{{ term.label }}</p>
           <p
             v-if="term.dateRangeLabel"
-            class="text-xs text-neutral-500 mt-0.5"
+            class="text-xxs text-neutral-500 mt-0.5"
           >
             {{ term.dateRangeLabel }}
           </p>
@@ -84,13 +85,14 @@ SPDX-License-Identifier: MIT
         >
           <profile-initials-avatar
             :name="mentor.name"
+            :src="mentor.avatarUrl"
             size="small"
           />
           <div class="min-w-0">
-            <p class="text-sm font-semibold text-neutral-900 truncate">{{ mentor.name }}</p>
+            <p class="text-xs font-normal text-neutral-900 truncate">{{ mentor.name }}</p>
             <p
               v-if="mentor.title"
-              class="text-xs text-neutral-500 truncate"
+              class="text-xxs text-neutral-500 truncate"
             >
               {{ mentor.title }}
             </p>
@@ -106,11 +108,12 @@ import { computed } from 'vue';
 import { PROFILE_PROGRAM_STATUS_CONFIG } from '~/components/modules/mentees/config/mentee-detail.config';
 import ProfileInitialsAvatar from '~/components/shared/directory/profile-initials-avatar.vue';
 import type { ProfileProgram } from '~/types/mentee.types';
-import LfxChip from '~/components/uikit/chip/chip.vue';
 import LfxTag from '~/components/uikit/tag/tag.vue';
+import { programPath } from '~/config/routes';
 
+const { stripHtml } = useSanitize();
 const props = defineProps<{ program: ProfileProgram }>();
-
+const plainDescription = computed(() => stripHtml(props.program.description ?? ''));
 const statusConfig = computed(() => PROFILE_PROGRAM_STATUS_CONFIG[props.program.status]);
 </script>
 

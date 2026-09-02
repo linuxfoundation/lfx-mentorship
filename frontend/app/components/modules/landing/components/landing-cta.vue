@@ -9,7 +9,7 @@ SPDX-License-Identifier: MIT
     >
       <div class="max-w-xl">
         <h2 class="font-secondary text-xl md:text-2xl font-normal text-neutral-900">
-          {{ LANDING_CTA_TITLE }}
+          {{ LANDING_CTA_TITLE(acceptingProgramCount) }}
         </h2>
         <p class="mt-2 text-sm text-neutral-500 leading-5">
           {{ LANDING_CTA_SUBTITLE }}
@@ -32,6 +32,10 @@ SPDX-License-Identifier: MIT
 import { LANDING_CTA_SUBTITLE, LANDING_CTA_TITLE } from '../config/landing.config';
 import { AppRoute } from '~/config/routes';
 import LfxButton from '~/components/uikit/button/button.vue';
+
+defineProps<{
+  acceptingProgramCount: number;
+}>();
 </script>
 
 <script lang="ts">

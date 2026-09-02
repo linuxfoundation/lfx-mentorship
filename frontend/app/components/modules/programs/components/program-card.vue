@@ -128,7 +128,10 @@ SPDX-License-Identifier: MIT
             </div>
           </template>
         </lfx-popover>
-        <div class="flex items-center gap-2 text-xs text-neutral-400">
+        <div
+          v-if="program.isPaid"
+          class="flex items-center gap-2 text-xs text-neutral-400"
+        >
           <lfx-icon
             name="sack-dollar"
             type="solid"
@@ -139,7 +142,7 @@ SPDX-License-Identifier: MIT
       </div>
       <lfx-button
         label="View program"
-        type="outline"
+        type="secondary"
         button-style="rounded"
         size="small"
       />
@@ -171,7 +174,9 @@ const foundationLine = computed(() => {
     .map((term) => term.name)
     .filter(Boolean);
   const foundation = props.program.foundation.name;
-  return names.length ? `${foundation} · ${names.join(', ')}` : foundation;
+  if (names.length && foundation) return `${foundation} · ${names.join(', ')}`;
+  if (names.length) return names.join(', ');
+  return foundation;
 });
 const visibleSkills = computed(() => props.program.skills.slice(0, PROGRAM_SKILLS_VISIBLE_COUNT));
 const overflowSkills = computed(() => props.program.skills.slice(PROGRAM_SKILLS_VISIBLE_COUNT));

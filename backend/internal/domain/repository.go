@@ -31,11 +31,34 @@ type UserProfileRepository interface {
 	CountActiveMenteeProfiles(ctx context.Context, userID string) (int, error)
 }
 
+// MenteeRepository defines public directory reads for mentees.
+type MenteeRepository interface {
+	List(ctx context.Context, filter models.MenteeFilter) (*models.MenteePage, error)
+	Summary(ctx context.Context) (*models.MenteeSummary, error)
+	GetByUserID(ctx context.Context, userID string) (*models.MenteeDetail, error)
+}
+
+// MentorRepository defines public directory reads for mentors.
+type MentorRepository interface {
+	List(ctx context.Context, filter models.MentorFilter) (*models.MentorPage, error)
+	Summary(ctx context.Context) (*models.MentorSummary, error)
+	GetByUserID(ctx context.Context, userID string) (*models.MentorDetail, error)
+}
+
+// PlatformSummaryRepository defines the read that backs the public
+// landing/marketing summary counts.
+type PlatformSummaryRepository interface {
+	Summary(ctx context.Context) (*models.PlatformSummary, error)
+}
+
 // ProgramRepository defines persistence operations for programs and related sub-resources.
 type ProgramRepository interface {
 	GetByID(ctx context.Context, id string) (*models.Program, error)
 	GetBySlug(ctx context.Context, slug string) (*models.Program, error)
 	List(ctx context.Context, filter models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error)
+	ListCatalog(ctx context.Context, filter models.ProgramFilter) ([]*models.ProgramCatalogItem, *models.PaginationMeta, error)
+	GetCatalog(ctx context.Context, id string) (*models.ProgramCatalogItem, error)
+	ListCatalogMentees(ctx context.Context, programID string) ([]*models.ProgramCatalogMentee, error)
 	Create(ctx context.Context, input models.ProgramCreateInput) (*models.Program, error)
 	Update(ctx context.Context, id string, input models.ProgramUpdateInput) (*models.Program, error)
 	Delete(ctx context.Context, id string) error

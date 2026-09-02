@@ -13,12 +13,13 @@ SPDX-License-Identifier: MIT
     <tbody>
       <tr
         v-for="mentee in mentees"
-        :key="mentee.id"
+        :key="`${mentee.id}-${mentee.termId ?? mentee.termLabel}`"
       >
         <td class="w-[80%] max-w-0">
           <div class="flex items-center gap-3 min-w-0">
             <profile-initials-avatar
               :name="mentee.name"
+              :src="mentee.avatarUrl"
               size="normal"
             />
             <div class="min-w-0">

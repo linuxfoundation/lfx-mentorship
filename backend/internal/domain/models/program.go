@@ -32,29 +32,29 @@ func (s ProgramStatus) IsValid() bool {
 
 // Program maps to the public.programs table.
 type Program struct {
-	ID                 string          `json:"id"`
-	Name               string          `json:"name"`
-	Slug               string          `json:"slug"`
-	Status             ProgramStatus   `json:"status"`
-	IsPaid             bool            `json:"is_paid"`
-	Description        *string         `json:"description,omitempty"`
-	LogoURL            *string         `json:"logo_url,omitempty"`
-	WebsiteURL         *string         `json:"website_url,omitempty"`
-	RepoLink           *string         `json:"repo_link,omitempty"`
-	CodeOfConduct      *string         `json:"code_of_conduct,omitempty"`
-	Industry           *string         `json:"industry,omitempty"`
-	Color              *string         `json:"color,omitempty"`
-	LFID               *string         `json:"lfid,omitempty"`
-	CIIProjectID       *string         `json:"cii_project_id,omitempty"`
-	AcceptApplications bool            `json:"accept_applications"`
-	TermsAndConditions bool            `json:"terms_and_conditions"`
-	ProgramTermStatus  *string         `json:"program_term_status,omitempty"`
-	DiscoverSortRank   int             `json:"discover_sort_rank"`
-	AmountRaised       float64         `json:"amount_raised"`
-	MenteeNeeds        json.RawMessage `json:"mentee_needs,omitempty"`
-	TaskTemplates      json.RawMessage `json:"task_templates,omitempty"`
-	CreatedOn          time.Time       `json:"created_on"`
-	UpdatedOn          time.Time       `json:"updated_on"`
+	ID                 string             `json:"id"`
+	Name               string             `json:"name"`
+	Slug               string             `json:"slug"`
+	Status             ProgramStatus      `json:"status"`
+	IsPaid             bool               `json:"is_paid"`
+	Description        *string            `json:"description,omitempty"`
+	LogoURL            *string            `json:"logo_url,omitempty"`
+	WebsiteURL         *string            `json:"website_url,omitempty"`
+	RepoLink           *string            `json:"repo_link,omitempty"`
+	CodeOfConduct      *string            `json:"code_of_conduct,omitempty"`
+	Industry           *string            `json:"industry,omitempty"`
+	Color              *string            `json:"color,omitempty"`
+	LFID               *string            `json:"lfid,omitempty"`
+	CIIProjectID       *string            `json:"cii_project_id,omitempty"`
+	AcceptApplications bool               `json:"accept_applications"`
+	TermsAndConditions bool               `json:"terms_and_conditions"`
+	ProgramTermStatus  *ProgramTermStatus `json:"program_term_status,omitempty"`
+	DiscoverSortRank   int                `json:"discover_sort_rank"`
+	AmountRaised       float64            `json:"amount_raised"`
+	MenteeNeeds        json.RawMessage    `json:"mentee_needs,omitempty"`
+	TaskTemplates      json.RawMessage    `json:"task_templates,omitempty"`
+	CreatedOn          time.Time          `json:"created_on"`
+	UpdatedOn          time.Time          `json:"updated_on"`
 }
 
 // ProgramCreateInput is the request body for creating a program.
@@ -81,25 +81,25 @@ type ProgramCreateInput struct {
 
 // ProgramUpdateInput is the request body for updating a program.
 type ProgramUpdateInput struct {
-	Name               *string         `json:"name,omitempty"`
-	Slug               *string         `json:"slug,omitempty"`
-	Status             *ProgramStatus  `json:"status,omitempty"`
-	IsPaid             *bool           `json:"is_paid,omitempty"`
-	Description        *string         `json:"description,omitempty"`
-	LogoURL            *string         `json:"logo_url,omitempty"`
-	WebsiteURL         *string         `json:"website_url,omitempty"`
-	RepoLink           *string         `json:"repo_link,omitempty"`
-	CodeOfConduct      *string         `json:"code_of_conduct,omitempty"`
-	Industry           *string         `json:"industry,omitempty"`
-	Color              *string         `json:"color,omitempty"`
-	LFID               *string         `json:"lfid,omitempty"`
-	CIIProjectID       *string         `json:"cii_project_id,omitempty"`
-	AcceptApplications *bool           `json:"accept_applications,omitempty"`
-	TermsAndConditions *bool           `json:"terms_and_conditions,omitempty"`
-	ProgramTermStatus  *string         `json:"program_term_status,omitempty"`
-	DiscoverSortRank   *int            `json:"discover_sort_rank,omitempty"`
-	MenteeNeeds        json.RawMessage `json:"mentee_needs,omitempty"`
-	TaskTemplates      json.RawMessage `json:"task_templates,omitempty"`
+	Name               *string            `json:"name,omitempty"`
+	Slug               *string            `json:"slug,omitempty"`
+	Status             *ProgramStatus     `json:"status,omitempty"`
+	IsPaid             *bool              `json:"is_paid,omitempty"`
+	Description        *string            `json:"description,omitempty"`
+	LogoURL            *string            `json:"logo_url,omitempty"`
+	WebsiteURL         *string            `json:"website_url,omitempty"`
+	RepoLink           *string            `json:"repo_link,omitempty"`
+	CodeOfConduct      *string            `json:"code_of_conduct,omitempty"`
+	Industry           *string            `json:"industry,omitempty"`
+	Color              *string            `json:"color,omitempty"`
+	LFID               *string            `json:"lfid,omitempty"`
+	CIIProjectID       *string            `json:"cii_project_id,omitempty"`
+	AcceptApplications *bool              `json:"accept_applications,omitempty"`
+	TermsAndConditions *bool              `json:"terms_and_conditions,omitempty"`
+	ProgramTermStatus  *ProgramTermStatus `json:"program_term_status,omitempty"`
+	DiscoverSortRank   *int               `json:"discover_sort_rank,omitempty"`
+	MenteeNeeds        json.RawMessage    `json:"mentee_needs,omitempty"`
+	TaskTemplates      json.RawMessage    `json:"task_templates,omitempty"`
 }
 
 // ProgramSkill maps to the public.program_skills table.
@@ -129,4 +129,39 @@ type ProgramFundingStats struct {
 type ProgramFundingStatsUpsert struct {
 	ProgramID         string
 	AmountRaisedCents int64
+}
+
+// ProgramCatalogTerm is a program term with the computed public discovery label.
+type ProgramCatalogTerm struct {
+	ProgramTerm
+	DiscoveryLabel string `json:"discovery_label"`
+}
+
+// ProgramCatalogMentor is an active mentor with display fields from users and user_profiles.
+type ProgramCatalogMentor struct {
+	ID           string  `json:"id"`
+	UserID       string  `json:"user_id"`
+	Name         *string `json:"name,omitempty"`
+	AvatarURL    *string `json:"avatar_url,omitempty"`
+	Introduction *string `json:"introduction,omitempty"`
+}
+
+// ProgramCatalogMentee is an accepted/active/graduated mentee with display fields from users, profiles, and terms.
+type ProgramCatalogMentee struct {
+	UserID       string  `json:"user_id"`
+	Name         *string `json:"name,omitempty"`
+	AvatarURL    *string `json:"avatar_url,omitempty"`
+	Introduction *string `json:"introduction,omitempty"`
+	Email        *string `json:"email,omitempty"`
+	Status       string  `json:"status"` // accepted | active | graduated
+	TermID       string  `json:"term_id"`
+	TermName     string  `json:"term_name"`
+}
+
+// ProgramCatalogItem is the public catalog shape: a program plus nested skills, terms, and mentors.
+type ProgramCatalogItem struct {
+	Program
+	Skills  []string               `json:"skills"`
+	Terms   []ProgramCatalogTerm   `json:"terms"`
+	Mentors []ProgramCatalogMentor `json:"mentors"`
 }

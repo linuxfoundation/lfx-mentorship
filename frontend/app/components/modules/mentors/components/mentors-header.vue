@@ -20,7 +20,7 @@ SPDX-License-Identifier: MIT
           />
           <span class="text-lg font-medium leading-7 text-accent-800">Mentors</span>
         </div>
-        <h1 class="font-secondary font-light md:text-5xl text-4xl leading-normal text-neutral-900">
+        <h1 class="font-secondary font-light md:text-4xl text-3xl leading-normal text-neutral-900">
           Mentors
           <p
             v-if="catalogSummary"
@@ -36,7 +36,7 @@ SPDX-License-Identifier: MIT
       <lfx-input
         :model-value="searchTerm"
         class="!rounded-full flex-1"
-        placeholder="Search mentors by name, skill or project"
+        placeholder="Search mentors by name"
         @update:model-value="$emit('update:searchTerm', String($event))"
       >
         <template #prefix>
@@ -60,7 +60,7 @@ SPDX-License-Identifier: MIT
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted } from 'vue';
-import { formatMentorsCatalogSummary } from '../config/mentors-header.config';
+import { formatMentorsSummary } from '../config/mentors-header.config';
 import LfxIcon from '~/components/uikit/icon/icon.vue';
 import LfxInput from '~/components/uikit/input/input.vue';
 import SkillFilterSelect from '~/components/shared/skill-filter-select.vue';
@@ -71,15 +71,15 @@ const props = defineProps<{
   skill: string;
   skillOptions: string[];
   mentorCount?: number;
-  projectCount?: number;
+  programCount?: number;
 }>();
 
 const catalogSummary = computed(() => {
-  if (props.mentorCount == null || props.projectCount == null) {
+  if (props.mentorCount == null || props.programCount == null) {
     return '';
   }
 
-  return formatMentorsCatalogSummary(props.mentorCount, props.projectCount);
+  return formatMentorsSummary(props.mentorCount, props.programCount);
 });
 
 defineEmits<{

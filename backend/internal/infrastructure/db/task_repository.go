@@ -236,13 +236,13 @@ func (r *TaskRepository) CountPrerequisiteTasksByApplication(ctx context.Context
 	defer rows.Close()
 
 	for rows.Next() {
-		var status string
+		var status models.TaskStatus
 		if scanErr := rows.Scan(&status); scanErr != nil {
 			span.RecordError(scanErr)
 			return 0, 0, fmt.Errorf("scan task status: %w", scanErr)
 		}
 		total++
-		if status == "complete" {
+		if status == models.TaskStatusComplete {
 			complete++
 		}
 	}

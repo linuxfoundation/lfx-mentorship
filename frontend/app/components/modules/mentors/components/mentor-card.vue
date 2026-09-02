@@ -6,23 +6,24 @@ SPDX-License-Identifier: MIT
   <article
     class="relative flex flex-col justify-between border border-neutral-200 rounded-2xl p-6 h-full min-h-[260px] bg-white transition-shadow duration-200 hover:shadow-lg"
   >
-    <div class="flex flex-col gap-5 w-full">
+    <div class="flex flex-col gap-5 w-full justify-between flex-grow">
       <div class="flex items-start gap-3">
         <profile-initials-avatar
           :name="mentor.name"
-          size="large"
+          :src="mentor.avatarUrl"
+          size="normal"
         />
         <div class="flex flex-col gap-0.5 min-w-0">
-          <h3 class="text-lg font-semibold text-neutral-900 leading-7 truncate">
+          <h3 class="text-base font-normal text-neutral-900 leading-5 truncate">
             {{ mentor.name }}
           </h3>
-          <p class="text-sm text-neutral-500 leading-5">
+          <p class="text-xs text-neutral-500 leading-4">
             {{ mentor.sinceLabel }}
           </p>
         </div>
       </div>
 
-      <p class="text-sm text-neutral-600 leading-5 line-clamp-3">
+      <p class="text-xs text-neutral-600 leading-4 line-clamp-5">
         {{ mentor.bio }}
       </p>
 
@@ -30,25 +31,27 @@ SPDX-License-Identifier: MIT
         v-if="mentor.skills.length"
         class="flex flex-wrap gap-2"
       >
-        <lfx-chip
+        <lfx-tag
           v-for="skill in visibleSkills"
           :key="skill"
-          type="default"
-          size="xsmall"
+          variation="neutral"
+          type="outline"
+          size="small"
         >
           {{ skill }}
-        </lfx-chip>
+        </lfx-tag>
         <lfx-tooltip
           v-if="overflowSkills.length"
           placement="top"
           class="inline-flex"
         >
-          <lfx-chip
-            type="default"
-            size="xsmall"
+          <lfx-tag
+            variation="neutral"
+            type="outline"
+            size="small"
           >
             +{{ overflowSkills.length }}
-          </lfx-chip>
+          </lfx-tag>
           <template #content>
             <div class="flex flex-col gap-1 text-xs">
               <span
@@ -63,7 +66,7 @@ SPDX-License-Identifier: MIT
       </div>
     </div>
 
-    <div class="pt-6 mt-6 border-t border-neutral-100">
+    <div class="mt-3.5">
       <NuxtLink
         :to="mentorPath(mentor.id)"
         class="w-full"
@@ -87,7 +90,6 @@ import { mentorPath } from '~/config/routes';
 import type { Mentor } from '~/types/mentor.types';
 import ProfileInitialsAvatar from '~/components/shared/directory/profile-initials-avatar.vue';
 import LfxButton from '~/components/uikit/button/button.vue';
-import LfxChip from '~/components/uikit/chip/chip.vue';
 import LfxTooltip from '~/components/uikit/tooltip/tooltip.vue';
 
 const props = defineProps<{ mentor: Mentor }>();

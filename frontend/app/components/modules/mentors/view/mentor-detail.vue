@@ -23,7 +23,7 @@ SPDX-License-Identifier: MIT
       <mentor-detail-header :mentor="mentor" />
 
       <section class="space-y-4">
-        <h2 class="font-secondary text-2xl md:text-3xl font-light text-neutral-900">Programs</h2>
+        <h2 class="font-secondary text-xl md:text-2xl font-normal text-neutral-900">Programs</h2>
         <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <profile-program-card
             v-for="program in mentor.programs"
@@ -31,13 +31,19 @@ SPDX-License-Identifier: MIT
             :program="program"
           />
         </div>
+        <p
+          v-if="!mentor.programs.length"
+          class="text-sm text-neutral-500"
+        >
+          No programs yet.
+        </p>
       </section>
 
       <section
         v-if="mentor.currentMentees.length"
         class="space-y-4"
       >
-        <h2 class="font-secondary text-2xl md:text-3xl font-light text-neutral-900">Mentees</h2>
+        <h2 class="font-secondary text-xl md:text-2xl font-normal text-neutral-900">Mentees</h2>
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3">
           <profile-mentee-card
             v-for="mentee in mentor.currentMentees"
@@ -51,7 +57,7 @@ SPDX-License-Identifier: MIT
         v-if="mentor.graduatedMentees.length"
         class="space-y-4"
       >
-        <h2 class="font-secondary text-2xl md:text-3xl font-light text-neutral-900">Graduated Mentees</h2>
+        <h2 class="font-secondary text-xl md:text-2xl font-normal text-neutral-900">Graduated Mentees</h2>
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3">
           <profile-mentee-card
             v-for="mentee in mentor.graduatedMentees"
@@ -65,17 +71,31 @@ SPDX-License-Identifier: MIT
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, watch } from 'vue';
 import MentorDetailHeader from '../components/mentor-detail-header.vue';
 import ProfileMenteeCard from '~/components/shared/directory/profile-mentee-card.vue';
 import ProfileProgramCard from '~/components/shared/directory/profile-program-card.vue';
 import { useMentor } from '~/composables/mentors/useMentor';
 import LfxSpinner from '~/components/uikit/spinner/spinner.vue';
+import { ToastTypesEnum } from '~/components/uikit/toast/types/toast.types';
+import useToastService from '~/components/uikit/toast/toast.service';
+import { getFetchErrorMessage } from '~/utils/fetch-error';
 
 const props = defineProps<{ mentorId: string }>();
 
 const mentorId = computed(() => props.mentorId);
 const { data: mentor, isLoading, error } = useMentor(mentorId);
+const { showToast } = useToastService();
+
+watch(error, (err) => {
+  if (!import.meta.client || !err) return;
+  const statusCode =
+    typeof err === 'object' && err !== null && 'statusCode' in err
+      ? Number((err as { statusCode?: number }).statusCode)
+      : 0;
+  const fallback = statusCode === 404 ? 'Mentor not found.' : 'Failed to load mentor. Please try again.';
+  showToast(getFetchErrorMessage(err, fallback), ToastTypesEnum.negative);
+});
 
 useHead({
   title: computed(() => mentor.value?.name ?? 'Mentor'),

@@ -31,18 +31,27 @@ func NewProgramMemberService(repo domain.ProgramMemberRepository, programRepo do
 }
 
 // memberTransitions defines valid next statuses for each member status.
-var memberTransitions = map[string]map[string]bool{
-	"invited":   {"active": true, "declined": true, "pending": true},
-	"requested": {"active": true, "declined": true, "pending": true},
-	"active":    {"withdrawn": true, "pending": true},
-	"pending":   {"active": true, "declined": true},
-	"declined":  {},
-	"withdrawn": {},
-}
-
-var validMemberTypes = map[string]bool{
-	"program_admin": true,
-	"mentor":        true,
+var memberTransitions = map[models.ProgramMemberStatus]map[models.ProgramMemberStatus]bool{
+	models.ProgramMemberStatusInvited: {
+		models.ProgramMemberStatusActive:   true,
+		models.ProgramMemberStatusDeclined: true,
+		models.ProgramMemberStatusPending:  true,
+	},
+	models.ProgramMemberStatusRequested: {
+		models.ProgramMemberStatusActive:   true,
+		models.ProgramMemberStatusDeclined: true,
+		models.ProgramMemberStatusPending:  true,
+	},
+	models.ProgramMemberStatusActive: {
+		models.ProgramMemberStatusWithdrawn: true,
+		models.ProgramMemberStatusPending:   true,
+	},
+	models.ProgramMemberStatusPending: {
+		models.ProgramMemberStatusActive:   true,
+		models.ProgramMemberStatusDeclined: true,
+	},
+	models.ProgramMemberStatusDeclined:  {},
+	models.ProgramMemberStatusWithdrawn: {},
 }
 
 // GetByID returns the program member with the given ID.
@@ -83,7 +92,7 @@ func (s *ProgramMemberService) Create(ctx context.Context, programID string, inp
 	if input.UserID == "" {
 		return nil, fmt.Errorf("%w: user_id is required", domain.ErrInvalidInput)
 	}
-	if !validMemberTypes[input.MemberType] {
+	if !input.MemberType.IsValid() {
 		return nil, fmt.Errorf("%w: member_type must be program_admin or mentor", domain.ErrInvalidInput)
 	}
 
@@ -93,21 +102,19 @@ func (s *ProgramMemberService) Create(ctx context.Context, programID string, inp
 		span.RecordError(err)
 		return nil, fmt.Errorf("get program: %w", err)
 	}
-	if prog.Status != "published" {
+	if prog.Status != models.ProgramStatusPublished {
 		return nil, fmt.Errorf("%w: program must be published before adding members", domain.ErrInvalidInput)
 	}
 
 	// Mentors are placed in 'invited' status and notified; program_admins are 'active' immediately.
-	if input.MemberType == "mentor" {
-		if input.Status == nil {
-			s := "invited"
-			input.Status = &s
+	if input.Status == nil {
+		defaultStatus := models.ProgramMemberStatusActive
+		if input.MemberType == models.MemberTypeMentor {
+			defaultStatus = models.ProgramMemberStatusInvited
 		}
-	} else {
-		if input.Status == nil {
-			s := "active"
-			input.Status = &s
-		}
+		input.Status = &defaultStatus
+	} else if !input.Status.IsValid() {
+		return nil, fmt.Errorf("%w: invalid member status %q", domain.ErrInvalidInput, *input.Status)
 	}
 
 	input.ID = uuid.New().String()
@@ -118,7 +125,7 @@ func (s *ProgramMemberService) Create(ctx context.Context, programID string, inp
 	}
 
 	// Send invite notification for mentors.
-	if input.MemberType == "mentor" && s.inviteSecret != "" {
+	if input.MemberType == models.MemberTypeMentor && s.inviteSecret != "" {
 		token, tokenErr := auth.GenerateInviteToken(programID, input.UserID, s.inviteSecret)
 		if tokenErr != nil {
 			span.RecordError(tokenErr)
@@ -138,19 +145,25 @@ func (s *ProgramMemberService) Update(ctx context.Context, id string, input mode
 	span.SetAttributes(attribute.String("member.id", id))
 
 	if input.Status != nil {
+		// Validate before the transition lookup: an unknown status matches no
+		// edge in memberTransitions and would otherwise surface as a 409
+		// conflict rather than a 400 naming the field.
+		if !input.Status.IsValid() {
+			return nil, fmt.Errorf("%w: invalid member status %q", domain.ErrInvalidInput, *input.Status)
+		}
 		current, err := s.repo.GetByID(ctx, id)
 		if err != nil {
 			span.RecordError(err)
 			return nil, fmt.Errorf("get member: %w", err)
 		}
-		currentStatus := ""
+		var currentStatus models.ProgramMemberStatus
 		if current.Status != nil {
 			currentStatus = *current.Status
 		}
 		if !memberTransitions[currentStatus][*input.Status] {
 			return nil, fmt.Errorf("%w: cannot transition member from %q to %q", domain.ErrInvalidStateTransition, currentStatus, *input.Status)
 		}
-		if *input.Status == "declined" {
+		if *input.Status == models.ProgramMemberStatusDeclined {
 			s.notifier.NotifyMentorDeclined(ctx, current.ProgramID, current.UserID)
 		}
 	}
@@ -186,7 +199,7 @@ func (s *ProgramMemberService) AcceptInvite(ctx context.Context, token string) (
 	}
 	var memberID string
 	for _, m := range members {
-		if m.UserID == userID && m.Status != nil && *m.Status == "invited" {
+		if m.UserID == userID && m.Status != nil && *m.Status == models.ProgramMemberStatusInvited {
 			memberID = m.ID
 			break
 		}
@@ -195,7 +208,7 @@ func (s *ProgramMemberService) AcceptInvite(ctx context.Context, token string) (
 		return nil, fmt.Errorf("%w: no pending invite found for this user", domain.ErrInvalidInput)
 	}
 
-	activeStatus := "active"
+	activeStatus := models.ProgramMemberStatusActive
 	m, err := s.repo.Update(ctx, memberID, models.ProgramMemberUpdateInput{Status: &activeStatus})
 	if err != nil {
 		span.RecordError(err)
@@ -226,7 +239,7 @@ func (s *ProgramMemberService) DeclineInvite(ctx context.Context, token string) 
 	}
 	var memberID string
 	for _, m := range members {
-		if m.UserID == userID && m.Status != nil && *m.Status == "invited" {
+		if m.UserID == userID && m.Status != nil && *m.Status == models.ProgramMemberStatusInvited {
 			memberID = m.ID
 			break
 		}
@@ -235,7 +248,7 @@ func (s *ProgramMemberService) DeclineInvite(ctx context.Context, token string) 
 		return fmt.Errorf("%w: no pending invite found for this user", domain.ErrInvalidInput)
 	}
 
-	declinedStatus := "declined"
+	declinedStatus := models.ProgramMemberStatusDeclined
 	if _, err := s.repo.Update(ctx, memberID, models.ProgramMemberUpdateInput{Status: &declinedStatus}); err != nil {
 		span.RecordError(err)
 		return fmt.Errorf("decline invite: %w", err)

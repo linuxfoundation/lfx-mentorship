@@ -25,12 +25,32 @@ type UserProfileFilter struct {
 	ProfileType string // mentor | mentee
 }
 
-// ProgramFilter constrains list queries for programs.
-type ProgramFilter struct {
+// MenteeFilter constrains public mentee directory queries.
+type MenteeFilter struct {
 	Limit  int
 	Offset int
-	Status string // pending | published | archived
-	Search string // ilike on name
+	Search string // case-insensitive match on mentee name
+	Skill  string // case-insensitive exact match on a mentee skill
+	Status string // active | graduated; omit or all for every accepted mentee
+}
+
+// MentorFilter constrains public mentor directory queries.
+type MentorFilter struct {
+	Limit  int
+	Offset int
+	Search string // case-insensitive match on mentor name
+	Skill  string // case-insensitive exact match on a mentor skill
+}
+
+// ProgramFilter constrains list queries for programs.
+type ProgramFilter struct {
+	Limit           int
+	Offset          int
+	Status          string // programs.status: draft | submitted | published | hidden | rejected | archived
+	Search          string // ilike on name
+	Skill           string // catalog only: case-insensitive exact match on a program skill
+	DiscoveryStatus string // catalog only: acceptance | in-progress | completed
+	SortBy          string // catalog only: accepting_first | completed_first | name_asc | name_desc | updated_oldest | updated_newest
 }
 
 // ProgramTermFilter constrains list queries for program terms.

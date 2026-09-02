@@ -7,7 +7,16 @@ export type MenteeStatus = (typeof MENTEE_STATUSES)[number];
 
 export type MenteeStatusFilter = 'all' | MenteeStatus;
 
-export const PROFILE_PROGRAM_STATUSES = ['accepting', 'closed', 'graduated', 'active'] as const;
+export const PROFILE_PROGRAM_STATUSES = [
+  'accepting',
+  'closed',
+  'graduated',
+  'active',
+  'open-soon',
+  'acceptance',
+  'in-progress',
+  'completed',
+] as const;
 
 export type ProfileProgramStatus = (typeof PROFILE_PROGRAM_STATUSES)[number];
 
@@ -18,10 +27,10 @@ export interface DirectoryMentorRef {
   avatarUrl?: string;
 }
 
-export interface DirectoryProjectRef {
+export interface DirectoryProgramRef {
   id: string;
   name: string;
-  /** Short foundation / org label shown before the project name, e.g. "CNCF". */
+  /** Short foundation / org label shown before the Program name, e.g. "CNCF". */
   foundationLabel: string;
 }
 
@@ -50,37 +59,30 @@ export interface ProfileProgram {
 export interface Mentee {
   id: string;
   name: string;
-  bio: string;
+  introduction: string;
   skills: string[];
-  status: MenteeStatus;
+  status?: MenteeStatus;
   /** Display label, e.g. "Since Aug. 2023". */
   sinceLabel: string;
   /** ISO date used for sorting / filtering. */
   joinedAt: string;
-  project: DirectoryProjectRef;
+  program: DirectoryProgramRef;
   mentors: DirectoryMentorRef[];
   avatarUrl?: string;
-}
-
-export interface MenteeStats {
-  programs: number;
-  termsCompleted: number;
-  mentors: number;
 }
 
 export interface MenteeDetail extends Mentee {
   githubUrl?: string;
   linkedinUrl?: string;
-  stats: MenteeStats;
   programs: ProfileProgram[];
 }
 
 export interface MenteesListResponse {
   data: Mentee[];
   total: number;
-  skills: string[];
-  /** Unfiltered catalog size for header summary. */
+}
+
+export interface MenteesSummaryResponse {
   menteeCount: number;
-  /** Unique projects in the catalog for header summary. */
-  projectCount: number;
+  programCount: number;
 }

@@ -34,6 +34,8 @@ Key notes
 - The enrollments table no longer exists; applications now covers the full mentee
   lifecycle (pending → accepted → active → graduated|withdrawn).
 - attendance_type is not captured in DynamoDB; it is migrated as NULL.
+- DynamoDB member/mentee status "approved" maps to Postgres "active".
+- DynamoDB user-profile type for mentees maps to Postgres profile_type "mentee".
 - tasks.application_id is resolved post-scan by matching (program_term_id, assignee_id)
   against inserted applications. Tasks with no match get application_id=NULL.
 - All INSERTs use ON CONFLICT … DO UPDATE (idempotent; safe to re-run).
@@ -258,7 +260,16 @@ _VALID_APP_STATUSES = {"pending", "accepted", "active", "declined", "withdrawn",
 def _map_application_status(dynamo_status: str | None) -> str:
     """Map DynamoDB mentee status → applications.status."""
     s = (dynamo_status or "pending").lower()
+    if s == "approved":
+        return "active"
     return s if s in _VALID_APP_STATUSES else "pending"
+
+
+def _map_profile_type(dynamo_type: str | None) -> str:
+    """Map DynamoDB user-profile type → user_profiles.profile_type."""
+    if (dynamo_type or "").strip().lower() == "mentor":
+        return "mentor"
+    return "mentee"
 
 
 # ---------------------------------------------------------------------------
@@ -377,7 +388,7 @@ def migrate_user_profiles(cur, profiles: list, known_user_ids: set) -> dict:
             (
                 pid,
                 uid,
-                (p.get("type") or "mentee").strip(),
+                _map_profile_type(p.get("type")),
                 slug,
                 (p.get("firstName") or "").strip() or None,
                 (p.get("lastName") or "").strip() or None,
@@ -659,6 +670,8 @@ def migrate_program_terms(cur, terms: list, known_program_ids: set) -> set:
 
 _VALID_MEMBER_TYPES    = {"program_admin", "mentor"}
 _VALID_MEMBER_STATUSES = {"invited", "requested", "pending", "active", "declined", "withdrawn"}
+# DynamoDB used "approved" for accepted mentors; Postgres stores that as "active".
+_MEMBER_STATUS_MAP = {"approved": "active"}
 
 
 def migrate_program_members(
@@ -697,7 +710,8 @@ def migrate_program_members(
         if member_type not in _VALID_MEMBER_TYPES:
             member_type = "mentor"
         raw_status = (m.get("status") or "").strip() or None
-        status = raw_status if raw_status in _VALID_MEMBER_STATUSES else None
+        mapped_status = _MEMBER_STATUS_MAP.get(raw_status, raw_status) if raw_status else None
+        status = mapped_status if mapped_status in _VALID_MEMBER_STATUSES else None
         member_rows.append(
             (
                 mid,
