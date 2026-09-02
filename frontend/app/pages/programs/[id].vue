@@ -42,7 +42,7 @@ const { canonical, image } = usePublicSeo({
 
 useJsonLd(
   computed(() => {
-    if (!program.value) return null;
+    if (!program.value || !canonical.value) return null;
     return courseJsonLd({
       name: program.value.name,
       description: truncateMetaDescription(
