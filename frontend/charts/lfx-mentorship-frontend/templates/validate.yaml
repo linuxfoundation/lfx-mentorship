@@ -18,3 +18,17 @@ catch it at render time instead.
 {{- if not .Values.config.NUXT_API_BASE_URL }}
 {{- fail "\n\nvalues.yaml: config.NUXT_API_BASE_URL is required — it must point at the backend Service,\ne.g. http://lfx-mentorship-backend.mentorship-backend.svc.cluster.local" }}
 {{- end }}
+
+{{/*
+Same failure mode as above: both have build-time defaults in
+setup/runtime-config.ts, so leaving them unset yields a site that serves
+traffic while silently emitting canonical and OG URLs for http://localhost:3000
+and running with development-mode behaviour. Fail the render instead.
+*/}}
+{{- if not .Values.config.NUXT_PUBLIC_APP_URL }}
+{{- fail "\n\nvalues.yaml: config.NUXT_PUBLIC_APP_URL is required — the public URL of this site,\ne.g. https://mentorship.dev.lfx.dev\nNote the NUXT_PUBLIC_ prefix: Nuxt only re-reads this name at server startup." }}
+{{- end }}
+
+{{- if not .Values.config.NUXT_PUBLIC_APP_ENV }}
+{{- fail "\n\nvalues.yaml: config.NUXT_PUBLIC_APP_ENV is required — either \"development\" or \"production\"" }}
+{{- end }}
