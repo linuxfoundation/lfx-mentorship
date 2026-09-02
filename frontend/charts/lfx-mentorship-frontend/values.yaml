@@ -10,6 +10,11 @@ image:
 
 imagePullSecrets: []
 
+# Deployment-level annotations. Defaults to the Reloader trigger so a ConfigMap
+# or Secret change restarts the pods; environments may add to or replace this.
+annotations:
+  reloader.stakater.com/auto: "true"
+
 serviceAccount:
   create: true
   automount: false
