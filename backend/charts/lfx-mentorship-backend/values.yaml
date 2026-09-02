@@ -80,6 +80,22 @@ tolerations: []
 affinity: {}
 topologySpreadConstraints: []
 
+# ── Database migration hook ──────────────────────────────────────────────────
+# Runs `/app/migrate` as a pre-install/pre-upgrade Job so schema changes land
+# before the new application image starts serving traffic.
+migrationJob:
+  enabled: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+  # Fail the release rather than hang if the DB is unreachable/misconfigured.
+  activeDeadlineSeconds: 120
+  backoffLimit: 2
+
 # ── Non-secret environment variables ────────────────────────────────────────
 # These are rendered into a ConfigMap and mounted via envFrom.
 config:
@@ -106,7 +122,17 @@ env: []
 #   LEDGER_API_KEY — bearer token for Ledger service API
 #     or individual RDS components referenced via env: above:
 #     username, password, host, port, dbname
+#   MENTOR_INVITE_SECRET — HMAC secret for signing mentor invite tokens.
+#     Required: the service exits at startup if it is not set.
 secretName: lfx-mentorship-backend-secrets
+
+# allowLocalAuthBypass — opt-in, defaults to false.
+#
+# Permits config.DISABLED_MOCK_LOCAL_PRINCIPAL / ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS
+# to be rendered. Those disable authentication entirely, so the chart refuses to
+# render them unless this is explicitly true. For local kind/minikube only —
+# never set it in an ArgoCD environment values file.
+allowLocalAuthBypass: false
 
 # createPlaceholderSecret — opt-in, defaults to false.
 #

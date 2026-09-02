@@ -26,3 +26,31 @@ No Kubernetes resource is rendered; this file only produces errors.
 {{- fail "\n\nvalues.yaml: secretName is required when fundingStatsSyncCronJob.enabled=true (must include LEDGER_API_KEY and DATABASE_DSN; Ledger project_id values are mapped to mentorship programs by program ID)." }}
 {{- end }}
 {{- end }}
+
+{{/*
+Auth bypass guard.
+
+DISABLED_MOCK_LOCAL_PRINCIPAL together with ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS
+makes the service accept a static principal for every authenticated route with
+no credentials at all. That is a local-development affordance only. Rendering
+it into a real cluster would be a complete authentication bypass, so it is
+refused unless allowLocalAuthBypass is explicitly set — which no environment
+values file in lfx-v2-argocd sets, and none ever should.
+*/}}
+{{- if or .Values.config.DISABLED_MOCK_LOCAL_PRINCIPAL (eq (toString .Values.config.ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS) "true") }}
+{{- if not .Values.allowLocalAuthBypass }}
+{{- fail "\n\nRefusing to render: the local auth bypass is enabled.\n\nconfig.DISABLED_MOCK_LOCAL_PRINCIPAL / config.ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS\ndisable authentication entirely and must never be set in a deployed environment.\n\nIf this really is a local kind/minikube cluster, opt in explicitly with:\n  --set allowLocalAuthBypass=true" }}
+{{- end }}
+{{- end }}
+
+{{/*
+Required runtime configuration. The binary exits at startup without these
+(DATABASE_DSN and MENTOR_INVITE_SECRET are hard-required; the JWT settings
+fail when the authenticator is constructed), so catch it at render time
+rather than in a crash-looping pod.
+*/}}
+{{- range $key := list "JWKS_URL" "JWT_AUDIENCE" "JWT_ISSUER" }}
+{{- if not (get $.Values.config $key) }}
+{{- fail (printf "\n\nvalues.yaml: config.%s is required — the service fails to start without it.\nSet it per environment in the ArgoCD values file." $key) }}
+{{- end }}
+{{- end }}
