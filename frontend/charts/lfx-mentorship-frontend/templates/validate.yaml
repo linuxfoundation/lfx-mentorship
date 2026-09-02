@@ -32,3 +32,14 @@ and running with development-mode behaviour. Fail the render instead.
 {{- if not .Values.config.NUXT_PUBLIC_APP_ENV }}
 {{- fail "\n\nvalues.yaml: config.NUXT_PUBLIC_APP_ENV is required — either \"development\" or \"production\"" }}
 {{- end }}
+
+{{/*
+intercomAppId is derived from appEnv when the image is built, not at server
+startup, and the image is built with no NUXT_PUBLIC_* set — so it always carries
+the development workspace id. Setting NUXT_PUBLIC_APP_ENV=production alone does
+not change it; only NUXT_PUBLIC_INTERCOM_APP_ID does. Require it in production so
+a prod deployment cannot silently report into the development Intercom workspace.
+*/}}
+{{- if and (eq .Values.config.NUXT_PUBLIC_APP_ENV "production") (not .Values.config.NUXT_PUBLIC_INTERCOM_APP_ID) }}
+{{- fail "\n\nvalues.yaml: config.NUXT_PUBLIC_INTERCOM_APP_ID is required when NUXT_PUBLIC_APP_ENV is \"production\".\nThe image bakes in the development workspace id at build time and does not re-derive it\nfrom NUXT_PUBLIC_APP_ENV at startup." }}
+{{- end }}
