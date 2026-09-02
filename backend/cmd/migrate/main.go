@@ -43,7 +43,11 @@ func main() {
 	connConfig.RuntimeParams["statement_timeout"] = "30s"
 
 	sqlDB := stdlib.OpenDB(*connConfig)
-	defer sqlDB.Close()
+	defer func() {
+		if err := sqlDB.Close(); err != nil {
+			log.Printf("close database: %v", err)
+		}
+	}()
 
 	driver, err := postgres.WithInstance(sqlDB, &postgres.Config{
 		// Pin golang-migrate's version-tracking table to "public". The driver
