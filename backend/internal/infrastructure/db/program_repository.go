@@ -28,11 +28,22 @@ func NewProgramRepository(pool *pgxpool.Pool) *ProgramRepository {
 	return &ProgramRepository{pool: pool}
 }
 
-const programCols = `
+const programSelectCols = `
+	id, name, slug, status, is_paid, description, logo_url, website_url, repo_link,
+	code_of_conduct, industry, color, lfid, cii_project_id, accept_applications,
+	terms_and_conditions, program_term_status, discover_sort_rank,
+	COALESCE(pfs.amount_raised, programs.amount_raised) AS amount_raised,
+	mentee_needs, task_templates, created_on, updated_on`
+
+const programReturningCols = `
 	id, name, slug, status, is_paid, description, logo_url, website_url, repo_link,
 	code_of_conduct, industry, color, lfid, cii_project_id, accept_applications,
 	terms_and_conditions, program_term_status, discover_sort_rank, amount_raised,
 	mentee_needs, task_templates, created_on, updated_on`
+
+const programsWithFundingFrom = `
+	FROM programs
+	LEFT JOIN program_funding_stats pfs ON pfs.program_id = programs.id`
 
 func scanProgram(row pgx.Row) (*models.Program, error) {
 	var p models.Program
@@ -55,7 +66,7 @@ func (r *ProgramRepository) GetByID(ctx context.Context, id string) (*models.Pro
 	defer span.End()
 	span.SetAttributes(attribute.String("db.program_id", id))
 
-	q := `SELECT` + programCols + ` FROM programs WHERE id = $1`
+	q := `SELECT` + programSelectCols + programsWithFundingFrom + ` WHERE programs.id = $1`
 	p, err := scanProgram(r.pool.QueryRow(ctx, q, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrProgramNotFound
@@ -73,7 +84,7 @@ func (r *ProgramRepository) GetBySlug(ctx context.Context, slug string) (*models
 	defer span.End()
 	span.SetAttributes(attribute.String("db.slug", slug))
 
-	q := `SELECT` + programCols + ` FROM programs WHERE slug = $1`
+	q := `SELECT` + programSelectCols + programsWithFundingFrom + ` WHERE programs.slug = $1`
 	p, err := scanProgram(r.pool.QueryRow(ctx, q, slug))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrProgramNotFound
@@ -103,13 +114,13 @@ func (r *ProgramRepository) List(ctx context.Context, filter models.ProgramFilte
 	where := ` WHERE 1=1`
 	if filter.Status != "" {
 		args = append(args, filter.Status)
-		where += fmt.Sprintf(` AND status = $%d`, len(args))
+		where += fmt.Sprintf(` AND programs.status = $%d`, len(args))
 	} else {
-		where += ` AND status = 'published'` // public list only shows published programs
+		where += ` AND programs.status = 'published'` // public list only shows published programs
 	}
 	if filter.Search != "" {
 		args = append(args, "%"+filter.Search+"%")
-		where += fmt.Sprintf(` AND name ILIKE $%d`, len(args))
+		where += fmt.Sprintf(` AND programs.name ILIKE $%d`, len(args))
 	}
 
 	var total int
@@ -119,8 +130,8 @@ func (r *ProgramRepository) List(ctx context.Context, filter models.ProgramFilte
 	}
 
 	args = append(args, limit, offset)
-	listQ := `SELECT` + programCols + ` FROM programs` + where +
-		fmt.Sprintf(` ORDER BY discover_sort_rank DESC, created_on DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
+	listQ := `SELECT` + programSelectCols + programsWithFundingFrom + where +
+		fmt.Sprintf(` ORDER BY programs.discover_sort_rank DESC, programs.created_on DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
 
 	rows, err := r.pool.Query(ctx, listQ, args...)
 	if err != nil {
@@ -159,7 +170,7 @@ func (r *ProgramRepository) Create(ctx context.Context, input models.ProgramCrea
 			code_of_conduct, industry, color, lfid, cii_project_id, accept_applications,
 			terms_and_conditions, mentee_needs, task_templates
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
-		RETURNING` + programCols
+		RETURNING` + programReturningCols
 
 	p, err := scanProgram(r.pool.QueryRow(ctx, q,
 		input.ID, input.Name, input.Slug, input.Status, input.IsPaid,
@@ -203,7 +214,7 @@ func (r *ProgramRepository) Update(ctx context.Context, id string, input models.
 			mentee_needs        = COALESCE($19, mentee_needs),
 			task_templates      = COALESCE($20, task_templates)
 		WHERE id = $1
-		RETURNING` + programCols
+		RETURNING` + programReturningCols
 
 	var statusVal *string
 	if input.Status != nil {
@@ -327,4 +338,73 @@ func (r *ProgramRepository) GetFundingStats(ctx context.Context, programID strin
 		return nil, fmt.Errorf("get funding stats: %w", err)
 	}
 	return &fs, nil
+}
+
+// ListFundingSyncProgramIDs returns active program IDs eligible for ledger sync.
+func (r *ProgramRepository) ListFundingSyncProgramIDs(ctx context.Context) ([]string, error) {
+	ctx, span := programTracer.Start(ctx, "db.programs.ListFundingSyncProgramIDs")
+	defer span.End()
+
+	const q = `
+		SELECT id
+		FROM programs
+		WHERE status NOT IN ('archived', 'draft')
+		ORDER BY id`
+
+	rows, err := r.pool.Query(ctx, q)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("list funding sync program IDs: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			span.RecordError(err)
+			return nil, fmt.Errorf("scan funding sync program ID: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("iterate funding sync program IDs: %w", err)
+	}
+	return ids, nil
+}
+
+// BulkUpsertFundingStats upserts one row per program in program_funding_stats.
+func (r *ProgramRepository) BulkUpsertFundingStats(ctx context.Context, rows []models.ProgramFundingStatsUpsert) (int, error) {
+	ctx, span := programTracer.Start(ctx, "db.programs.BulkUpsertFundingStats")
+	defer span.End()
+	span.SetAttributes(attribute.Int("db.batch_size", len(rows)))
+
+	if len(rows) == 0 {
+		return 0, nil
+	}
+
+	const q = `
+		INSERT INTO program_funding_stats (program_id, amount_raised, updated_on)
+		VALUES ($1, ($2::numeric / 100.0), NOW())
+		ON CONFLICT (program_id) DO UPDATE
+		SET amount_raised = EXCLUDED.amount_raised,
+		    updated_on    = NOW()`
+
+	batch := &pgx.Batch{}
+	for i := range rows {
+		batch.Queue(q, rows[i].ProgramID, rows[i].AmountRaisedCents)
+	}
+
+	br := r.pool.SendBatch(ctx, batch)
+	defer br.Close()
+
+	for i := range rows {
+		if _, err := br.Exec(); err != nil {
+			span.RecordError(err)
+			return i, fmt.Errorf("upsert program_funding_stats[%d] %s: %w", i, rows[i].ProgramID, err)
+		}
+	}
+
+	return len(rows), nil
 }

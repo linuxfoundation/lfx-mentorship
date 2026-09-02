@@ -124,3 +124,9 @@ type ProgramFundingStats struct {
 	CreatedOn    time.Time `json:"created_on"`
 	UpdatedOn    time.Time `json:"updated_on"`
 }
+
+// ProgramFundingStatsUpsert is the payload used by the funding sync job.
+type ProgramFundingStatsUpsert struct {
+	ProgramID         string
+	AmountRaisedCents int64
+}

@@ -86,6 +86,7 @@ config:
   JWKS_URL: ""
   JWT_AUDIENCE: ""
   JWT_ISSUER: ""
+  LEDGER_BASE_URL: ""
   OTEL_EXPORTER_OTLP_ENDPOINT: ""
   OTEL_SERVICE_NAME: "lfx-mentorship-backend"
 
@@ -102,6 +103,7 @@ env: []
 #
 # Expected keys in the Secret:
 #   DATABASE_DSN — full Postgres connection string
+#   LEDGER_API_KEY — bearer token for Ledger service API
 #     or individual RDS components referenced via env: above:
 #     username, password, host, port, dbname
 secretName: lfx-mentorship-backend-secrets
@@ -113,3 +115,24 @@ secretName: lfx-mentorship-backend-secrets
 # for local development (kind/minikube). If ESO is also managing this Secret
 # it MUST be configured with creationPolicy: Merge.
 createPlaceholderSecret: false
+
+# ── CronJob: program-funding-stats-sync ──────────────────────────────────────
+# Runs hourly to sync mentorship credit totals from Ledger into program_funding_stats.
+fundingStatsSyncCronJob:
+  enabled: false
+  schedule: "0 * * * *"
+  image:
+    # Defaults to same repository and tag as the main API image.
+    # Override only if building a separate image for the CronJob.
+    repository: ""
+    tag: ""
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  concurrencyPolicy: Forbid

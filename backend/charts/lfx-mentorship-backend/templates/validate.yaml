@@ -8,3 +8,12 @@ No Kubernetes resource is rendered; this file only produces errors.
 {{- if not .Values.image.tag }}
 {{- fail "\n\nvalues.yaml: image.tag is required.\nSet it to the image tag to deploy, e.g.:\n  image:\n    tag: \"abc1234\"" }}
 {{- end }}
+
+{{- if .Values.fundingStatsSyncCronJob.enabled }}
+{{- if not .Values.config.LEDGER_BASE_URL }}
+{{- fail "\n\nvalues.yaml: config.LEDGER_BASE_URL is required when fundingStatsSyncCronJob.enabled=true." }}
+{{- end }}
+{{- if not .Values.secretName }}
+{{- fail "\n\nvalues.yaml: secretName is required when fundingStatsSyncCronJob.enabled=true (must include LEDGER_API_KEY and DATABASE_DSN)." }}
+{{- end }}
+{{- end }}
