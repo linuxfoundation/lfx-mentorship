@@ -1,5 +1,5 @@
 <!--
-Copyright (c) 2025 The Linux Foundation and each contributor.
+Copyright The Linux Foundation and each contributor to LFX.
 SPDX-License-Identifier: MIT
 -->
 <template>
@@ -12,9 +12,11 @@ SPDX-License-Identifier: MIT
       />
       <div class="flex min-w-0 flex-1 flex-col gap-1">
         <p class="text-xs text-neutral-500 leading-4 truncate">{{ program.foundationLabel }}</p>
-        <h3 class="text-base font-normal text-neutral-900 leading-6 break-words">
-          {{ program.title }}
-        </h3>
+        <NuxtLink :to="programPath(program.id)">
+          <h3 class="text-base font-normal text-neutral-900 leading-6 break-words">
+            {{ program.title }}
+          </h3>
+        </NuxtLink>
       </div>
       <lfx-tag
         class="shrink-0"
@@ -35,13 +37,15 @@ SPDX-License-Identifier: MIT
       class="flex flex-col gap-2"
     >
       <p class="text-xs font-semibold uppercase tracking-wide text-neutral-500">Required skills</p>
-      <div class="flex flex-wrap gap-2">
+      <div class="flex flex-wrap gap-2 flex-grow">
         <lfx-tag
           v-for="skill in program.skills"
           :key="skill"
           variation="neutral"
           type="outline"
           size="small"
+          :title="skill"
+          class="truncate !block leading-5"
         >
           {{ skill }}
         </lfx-tag>
@@ -52,7 +56,7 @@ SPDX-License-Identifier: MIT
       v-if="program.terms.length"
       class="flex flex-col gap-2"
     >
-      <p class="text-xs font-semibold uppercase tracking-wide text-neutral-500">Terms</p>
+      <p class="text-xs font-semibold uppercase tracking-wide text-neutral-500">{{program.terms.length > 1 ? 'Terms' : 'Term'}}</p>
       <div class="flex flex-wrap gap-2">
         <div
           v-for="term in program.terms"
@@ -107,6 +111,7 @@ import { PROFILE_PROGRAM_STATUS_CONFIG } from '~/components/modules/mentees/conf
 import ProfileInitialsAvatar from '~/components/shared/directory/profile-initials-avatar.vue';
 import type { ProfileProgram } from '~/types/mentee.types';
 import LfxTag from '~/components/uikit/tag/tag.vue';
+import { programPath } from '~/config/routes';
 
 const { stripHtml } = useSanitize();
 const props = defineProps<{ program: ProfileProgram }>();

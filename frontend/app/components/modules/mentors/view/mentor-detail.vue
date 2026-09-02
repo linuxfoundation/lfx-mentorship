@@ -1,5 +1,5 @@
 <!--
-Copyright (c) 2025 The Linux Foundation and each contributor.
+Copyright The Linux Foundation and each contributor to LFX.
 SPDX-License-Identifier: MIT
 -->
 <template>
@@ -31,6 +31,12 @@ SPDX-License-Identifier: MIT
             :program="program"
           />
         </div>
+        <p
+          v-if="!mentor.programs.length"
+          class="text-sm text-neutral-500"
+        >
+          No programs yet.
+        </p>
       </section>
 
       <section
@@ -65,17 +71,31 @@ SPDX-License-Identifier: MIT
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, watch } from 'vue';
 import MentorDetailHeader from '../components/mentor-detail-header.vue';
 import ProfileMenteeCard from '~/components/shared/directory/profile-mentee-card.vue';
 import ProfileProgramCard from '~/components/shared/directory/profile-program-card.vue';
 import { useMentor } from '~/composables/mentors/useMentor';
 import LfxSpinner from '~/components/uikit/spinner/spinner.vue';
+import { ToastTypesEnum } from '~/components/uikit/toast/types/toast.types';
+import useToastService from '~/components/uikit/toast/toast.service';
+import { getFetchErrorMessage } from '~/utils/fetch-error';
 
 const props = defineProps<{ mentorId: string }>();
 
 const mentorId = computed(() => props.mentorId);
 const { data: mentor, isLoading, error } = useMentor(mentorId);
+const { showToast } = useToastService();
+
+watch(error, (err) => {
+  if (!import.meta.client || !err) return;
+  const statusCode =
+    typeof err === 'object' && err !== null && 'statusCode' in err
+      ? Number((err as { statusCode?: number }).statusCode)
+      : 0;
+  const fallback = statusCode === 404 ? 'Mentor not found.' : 'Failed to load mentor. Please try again.';
+  showToast(getFetchErrorMessage(err, fallback), ToastTypesEnum.negative);
+});
 
 useHead({
   title: computed(() => mentor.value?.name ?? 'Mentor'),

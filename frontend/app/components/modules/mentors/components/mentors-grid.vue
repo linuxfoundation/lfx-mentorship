@@ -1,5 +1,5 @@
 <!--
-Copyright (c) 2025 The Linux Foundation and each contributor.
+Copyright The Linux Foundation and each contributor to LFX.
 SPDX-License-Identifier: MIT
 -->
 <template>
@@ -15,33 +15,23 @@ SPDX-License-Identifier: MIT
     </div>
 
     <div
-      v-else-if="error"
-      class="flex items-center gap-2 text-negative-600"
-    >
-      <lfx-icon
-        name="circle-exclamation"
-        type="solid"
-        :size="16"
-      />
-      <span class="text-body-1">Failed to load mentors. Please try again.</span>
-    </div>
-
-    <div
       v-else-if="!mentors.length"
       class="flex flex-col items-center justify-center gap-4 py-24 text-neutral-500"
     >
       <lfx-icon
-        name="user-tie"
+        :name="loadFailed ? 'circle-exclamation' : 'user-tie'"
         type="light"
         :size="40"
       />
-      <p class="text-base">No mentors found.</p>
+      <p class="text-base">
+        {{ loadFailed ? 'Unable to load mentors. Please try again.' : 'No mentors found.' }}
+      </p>
     </div>
 
     <template v-else>
       <div class="grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-3">
         <mentor-card
-          v-for="mentor in visibleMentors"
+          v-for="mentor in mentors"
           :key="mentor.id"
           :mentor="mentor"
         />
@@ -54,7 +44,8 @@ SPDX-License-Identifier: MIT
         <lfx-button
           label="Load More"
           type="tertiary"
-          button-style="pill"
+          button-style="rounded"
+          :loading="isLoadingMore"
           @click="$emit('load-more')"
         />
       </div>
@@ -63,24 +54,21 @@ SPDX-License-Identifier: MIT
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
 import MentorCard from './mentor-card.vue';
 import MentorCardLoading from './mentor-card-loading.vue';
 import LfxButton from '~/components/uikit/button/button.vue';
 import LfxIcon from '~/components/uikit/icon/icon.vue';
 import type { Mentor } from '~/types/mentor.types';
 
-const props = defineProps<{
+defineProps<{
   mentors: Mentor[];
-  visibleCount: number;
+  hasMore: boolean;
   isLoading: boolean;
-  error: Error | null;
+  isLoadingMore: boolean;
+  loadFailed: boolean;
 }>();
 
 defineEmits<{ (e: 'load-more'): void }>();
-
-const visibleMentors = computed(() => props.mentors.slice(0, props.visibleCount));
-const hasMore = computed(() => props.visibleCount < props.mentors.length);
 </script>
 
 <script lang="ts">

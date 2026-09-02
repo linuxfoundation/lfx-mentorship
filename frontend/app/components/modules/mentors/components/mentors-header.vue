@@ -1,5 +1,5 @@
 <!--
-Copyright (c) 2025 The Linux Foundation and each contributor.
+Copyright The Linux Foundation and each contributor to LFX.
 SPDX-License-Identifier: MIT
 -->
 <template>
@@ -35,7 +35,7 @@ SPDX-License-Identifier: MIT
     <div class="flex flex-col gap-4 lg:flex-row lg:items-center">
       <lfx-input
         :model-value="searchTerm"
-        class="!rounded-full flex-1"
+        class="!rounded-lg flex-1"
         placeholder="Search mentors by name"
         @update:model-value="$emit('update:searchTerm', String($event))"
       >
@@ -60,7 +60,7 @@ SPDX-License-Identifier: MIT
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted } from 'vue';
-import { formatMentorsCatalogSummary } from '../config/mentors-header.config';
+import { formatMentorsSummary } from '../config/mentors-header.config';
 import LfxIcon from '~/components/uikit/icon/icon.vue';
 import LfxInput from '~/components/uikit/input/input.vue';
 import SkillFilterSelect from '~/components/shared/skill-filter-select.vue';
@@ -71,15 +71,15 @@ const props = defineProps<{
   skill: string;
   skillOptions: string[];
   mentorCount?: number;
-  projectCount?: number;
+  programCount?: number;
 }>();
 
 const catalogSummary = computed(() => {
-  if (props.mentorCount == null || props.projectCount == null) {
+  if (props.mentorCount == null || props.programCount == null) {
     return '';
   }
 
-  return formatMentorsCatalogSummary(props.mentorCount, props.projectCount);
+  return formatMentorsSummary(props.mentorCount, props.programCount);
 });
 
 defineEmits<{

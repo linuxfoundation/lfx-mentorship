@@ -11,6 +11,7 @@ export interface ProgramStatusConfig {
 
 export const PROGRAM_STATUS_CONFIG: Record<ProgramStatus, ProgramStatusConfig> = {
   acceptance: { label: 'Accepting', variation: 'positive' },
+  'open-soon': { label: 'Opens soon', variation: 'info' },
   'in-progress': { label: 'In progress', variation: 'warning' },
   completed: { label: 'Completed', variation: 'neutral' },
 };

@@ -149,6 +149,9 @@ func (s *ProgramService) GetCatalog(ctx context.Context, id string) (*models.Pro
 		span.RecordError(err)
 		return nil, fmt.Errorf("get program catalog: %w", err)
 	}
+	if item.Status != models.ProgramStatusPublished {
+		return nil, fmt.Errorf("get program catalog: %w", domain.ErrProgramNotFound)
+	}
 	applyCatalogLabels([]*models.ProgramCatalogItem{item}, time.Now())
 	return item, nil
 }
@@ -197,6 +200,9 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 
 	if input.Status != nil && !input.Status.IsValid() {
 		return nil, fmt.Errorf("%w: invalid status %q", domain.ErrInvalidInput, *input.Status)
+	}
+	if input.ProgramTermStatus != nil && !input.ProgramTermStatus.IsValid() {
+		return nil, fmt.Errorf("%w: invalid program term status %q", domain.ErrInvalidInput, *input.ProgramTermStatus)
 	}
 
 	if input.Status != nil {

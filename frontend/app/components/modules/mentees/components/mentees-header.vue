@@ -1,5 +1,5 @@
 <!--
-Copyright (c) 2025 The Linux Foundation and each contributor.
+Copyright The Linux Foundation and each contributor to LFX.
 SPDX-License-Identifier: MIT
 -->
 <template>
@@ -35,7 +35,7 @@ SPDX-License-Identifier: MIT
     <div class="flex flex-col gap-4 lg:flex-row lg:items-center">
       <lfx-input
         :model-value="searchTerm"
-        class="!rounded-full flex-1"
+        class="!rounded-lg flex-1"
         placeholder="Search mentees by name"
         @update:model-value="$emit('update:searchTerm', String($event))"
       >
@@ -76,7 +76,7 @@ SPDX-License-Identifier: MIT
             <lfx-button
               :label="selectedOption?.label ?? 'All'"
               type="outline"
-              button-style="pill"
+              button-style="rounded"
               icon="arrow-up-arrow-down"
             />
           </template>

@@ -38,6 +38,19 @@ type MenteeRepository interface {
 	GetByUserID(ctx context.Context, userID string) (*models.MenteeDetail, error)
 }
 
+// MentorRepository defines public directory reads for mentors.
+type MentorRepository interface {
+	List(ctx context.Context, filter models.MentorFilter) (*models.MentorPage, error)
+	Summary(ctx context.Context) (*models.MentorSummary, error)
+	GetByUserID(ctx context.Context, userID string) (*models.MentorDetail, error)
+}
+
+// PlatformSummaryRepository defines the read that backs the public
+// landing/marketing summary counts.
+type PlatformSummaryRepository interface {
+	Summary(ctx context.Context) (*models.PlatformSummary, error)
+}
+
 // ProgramRepository defines persistence operations for programs and related sub-resources.
 type ProgramRepository interface {
 	GetByID(ctx context.Context, id string) (*models.Program, error)

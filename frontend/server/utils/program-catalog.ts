@@ -5,11 +5,10 @@ import type {
   Program,
   ProgramMember,
   ProgramMentee,
-  ProgramStatus,
   ProgramTerm,
   TermStatus,
 } from '../../app/types/program.types';
-import { getProgramTermDisplayStatus, withActiveTerms } from '../../app/utils/program-terms';
+import { toProgramCardStatus, withActiveTerms } from '../../app/utils/program-terms';
 
 export interface ProgramCatalogTerm {
   id: string;
@@ -113,13 +112,6 @@ export function mapCatalogMentee(mentee: ProgramCatalogMentee): ProgramMentee {
   };
 }
 
-function toUiStatus(terms: ProgramTerm[]): ProgramStatus {
-  const displays = terms.map((term) => getProgramTermDisplayStatus(term));
-  if (displays.some((status) => status === 'accepting')) return 'acceptance';
-  if (displays.some((status) => status === 'opens-soon')) return 'open-soon';
-  if (terms.some((term) => term.status === 'open')) return 'in-progress';
-  return 'completed';
-}
 
 function fetchErrorStatus(error: unknown): number {
   if (typeof error === 'object' && error !== null && 'statusCode' in error) {
@@ -138,7 +130,7 @@ export function mapCatalogItemToProgram(item: ProgramCatalogItem): Program {
     description: item.description ?? '',
     logoUrl: item.logo_url,
     skills: item.skills ?? [],
-    status: toUiStatus(terms),
+    status: toProgramCardStatus(terms),
     foundation: EMPTY_FOUNDATION,
     terms,
     updatedAt: item.updated_on,

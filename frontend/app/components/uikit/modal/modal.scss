@@ -20,6 +20,10 @@
     @apply absolute top-2 -right-10;
   }
 
+  &--centered {
+    @apply items-center p-5;
+  }
+
   &--floating {
     background: none;
     @apply items-end;

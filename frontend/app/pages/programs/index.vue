@@ -1,5 +1,5 @@
 <!--
-Copyright (c) 2025 The Linux Foundation and each contributor.
+Copyright The Linux Foundation and each contributor to LFX.
 SPDX-License-Identifier: MIT
 -->
 <template>
@@ -8,18 +8,12 @@ SPDX-License-Identifier: MIT
 
 <script setup lang="ts">
 import ProgramsView from '~/components/modules/programs/view/programs.vue';
+import { FunnelEvent } from '~/composables/useFunnelAnalytics';
 
-const title = 'Programs';
-const description = 'Browse LFX Mentorship programs. Find opportunities by status, skills, and mentors.';
-
-useHead({ title });
-useSeoMeta({
-  description,
-  ogTitle: `${title} | LFX Mentorship`,
-  ogDescription: description,
-  ogType: 'website',
-  twitterCard: 'summary_large_image',
-  twitterTitle: `${title} | LFX Mentorship`,
-  twitterDescription: description,
+usePublicSeo({
+  title: 'Programs',
+  description: 'Browse LFX Mentorship programs. Find opportunities by status, skills, and mentors.',
 });
+
+useFunnelPageView(FunnelEvent.DirectoryViewed, { directory: 'programs' }, 'directory_viewed:programs');
 </script>

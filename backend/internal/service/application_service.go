@@ -47,34 +47,29 @@ func NewApplicationService(
 }
 
 // applicationTransitions maps current → allowed next statuses.
-var applicationTransitions = map[string][]string{
-	"pending":   {"accepted", "declined", "hold", "withdrawn"},
-	"hold":      {"accepted", "declined", "pending"},
-	"accepted":  {"active", "declined"},
-	"active":    {"graduated", "declined"},
-	"declined":  {"pending"}, // allow re-open by admin
-	"withdrawn": {},
-	"graduated": {},
-}
-
-var validApplicationRoles = map[string]bool{
-	"mentor": true,
-	"mentee": true,
-}
-
-var validApplicationStatuses = map[string]bool{
-	"pending":   true,
-	"accepted":  true,
-	"active":    true,
-	"declined":  true,
-	"withdrawn": true,
-	"graduated": true,
-	"hold":      true,
-}
-
-var validAttendanceTypes = map[string]bool{
-	"full_time": true,
-	"part_time": true,
+var applicationTransitions = map[models.ApplicationStatus][]models.ApplicationStatus{
+	models.ApplicationStatusPending: {
+		models.ApplicationStatusAccepted,
+		models.ApplicationStatusDeclined,
+		models.ApplicationStatusHold,
+		models.ApplicationStatusWithdrawn,
+	},
+	models.ApplicationStatusHold: {
+		models.ApplicationStatusAccepted,
+		models.ApplicationStatusDeclined,
+		models.ApplicationStatusPending,
+	},
+	models.ApplicationStatusAccepted: {
+		models.ApplicationStatusActive,
+		models.ApplicationStatusDeclined,
+	},
+	models.ApplicationStatusActive: {
+		models.ApplicationStatusGraduated,
+		models.ApplicationStatusDeclined,
+	},
+	models.ApplicationStatusDeclined:  {models.ApplicationStatusPending}, // allow re-open by admin
+	models.ApplicationStatusWithdrawn: {},
+	models.ApplicationStatusGraduated: {},
 }
 
 // GetByID returns the application with the given ID.
@@ -130,10 +125,16 @@ func (s *ApplicationService) Create(ctx context.Context, programTermID string, i
 	if input.UserID == "" {
 		return nil, fmt.Errorf("%w: user_id is required", domain.ErrInvalidInput)
 	}
-	if !validApplicationRoles[input.Role] {
+	if !input.Role.IsValid() {
 		return nil, fmt.Errorf("%w: role must be mentor or mentee", domain.ErrInvalidInput)
 	}
-	input.Status = "pending" // applications always start as pending
+	if input.ProgramTermStatus != nil && !input.ProgramTermStatus.IsValid() {
+		return nil, fmt.Errorf("%w: invalid program term status %q", domain.ErrInvalidInput, *input.ProgramTermStatus)
+	}
+	if input.AttendanceType != nil && !input.AttendanceType.IsValid() {
+		return nil, fmt.Errorf("%w: attendance_type must be full_time or part_time", domain.ErrInvalidInput)
+	}
+	input.Status = models.ApplicationStatusPending // applications always start as pending
 
 	// Application window guard (FR-016): term must be open and now within the window.
 	term, err := s.termRepo.GetByID(ctx, programTermID)
@@ -141,7 +142,7 @@ func (s *ApplicationService) Create(ctx context.Context, programTermID string, i
 		span.RecordError(err)
 		return nil, fmt.Errorf("get program term: %w", err)
 	}
-	if term.Status != "open" {
+	if term.Status != models.ProgramTermStatusOpen {
 		return nil, fmt.Errorf("%w: applications are not open for this term", domain.ErrIneligible)
 	}
 	now := time.Now()
@@ -160,10 +161,10 @@ func (s *ApplicationService) Create(ctx context.Context, programTermID string, i
 	}
 	// Reapply guard (FR-030): allow only from withdrawn, never from declined.
 	if existing != nil {
-		if existing.Status == "declined" {
+		if existing.Status == models.ApplicationStatusDeclined {
 			return nil, fmt.Errorf("%w: reapplication is not permitted from a declined application", domain.ErrConflict)
 		}
-		if existing.Status != "withdrawn" {
+		if existing.Status != models.ApplicationStatusWithdrawn {
 			return nil, fmt.Errorf("%w: an application for this term already exists (status: %s)", domain.ErrConflict, existing.Status)
 		}
 		// Remove the withdrawn record so the unique (term, user, role) constraint allows the new insert.
@@ -186,8 +187,8 @@ func (s *ApplicationService) Create(ctx context.Context, programTermID string, i
 		var templates []taskTemplate
 		if jsonErr := json.Unmarshal(prog.TaskTemplates, &templates); jsonErr == nil {
 			for _, tmpl := range templates {
-				cat := "prerequisite"
-				status := "incomplete"
+				cat := models.TaskCategoryPrerequisite
+				status := models.TaskStatusIncomplete
 				custom := false
 				termIDCopy := programTermID
 				createdBy := input.UserID
@@ -220,11 +221,14 @@ func (s *ApplicationService) Update(ctx context.Context, id string, input models
 	defer span.End()
 	span.SetAttributes(attribute.String("application.id", id))
 
-	if input.Status != nil && !validApplicationStatuses[*input.Status] {
+	if input.Status != nil && !input.Status.IsValid() {
 		return nil, fmt.Errorf("%w: invalid status %q", domain.ErrInvalidInput, *input.Status)
 	}
-	if input.AttendanceType != nil && !validAttendanceTypes[*input.AttendanceType] {
+	if input.AttendanceType != nil && !input.AttendanceType.IsValid() {
 		return nil, fmt.Errorf("%w: attendance_type must be full_time or part_time", domain.ErrInvalidInput)
+	}
+	if input.ProgramTermStatus != nil && !input.ProgramTermStatus.IsValid() {
+		return nil, fmt.Errorf("%w: invalid program term status %q", domain.ErrInvalidInput, *input.ProgramTermStatus)
 	}
 
 	if input.Status != nil {
@@ -237,8 +241,8 @@ func (s *ApplicationService) Update(ctx context.Context, id string, input models
 		next := *input.Status
 		allowed := applicationTransitions[current.Status]
 		ok := false
-		for _, s := range allowed {
-			if s == next {
+		for _, candidate := range allowed {
+			if candidate == next {
 				ok = true
 				break
 			}
@@ -248,12 +252,12 @@ func (s *ApplicationService) Update(ctx context.Context, id string, input models
 		}
 
 		// Withdrawal guard: only the applicant may self-withdraw.
-		if next == "withdrawn" && input.ActorID != "" && current.UserID != input.ActorID {
+		if next == models.ApplicationStatusWithdrawn && input.ActorID != "" && current.UserID != input.ActorID {
 			return nil, fmt.Errorf("%w: only the applicant may withdraw their application", domain.ErrForbidden)
 		}
 
 		// Accept guard: attendance_type is required when accepting.
-		if next == "accepted" {
+		if next == models.ApplicationStatusAccepted {
 			attType := input.AttendanceType
 			if attType == nil {
 				attType = current.AttendanceType
@@ -273,10 +277,10 @@ func (s *ApplicationService) Update(ctx context.Context, id string, input models
 	// Post-update side-effects.
 	if input.Status != nil {
 		switch *input.Status {
-		case "accepted":
+		case models.ApplicationStatusAccepted:
 			attType := ""
 			if a.AttendanceType != nil {
-				attType = *a.AttendanceType
+				attType = string(*a.AttendanceType)
 			}
 			s.notifier.NotifyMenteeAccepted(ctx, id, attType)
 		}

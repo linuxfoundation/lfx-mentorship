@@ -1,11 +1,11 @@
 <!--
-Copyright (c) 2025 The Linux Foundation and each contributor.
+Copyright The Linux Foundation and each contributor to LFX.
 SPDX-License-Identifier: MIT
 -->
 <template>
   <!-- Pill style: icon + label pill tabs matching Figma design -->
   <div
-    v-if="props.tabStyle === 'pill'"
+    v-if="props.tabStyle === 'pill' || props.tabStyle === 'rounded'"
     class="flex gap-4"
     role="tablist"
   >
@@ -16,12 +16,13 @@ SPDX-License-Identifier: MIT
       role="tab"
       :disabled="tab.disabled"
       :aria-selected="modelValue === tab.value"
-      class="flex items-center justify-center gap-1.5 h-9 px-3 py-1 rounded-full text-sm shrink-0 overflow-hidden transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-      :class="
+      class="flex items-center justify-center gap-1.5 h-9 px-3 py-1 text-sm shrink-0 overflow-hidden transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+      :class="[
+        props.tabStyle === 'pill' ? 'rounded-full' : 'rounded-lg',
         modelValue === tab.value
           ? 'bg-accent-100 text-neutral-900 font-semibold'
           : 'text-neutral-900 font-medium hover:bg-neutral-50'
-      "
+      ]"
       @click="emit('update:modelValue', tab.value)"
     >
       <lfx-icon
@@ -71,7 +72,7 @@ const props = withDefaults(
   defineProps<{
     modelValue: string;
     tabs: Tab[];
-    tabStyle?: 'pill' | 'default';
+    tabStyle?: 'pill' | 'default' | 'rounded';
     widthType?: 'full' | 'inline';
   }>(),
   {

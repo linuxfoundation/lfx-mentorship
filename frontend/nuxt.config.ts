@@ -5,7 +5,10 @@
 import head from './setup/head';
 import modules from './setup/modules';
 import primevue from './setup/primevue';
+import robots from './setup/robots';
 import runtimeConfig from './setup/runtime-config';
+import site from './setup/site';
+import sitemap from './setup/sitemap';
 import tailwindcss from './setup/tailwind';
 import vite from './setup/vite';
 
@@ -35,6 +38,7 @@ export default defineNuxtConfig({
     },
   ],
   plugins: [
+    '~/plugins/canonical.ts',
     '~/plugins/vue-query.ts',
     '~/plugins/primevue-toast.ts',
     '~/plugins/lfx-ui-core.client.ts',
@@ -42,7 +46,15 @@ export default defineNuxtConfig({
   ],
   css: ['~/assets/styles/main.scss'],
   primevue,
+  robots,
+  routeRules: {
+    '/apply/**': { robots: false },
+    '/account/**': { robots: false },
+    '/me/**': { robots: false },
+  },
   runtimeConfig,
+  site,
+  ...sitemap,
   tailwindcss,
   vite,
 });
