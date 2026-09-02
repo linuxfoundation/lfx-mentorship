@@ -18,8 +18,6 @@ func newProgramSvc(progRepo *stubProgRepo, termRepo *stubTermRepo, appRepo *stub
 	return service.NewProgramService(progRepo, termRepo, appRepo)
 }
 
-func strPtr(s string) *string { return &s }
-
 // ── state machine ────────────────────────────────────────────────────────────
 
 func TestProgramService_Create_AlwaysDraft(t *testing.T) {
