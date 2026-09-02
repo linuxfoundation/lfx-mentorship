@@ -16,7 +16,7 @@ Source → Target mapping
                                         (recordKind='github-profile-reservation'
                                         rows are skipped)
   jobspring-prod-projects             → programs
-                                      → program_skills   (menteeNeeds.skills[])
+                                      → program_skills   (apprenticeNeeds.skills[])
                                       → program_funding_stats (amountRaised)
   jobspring-prod-program-terms        → program_terms
   jobspring-prod-project-members      → program_members
@@ -481,6 +481,12 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
             suffix += 1
         seen_slugs.add(slug)
 
+        # The legacy platform persists this as apprenticeNeeds (see jobspring
+        # backend/user/user.go: `json:"apprenticeNeeds"`); menteeNeeds is the
+        # rewrite's name for it. Accept either, preferring the new one, and
+        # resolve once so the programs row and the skill rows below agree.
+        needs = p.get("menteeNeeds") or p.get("apprenticeNeeds")
+
         prog_rows.append(
             (
                 pid,
@@ -502,15 +508,14 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
                 (p.get("programTermStatus") or "").strip() or None,
                 _as_int(p.get("discoverSortRank")),
                 amount,
-                _to_jsonb(p.get("menteeNeeds")),  # DynamoDB field was apprenticeNeeds
+                _to_jsonb(needs),
                 _to_jsonb(p.get("taskTemplates")),
                 _parse_ts(p.get("createdOn")),
                 _parse_ts(p.get("updatedOn")),
             )
         )
 
-        needs = p.get("menteeNeeds") or p.get("apprenticeNeeds") or {}  # field renamed in new data
-        for skill in needs.get("skills") or []:
+        for skill in (needs or {}).get("skills") or []:
             if skill and str(skill).strip():
                 skill_rows.append(
                     (
