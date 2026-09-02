@@ -9,8 +9,9 @@ export const PROGRAM_TERM_DISPLAY_STATUSES = ['opens-soon', 'accepting', 'comple
 export type ProgramTermDisplayStatus = (typeof PROGRAM_TERM_DISPLAY_STATUSES)[number];
 
 /**
- * Terms currently accepting applications: status is open, the start
- * date has been reached, and the close date has not arrived yet.
+ * Terms currently accepting applications: status is open and now is
+ * inside the application window, inclusive on both ends (same as
+ * Postgres `NOW() BETWEEN application_start_date AND application_end_date`).
  */
 export function getActiveTerms(terms: ProgramTerm[], now: Date = new Date()): ProgramTerm[] {
   const nowMs = now.getTime();
@@ -22,7 +23,7 @@ export function getActiveTerms(terms: ProgramTerm[], now: Date = new Date()): Pr
     const closeMs = parseTime(term.applicationsCloseAt);
     if (startMs === null || closeMs === null) return false;
 
-    return startMs <= nowMs && nowMs < closeMs;
+    return startMs <= nowMs && nowMs <= closeMs;
   });
 }
 
@@ -62,7 +63,7 @@ export function getProgramTermDisplayStatus(
     applicationsStartMs !== null &&
     applicationsCloseMs !== null &&
     applicationsStartMs <= nowMs &&
-    nowMs < applicationsCloseMs
+    nowMs <= applicationsCloseMs
   ) {
     return 'accepting';
   }

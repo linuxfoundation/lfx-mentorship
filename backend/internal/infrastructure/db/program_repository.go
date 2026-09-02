@@ -169,8 +169,7 @@ const (
 		  AND pt.status = 'open'
 		  AND pt.application_start_date IS NOT NULL
 		  AND pt.application_end_date IS NOT NULL
-		  AND pt.application_start_date <= NOW()
-		  AND pt.application_end_date >= NOW()
+		  AND NOW() BETWEEN pt.application_start_date AND pt.application_end_date
 	)`
 	sqlHasComingSoonTerm = `EXISTS (
 		SELECT 1 FROM program_terms pt
