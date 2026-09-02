@@ -95,8 +95,18 @@ config:
   NUXT_API_BASE_URL: ""
   NUXT_PUBLIC_APP_ENV: "" # set per environment, e.g. development / production
   NUXT_PUBLIC_APP_URL: "" # set per environment, e.g. https://mentorship.dev.lfx.dev
-  NUXT_PUBLIC_SELF_SERVE_URL: ""
-  NUXT_PUBLIC_CROWDFUNDING_URL: ""
+  # NUXT_PUBLIC_SELF_SERVE_URL and NUXT_PUBLIC_CROWDFUNDING_URL are deliberately
+  # absent rather than empty: an empty value overrides the image's baked-in
+  # fallback with "", which turns the cross-service links in the header and on
+  # the program page into same-origin paths this site does not serve. Set them
+  # per environment instead — see values/{dev,staging,prod} in lfx-v2-argocd.
+  #
+  # NUXT_PUBLIC_INTERCOM_APP_ID must be set explicitly in production. The image
+  # is built with no NUXT_PUBLIC_* set, so setup/runtime-config.ts derives
+  # intercomAppId from the build-time appEnv ("development") and bakes the dev
+  # workspace id into the bundle; unlike the URLs above it is not re-derived
+  # from NUXT_PUBLIC_APP_ENV at startup. templates/validate.yaml enforces this.
+  NUXT_PUBLIC_INTERCOM_APP_ID: ""
 
 # ── Additional environment variables ─────────────────────────────────────────
 # Rendered as a Kubernetes env: list on the Deployment. Supports the full env
