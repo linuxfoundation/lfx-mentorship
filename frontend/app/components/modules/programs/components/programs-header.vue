@@ -50,7 +50,7 @@ SPDX-License-Identifier: MIT
         <lfx-tabs
           :model-value="activeStatus"
           :tabs="PROGRAM_FILTER_TABS"
-          tab-style="rounded"
+          tab-style="pill"
           @update:model-value="$emit('update:activeStatus', $event as ProgramStatusFilter)"
         />
       </div>
