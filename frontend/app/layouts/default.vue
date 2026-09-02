@@ -19,4 +19,13 @@ import MentorshipHeader from '~/components/shared/layout/header.vue';
 import MentorshipFooter from '~/components/shared/layout/footer.vue';
 import ShareModalGlobal from '~/components/shared/components/share/share-modal-global.vue';
 import LfxToast from '~/components/uikit/toast/toast.vue';
+import { organizationJsonLd, siteOrigin } from '~/utils/seo';
+
+const config = useRuntimeConfig();
+const origin = computed(() => siteOrigin(String(config.public.appUrl)));
+
+useJsonLd(
+  computed(() => organizationJsonLd(origin.value)),
+  'json-ld-organization',
+);
 </script>
