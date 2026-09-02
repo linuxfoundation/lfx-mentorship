@@ -270,6 +270,7 @@ func (r *ApplicationRepository) CountBlockingAppsForProgram(ctx context.Context,
 	span.SetAttributes(attribute.String("db.program_id", programID))
 
 	var count int
+	// NOTE: status literals must stay in sync with models.ApplicationStatus.
 	const q = `
 		SELECT COUNT(*) FROM applications a
 		JOIN program_terms pt ON pt.id = a.program_term_id
@@ -289,6 +290,7 @@ func (r *ApplicationRepository) CountAcceptedByTerm(ctx context.Context, termID 
 	span.SetAttributes(attribute.String("db.term_id", termID))
 
 	var count int
+	// NOTE: status literals must stay in sync with models.ApplicationStatus.
 	const q = `SELECT COUNT(*) FROM applications WHERE program_term_id = $1 AND status IN ('accepted', 'active')`
 	if err := r.pool.QueryRow(ctx, q, termID).Scan(&count); err != nil {
 		span.RecordError(err)
@@ -320,6 +322,7 @@ func (r *ApplicationRepository) BulkDeclineByTerm(ctx context.Context, termID st
 	defer span.End()
 	span.SetAttributes(attribute.String("db.term_id", termID))
 
+	// NOTE: status literals must stay in sync with models.ApplicationStatus.
 	const q = `
 		UPDATE applications SET status = 'declined'
 		WHERE program_term_id = $1 AND status = 'pending'
@@ -348,6 +351,7 @@ func (r *ApplicationRepository) ListPastMenteesByTerm(ctx context.Context, termI
 	defer span.End()
 	span.SetAttributes(attribute.String("db.term_id", termID))
 
+	// NOTE: status literals must stay in sync with models.ApplicationStatus.
 	q := `SELECT ` + applicationCols + ` FROM applications WHERE program_term_id = $1 AND status IN ('accepted', 'active', 'graduated') ORDER BY created_on`
 	rows, err := r.pool.Query(ctx, q, termID)
 	if err != nil {
