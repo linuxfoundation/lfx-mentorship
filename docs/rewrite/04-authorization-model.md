@@ -97,7 +97,7 @@ type mentorship_program
     define mentor: [user]
     # LF staff who approve a submitted program for publication (AQ-5/AQ-6).
     # Deliberately NOT part of `manager` — approving is not managing.
-    # @fgadoc:jtbd Approve or reject a pending mentorship program
+    # @fgadoc:jtbd Approve or reject a submitted mentorship program
     define program_approver: [user]
     # union helper (cf. meetings_creator, inviter): "may act on this program's children"
     define manager: writer or mentor
@@ -185,7 +185,7 @@ Two tuples per application/task (owner + parent), a handful per program. At Ment
 
 | Transition | Postgres | FGA (via fga-sync) |
 | --- | --- | --- |
-| Program created (`draft`) | `programs` + `program_members` rows | `update_access`: writers, mentors, approvers, `project` reference — **not** public |
+| Program created (`draft`) | `programs` + `program_members` rows | `update_access` with `writer`, `mentor`, `program_approver`, and `project` (the parent reference) — **not** `viewer`, which is what the public wildcard grants. These are `relations` keys on `GenericFGAMessage` and must match the model's relation names exactly |
 | Submitted for approval (`draft → submitted`) | `programs.status` change | No tuple change — the program is still non-public, and `program_approver` was granted at creation. Listed because it is a real authorization transition (only a `writer` may submit; only a `program_approver` may then decide), not because it emits |
 | Approved (`submitted → published`) | `programs.status` change | `update_access` **with** `public` — this is the only transition that first emits `viewer@user:*` |
 | Rejected (`submitted → rejected`) | `programs.status` change | No tuple change — never public, so nothing to revoke |
