@@ -23,7 +23,7 @@ Rewrite LFX Mentorship following the pattern proven by the Crowdfunding rewrite 
 flowchart TB
     ADMIN(["Program Admin"])
     USERS(["Mentee / Mentor"])
-    SUPER(["LF Staff<br/>(program_approver)"])
+    SUPER(["LF Staff<br/>(approver team)"])
 
     subgraph GW["LFX v2 API Gateway"]
         HEIMDALL["Heimdall<br/>authN + authZ at the edge"]
@@ -192,8 +192,8 @@ Three things this replaces from the Crowdfunding-derived design:
 | Was | Now |
 | --- | --- |
 | Service-layer role checks against `program_members` / `enrollments` | Heimdall + FGA relations at the edge |
-| Super-admin LFID allowlist injected at deploy time | `program_approver` relation on the program (AQ-5 in [04](./04-authorization-model.md)) |
-| HMAC-signed email approval links, no login | Authenticated approval in Self Serve, gated on `program_approver` |
+| Super-admin LFID allowlist injected at deploy time | membership in `team:mentorship-program-approvers` (AQ-5 in [04](./04-authorization-model.md), resolved) |
+| HMAC-signed email approval links, no login | Authenticated approval in Self Serve, gated on approver-team membership |
 
 The allowlist and the HMAC links were each a second authorization mechanism outside the model; both are retired.
 
