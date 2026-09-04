@@ -102,3 +102,17 @@ These are cases where two things the platform does about "who can do X" don't ma
 6. **Three actions on `task` (create, list-all, list-submitted) have no relation check whatsoever**, while their close siblings do. If 04 defines FGA checks for task creation/listing, there is no legacy behavior to compare them against — the legacy answer is "unrestricted."
 7. **A `pending` membership row is as good as an approved one.** Every membership-based check (terms, application listing, application decisions) filters by member type only; the status filter was designed into the query type but never wired up, so a not-yet-approved mentor applicant already passes all of them. The rewrite must require an accepted/active membership.
 8. **The member-list API leaks `email`/`name` of all approved members (including mentees) to anonymous callers**, while the UI never displays an email anywhere. The intended public surface — confirmed from the actual public pages — is: program metadata, accepted mentors (name/avatar/bio/public profile), and, when the program opts in, accepted mentees (name/avatar/bio). That, minus the emails, is the behavior to reproduce.
+
+## Product decisions for the rewrite
+
+Decisions made during review of this document (2026-09-04). These resolve divergences above and are inputs to validating [04-authorization-model.md](./04-authorization-model.md):
+
+1. **Public mentor visibility**: the public program page shows only mentors in **accepted or graduated** status. Pending, invited-but-not-accepted, declined, and withdrawn mentors are never publicly listed (an invitee has not consented to a public affiliation).
+2. **Tasks**: program admins and mentors create tasks; the mentee (assignee) submits material (file upload or marking the task submitted); program admins and mentors accept/complete or decline the submission. The legacy "mentors may create tasks only for accepted mentees" rule is kept — enforcement placement is [OQ-2](#open-questions).
+3. **Application withdrawal**: a mentee may withdraw their **own** application only while it is `pending`; a program admin may withdraw a mentee's application in any state. (Fixes the legacy IDOR where any authenticated user could withdraw any mentee.)
+4. **Mentee profile visibility**: editable only by the mentee; viewable by program admins and mentors of a program the mentee has applied to (matches the legacy `isLinked` scope). The mentee's LFX user profile is not included in that grant.
+
+## Open questions
+
+1. **OQ-1 — Program approver**: "LF admin" needs to become a real, data-backed relation (legacy has only an env-var allowlist and signed one-time email links — divergence 5). Proposed: a platform-level team relation for authorization, with new-program notifications sent to a single configured address (mailing-list alias) rather than resolving individual approver emails. Needs an owner for who manages that team's membership.
+2. **OQ-2 — Where to enforce "tasks only for accepted mentees"**: legacy enforces this in the UI alone. Options: (a) keep UI-only, (b) validate in the service layer (task's assignee must hold an accepted application/membership on the program). FGA is unaffected either way — it only answers "is the caller an admin/mentor of the program".
