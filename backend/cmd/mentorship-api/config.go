@@ -31,9 +31,9 @@ type ServerConfig struct {
 	ShutdownTimeout time.Duration
 }
 
-// DatabaseConfig holds PostgreSQL connection settings.
+// DatabaseConfig holds PostgreSQL pool settings. Connection details come from
+// the environment via db.ConnConfigFromEnv, not from a DSN assembled here.
 type DatabaseConfig struct {
-	DSN             string
 	MaxConns        int
 	MinConns        int
 	ConnMaxLifetime time.Duration
@@ -97,7 +97,6 @@ func loadConfig() (*Config, error) {
 			ShutdownTimeout: 10 * time.Second,
 		},
 		Database: DatabaseConfig{
-			DSN:             requireEnv("DATABASE_DSN"),
 			MaxConns:        maxConns,
 			MinConns:        minConns,
 			ConnMaxLifetime: 30 * time.Minute,

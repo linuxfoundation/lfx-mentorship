@@ -14,8 +14,9 @@ import (
 )
 
 // PoolConfig holds connection pool settings sourced from environment variables.
+// Connection details are read from the environment by ConnConfigFromEnv rather
+// than passed as a DSN string, so credentials are never string-interpolated.
 type PoolConfig struct {
-	DSN             string
 	MaxConns        int
 	MinConns        int
 	ConnMaxLifetime time.Duration
@@ -23,10 +24,15 @@ type PoolConfig struct {
 
 // NewPool creates a pgxpool.Pool, pings the database, and returns it.
 func NewPool(ctx context.Context, cfg PoolConfig) (*pgxpool.Pool, error) {
-	config, err := pgxpool.ParseConfig(cfg.DSN)
+	connConfig, err := ConnConfigFromEnv()
 	if err != nil {
-		return nil, fmt.Errorf("parse DSN: %w", err)
+		return nil, err
 	}
+	config, err := pgxpool.ParseConfig("")
+	if err != nil {
+		return nil, fmt.Errorf("build pool config: %w", err)
+	}
+	config.ConnConfig = connConfig
 	if cfg.MaxConns < 0 || cfg.MaxConns > math.MaxInt32 {
 		return nil, fmt.Errorf("MaxConns %d is out of valid range [0, %d]", cfg.MaxConns, math.MaxInt32)
 	}
@@ -39,10 +45,6 @@ func NewPool(ctx context.Context, cfg PoolConfig) (*pgxpool.Pool, error) {
 	config.MaxConns = int32(cfg.MaxConns)
 	config.MinConns = int32(cfg.MinConns)
 	config.MaxConnLifetime = cfg.ConnMaxLifetime
-	// Mentorship tables live in the "mentorship" schema (migration 001), not
-	// "public", because this service shares an RDS instance with the other LFX
-	// services. "public" stays on the path for extensions such as pgcrypto.
-	config.ConnConfig.RuntimeParams["search_path"] = "mentorship,public"
 
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {

@@ -10,8 +10,8 @@
 # the app ConfigMap: on a first `helm install`, pre-install hooks run before
 # the chart's own ServiceAccount and ConfigMap exist, so referencing either
 # here would leave the hook pod stuck (unadmittable / CreateContainerConfigError).
-# The migrator only needs DATABASE_DSN (from the Secret / env: below) and makes
-# no Kubernetes API calls, so neither is required.
+# The migrator only needs the database connection variables (from the Secret /
+# env: below) and makes no Kubernetes API calls, so neither is required.
 {{- if .Values.migrationJob.enabled }}
 apiVersion: batch/v1
 kind: Job

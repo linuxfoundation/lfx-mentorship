@@ -123,10 +123,13 @@ env: []
 # syncing from AWS Secrets Manager).
 #
 # Expected keys in the Secret:
-#   DATABASE_DSN — full Postgres connection string
+#   The individual RDS components, referenced via env: above and mapped to
+#   DB_HOST / DB_PORT / DB_USER / DB_PASSWORD / DB_NAME:
+#     host, port, username, password, dbname
+#   The service assigns these to its pgx connection config directly rather than
+#   assembling a DSN string, so a password containing a backslash or a space is
+#   not altered in transit.
 #   LEDGER_API_KEY — bearer token for Ledger service API
-#     or individual RDS components referenced via env: above:
-#     username, password, host, port, dbname
 #   MENTOR_INVITE_SECRET — HMAC secret for signing mentor invite tokens.
 #     Required: the service exits at startup if it is not set.
 secretName: lfx-mentorship-backend-secrets
