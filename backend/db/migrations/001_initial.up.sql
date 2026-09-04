@@ -5,7 +5,11 @@
 -- Source: jobspring-prod-* DynamoDB tables
 -- ============================================
 
+CREATE SCHEMA IF NOT EXISTS mentorship;
+
 BEGIN;
+
+SET LOCAL search_path TO mentorship, public;
 
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
