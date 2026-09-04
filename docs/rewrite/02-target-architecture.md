@@ -192,7 +192,7 @@ Three things this replaces from the Crowdfunding-derived design:
 | Was | Now |
 | --- | --- |
 | Service-layer role checks against `program_members` / `enrollments` | Heimdall + FGA relations at the edge |
-| Super-admin LFID allowlist injected at deploy time | membership in `team:mentorship-program-approvers` (AQ-5 in [04](./04-authorization-model.md), resolved) |
+| Super-admin LFID allowlist injected at deploy time | `member` on a global approver-team object of the platform's existing `team` type (AQ-5 in [04](./04-authorization-model.md), resolved; which object, and how approvers read a non-public program, are AQ-8/AQ-9) |
 | HMAC-signed email approval links, no login | Authenticated approval in Self Serve, gated on approver-team membership |
 
 The allowlist and the HMAC links were each a second authorization mechanism outside the model; both are retired.
