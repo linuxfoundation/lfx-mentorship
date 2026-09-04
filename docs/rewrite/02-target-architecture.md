@@ -131,7 +131,7 @@ erDiagram
         uuid program_term_id FK
         uuid user_id FK
         text role "mentor | mentee"
-        text status "pending | accepted | active | declined | withdrawn | graduated"
+        text status "pending | accepted | active | declined | withdrawn | graduated | hold"
     }
     program_members {
         uuid id PK
@@ -155,6 +155,7 @@ Notes:
 - **Denormalization jobs eliminated**: mentor lists, skill mappings, and counts become queries/views instead of cron-materialized copies.
 - **Funding stats**: `program_funding_stats` is an hourly-refreshed local cache of Crowdfunding data (see Integrations) — the same pattern Crowdfunding uses for Ledger stats.
 - **No enrollment entity, and no mentor assignment.** The application *is* the lifecycle object — one row per user per term, whose status runs `pending → accepted → active → graduated`. This matches legacy, where acceptance and graduation are status changes on a single `project-members` row and mentors relate to the **program**, not to individual mentees (the legacy per-mentee "mentors" list is a cron-denormalized copy of the program's approved mentors). Tasks therefore hang off the application, with `category` distinguishing `prerequisite` from `non_prerequisite` tasks. Introducing `enrollments` + `enrollment_mentors` would add a parity feature nobody asked for; see "No enrollment entity" and decision 2 in [04](./04-authorization-model.md).
+- **`hold` is shown as the merged schema has it, not as this series recommends it.** `applications_status_check` permits `hold` (`backend/db/migrations/001_initial.up.sql:184`) and the ERD reflects that, but [03](./03-migration-plan.md) argues it describes a *paused accepted mentorship* rather than an application outcome and belongs in its own column. That divergence is an open decision, not settled here — the ERD tracks what exists today so the two documents disagree visibly rather than silently.
 - Exact column-level schema is an implementation-phase deliverable; this ERD fixes the entity boundaries.
 
 ## Frontend split: Nuxt public site + Self Serve management
