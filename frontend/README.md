@@ -41,15 +41,15 @@ These are the same checks CI runs (`.github/workflows/ci-frontend.yml`).
 Runtime configuration is defined in `setup/runtime-config.ts`. The values that
 must be set per environment:
 
-| Variable                        | Purpose                                                   |
-| ------------------------------- | --------------------------------------------------------- |
-| `NUXT_API_BASE_URL`             | Server-side base URL of the backend API                    |
-| `NUXT_PUBLIC_APP_ENV`           | `development` or `production`                              |
-| `NUXT_PUBLIC_APP_URL`           | Public URL of this site                                    |
-| `NUXT_PUBLIC_SITE_URL`          | Sitemap and site-config URL — see below                    |
-| `NUXT_PUBLIC_SELF_SERVE_URL`    | Link target for management surfaces                        |
-| `NUXT_PUBLIC_CROWDFUNDING_URL`  | Link target for Crowdfunding                               |
-| `NUXT_PUBLIC_INTERCOM_APP_ID`   | Intercom workspace — **required in production**            |
+| Variable                       | Purpose                                         |
+| ------------------------------ | ----------------------------------------------- |
+| `NUXT_API_BASE_URL`            | Server-side base URL of the backend API         |
+| `NUXT_PUBLIC_APP_ENV`          | `development` or `production`                   |
+| `NUXT_PUBLIC_APP_URL`          | Public URL of this site                         |
+| `NUXT_PUBLIC_SITE_URL`         | Sitemap and site-config URL — see below         |
+| `NUXT_PUBLIC_SELF_SERVE_URL`   | Link target for management surfaces             |
+| `NUXT_PUBLIC_CROWDFUNDING_URL` | Link target for Crowdfunding                    |
+| `NUXT_PUBLIC_INTERCOM_APP_ID`  | Intercom workspace — **required in production** |
 
 Two of these are not interchangeable with `NUXT_PUBLIC_APP_URL`, because the
 image is built with no `NUXT_PUBLIC_*` set and only some names are re-read at
@@ -60,7 +60,7 @@ startup:
   alone at runtime, so leaving it unset serves sitemap and site URLs for
   `http://localhost:3000` even when canonical URLs are correct.
 - **`NUXT_PUBLIC_INTERCOM_APP_ID`** — `setup/runtime-config.ts` derives this from
-  the *build-time* `appEnv`, baking in the development workspace id. It is not
+  the _build-time_ `appEnv`, baking in the development workspace id. It is not
   re-derived from `NUXT_PUBLIC_APP_ENV`, so production must set it explicitly;
   the chart refuses to render otherwise.
 
