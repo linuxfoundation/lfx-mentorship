@@ -28,7 +28,6 @@ export interface ProgramMember {
 /** Program mentee: currently in a term, or already graduated. */
 export interface ProgramMentee extends ProgramMember {
   status: MenteeStatus;
-  email: string;
   /** Term id used with `id` for list keys when a user appears on more than one term. */
   termId?: string;
   /** Display term, e.g. "Fall 2026". */
