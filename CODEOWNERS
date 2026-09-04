@@ -1,1 +1,5 @@
-* @linuxfoundation/lfx-mentorship
+*                 @linuxfoundation/lfx-mentorship
+
+# Cross-component contracts, authorization, and external dependencies are
+# owned by the architecture review team. This overrides the * rule above.
+/ARCHITECTURE.md  @linuxfoundation/lfx-architecture-team
