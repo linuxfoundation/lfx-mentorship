@@ -36,10 +36,31 @@ no credentials at all. That is a local-development affordance only. Rendering
 it into a real cluster would be a complete authentication bypass, so it is
 refused unless allowLocalAuthBypass is explicitly set — which no environment
 values file in lfx-v2-argocd sets, and none ever should.
+
+Two things this guard must get right, both learned from review:
+
+  - DISABLED_MOCK_LOCAL_PRINCIPAL is a principal *string*, not a boolean.
+    internal/infrastructure/auth/jwt.go activates the mock path on any
+    non-empty value, so testing for "true" would miss `localdev`.
+  - Both .Values.config (rendered into the ConfigMap) and .Values.env
+    (rendered as explicit container env on the Deployment and the migrate
+    Job) reach the process, so both must be inspected.
 */}}
-{{- if or (eq (toString .Values.config.DISABLED_MOCK_LOCAL_PRINCIPAL) "true") (eq (toString .Values.config.ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS) "true") }}
+{{- $bypassKeys := list "DISABLED_MOCK_LOCAL_PRINCIPAL" "ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS" }}
+{{- $bypassSet := false }}
+{{- range $key := $bypassKeys }}
+{{- if get $.Values.config $key }}
+{{- $bypassSet = true }}
+{{- end }}
+{{- end }}
+{{- range $entry := .Values.env }}
+{{- if and (has $entry.name $bypassKeys) (or $entry.value $entry.valueFrom) }}
+{{- $bypassSet = true }}
+{{- end }}
+{{- end }}
+{{- if $bypassSet }}
 {{- if ne (toString .Values.allowLocalAuthBypass) "true" }}
-{{- fail "\n\nRefusing to render: the local auth bypass is enabled.\n\nconfig.DISABLED_MOCK_LOCAL_PRINCIPAL / config.ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS\ndisable authentication entirely and must never be set in a deployed environment.\n\nIf this really is a local kind/minikube cluster, opt in explicitly with:\n  --set allowLocalAuthBypass=true" }}
+{{- fail "\n\nRefusing to render: the local auth bypass is enabled.\n\nDISABLED_MOCK_LOCAL_PRINCIPAL / ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS disable\nauthentication entirely and must never be set in a deployed environment.\nThis is checked in both config: and env:, and any non-empty principal counts.\n\nIf this really is a local kind/minikube cluster, opt in explicitly with:\n  --set allowLocalAuthBypass=true" }}
 {{- end }}
 {{- end }}
 

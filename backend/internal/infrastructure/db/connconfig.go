@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -93,12 +94,29 @@ func connConfigFromDiscreteEnv() (*pgx.ConnConfig, error) {
 	// Built through ParseConfig so pgx applies its own defaults and TLS setup,
 	// then overridden field by field. Only non-credential values are formatted
 	// into the string; the password is assigned directly below.
-	cfg, err := pgx.ParseConfig(fmt.Sprintf("sslmode=%s", sslMode))
-	if err != nil {
-		return nil, fmt.Errorf("build database config (DB_SSLMODE=%q): %w", sslMode, err)
+	//
+	// The host and port MUST be part of the parsed string. pgx derives
+	// TLSConfig from the host it sees at parse time — with no host it assumes a
+	// Unix socket, which never gets TLS, and leaves TLSConfig nil regardless of
+	// sslmode. Assigning cfg.Host afterwards does not re-run that derivation, so
+	// a "require" connection to RDS would silently go out in plaintext. Passing
+	// the host here also gives verify-full the correct SNI server name. Neither
+	// value is a credential, so this does not reintroduce the DSN-parsing hazard
+	// that this function exists to avoid.
+	host := os.Getenv("DB_HOST")
+	if strings.ContainsAny(host, " \t\r\n'\\") {
+		return nil, fmt.Errorf("DB_HOST contains whitespace or a quoting character and cannot be used: %q", host)
 	}
-	cfg.Host = os.Getenv("DB_HOST")
-	cfg.Port = port
+	cfg, err := pgx.ParseConfig(fmt.Sprintf("host=%s port=%d sslmode=%s", host, port, sslMode))
+	if err != nil {
+		return nil, fmt.Errorf("build database config (DB_HOST=%q, DB_PORT=%d, DB_SSLMODE=%q): %w", host, port, sslMode, err)
+	}
+	// ParseConfig is authoritative for Host now, but assert it round-tripped so
+	// a future change to the format string cannot silently retarget the
+	// connection.
+	if cfg.Host != host {
+		return nil, fmt.Errorf("DB_HOST %q was altered to %q while building the connection config", host, cfg.Host)
+	}
 	cfg.User = os.Getenv("DB_USER")
 	cfg.Password = os.Getenv("DB_PASSWORD")
 	cfg.Database = os.Getenv("DB_NAME")

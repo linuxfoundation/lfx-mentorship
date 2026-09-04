@@ -80,6 +80,75 @@ func TestConnConfigFromEnvPasswordNotParsed(t *testing.T) {
 	}
 }
 
+// TLS is derived by pgx from the host present at parse time. Building the
+// config without one leaves TLSConfig nil even under sslmode=require, so a
+// connection that looks encrypted goes out in plaintext. These assertions exist
+// because that regression shipped once already.
+func TestConnConfigFromEnvTLSEnabled(t *testing.T) {
+	for _, mode := range []string{"", "require", "verify-full"} {
+		t.Run("sslmode="+mode, func(t *testing.T) {
+			clearDBEnv(t)
+			t.Setenv("DB_HOST", "rds.example.com")
+			t.Setenv("DB_USER", "mentorship")
+			t.Setenv("DB_PASSWORD", "s3cret")
+			t.Setenv("DB_NAME", "mentorship")
+			if mode != "" {
+				t.Setenv("DB_SSLMODE", mode)
+			}
+
+			cfg, err := ConnConfigFromEnv()
+			if err != nil {
+				t.Fatalf("ConnConfigFromEnv: %v", err)
+			}
+			if cfg.TLSConfig == nil {
+				t.Fatalf("TLSConfig is nil for sslmode=%q — the connection would be plaintext", mode)
+			}
+			if cfg.TLSConfig.ServerName != "rds.example.com" {
+				t.Errorf("TLSConfig.ServerName = %q, want rds.example.com", cfg.TLSConfig.ServerName)
+			}
+			if cfg.Host != "rds.example.com" {
+				t.Errorf("Host = %q, want rds.example.com", cfg.Host)
+			}
+		})
+	}
+}
+
+func TestConnConfigFromEnvSSLModeDisableHasNoTLS(t *testing.T) {
+	clearDBEnv(t)
+	t.Setenv("DB_HOST", "localhost")
+	t.Setenv("DB_USER", "mentorship")
+	t.Setenv("DB_PASSWORD", "s3cret")
+	t.Setenv("DB_NAME", "mentorship")
+	t.Setenv("DB_SSLMODE", "disable")
+
+	cfg, err := ConnConfigFromEnv()
+	if err != nil {
+		t.Fatalf("ConnConfigFromEnv: %v", err)
+	}
+	if cfg.TLSConfig != nil {
+		t.Error("TLSConfig should be nil when DB_SSLMODE=disable")
+	}
+}
+
+// DB_HOST is interpolated into the string pgx parses, so a value carrying
+// keyword/value syntax must be rejected rather than silently retarget the
+// connection.
+func TestConnConfigFromEnvRejectsMalformedHost(t *testing.T) {
+	for _, host := range []string{"evil.example.com port=1234", "host\\name", "has space", "quote'host"} {
+		t.Run(host, func(t *testing.T) {
+			clearDBEnv(t)
+			t.Setenv("DB_HOST", host)
+			t.Setenv("DB_USER", "mentorship")
+			t.Setenv("DB_PASSWORD", "s3cret")
+			t.Setenv("DB_NAME", "mentorship")
+
+			if _, err := ConnConfigFromEnv(); err == nil {
+				t.Fatalf("expected an error for DB_HOST=%q, got nil", host)
+			}
+		})
+	}
+}
+
 func TestConnConfigFromEnvDefaultPort(t *testing.T) {
 	clearDBEnv(t)
 	t.Setenv("DB_HOST", "rds.example.com")
