@@ -95,18 +95,24 @@ config:
   NUXT_API_BASE_URL: ""
   NUXT_PUBLIC_APP_ENV: "" # set per environment, e.g. development / production
   NUXT_PUBLIC_APP_URL: "" # set per environment, e.g. https://mentorship.dev.lfx.dev
+  # Sitemap / site-config URL, normally identical to NUXT_PUBLIC_APP_URL. It has
+  # to be set separately: setup/site.ts falls back to NUXT_PUBLIC_APP_URL only at
+  # build time, and nuxt-site-config re-reads just this name at startup.
+  NUXT_PUBLIC_SITE_URL: ""
   # NUXT_PUBLIC_SELF_SERVE_URL and NUXT_PUBLIC_CROWDFUNDING_URL are deliberately
   # absent rather than empty: an empty value overrides the image's baked-in
   # fallback with "", which turns the cross-service links in the header and on
   # the program page into same-origin paths this site does not serve. Set them
   # per environment instead — see values/{dev,staging,prod} in lfx-v2-argocd.
   #
-  # NUXT_PUBLIC_INTERCOM_APP_ID must be set explicitly in production. The image
-  # is built with no NUXT_PUBLIC_* set, so setup/runtime-config.ts derives
-  # intercomAppId from the build-time appEnv ("development") and bakes the dev
-  # workspace id into the bundle; unlike the URLs above it is not re-derived
-  # from NUXT_PUBLIC_APP_ENV at startup. templates/validate.yaml enforces this.
-  NUXT_PUBLIC_INTERCOM_APP_ID: ""
+  # NUXT_PUBLIC_INTERCOM_APP_ID is absent here for the same reason, and must be
+  # set explicitly in production. The image is built with no NUXT_PUBLIC_* set,
+  # so setup/runtime-config.ts derives intercomAppId from the build-time appEnv
+  # ("development") and bakes the dev workspace id into the bundle; unlike the
+  # URLs above it is not re-derived from NUXT_PUBLIC_APP_ENV at startup. An
+  # empty value here would blank that baked id, leaving useIntercom() to reject
+  # with "No Intercom app ID configured" in every non-production deployment.
+  # templates/validate.yaml requires it when NUXT_PUBLIC_APP_ENV=production.
 
 # ── Additional environment variables ─────────────────────────────────────────
 # Rendered as a Kubernetes env: list on the Deployment. Supports the full env
