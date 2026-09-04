@@ -171,6 +171,16 @@ Two tuples per application/task (owner + parent), a handful per program. At Ment
 
    **The admin-only status rule is parity; the legacy API gap is not.** The product states the rule on the mentees tab — *"project admin gets notified via email to review the submission and make the admission decision. Mentors can assign tasks and milestones to accepted mentees"* — and it holds in practice: a mentor-only user sees the status as a static badge, verified on dev. The legacy **API** does not enforce it (`UpdateMenteeStatus` matches any `mentor` or `maintainer` row), so the rule lives in the frontend alone. `manager: writer from mentorship_program` reproduces the behavior users have and closes the gap. Reading the service layer alone gives the opposite answer, which is why this is called out rather than assumed.
 
+7. **A route with no checkable object cannot be edge-authorized — three shapes in the current API need reshaping.** Heimdall extracts an object UID from the path and checks one relation against it. Where the path carries no UID of a type in the model, there is nothing to check, and the rule degrades to `allow_all` — authentication only. Three groups hit this:
+
+   | Current shape | Problem | Reshape |
+   | --- | --- | --- |
+   | `PATCH`/`DELETE /v1/users/{id}`, `/v1/user-profiles/{id}` | `user` has no relations of its own, so any authenticated caller could target another user's ID | Serve as `/me` routes. No target ID means no check is needed — `principal` settles it in the service, the same data-scoping residue `/me` collections already are |
+   | `PATCH`/`DELETE /v1/program-terms/{id}`, plus the bulk, export, and past-mentee routes | Terms are not an FGA type, and the path exposes no program UID to inherit from | Nest under the parent: `/v1/programs/{uid}/terms/{id}`, with the service validating the parent-child association. Giving `program_term` a type purely to reach its parent adds a type and a tuple per term for no access distinction of its own |
+   | `POST /v1/applications/{id}/tasks` | Carries the application UID, not the program UID, but creation is a `manager` decision on the program | Check `manager` on the **application** — it already inherits `manager from mentorship_program` — so the existing UID suffices and no nesting is needed |
+
+   The first two are API changes, not model changes, and are cheapest to make before the routes are public. They are the reason the gateway cutover ([05](./05-heimdall-gateway.md), GW-5/GW-6) cannot be a pure configuration change.
+
 ## Lifecycle → FGA emissions
 
 | Transition | Postgres | FGA (via fga-sync) |

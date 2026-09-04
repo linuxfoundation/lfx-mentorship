@@ -66,7 +66,7 @@ sequenceDiagram
 
     C->>T: PATCH /mentorship/v1/applications/{uid}/status<br/>Authorization: Bearer (Auth0)
     T->>H: forward-auth (heimdall-forward-body middleware)
-    H->>H: authenticate — Auth0 JWKS, gateway audience,<br/>subject = lfx username claim (fallback: sub)
+    H->>H: authenticate — Auth0 JWKS, gateway audience,<br/>subject = lfx username claim
     H->>F: check: manager on mentorship_application:{uid}
     F-->>H: allowed
     H->>H: finalizer create_jwt — mint JWT<br/>(principal, aud: lfx-mentorship-backend)
@@ -82,10 +82,13 @@ An unauthenticated request falls through to the `anonymous_authenticator` (subje
 
 | | Auth0 token (in front of Heimdall) | Heimdall token (behind, seen by the service) |
 | --- | --- | --- |
-| Issuer | `https://linuxfoundation-dev.auth0.com/` (per env) | `heimdall` |
+| Issuer | `https://linuxfoundation-dev.auth0.com/` (per env) | `heimdall` — a bare string, not a URL |
 | Audience | `https://lfx-api.{lfx.domain}/` | `lfx-mentorship-backend` |
-| Identity | `http://lfx.dev/claims/username`, fallback `sub` | `principal` |
-| JWKS | Auth0 (public internet) | `lfx-platform-heimdall.lfx.svc.cluster.local:4457` (cluster-internal) |
+| Identity | `http://lfx.dev/claims/username` | `principal` |
+| Algorithm | RS256 | PS256 (the platform signer is a 2048-bit RSA key) |
+| JWKS | Auth0 (public internet) | `http://lfx-platform-heimdall.lfx.svc.cluster.local:4457/.well-known/jwks` (cluster-internal) |
+
+**`principal` is never the Auth0 `sub`.** The platform finalizer sets it to the subject's `username` for human callers, `client_id@clients` for M2M, or `_anonymous`; the Auth0 `sub` is not forwarded to services at all. The platform config is explicit that client IDs can collide with usernames, so `sub` must not be relied on downstream. This is the identity that must key every `user:{lfid}` tuple in [04](./04-authorization-model.md) and every `/me/*` lookup — keying them off `sub` would check FGA against an identity Heimdall never sends.
 
 Consequences worth calling out:
 
@@ -99,11 +102,17 @@ Consequences worth calling out:
 | --- | --- | --- |
 | [lfx-v2-helm](https://github.com/linuxfoundation/lfx-v2-helm) | `model.fga` types + `tests.yaml` (PR 1 of [04 §implementation path](./04-authorization-model.md)) | `vote_response` / `survey_response` |
 | lfx-mentorship (backend chart) | `ruleset.yaml` (one rule per route, checking the [04 §decision 6](./04-authorization-model.md) relation), `httproute.yaml` on `lfx-api.{lfx.domain}` with a `/mentorship/` path prefix, `heimdall-middleware.yaml` — all gated on `heimdall.enabled` | `lfx-v2-meeting-service` templates |
-| lfx-mentorship (backend) | dual-accept Heimdall JWTs alongside Auth0, config-gated: `HEIMDALL_JWKS_URL` / `HEIMDALL_JWT_AUDIENCE` / `HEIMDALL_JWT_ISSUER`, all-or-nothing | port of [lfx-crowdfunding#252](https://github.com/linuxfoundation/lfx-crowdfunding/pull/252) |
+| lfx-mentorship (backend) | dual-accept Heimdall JWTs alongside Auth0, config-gated: `HEIMDALL_JWKS_URL` / `HEIMDALL_JWT_AUDIENCE` / `HEIMDALL_JWT_ISSUER`, all-or-nothing | [lfx-crowdfunding#252](https://github.com/linuxfoundation/lfx-crowdfunding/pull/252) — **adapt, do not port verbatim** (below) |
 | [lfx-v2-argocd](https://github.com/linuxfoundation/lfx-v2-argocd) | per-env `HEIMDALL_*` config + `lfx.domain`; `heimdall.add_middleware: true` (renders objects, routes nothing); later `heimdall.enabled: true` per env | [lfx-v2-argocd#1410](https://github.com/linuxfoundation/lfx-v2-argocd/pull/1410) |
 | [auth0-terraform](https://github.com/linuxfoundation/auth0-terraform) | frontend requests tokens with the gateway audience instead of `lfx_mentorship_api` | CF's LFXV2-3354 equivalent |
 
-The `/mentorship/` path prefix is required by the shared host: the API's routes (`/v1/users`, `/v1/programs`, …) are too generic to claim at the root of `lfx-api.*` alongside project-service's `/projects/*` and meeting-service's `/itx/*`. Full shape: `https://lfx-api.{lfx.domain}/mentorship/v1/...`.
+Three implementation notes that are easy to get wrong:
+
+**The Crowdfunding validator needs adapting, not copying.** Its `newJWKSValidator` requires the issuer to parse as an absolute URL and to pass a secure-URL check, and the Auth0 claims type expects a `sub`. The platform token has none of those properties: the issuer is the literal string `heimdall`, the JWKS endpoint is plain `http://` inside the cluster, the signature is PS256, and identity arrives as `principal` with no `sub`. Ported verbatim, the service fails at startup — and relaxing only the URL check still rejects every real token. The second validator branch has to be Heimdall-native, and its tests need a genuine finalizer-shaped token rather than a hand-rolled Auth0 one.
+
+**The path prefix must not break the interim host.** The shared host needs a prefix — `/v1/users`, `/v1/programs` and friends are too generic to claim at the root of `lfx-api.*` alongside project-service's `/projects/*` and meeting-service's `/itx/*` — giving `https://lfx-api.{lfx.domain}/mentorship/v1/...`. But the interim hostname serves `/v1/...` today, so remounting the router under `/mentorship` in step 2 breaks every existing client, while leaving it unmounted 404s the gateway path. Either serve both mounts until step 5, or have Traefik strip the prefix so the service keeps serving `/v1` unchanged (see GW-1).
+
+**Protected routes must be UID-only.** `program_handler.go` resolves `{id}` as a UUID *or* a slug, but the tuples in [04](./04-authorization-model.md) are keyed by UID. A RuleSet built from the raw `{id}` capture would check `mentorship_program:{slug}`, find no tuple, and deny a valid URL before the service could resolve it. Slug resolution has to happen ahead of the check — a public slug-to-UID route, as the platform does for projects — or the protected routes accept UIDs only and slugs stay on public reads.
 
 ## Cutover
 
@@ -112,18 +121,24 @@ Same sequencing as Crowdfunding, with one material difference: **Mentorship has 
 ```mermaid
 flowchart LR
     A["1 — model.fga + tests<br/>(lfx-v2-helm)"] --> B["2 — dual-accept ships<br/>(unset config = no change)"]
-    B --> C["3 — values + RuleSets land<br/>(add_middleware: renders, routes nothing)"]
-    C --> D["4 — heimdall.enabled: true<br/>traffic moves to lfx-api host"]
-    D --> E["5 — retire mentorship-api ingress<br/>+ Auth0 validation branch"]
+    B --> C["3 — outbox + relay ship<br/>tuples start flowing"]
+    C --> D["4 — seed FGA from Postgres<br/>verify coverage"]
+    D --> E["5 — values + RuleSets land<br/>(add_middleware: renders, routes nothing)"]
+    E --> F["6 — heimdall.enabled: true<br/>traffic moves to lfx-api host"]
+    F --> G["7 — retire mentorship-api ingress<br/>+ Auth0 validation branch"]
 ```
 
-Steps 1–3 are individually inert. Step 4 is the cutover and is per-environment — dev first, soak, then staging/prod when those exist. Rollback at step 4 is `heimdall.enabled: false`, which restores the interim routing with no code change; step 5 happens only after cutover is confirmed everywhere, and is the point where the interim hostname and the standalone Auth0 audience disappear.
+**Steps 3 and 4 are the ones that cannot be skipped.** Heimdall fails closed: with the model, the validator and the RuleSets in place but no tuples in FGA, every protected request is denied. So emission has to be live *before* the seed (or the seed races new writes), and the seed has to be complete and verified *before* traffic moves. Verification means an explicit check that every program, application and task in Postgres has its expected tuples — not just that the relay ran without errors.
+
+Steps 1–5 are individually inert. Step 6 is the cutover and is per-environment — dev first, soak, then staging and prod when those exist. Rollback at step 6 is `heimdall.enabled: false`, restoring the interim routing with no code change, which is why step 7 waits until cutover is confirmed everywhere: it is the point of no return, retiring the interim hostname, the standalone Auth0 audience, and the fallback path.
 
 ## Open questions for the Architecture team
 
 | # | Question | Proposed default |
 | --- | --- | --- |
-| GW-1 | Confirm the `/mentorship/` path prefix on the shared host (the service's own resource names are too generic to claim at the root). Should the service strip the prefix at the router, or should Traefik rewrite it? | Service mounts its router under `/mentorship` — keeps the gateway config dumb and the URL visible in service logs. |
-| GW-2 | Public catalog reads: authorize anonymously at the edge via the `viewer@user:*` wildcard check (one model for everything), or `allow_all` on the handful of catalog routes with the service filtering to published (Crowdfunding-style)? | Wildcard check — it is what [04](./04-authorization-model.md) already emits tuples for, and it keeps "who may see this" out of the service entirely. |
-| GW-3 | Should the Nuxt BFF call the gateway via the public hostname or a cluster-internal route to the gateway? Public is simpler and matches LFX One; internal saves a hairpin. | Public hostname first; optimize later if latency says so. |
-| GW-4 | Timing: does the Heimdall cutover gate the public launch, or does Mentorship launch on the interim model (as deployed by #141/#1453) and cut over after? | Launch interim, cut over after — the interim model is exactly what Crowdfunding runs in production today, and blocking launch on four cross-repo PRs buys no user-visible safety while nothing is live to migrate. |
+| GW-1 | The shared host needs a `/mentorship/` prefix, but the interim host serves `/v1/...`. Does Traefik strip the prefix, or does the service serve both mounts until step 7? | **Traefik strips it.** The service keeps serving `/v1` throughout, so no client breaks and the one-flag rollback stays honest. Mounting the service under `/mentorship` instead would make step 6 a code change rather than a config flip. |
+| GW-2 | Public catalog reads: `viewer@user:*` wildcard check everywhere, or `allow_all` plus the service's published filter for the collection routes? | **Split by route shape.** `GET /v1/programs/catalog` is a collection with no object UID to put in an `openfga_check`, so the wildcard cannot express it; that route gets `allow_all` and keeps the service's existing `status = published` filter. ID-addressed public reads keep the wildcard check. |
+| GW-3 | Should the Nuxt BFF call the gateway via the public hostname or a cluster-internal route? | Public hostname first; optimize later if latency says so. |
+| GW-4 | Timing: does the Heimdall cutover gate the public launch, or does Mentorship launch on the interim model (as deployed by #141/#1453) and cut over after? | Launch interim, cut over after — the interim model is exactly what Crowdfunding runs in production today, and blocking launch on cross-repo PRs buys no user-visible safety while nothing is live to migrate. |
+| GW-5 | Self-service writes are ID-addressed (`PATCH/DELETE /v1/users/{id}`, `/v1/user-profiles/{id}`) but neither object has an FGA type, so authentication alone would let one user target another's ID. Add owner types, or redesign these as `/me` routes? | **Redesign as `/me` routes.** A `user` FGA type whose only relation is "is yourself" is exactly the one-off [04](./04-authorization-model.md) says not to model; `/me` writes carry no target ID, so `principal` settles it in the service with no edge check. |
+| GW-6 | Term-scoped routes (`PATCH/DELETE /v1/program-terms/{id}`, plus the bulk, export and past-mentee routes) expose no program UID, and terms have no FGA type. How are they edge-authorized? | **Carry the program UID in the path** (`/v1/programs/{uid}/terms/{id}`) and have the service validate the parent-child association. The alternative — giving `program_term` a type purely to reach its parent — adds a type and a tuple per term for no access distinction of its own. Same question applies to `POST /v1/applications/{id}/tasks`. |
