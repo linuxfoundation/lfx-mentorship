@@ -37,8 +37,8 @@ it into a real cluster would be a complete authentication bypass, so it is
 refused unless allowLocalAuthBypass is explicitly set — which no environment
 values file in lfx-v2-argocd sets, and none ever should.
 */}}
-{{- if or .Values.config.DISABLED_MOCK_LOCAL_PRINCIPAL (eq (toString .Values.config.ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS) "true") }}
-{{- if not .Values.allowLocalAuthBypass }}
+{{- if or (eq (toString .Values.config.DISABLED_MOCK_LOCAL_PRINCIPAL) "true") (eq (toString .Values.config.ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS) "true") }}
+{{- if ne (toString .Values.allowLocalAuthBypass) "true" }}
 {{- fail "\n\nRefusing to render: the local auth bypass is enabled.\n\nconfig.DISABLED_MOCK_LOCAL_PRINCIPAL / config.ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS\ndisable authentication entirely and must never be set in a deployed environment.\n\nIf this really is a local kind/minikube cluster, opt in explicitly with:\n  --set allowLocalAuthBypass=true" }}
 {{- end }}
 {{- end }}
