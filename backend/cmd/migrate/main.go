@@ -1,9 +1,10 @@
 // Copyright The Linux Foundation and each contributor to LFX.
 // SPDX-License-Identifier: MIT
 
-// Command migrate applies pending db/migrations to DATABASE_DSN. It is run as
-// a Helm pre-install/pre-upgrade hook Job so schema changes land before the
-// new application image starts serving traffic.
+// Command migrate applies pending db/migrations to the database described by
+// the environment (see db.ConnConfigFromEnv). It is run as a Helm
+// pre-install/pre-upgrade hook Job so schema changes land before the new
+// application image starts serving traffic.
 package main
 
 import (
@@ -16,25 +17,20 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/db/migrations"
+	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/db"
 )
 
 func main() {
-	dsn := os.Getenv("DATABASE_DSN")
-	if dsn == "" {
-		log.Fatal("DATABASE_DSN is required")
-	}
-
-	// Parsed with pgx rather than net/url: DATABASE_DSN is a postgres:// URL
-	// locally/in CI but a libpq keyword/value string ("host=... user=...") in
-	// the cluster, where it is assembled from the ESO-managed RDS secret
-	// components (see lfx-v2-argocd values), which net/url can't parse.
-	connConfig, err := pgx.ParseConfig(dsn)
+	// Same source as the API pool: the discrete DB_* variables in the cluster,
+	// DATABASE_DSN locally and in CI. Credentials are assigned to config fields
+	// rather than interpolated into a DSN string, and the schema search_path is
+	// applied for both.
+	connConfig, err := db.ConnConfigFromEnv()
 	if err != nil {
-		log.Fatalf("parse DATABASE_DSN: %v", err)
+		log.Fatalf("database configuration: %v", err)
 	}
 	// Fail fast rather than queue behind live traffic waiting for an
 	// ACCESS EXCLUSIVE lock: a blocked DDL statement holds a lock queue that
