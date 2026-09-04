@@ -10,6 +10,8 @@ Follow-up to the Architecture-call feedback: Mentorship programs are always subo
 
 Positions carried over from the follow-up Architecture call are marked inline: the FGA-inclusion test and the `vote` precedent (below), no attribute-level access control (decision 6), one canonical route per object (AQ-1), direct grants vs. inheritance (AQ-2), and the storage deviation (AQ-3).
 
+A second Architecture review then validated a standalone OpenFGA model (`model.fga` + `tuples.yaml` + `tests.yaml`, checked with the `fga` CLI) built from this proposal. Three of its outcomes supersede the first draft and are folded in below: program **approval is a global team-membership check** on the platform's existing `team` type, not a per-program relation (AQ-5, resolved); the project-level `mentorship_program_admin` relation grants **management of every program in the project**, not only creation; and the task's FGA parent is the **application**, completing one inheritance chain project → program → application → task. The standalone model's `can_*` vocabulary maps onto the platform's relation idiom — see the mapping table after the sketch.
+
 ## Principle
 
 **PostgreSQL is the system of record for all data — including memberships and ownership. OpenFGA holds a derived authorization index: only the relations Heimdall needs to answer "may this caller act on this object" at the edge.**
@@ -55,7 +57,7 @@ flowchart TB
     PROGRAM ==>|"mentor (direct only)"| MENTOR
     APP ==>|"mentorship_program"| PROGRAM
     APP ==>|"applicant"| MENTEE
-    TASK ==>|"mentorship_program"| PROGRAM
+    TASK ==>|"mentorship_application"| APP
     TASK ==>|"assignee"| MENTEE
 
     PROGRAM -.->|"has terms"| TERM
@@ -83,32 +85,35 @@ One deliberate divergence from the merged schema: `applications_status_check` (`
 Written in the platform's DSL conventions ([model.fga](https://github.com/linuxfoundation/lfx-v2-helm/blob/main/charts/lfx-platform/files/model.fga)): the parent relation is named after the parent *type*; each Heimdall rule checks a **single** relation; actions are documented as `@fgadoc:jtbd` annotations (from which `PERMISSIONS.md` is generated); and no relation is defined as a mere alias of another — per the model's own guidance on `vote_response`: *"we don't need to create a 'writer' relation that is defined as just 'owner': we just use the 'owner' relation in our access checks."* The closest existing analogs to applications/tasks are `vote_response` and `survey_response` (single owner + parent, owner-or-staff access) — confirmed on the Architecture call as the intended precedent.
 
 ```
+# type team — exists in the platform model today (member: [user]); no change
+# needed. Program approval is a membership check on the well-known object
+# team:mentorship-program-approvers — see decision 6 and AQ-5 (resolved).
+
 type project
   relations
-    # added to the existing type, mirroring meeting_coordinator / meetings_creator
-    define mentorship_coordinator: [user]
+    # added to the existing type; a cross-program admin manages every program
+    # in the project (and creates new ones) without holding project writer
+    define mentorship_program_admin: [user]
     # @fgadoc:jtbd Create a mentorship program
-    define mentorship_program_creator: writer or mentorship_coordinator
+    define mentorship_program_creator: writer or mentorship_program_admin
 
 type mentorship_program
   relations
     define project: [project]
-    # program admins: directly assigned AND inherited from the project
+    # program admins: directly assigned, inherited from project writers, and
+    # the project's cross-program mentorship admins
     # @fgadoc:jtbd Update & delete a mentorship program
     # @fgadoc:jtbd Manage program terms, mentors & settings
-    define writer: [user] or writer from project
+    define writer: [user] or writer from project or mentorship_program_admin from project
     # mentors are directly assigned only (via accepted invitation)
     define mentor: [user]
-    # LF staff who approve a submitted program for publication (AQ-5/AQ-6).
-    # Deliberately NOT part of `manager` — approving is not managing.
-    # @fgadoc:jtbd Approve or reject a submitted mentorship program
-    define program_approver: [user]
     # union helper (cf. meetings_creator, inviter): "may act on this program's children"
     define manager: writer or mentor
     # @fgadoc:jtbd View program settings & member lists
-    # program_approver is included here so an approver can read a submitted
-    # program (no public wildcard yet) in order to review it — but not manage it.
-    define auditor: [user] or manager or program_approver or auditor from project
+    # [team#member]: fga-sync stamps team:mentorship-program-approvers#member at
+    # creation (the b2b_org global_org_admin pattern), so approvers can read a
+    # submitted, non-public program in order to review it — but not manage it.
+    define auditor: [user, team#member] or manager or auditor from project
     # @fgadoc:jtbd View & discover a mentorship program
     define viewer: [user:*] or auditor
 
@@ -132,12 +137,13 @@ type mentorship_application
 
 type mentorship_task
   relations
-    define mentorship_program: [mentorship_program]
+    define mentorship_application: [mentorship_application]
     # @fgadoc:alias Mentee
     # @fgadoc:jtbd Complete & submit a task
     define assignee: [user]
     # @fgadoc:jtbd Create, update & review tasks
-    define manager: manager from mentorship_program
+    # resolves through the application: the parent program's admins and mentors
+    define manager: reviewer from mentorship_application
     # @fgadoc:jtbd View a task
     define auditor: assignee or manager
 ```
@@ -148,16 +154,33 @@ Two tuples per application/task (owner + parent), a handful per program. At Ment
 
 **Notes on the sketch:**
 
-- **Creation.** Programs: `mentorship_program_creator` on the **project** (`writer or mentorship_coordinator`, the `meetings_creator` shape) — whether the create route *checks* it at launch is AQ-6; defining it now makes tightening later a RuleSet change, not a model migration. Tasks: `manager` on the parent program. Applications: the applicant themselves, authorized by authentication alone — the application window is a Postgres business rule, and the applicant's LFID comes from the JWT, not the payload.
-- **`program_approver` replaces the HMAC email links** — today an unauthenticated signed URL mailed to LF staff, a second authorization mechanism outside the model. A relation this service owns retires it without waiting on a platform-level super-admin (AQ-5). It stays out of `manager` deliberately: folding it in would let every program admin approve their own program. For the same reason the grant must be administered by LF staff, not self-served by `writer`.
+- **Creation.** Programs: `mentorship_program_creator` on the **project** (`writer or mentorship_program_admin`, the `meetings_creator` shape) — whether the create route *checks* it at launch is AQ-6; defining it now makes tightening later a RuleSet change, not a model migration. Tasks: `reviewer` on the parent application (decision 7). Applications: the applicant themselves, authorized by authentication alone — the application window is a Postgres business rule, and the applicant's LFID comes from the JWT, not the payload.
+- **Approval is a global team check, and it replaces the HMAC email links** — today an unauthenticated signed URL mailed to LF staff, a second authorization mechanism outside the model. Per the second Architecture review, approval is not a relation on the program at all: the decision route checks `member` on the well-known object `team:mentorship-program-approvers`, using the platform's **existing `team` type** — the same static-object guard the platform already uses for global capabilities (the SurveyMonkey template team). It stays outside `writer`/`manager` deliberately: folding approval into the program's own relations would let every program admin approve their own program. The team's roster is administered by LF staff through platform tooling (tuples on the `team` object — this service never writes them); what this service emits is the **read grant**: the `auditor` userset `team:mentorship-program-approvers#member` stamped on each program at creation (the `b2b_org.global_org_admin` pattern), so approvers can open a submitted, non-public program via its canonical route (AQ-1) with no per-program user tuples.
 - **Staff-assisted withdrawal** is a real requirement (support and admins withdraw on a mentee's behalf), hence `writer: applicant or manager` rather than applicant-only.
 - **Business-rule boundary, confirmed by the platform model**: the `meeting.participant` comment notes committee members aren't automatically participants because that filtering "is managed by the backend services and therefore can't be a relationship in the authorization model" — the same line drawn here for application windows and graduation gates.
 - **Legacy gap closed by construction**: the legacy approve/disapprove endpoints are wired without auth middleware. Under this model every status route carries a Heimdall rule.
 
+### Mapping from the reviewed standalone model
+
+The model validated at the second Architecture review was written with self-describing `can_*` relations and a dedicated approver type. The platform model does not use that idiom — actions are `@fgadoc:jtbd` annotations on noun relations, and no relation is a mere alias — so the sketch above expresses the **same resolved permission sets** in the platform's vocabulary:
+
+| Standalone model (as reviewed) | This sketch | Note |
+| --- | --- | --- |
+| `mentorship_approver_team` type; `member` / `can_approve_program` | existing platform `team` type; decision route checks `member` on `team:mentorship-program-approvers` | no new type — the platform's `team` already exists for exactly this global-guard shape |
+| `project.mentorship_program_admin`; `can_create_program`, `can_admin_programs` | same relation name; `mentorship_program_creator`; `mentorship_program_admin from project` in the program's `writer` | `mentorship_program_creator` is a pure computed union — no tuples of its own |
+| program `admin`; `can_edit`, `can_submit`, `can_invite_mentor` | `writer` | |
+| program `can_create_term` (admin or mentor) | `manager` (`writer or mentor`) | same set |
+| program `can_view` | `auditor` / `viewer` | |
+| application `mentee` | `applicant` | **deliberate divergence**: mentors apply too (see "Applications carry an applicant type" above), so the owner relation is role-neutral |
+| application `can_decide` | `manager` | admins only, mentors excluded — identical in both models |
+| application `can_withdraw` (mentee or admin) | `writer` (`applicant or manager`) | |
+| application `can_evaluate` / `can_view` | `reviewer` / `auditor` | |
+| task `admin`/`mentor` from application; `can_update` | `manager: reviewer from mentorship_application`; `auditor: assignee or manager` | same chain, same resolved sets |
+
 ## Deliberate modeling decisions
 
 1. **No mentee→program relation.** "Accepted mentee" is a *state* of the application (Postgres), not an FGA relation. Every mentee-facing surface is already covered: their applications and tasks carry their own `applicant`/`assignee` tuples, program pages are public, and their dashboard is `/me`-scoped. No route needs "caller is an accepted mentee of program X" at the edge. If one appears (e.g. enrolled-only program content), acceptance is exactly the transition where a `participant` tuple would be emitted — deferred until a route requires it.
-2. **Tasks: structural parent is the application; FGA parent is the program.** In Postgres, tasks belong to the mentee's application journey (`prerequisite` tasks gate whether the application is considered; `non_prerequisite` tasks gate graduation — same object, `category` distinguishes the phase, as in legacy `task.Category`; the values match the `tasks_category_check` constraint in `backend/db/migrations/001_initial.up.sql`). In FGA, the task's `mentorship_program` relation points at the **program**, because the reviewers (mentors/admins) hold their relations there — pointing it at the application would authorize nobody. One FGA type covers both categories.
+2. **Tasks: the application is the parent in Postgres *and* in FGA.** Tasks belong to the mentee's application journey (`prerequisite` tasks gate whether the application is considered; `non_prerequisite` tasks gate graduation — same object, `category` distinguishes the phase, as in legacy `task.Category`; the values match the `tasks_category_check` constraint in `backend/db/migrations/001_initial.up.sql`). The FGA parent is the same: `mentorship_task.mentorship_application` points at the application, and reviewers resolve through the chain — the task's `manager` is the application's `reviewer`, which reaches the program's admins and mentors, which in turn reaches the project's writers and cross-program admins. One inheritance chain, project → program → application → task, confirmed at the second Architecture review. (An earlier draft parented tasks on the program on the mistaken ground that the application "would authorize nobody" — wrong, since the application itself chains to the program; parenting on the application keeps FGA congruent with Postgres.) One FGA type covers both categories.
 3. **Workflow gates are business logic, not access rules.** "All prerequisite tasks submitted before the application is considered" and "all non-prerequisite tasks submitted to graduate" are state-machine checks in Postgres. FGA answers *who may touch*; the service answers *what is allowed given state*.
 4. **Pending mentor *invitations* have no FGA presence.** A pending invitation is a Postgres row; the `mentor` tuple appears when it is accepted. Applications, by contrast, get their tuples on submission (`applicant` + `mentorship_program`) precisely so mentors can evaluate them while still pending — "pending" describes the application's *status*, not an absence of tuples; only unsubmitted drafts (if the UI keeps any) would have none. This distinction matters because mentors reach a program by **either** route: a mentor *application* is an ordinary `mentorship_application` with tuples and an admin-gated accept (`manager`), whereas an *invitation* has no tuple at accept time and so no relation for Heimdall to check — that narrower gap is AQ-7.
 5. **List routes are nested to reuse the program check.** `GET /programs/{uid}/applications` lets Heimdall authorize the caller's relation on the program straight from the path — no per-object listing problem, no mentor→application tuples.
@@ -171,10 +194,10 @@ Two tuples per application/task (owner + parent), a handful per program. At Ment
    | `PATCH /tasks/{uid}/submission` | `assignee` | the mentee |
    | `PATCH /tasks/{uid}/review` | `manager` | mentors and admins |
    | `POST /programs/{uid}/submit` | `writer` | program admins (`draft → submitted`) |
-   | `POST /programs/{uid}/decision` | `program_approver` | LF staff (`submitted → published \| rejected`) |
+   | `POST /programs/{uid}/decision` | `member` on `team:mentorship-program-approvers` (static object) | LF staff (`submitted → published \| rejected`) |
    | `PATCH /programs/{uid}` | `writer` | program admins — **metadata only, must reject `status`** |
 
-   **Program moderation is the same split, and the current API does not have it.** `ProgramUpdateInput` accepts `Status` alongside every metadata field (`backend/internal/domain/models/program.go:86`), so one route carries both "edit this program" and "publish this program". A single edge relation cannot express that: gating `PATCH /programs/{uid}` on `writer` would let a program admin publish their own program, defeating the `program_approver` separation of duties that is the whole point of holding approval outside `manager`; gating it on `program_approver` would stop admins editing their own metadata. Hence the three rows above — and the generic metadata route must reject a `status` field in the payload rather than silently ignoring it, so an attempt to smuggle a transition through it fails loudly.
+   **Program moderation is the same split, and the current API does not have it.** `ProgramUpdateInput` accepts `Status` alongside every metadata field (`backend/internal/domain/models/program.go:86`), so one route carries both "edit this program" and "publish this program". A single edge relation cannot express that: gating `PATCH /programs/{uid}` on `writer` would let a program admin publish their own program, defeating the separation of duties that is the whole point of holding approval outside the program's own relations — and no program relation *could* gate the decision correctly, because approval is a team membership, not a program grant. Hence the three rows above; the decision route is the one rule in the matrix whose checked object is **static** (`team:mentorship-program-approvers`) rather than extracted from the path — the shape the platform already uses for global-capability guards. And the generic metadata route must reject a `status` field in the payload rather than silently ignoring it, so an attempt to smuggle a transition through it fails loudly.
 
    The same rule applies to reads: any field that only admins may see (private review notes, internal scores) needs its own sub-resource rather than a conditionally-populated field on the main payload, since the service cannot make that call itself.
 
@@ -186,8 +209,8 @@ Two tuples per application/task (owner + parent), a handful per program. At Ment
    | --- | --- | --- |
    | `PATCH`/`DELETE /v1/users/{id}`, `/v1/user-profiles/{id}` | `user` has no relations of its own, so any authenticated caller could target another user's ID | Serve as `/me` routes. No target ID means no check is needed — `principal` settles it in the service, the same data-scoping residue `/me` collections already are |
    | `PATCH`/`DELETE /v1/program-terms/{id}`, plus the bulk, export, and past-mentee routes | Terms are not an FGA type, and the path exposes no program UID to inherit from | Nest under the parent: `/v1/programs/{uid}/terms/{id}`, with the service validating the parent-child association. Giving `program_term` a type purely to reach its parent adds a type and a tuple per term for no access distinction of its own |
-   | `PATCH /v1/programs/{id}` | One route carries both ordinary metadata edits and the moderation decision — `ProgramUpdateInput.Status` sits alongside `Name`, `Description`, and the rest (`internal/domain/models/program.go:83-103`) | Split the moderation transition onto its own route (`POST /v1/programs/{id}/status`, or approve/reject routes) checking `program_approver`, and leave `PATCH` checking `writer`. A single check cannot separate them, and `program_approver` is deliberately **not** part of `manager` so that admins cannot approve their own programs — routing both through one `writer` check hands every program admin the approval they were excluded from. Attribute-level checks are ruled out by decision 6, so the split has to be at the route |
-   | `POST /v1/applications/{id}/tasks` | Carries the application UID, not the program UID | Check `reviewer` on the **application** — the existing UID suffices and no nesting is needed. **Not `manager`**: `mentorship_application.manager` is `writer from mentorship_program`, which excludes mentors, but assigning tasks to an accepted mentee is a mentor capability ([01](./01-current-system.md)). `reviewer` (`manager or mentor from mentorship_program`) matches who may actually create a task. This differs from `mentorship_task.manager`, which resolves to the *program's* `manager` (`writer or mentor`) and so does include mentors — the two `manager` relations are not the same set |
+   | `PATCH /v1/programs/{id}` | One route carries both ordinary metadata edits and the moderation decision — `ProgramUpdateInput.Status` sits alongside `Name`, `Description`, and the rest (`internal/domain/models/program.go:83-103`) | Split the moderation transition onto its own route (`POST /v1/programs/{id}/decision`, or approve/reject routes) checking `member` on `team:mentorship-program-approvers`, and leave `PATCH` checking `writer`. A single check cannot separate them, and approval is deliberately held **outside** the program's relations so that admins cannot approve their own programs — routing both through one `writer` check hands every program admin the approval they were excluded from. Attribute-level checks are ruled out by decision 6, so the split has to be at the route |
+   | `POST /v1/applications/{id}/tasks` | Carries the application UID, not the program UID | Check `reviewer` on the **application** — the existing UID suffices and no nesting is needed. **Not `manager`**: `mentorship_application.manager` is `writer from mentorship_program`, which excludes mentors, but assigning tasks to an accepted mentee is a mentor capability ([01](./01-current-system.md)). `reviewer` (`manager or mentor from mentorship_program`) matches who may actually create a task — and it is the same set `mentorship_task.manager` resolves to once the task exists (`reviewer from mentorship_application`). The application's own `manager` is the narrower, admins-only set, so the relation to check still depends on whether the path carries the application or the task |
 
    The first two are API changes, not model changes, and are cheapest to make before the routes are public. They are the reason the gateway cutover ([05](./05-heimdall-gateway.md), GW-5/GW-6) cannot be a pure configuration change.
 
@@ -197,24 +220,24 @@ Two tuples per application/task (owner + parent), a handful per program. At Ment
 
 | Transition | Postgres | FGA (via fga-sync) |
 | --- | --- | --- |
-| Program created (`draft`) | `programs` + `program_members` rows | `update_access` with `writer`, `mentor`, `program_approver`, and `project` (the parent reference) — **not** `viewer`, which is what the public wildcard grants. These are `relations` keys on `GenericFGAMessage` and must match the model's relation names exactly |
-| Submitted for approval (`draft → submitted`) | `programs.status` change | No tuple change — the program is still non-public, and `program_approver` was granted at creation. Listed because it is a real authorization transition (only a `writer` may submit; only a `program_approver` may then decide), not because it emits |
+| Program created (`draft`) | `programs` + `program_members` rows | `update_access` with `writer`, `mentor`, `project` (the parent reference), and the approver-team read grant — `auditor` = `team:mentorship-program-approvers#member` — but **not** `viewer`, which is what the public wildcard grants. These are `relations` keys on `GenericFGAMessage` and must match the model's relation names exactly |
+| Submitted for approval (`draft → submitted`) | `programs.status` change | No tuple change — the program is still non-public, and the approver team's `auditor` userset was stamped at creation. Listed because it is a real authorization transition (only a `writer` may submit; only an approver-team member may then decide), not because it emits |
 | Approved (`submitted → published`) | `programs.status` change | `update_access` **with** `public` — this is the only transition that first emits `viewer@user:*` |
 | Rejected (`submitted → rejected`) | `programs.status` change | No tuple change — never public, so nothing to revoke |
 | Unpublished / archived / hidden (`published → archived \| hidden`) | `programs.status` change | `update_access` **without** `public`. The wildcard tuple is per-object, so without re-emitting on the way back down an archived or hidden program stays publicly authorized |
 | Mentor **or admin** added (invite accepted, or admin granted later) | `program_members` row | `member_put` mentor→program / writer→program |
 | Application submitted | `applications` row | `update_access`: applicant + `mentorship_program` reference |
-| Task created (either category) | `tasks` row | `update_access`: assignee + `mentorship_program` reference |
+| Task created (either category) | `tasks` row | `update_access`: assignee + `mentorship_application` reference |
 | **Mentee** application accepted | status change on the application row | — (none; see decision 1) |
 | **Mentor** application accepted | status change + `program_members` row | `member_put` mentor→program — a mentor who applied rather than being invited becomes a mentor on acceptance, so this is the same grant as the invite-accept path, not a no-op |
 | Graduation / gate checks | status change on the application row | — |
 | Application withdrawn / declined | status change on the application row | — (tuples stay: applicant and program mentors/admins can still view the record) |
 | Mentor / admin removed from program | status change on the member row | `member_remove` **naming the relation** being removed (`mentor` or `writer`) |
 | Program deleted | `programs` row + children deleted | `delete_access` for the program **and** for every application and task under it — otherwise their tuples are orphaned in FGA |
-| Application / task deleted | row deleted | `delete_access` for that object |
+| Application / task deleted | row deleted | `delete_access` for that object — an application deletion also emits `delete_access` for its tasks (the task's parent is the application), or their tuples are orphaned |
 | Backfill (one-time) | DynamoDB → Postgres ETL | bulk seed: re-emit `update_access` for every object |
 
-**Which statuses are public**: `published` alone emits `viewer@user:*`. `draft`, `submitted`, `rejected`, `archived` and `hidden` do not — so `public` is derived as `status == 'published'`, and every transition into or out of that one value must re-emit. Reviewers of a non-public program reach it through `program_approver` (via `auditor`), not through the wildcard.
+**Which statuses are public**: `published` alone emits `viewer@user:*`. `draft`, `submitted`, `rejected`, `archived` and `hidden` do not — so `public` is derived as `status == 'published'`, and every transition into or out of that one value must re-emit. Approvers reach a non-public program through the stamped approver-team `auditor` userset, not through the wildcard.
 
 **`member_remove` must name the relation.** With an empty relations array fga-sync deletes *every* direct relation the user holds on that object; with a populated array it deletes only the named ones (verified in [fga-sync](https://github.com/linuxfoundation/lfx-v2-fga-sync) `handler_generic.go`). Because this model lets one user be both `mentor` and a direct `writer` on the same program, removing one role must not silently strip the other — so the emission always names the relation. Note also that this revokes only the *direct* tuple: a user who still holds `writer from project` remains authorized, correctly, so removal from a program is not the same as "access ends".
 
@@ -224,20 +247,21 @@ Because removed mentors and admins are kept in `program_members` as history, **e
 
 ## Implementation path
 
-The model lands in three PRs rather than one, so that each is separately reviewable and nothing depends on a model that has not merged yet:
+The model lands in four PRs rather than one, so that each is separately reviewable and nothing depends on a model that has not merged yet:
 
 | PR | Contents | Depends on |
 | --- | --- | --- |
 | 1 | `model.fga` types and relations + `tests.yaml` scenarios, in [lfx-v2-helm](https://github.com/linuxfoundation/lfx-v2-helm) | — |
-| 2 | Heimdall RuleSets, one rule per route (the decision-6 table) | PR 1 merged |
-| 3 | Service-side emission: `fga_outbox`, the relay, and the transitions in the lifecycle table | PR 1 merged |
+| 2 | Register the service and its object types in [lfx-v2-fga-sync](https://github.com/linuxfoundation/lfx-v2-fga-sync)'s `docs/fga-protected-types.md` services table, pointing at this repo's `docs/fga-contract.md` (delivered by PR 4) | PR 1 merged |
+| 3 | Heimdall RuleSets, one rule per route (the decision-6 table) | PR 1 merged |
+| 4 | Service-side emission: `fga_outbox`, the relay, the transitions in the lifecycle table, and `docs/fga-contract.md` documenting what this service emits | PR 1 merged |
 
-PRs 2 and 3 are independent of each other and can land in parallel. The ordering matters in one direction only: a RuleSet referencing a relation that does not exist fails closed, so the model must be in place first.
+PRs 2–4 are independent of each other and can land in parallel. The ordering matters in one direction only: a RuleSet referencing a relation that does not exist fails closed, so the model must be in place first. (PR 2 is documentation — fga-sync applies whatever `GenericFGAMessage` arrives regardless — but the platform convention is that every tuple-emitting service is listed in the protected-types registry with a contract doc, and that registry is where reviewers of the shared model look first.)
 
 **`tests.yaml` is the merge gate.** The platform model ships with an OpenFGA test suite, and every relation added here needs scenarios in it — the merge criterion for PR 1 is that they pass, not that the DSL parses. Two categories are worth writing explicitly because they are where this model could go wrong quietly:
 
-- **Negative cases**, which are the whole point of the exercise: a mentor is *denied* `manager` on an application (decision 6 — the legacy API gap, encoded as a test so it cannot regress); a program admin is denied `program_approver` on their own program; a `writer` on project A is denied `writer` on project B's program; an applicant is denied `reviewer` on their own application.
-- **Inheritance cases**, since `manager from mentorship_program` is the hop AQ-2 proposes to keep: a project `writer` reaches a task two levels down; revoking a direct program `writer` does *not* revoke access for someone who still holds it via the project.
+- **Negative cases**, which are the whole point of the exercise: a mentor is *denied* `manager` on an application (decision 6 — the legacy API gap, encoded as a test so it cannot regress); a program `writer` is denied `member` on `team:mentorship-program-approvers` (admins cannot approve their own programs); a `writer` on project A is denied `writer` on project B's program; an applicant is denied `reviewer` on their own application.
+- **Inheritance cases**, since the parent hops are what AQ-2 proposes to keep: a project `writer` reaches a task three levels down (project → program → application → task); a project `mentorship_program_admin` holds `writer` on every program in the project; revoking a direct program `writer` does *not* revoke access for someone who still holds it via the project.
 
 Porting the scenarios from the existing `vote_response` / `survey_response` tests is the fastest start — they are the same single-owner-plus-parent shape.
 
@@ -248,9 +272,9 @@ Porting the scenarios from the existing `vote_response` / `survey_response` test
 | # | Question | Proposed default |
 | --- | --- | --- |
 | AQ-1 | **One canonical route per object (Route 1), with `/me/*` as lists only.** The call framed it as a choice: (1) applications are a real FGA type with one `GET /applications/{uid}` for every authorized caller, or (2) a `/my-applications` endpoint that backdoors the object via a service-side filter — "easier… faster… but not necessarily better", and *"choose one"*, not both. Confirm that reading. | **Route 1** (Jordan endorsed it on the call). One ID-addressed route per object, Heimdall-checked; `/me/*` exists only as collections, never as a second path to an individual object — following a result to `GET /applications/{uid}` hits the same route an admin would. This is the V1 mistake avoided: two ways to fetch one object by ID. **Open sub-question:** should `/me` collections be served by the **query service** (FGA-aware, platform-consistent) rather than by Mentorship filtering on `principal`? |
-| AQ-2 | Confirm per-object tuples for applications/tasks (parent + owner), vs. program-level relations only with *all* routes nested under `/programs/{uid}/…`. Related: Jordan raised **stamping admins/mentors directly onto each child** instead of resolving `manager from mentorship_program` — "much, much more efficient" for listing. | **Keep the parent tuple** and resolve `manager` through it. Dropping it would force nested routes *and* a service-side "does this task belong to that program" guard — authorization logic back in the service. Direct grants trade write amplification (every admin change rewrites every child) for read speed; it is the same denormalization the platform is weighing for project trees. At our volumes the parent hop is not a bottleneck, so start with inheritance — but follow the platform if it standardizes on flattening. |
+| AQ-2 | Confirm per-object tuples for applications/tasks (parent + owner), vs. program-level relations only with *all* routes nested under `/programs/{uid}/…`. Related: Jordan raised **stamping admins/mentors directly onto each child** instead of resolving the parent hops (`… from mentorship_program`, `… from mentorship_application`) — "much, much more efficient" for listing. | **Keep the parent tuple** and resolve `manager` through it. Dropping it would force nested routes *and* a service-side "does this task belong to that program" guard — authorization logic back in the service. Direct grants trade write amplification (every admin change rewrites every child) for read speed; it is the same denormalization the platform is weighing for project trees. At our volumes the parent hop is not a bottleneck, so start with inheritance — but follow the platform if it standardizes on flattening. |
 | AQ-3 | Storage: PostgreSQL (relational lifecycle data, FTS, Fivetran→Snowflake feed) as an explicit deviation from the NATS-KV idiom of native v2 services. | **Keep Postgres**, per [02](./02-target-architecture.md) — a smaller deviation than first framed. The call was explicit that Goa and NATS-KV are *"patterns and recommendations, but not the only way to build things"*, and that Heimdall-fronted with NATS notifications is what makes a service idiomatic: *"it doesn't mean a rewrite from scratch."* The trade is velocity now against homogeneity later (shared tooling, SDK/MCP generation). Crowdfunding is heading for the same shape, so this is not a one-off. |
-| AQ-4 | The model adds two relations to the existing `project` type (`mentorship_program_creator`, `mentorship_coordinator`), mirroring `meetings_creator`/`meeting_coordinator`. Confirm that shape and whether the coordinator grant is wanted at launch. **Ownership constraint:** project-service emits full-state `update_access` for `project` objects, so whichever service does not own a relation cannot durably write it — a tuple written independently by Mentorship would be deleted by the next project update. Adding the relation to `model.fga` is therefore necessary but not sufficient. | Add both; coordinator lets LF staff be granted program creation without full project write. **Project-service must own and emit `mentorship_coordinator`** (as it already does for `meeting_coordinator`) — or, if that is unwanted, the relation belongs on `mentorship_program` instead of `project` and program creation is authorized some other way. Needs an explicit owner before implementation. |
-| AQ-5 | Drop the HMAC email-approval links in favor of LF staff approving via a logged-in Self Serve page, gated on **`program_approver`**? Confirm the relation belongs on `mentorship_program` (owned and emitted by this service) rather than as a platform-level super-admin. | Drop them — one authorization model, and no cross-team prerequisite. The open part is administration: the LF-staff grant should come from a project-level or platform group tuple, not user-by-user writes on every program. |
-| AQ-6 | Program creation policy: gate creation on `mentorship_program_creator` and drop the approval step, or keep legacy behavior (any authenticated user creates; approval publishes)? Most legacy creators are community maintainers who likely hold no FGA relation on their project, and approval is also an editorial/brand gate (product call), not just anti-spam. | Launch with parity: authenticated-only creation (program stays `draft`/`submitted` and non-public until approved), with approval gated on `program_approver`. Keep the creator relations in the model as the lever for later permission-tiered auto-publish. The two questions are separable — creation policy can tighten later without touching the approval gate. |
+| AQ-4 | The model adds two relations to the existing `project` type (`mentorship_program_creator`, `mentorship_program_admin`), mirroring `meetings_creator`/`meeting_coordinator` — with `mentorship_program_admin` also inherited into every program's `writer`, since the second Architecture review confirmed a cross-program admin manages all of the project's programs, not just creates new ones. Confirm that shape and whether the grant is wanted at launch. **Ownership constraint:** project-service emits full-state `update_access` for `project` objects, so whichever service does not own a relation cannot durably write it — a tuple written independently by Mentorship would be deleted by the next project update. Adding the relation to `model.fga` is therefore necessary but not sufficient. | Add both; `mentorship_program_admin` lets someone administer a project's mentorship programs without full project write. (`mentorship_program_creator` is a pure computed union and needs no tuples of its own, so the ownership constraint bites only the admin relation.) **Project-service must own and emit `mentorship_program_admin`** (as it already does for `meeting_coordinator`) — or, if that is unwanted, the relation belongs on `mentorship_program` instead of `project` and cross-program administration is authorized some other way. Needs an explicit owner before implementation. |
+| AQ-5 | ~~Where does the approval grant live?~~ **Resolved at the second Architecture review**: approval is a global LF-staff capability, not a per-program relation — the decision route checks `member` on the platform's existing `team` type (well-known object `team:mentorship-program-approvers`), and the HMAC email links are retired in favor of logged-in approval in Self Serve. | Remaining detail, not shape: the team's roster is written through platform tooling (this service never writes `team` tuples), and the approvers' *read* access to submitted programs comes from the `auditor` userset stamped at program creation (see the sketch and lifecycle table). |
+| AQ-6 | Program creation policy: gate creation on `mentorship_program_creator` and drop the approval step, or keep legacy behavior (any authenticated user creates; approval publishes)? Most legacy creators are community maintainers who likely hold no FGA relation on their project, and approval is also an editorial/brand gate (product call), not just anti-spam. | Launch with parity: authenticated-only creation (program stays `draft`/`submitted` and non-public until approved), with the decision gated on the approver team. Keep the creator relations in the model as the lever for later permission-tiered auto-publish. The two questions are separable — creation policy can tighten later without touching the approval gate. |
 | AQ-7 | **How is the invite-accept route authorized?** Decision 4 keeps pending invitations out of FGA, so at accept time Heimdall has no relation to check — and `allow_all` would let any authenticated caller accept a known invitation ID. Options: (a) emit an `invitee` tuple when the invitation is created (a `mentorship_invite` type mirroring `committee_invite` in the platform model) and have Heimdall check it; or (b) treat the signed invitation token as the credential and document it as an explicit, narrowly-scoped exception to "no service-side authorization decisions". | (a) — `mentorship_invite` with `invitee: [user]` keeps the no-exceptions rule intact, has direct platform precedent, and costs one tuple per pending invite. Worth an explicit call, since it trades pattern purity against emitting tuples for not-yet-accepted state. |
