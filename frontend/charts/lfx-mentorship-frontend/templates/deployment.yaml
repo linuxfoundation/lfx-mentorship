@@ -4,21 +4,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "lfx-v2-mentorship-service.fullname" . }}
+  name: {{ include "lfx-mentorship-frontend.fullname" . }}
   namespace: {{ .Release.Namespace }}
   {{- with .Values.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
   labels:
-    {{- include "lfx-v2-mentorship-service.labels" . | nindent 4 }}
+    {{- include "lfx-mentorship-frontend.labels" . | nindent 4 }}
 spec:
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
   {{- end }}
   selector:
     matchLabels:
-      {{- include "lfx-v2-mentorship-service.selectorLabels" . | nindent 6 }}
+      {{- include "lfx-mentorship-frontend.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       {{- with .Values.podAnnotations }}
@@ -26,13 +26,13 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       labels:
-        {{- include "lfx-v2-mentorship-service.selectorLabels" . | nindent 8 }}
+        {{- include "lfx-mentorship-frontend.selectorLabels" . | nindent 8 }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      serviceAccountName: {{ include "lfx-v2-mentorship-service.serviceAccountName" . }}
+      serviceAccountName: {{ include "lfx-mentorship-frontend.serviceAccountName" . }}
       automountServiceAccountToken: false
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
@@ -44,7 +44,7 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
-              containerPort: 8080
+              containerPort: 3000
               protocol: TCP
           {{- with .Values.env }}
           env:
@@ -52,9 +52,11 @@ spec:
           {{- end }}
           envFrom:
             - configMapRef:
-                name: {{ include "lfx-v2-mentorship-service.fullname" . }}-config
+                name: {{ include "lfx-mentorship-frontend.fullname" . }}-config
+            {{- if .Values.secretName }}
             - secretRef:
                 name: {{ .Values.secretName }}
+            {{- end }}
           livenessProbe:
             {{- toYaml .Values.livenessProbe | nindent 12 }}
           readinessProbe:

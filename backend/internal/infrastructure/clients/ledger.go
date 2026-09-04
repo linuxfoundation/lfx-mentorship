@@ -91,7 +91,7 @@ func (c *ledgerHTTPClient) GetTransactionsPage(ctx context.Context, projectID st
 	if err != nil {
 		return nil, fmt.Errorf("request transactions page: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("ledger GET /transactions returned status %d", resp.StatusCode)

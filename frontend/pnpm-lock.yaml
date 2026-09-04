@@ -74,6 +74,9 @@ importers:
       sass:
         specifier: ^1.102.0
         version: 1.102.0
+      tailwindcss:
+        specifier: ^3.4.19
+        version: 3.4.19(yaml@2.9.0)
       vue:
         specifier: ^3.5.41
         version: 3.5.41(typescript@6.0.3)

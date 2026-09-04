@@ -23,6 +23,56 @@ No Kubernetes resource is rendered; this file only produces errors.
 {{- fail "\n\nvalues.yaml: fundingStatsSyncCronJob.backoffLimit must be 0 or greater when fundingStatsSyncCronJob.enabled=true." }}
 {{- end }}
 {{- if not .Values.secretName }}
-{{- fail "\n\nvalues.yaml: secretName is required when fundingStatsSyncCronJob.enabled=true (must include LEDGER_API_KEY and DATABASE_DSN; Ledger project_id values are mapped to mentorship programs by program ID)." }}
+{{- fail "\n\nvalues.yaml: secretName is required when fundingStatsSyncCronJob.enabled=true (must include LEDGER_API_KEY and the RDS connection components; Ledger project_id values are mapped to mentorship programs by program ID)." }}
+{{- end }}
+{{- end }}
+
+{{/*
+Auth bypass guard.
+
+DISABLED_MOCK_LOCAL_PRINCIPAL together with ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS
+makes the service accept a static principal for every authenticated route with
+no credentials at all. That is a local-development affordance only. Rendering
+it into a real cluster would be a complete authentication bypass, so it is
+refused unless allowLocalAuthBypass is explicitly set — which no environment
+values file in lfx-v2-argocd sets, and none ever should.
+
+Two things this guard must get right, both learned from review:
+
+  - DISABLED_MOCK_LOCAL_PRINCIPAL is a principal *string*, not a boolean.
+    internal/infrastructure/auth/jwt.go activates the mock path on any
+    non-empty value, so testing for "true" would miss `localdev`.
+  - Both .Values.config (rendered into the ConfigMap) and .Values.env
+    (rendered as explicit container env on the Deployment and the migrate
+    Job) reach the process, so both must be inspected.
+*/}}
+{{- $bypassKeys := list "DISABLED_MOCK_LOCAL_PRINCIPAL" "ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS" }}
+{{- $bypassSet := false }}
+{{- range $key := $bypassKeys }}
+{{- if get $.Values.config $key }}
+{{- $bypassSet = true }}
+{{- end }}
+{{- end }}
+{{- range $entry := .Values.env }}
+{{- if and (has $entry.name $bypassKeys) (or $entry.value $entry.valueFrom) }}
+{{- $bypassSet = true }}
+{{- end }}
+{{- end }}
+{{- if $bypassSet }}
+{{- if ne (toString .Values.allowLocalAuthBypass) "true" }}
+{{- fail "\n\nRefusing to render: the local auth bypass is enabled.\n\nDISABLED_MOCK_LOCAL_PRINCIPAL / ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS disable\nauthentication entirely and must never be set in a deployed environment.\nThis is checked in both config: and env:, and any non-empty principal counts.\n\nIf this really is a local kind/minikube cluster, opt in explicitly with:\n  --set allowLocalAuthBypass=true" }}
+{{- end }}
+{{- end }}
+
+{{/*
+Required runtime configuration. The binary exits at startup without these
+(the database connection variables and MENTOR_INVITE_SECRET are hard-required;
+the JWT settings
+fail when the authenticator is constructed), so catch it at render time
+rather than in a crash-looping pod.
+*/}}
+{{- range $key := list "JWKS_URL" "JWT_AUDIENCE" "JWT_ISSUER" }}
+{{- if not (get $.Values.config $key) }}
+{{- fail (printf "\n\nvalues.yaml: config.%s is required — the service fails to start without it.\nSet it per environment in the ArgoCD values file." $key) }}
 {{- end }}
 {{- end }}

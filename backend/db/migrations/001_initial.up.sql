@@ -5,9 +5,17 @@
 -- Source: jobspring-prod-* DynamoDB tables
 -- ============================================
 
+CREATE SCHEMA IF NOT EXISTS mentorship;
+
 BEGIN;
 
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+SET LOCAL search_path TO mentorship, public;
+
+-- SCHEMA public is required, not cosmetic. CREATE EXTENSION with no SCHEMA
+-- clause installs into the first schema on search_path — "mentorship" — which
+-- on the shared RDS instance makes pgcrypto's functions unresolvable for every
+-- other service, whose search_path is its own schema plus public.
+CREATE EXTENSION IF NOT EXISTS "pgcrypto" SCHEMA public;
 
 -- ============================================
 -- Trigger: set updated_on on every UPDATE

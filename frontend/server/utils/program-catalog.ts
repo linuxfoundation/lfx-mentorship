@@ -112,7 +112,6 @@ export function mapCatalogMentee(mentee: ProgramCatalogMentee): ProgramMentee {
   };
 }
 
-
 function fetchErrorStatus(error: unknown): number {
   if (typeof error === 'object' && error !== null && 'statusCode' in error) {
     const statusCode = Number((error as { statusCode?: number }).statusCode);

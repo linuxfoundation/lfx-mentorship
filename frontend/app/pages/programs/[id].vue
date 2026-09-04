@@ -28,9 +28,7 @@ if (error.value) {
 }
 
 const title = computed(() => program.value?.name ?? 'Program');
-const description = computed(
-  () => program.value?.description ?? 'Explore this mentorship program on LFX Mentorship.',
-);
+const description = computed(() => program.value?.description ?? 'Explore this mentorship program on LFX Mentorship.');
 const canonicalPath = computed(() => programPath(program.value?.slug || program.value?.id || programId.value));
 
 const { canonical, image } = usePublicSeo({

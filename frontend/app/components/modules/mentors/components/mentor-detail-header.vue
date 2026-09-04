@@ -81,19 +81,19 @@ SPDX-License-Identifier: MIT
         <dl class="flex flex-col gap-3 border-t border-neutral-100 pt-5">
           <div class="flex items-center justify-between gap-4 text-xs">
             <dt class="text-neutral-500">Programs mentoring</dt>
-            <dd class=" text-neutral-900 tabular-nums">
+            <dd class="text-neutral-900 tabular-nums">
               {{ mentor.stats.programsMentoring }}
             </dd>
           </div>
           <div class="flex items-center justify-between gap-4 text-xs">
             <dt class="text-neutral-500">Current mentees</dt>
-            <dd class=" text-neutral-900 tabular-nums">
+            <dd class="text-neutral-900 tabular-nums">
               {{ mentor.stats.currentMentees }}
             </dd>
           </div>
           <div class="flex items-center justify-between gap-4 text-xs">
             <dt class="text-neutral-500">Mentees graduated</dt>
-            <dd class=" text-neutral-900 tabular-nums">
+            <dd class="text-neutral-900 tabular-nums">
               {{ mentor.stats.menteesGraduated }}
             </dd>
           </div>
