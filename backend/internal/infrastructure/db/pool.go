@@ -39,6 +39,10 @@ func NewPool(ctx context.Context, cfg PoolConfig) (*pgxpool.Pool, error) {
 	config.MaxConns = int32(cfg.MaxConns)
 	config.MinConns = int32(cfg.MinConns)
 	config.MaxConnLifetime = cfg.ConnMaxLifetime
+	// Mentorship tables live in the "mentorship" schema (migration 001), not
+	// "public", because this service shares an RDS instance with the other LFX
+	// services. "public" stays on the path for extensions such as pgcrypto.
+	config.ConnConfig.RuntimeParams["search_path"] = "mentorship,public"
 
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
