@@ -6,8 +6,9 @@ package models
 import "time"
 
 // MenteeStatus is the directory-facing application status shown on mentee
-// cards, programs, and terms. Values stay aligned with applications.status
-// for enrolled mentees (accepted, active, graduated).
+// cards, programs, and terms. It is a display vocabulary, not a stored one:
+// "active" is a UI label for an enrolled mentee and has no corresponding
+// applications.status value — the stored status for those rows is "accepted".
 type MenteeStatus string
 
 const (

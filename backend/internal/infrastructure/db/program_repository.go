@@ -343,7 +343,7 @@ func (r *ProgramRepository) ListCatalogMentees(ctx context.Context, programID st
 		WHERE pt.program_id = $1
 		  AND pt.status <> 'deleted'
 		  AND a.role = 'mentee'
-		  AND a.status IN ('accepted', 'active', 'graduated')
+		  AND a.status IN ('accepted', 'graduated')
 		ORDER BY CASE WHEN a.status = 'graduated' THEN 1 ELSE 0 END,
 		         u.name NULLS LAST,
 		         pt.start_date_time DESC NULLS LAST`, programID)
