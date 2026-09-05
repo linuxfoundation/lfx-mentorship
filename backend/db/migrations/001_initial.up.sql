@@ -171,7 +171,7 @@ CREATE TABLE IF NOT EXISTS applications (
   program_term_id      UUID        NOT NULL REFERENCES program_terms(id) ON DELETE CASCADE,
   user_id              UUID        NOT NULL REFERENCES users(id),
   role                 VARCHAR(20) NOT NULL DEFAULT 'mentee',   -- mentor | mentee
-  status               VARCHAR(20) NOT NULL DEFAULT 'pending',  -- pending | accepted | active | declined | withdrawn | graduated | hold
+  status               VARCHAR(20) NOT NULL DEFAULT 'pending',  -- pending | accepted | declined | withdrawn | graduated | hold
   program_term_status  VARCHAR(20),                             -- denormalised: open | closed
   start_date_time      TIMESTAMPTZ,
   end_date_time        TIMESTAMPTZ,
@@ -181,7 +181,7 @@ CREATE TABLE IF NOT EXISTS applications (
   created_on           TIMESTAMPTZ DEFAULT NOW(),
   updated_on           TIMESTAMPTZ DEFAULT NOW(),
   CONSTRAINT applications_role_check       CHECK (role   IN ('mentor', 'mentee')),
-  CONSTRAINT applications_status_check     CHECK (status IN ('pending', 'accepted', 'active', 'declined', 'withdrawn', 'graduated', 'hold')),
+  CONSTRAINT applications_status_check     CHECK (status IN ('pending', 'accepted', 'declined', 'withdrawn', 'graduated', 'hold')),
   CONSTRAINT applications_attendance_check CHECK (attendance_type IS NULL OR attendance_type IN ('full_time', 'part_time')),
   UNIQUE (program_term_id, user_id, role)
 );

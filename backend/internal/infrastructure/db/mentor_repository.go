@@ -425,7 +425,7 @@ func (r *MentorRepository) loadMentorMentees(ctx context.Context, mentorUserID s
 			LIMIT 1
 		) up ON true
 		WHERE a.role = 'mentee'
-		  AND a.status IN ('accepted', 'active', 'graduated')
+		  AND a.status IN ('accepted', 'graduated')
 		  AND pt.status <> 'deleted'
 		  AND p.status = 'published'
 		ORDER BY a.user_id,

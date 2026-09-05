@@ -291,7 +291,7 @@ func (r *ApplicationRepository) CountAcceptedByTerm(ctx context.Context, termID 
 
 	var count int
 	// NOTE: status literals must stay in sync with models.ApplicationStatus.
-	const q = `SELECT COUNT(*) FROM applications WHERE program_term_id = $1 AND status IN ('accepted', 'active')`
+	const q = `SELECT COUNT(*) FROM applications WHERE program_term_id = $1 AND status = 'accepted'`
 	if err := r.pool.QueryRow(ctx, q, termID).Scan(&count); err != nil {
 		span.RecordError(err)
 		return 0, fmt.Errorf("count accepted applications: %w", err)
@@ -352,7 +352,7 @@ func (r *ApplicationRepository) ListPastMenteesByTerm(ctx context.Context, termI
 	span.SetAttributes(attribute.String("db.term_id", termID))
 
 	// NOTE: status literals must stay in sync with models.ApplicationStatus.
-	q := `SELECT ` + applicationCols + ` FROM applications WHERE program_term_id = $1 AND status IN ('accepted', 'active', 'graduated') ORDER BY created_on`
+	q := `SELECT ` + applicationCols + ` FROM applications WHERE program_term_id = $1 AND status IN ('accepted', 'graduated') ORDER BY created_on`
 	rows, err := r.pool.Query(ctx, q, termID)
 	if err != nil {
 		span.RecordError(err)

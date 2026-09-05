@@ -328,7 +328,7 @@ func (r *ProgramRepository) ListCatalogMentees(ctx context.Context, programID st
 	span.SetAttributes(attribute.String("db.program_id", programID))
 
 	rows, err := r.pool.Query(ctx, `
-		SELECT a.user_id, u.name, u.avatar_url, u.email, up.introduction, a.status, pt.id, pt.name
+		SELECT a.user_id, u.name, u.avatar_url, up.introduction, a.status, pt.id, pt.name
 		FROM applications a
 		JOIN program_terms pt ON pt.id = a.program_term_id
 		LEFT JOIN users u ON u.id = a.user_id
@@ -343,7 +343,7 @@ func (r *ProgramRepository) ListCatalogMentees(ctx context.Context, programID st
 		WHERE pt.program_id = $1
 		  AND pt.status <> 'deleted'
 		  AND a.role = 'mentee'
-		  AND a.status IN ('accepted', 'active', 'graduated')
+		  AND a.status IN ('accepted', 'graduated')
 		ORDER BY CASE WHEN a.status = 'graduated' THEN 1 ELSE 0 END,
 		         u.name NULLS LAST,
 		         pt.start_date_time DESC NULLS LAST`, programID)
@@ -356,7 +356,7 @@ func (r *ProgramRepository) ListCatalogMentees(ctx context.Context, programID st
 	var mentees []*models.ProgramCatalogMentee
 	for rows.Next() {
 		var m models.ProgramCatalogMentee
-		if err := rows.Scan(&m.UserID, &m.Name, &m.AvatarURL, &m.Email, &m.Introduction, &m.Status, &m.TermID, &m.TermName); err != nil {
+		if err := rows.Scan(&m.UserID, &m.Name, &m.AvatarURL, &m.Introduction, &m.Status, &m.TermID, &m.TermName); err != nil {
 			span.RecordError(err)
 			return nil, fmt.Errorf("scan catalog mentee: %w", err)
 		}

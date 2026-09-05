@@ -14,7 +14,6 @@ type ApplicationStatus string
 const (
 	ApplicationStatusPending   ApplicationStatus = "pending"
 	ApplicationStatusAccepted  ApplicationStatus = "accepted"
-	ApplicationStatusActive    ApplicationStatus = "active"
 	ApplicationStatusDeclined  ApplicationStatus = "declined"
 	ApplicationStatusWithdrawn ApplicationStatus = "withdrawn"
 	ApplicationStatusGraduated ApplicationStatus = "graduated"
@@ -24,7 +23,7 @@ const (
 // IsValid reports whether the status value is one of the allowed enum members.
 func (s ApplicationStatus) IsValid() bool {
 	switch s {
-	case ApplicationStatusPending, ApplicationStatusAccepted, ApplicationStatusActive,
+	case ApplicationStatusPending, ApplicationStatusAccepted,
 		ApplicationStatusDeclined, ApplicationStatusWithdrawn, ApplicationStatusGraduated,
 		ApplicationStatusHold:
 		return true

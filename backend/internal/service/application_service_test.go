@@ -463,6 +463,21 @@ func TestApplicationService_Update_ValidTransition(t *testing.T) {
 	}
 }
 
+// An enrolled mentee stays "accepted" for the whole term and graduates
+// directly from it — there is no intermediate "active" status.
+func TestApplicationService_Update_AcceptedToGraduated(t *testing.T) {
+	repo := &stubAppRepo{
+		getByID: func(_ context.Context, id string) (*models.Application, error) {
+			return &models.Application{ID: id, Status: models.ApplicationStatusAccepted}, nil
+		},
+	}
+	svc := newApplicationSvc(repo, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{})
+	next := models.ApplicationStatusGraduated
+	if _, err := svc.Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &next}); err != nil {
+		t.Errorf("expected valid transition accepted→graduated, got %v", err)
+	}
+}
+
 func TestApplicationService_Update_InvalidTransition(t *testing.T) {
 	repo := &stubAppRepo{
 		getByID: func(_ context.Context, id string) (*models.Application, error) {
