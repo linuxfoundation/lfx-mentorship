@@ -36,6 +36,33 @@ func (s *stubProgramMemberSvc) Update(context.Context, string, models.ProgramMem
 }
 func (s *stubProgramMemberSvc) Delete(context.Context, string) error { return nil }
 
+// The public roster is active members only, and the caller must not be able to
+// widen it by asking for another status.
+func TestProgramMemberHandler_List_PinsActiveStatus(t *testing.T) {
+	var captured models.ProgramMemberFilter
+	h := handler.NewProgramMemberHandler(&stubProgramMemberSvc{
+		listByProgram: func(_ context.Context, _ string, f models.ProgramMemberFilter) ([]*models.ProgramMember, *models.PaginationMeta, error) {
+			captured = f
+			return []*models.ProgramMember{}, &models.PaginationMeta{}, nil
+		},
+	})
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/p1/members?status=pending&member_type=mentor", nil)
+	r = requestWithChiParam(r, "id", "p1")
+	w := httptest.NewRecorder()
+	h.List(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d; want 200", w.Code)
+	}
+	if captured.Status != string(models.ProgramMemberStatusActive) {
+		t.Errorf("Status = %q; want %q", captured.Status, models.ProgramMemberStatusActive)
+	}
+	// member_type stays caller-controlled: every type on the roster is public.
+	if captured.MemberType != "mentor" {
+		t.Errorf("MemberType = %q; want mentor", captured.MemberType)
+	}
+}
+
 // The members list is served unauthenticated, so it must never carry the
 // member's email address, even though the service returns it.
 func TestProgramMemberHandler_List_OmitsEmail(t *testing.T) {

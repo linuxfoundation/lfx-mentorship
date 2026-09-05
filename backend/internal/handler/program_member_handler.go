@@ -33,9 +33,13 @@ func NewProgramMemberHandler(svc programMemberService) *ProgramMemberHandler {
 
 // List handles GET /v1/programs/{id}/members.
 //
-// This route is unauthenticated, so the member's email is stripped from every
-// row before it is serialized. Email stays on the model because create and
-// update accept it; it must not reach an anonymous caller.
+// This route is unauthenticated, so it serves the public roster only: active
+// members, with the email stripped from every row before it is serialized.
+//
+// Status is pinned rather than read from the query string — a caller must not
+// be able to widen a public roster to pending, declined or withdrawn members.
+// Email stays on the model because create and update accept it; it must not
+// reach an anonymous caller.
 func (h *ProgramMemberHandler) List(w http.ResponseWriter, r *http.Request) {
 	programID := chi.URLParam(r, "id")
 	limit, offset, ok := parsePaginationParams(w, r)
@@ -46,7 +50,7 @@ func (h *ProgramMemberHandler) List(w http.ResponseWriter, r *http.Request) {
 		Limit:      limit,
 		Offset:     offset,
 		MemberType: r.URL.Query().Get("member_type"),
-		Status:     r.URL.Query().Get("status"),
+		Status:     string(models.ProgramMemberStatusActive),
 	})
 	if err != nil {
 		Error(w, err)
