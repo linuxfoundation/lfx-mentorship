@@ -50,7 +50,6 @@ export interface ProgramCatalogMentee {
   name?: string;
   avatar_url?: string;
   introduction?: string;
-  email?: string;
   status: string;
   term_id: string;
   term_name: string;
@@ -105,13 +104,11 @@ export function mapCatalogMentee(mentee: ProgramCatalogMentee): ProgramMentee {
     name: mentee.name?.trim() || 'Mentee',
     avatarUrl: mentee.avatar_url,
     intro: mentee.introduction?.trim() || undefined,
-    email: mentee.email?.trim() || '',
     status: toMenteeStatus(mentee.status),
     termId: mentee.term_id,
     termLabel: mentee.term_name,
   };
 }
-
 
 function fetchErrorStatus(error: unknown): number {
   if (typeof error === 'object' && error !== null && 'statusCode' in error) {

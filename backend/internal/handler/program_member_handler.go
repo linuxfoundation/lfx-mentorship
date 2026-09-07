@@ -32,6 +32,14 @@ func NewProgramMemberHandler(svc programMemberService) *ProgramMemberHandler {
 }
 
 // List handles GET /v1/programs/{id}/members.
+//
+// This route is unauthenticated, so it serves the public roster only: active
+// members, with the email stripped from every row before it is serialized.
+//
+// Status is pinned rather than read from the query string — a caller must not
+// be able to widen a public roster to pending, declined or withdrawn members.
+// Email stays on the model because create and update accept it; it must not
+// reach an anonymous caller.
 func (h *ProgramMemberHandler) List(w http.ResponseWriter, r *http.Request) {
 	programID := chi.URLParam(r, "id")
 	limit, offset, ok := parsePaginationParams(w, r)
@@ -42,13 +50,19 @@ func (h *ProgramMemberHandler) List(w http.ResponseWriter, r *http.Request) {
 		Limit:      limit,
 		Offset:     offset,
 		MemberType: r.URL.Query().Get("member_type"),
-		Status:     r.URL.Query().Get("status"),
+		Status:     string(models.ProgramMemberStatusActive),
 	})
 	if err != nil {
 		Error(w, err)
 		return
 	}
-	JSON(w, http.StatusOK, map[string]any{"data": members, "meta": meta})
+	public := make([]models.ProgramMember, 0, len(members))
+	for _, m := range members {
+		redacted := *m
+		redacted.Email = nil
+		public = append(public, redacted)
+	}
+	JSON(w, http.StatusOK, map[string]any{"data": public, "meta": meta})
 }
 
 // Create handles POST /v1/programs/{id}/members — requires JWT.
