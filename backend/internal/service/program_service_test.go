@@ -323,3 +323,63 @@ func TestProgramService_Update_InvalidProgramTermStatus_Rejected(t *testing.T) {
 		t.Errorf("expected ErrInvalidInput for unknown program_term_status, got %v", err)
 	}
 }
+
+type fakeCrowdfundingClient struct {
+	getCategorizedTransactions func(context.Context, string, string, bool, int, int) (*models.ProgramCategorizedTransactions, error)
+}
+
+func (f *fakeCrowdfundingClient) GetCategorizedTransactions(ctx context.Context, initiativeID, categoryType string, subscriptionOnly bool, limit, offset int) (*models.ProgramCategorizedTransactions, error) {
+	if f.getCategorizedTransactions != nil {
+		return f.getCategorizedTransactions(ctx, initiativeID, categoryType, subscriptionOnly, limit, offset)
+	}
+	return &models.ProgramCategorizedTransactions{}, nil
+}
+
+func TestProgramService_GetCategorizedTransactions_ClientNotConfigured(t *testing.T) {
+	svc := newProgramSvc(&stubProgRepo{}, &stubTermRepo{}, &stubAppRepo{})
+	_, err := svc.GetCategorizedTransactions(context.Background(), "prog-1", "mentorship", false, 10, 0)
+	if !errors.Is(err, domain.ErrUpstreamUnavailable) {
+		t.Errorf("expected ErrUpstreamUnavailable, got %v", err)
+	}
+}
+
+func TestProgramService_GetCategorizedTransactions_DefaultCategoryAndArgs(t *testing.T) {
+	svc := newProgramSvc(&stubProgRepo{}, &stubTermRepo{}, &stubAppRepo{})
+
+	var gotProgramID, gotCategory string
+	var gotSubOnly bool
+	var gotLimit, gotOffset int
+
+	svc.SetCrowdfundingClient(&fakeCrowdfundingClient{
+		getCategorizedTransactions: func(_ context.Context, programID, categoryType string, subscriptionOnly bool, limit, offset int) (*models.ProgramCategorizedTransactions, error) {
+			gotProgramID = programID
+			gotCategory = categoryType
+			gotSubOnly = subscriptionOnly
+			gotLimit = limit
+			gotOffset = offset
+			return &models.ProgramCategorizedTransactions{
+				IndividualTransactions: []models.ProgramTransaction{{ID: "ind-1"}},
+				TotalCount:             1,
+				Limit:                  limit,
+				Offset:                 offset,
+			}, nil
+		},
+	})
+
+	out, err := svc.GetCategorizedTransactions(context.Background(), "prog-1", "", true, 25, 3)
+	if err != nil {
+		t.Fatalf("GetCategorizedTransactions: %v", err)
+	}
+	if gotProgramID != "prog-1" {
+		t.Errorf("programID = %q; want prog-1", gotProgramID)
+	}
+	if gotCategory != string(models.MentorshipCategory) {
+		t.Errorf("category = %q; want %q", gotCategory, string(models.MentorshipCategory))
+	}
+	if !gotSubOnly || gotLimit != 25 || gotOffset != 3 {
+		t.Errorf("args = subOnly=%v limit=%d offset=%d; want true/25/3", gotSubOnly, gotLimit, gotOffset)
+	}
+	if out.TotalCount != 1 {
+		t.Errorf("TotalCount = %d; want 1", out.TotalCount)
+	}
+}

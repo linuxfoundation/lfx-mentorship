@@ -6,6 +6,7 @@ package handler
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
@@ -27,6 +28,7 @@ type programService interface {
 	AddSkill(ctx context.Context, programID string, input models.ProgramSkillCreateInput) (*models.ProgramSkill, error)
 	DeleteSkill(ctx context.Context, skillID string) error
 	GetFundingStats(ctx context.Context, programID string) (*models.ProgramFundingStats, error)
+	GetCategorizedTransactions(ctx context.Context, programID, categoryType string, subscriptionOnly bool, limit, offset int) (*models.ProgramCategorizedTransactions, error)
 }
 
 // ProgramHandler holds Chi handlers for the programs resource.
@@ -265,4 +267,40 @@ func (h *ProgramHandler) GetFundingStats(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	JSON(w, http.StatusOK, stats)
+}
+
+// GetCategorizedTransactions handles GET /v1/programs/{id}/transactions.
+func (h *ProgramHandler) GetCategorizedTransactions(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	program, err := h.svc.GetByID(r.Context(), id)
+	if err != nil {
+		program, err = h.svc.GetBySlug(r.Context(), id)
+		if err != nil {
+			Error(w, err)
+			return
+		}
+	}
+
+	limit, offset, ok := parsePaginationParams(w, r)
+	if !ok {
+		return
+	}
+	if limit <= 0 {
+		limit = 10
+	} else if limit > 100 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	categoryType := strings.TrimSpace(r.URL.Query().Get("categoryType"))
+	subscriptionOnly := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("subscriptionOnly")), "true")
+
+	txns, err := h.svc.GetCategorizedTransactions(r.Context(), program.ID, categoryType, subscriptionOnly, limit, offset)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, txns)
 }

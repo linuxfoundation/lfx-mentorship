@@ -16,6 +16,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/handler"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/auth"
+	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/clients"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/db"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/service"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -62,6 +63,17 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	userSvc := service.NewUserService(userRepo)
 	userProfileSvc := service.NewUserProfileService(userProfileRepo)
 	programSvc := service.NewProgramService(programRepo, programTermRepo, applicationRepo)
+	if cfg.Crowdfunding.IsConfigured() {
+		programSvc.SetCrowdfundingClient(clients.NewCrowdfundingClient(clients.CrowdfundingConfig{
+			BaseURL:      cfg.Crowdfunding.BaseURL,
+			TokenURL:     cfg.Crowdfunding.TokenURL,
+			ClientID:     cfg.Crowdfunding.ClientID,
+			ClientSecret: cfg.Crowdfunding.ClientSecret,
+			Audience:     cfg.Crowdfunding.Audience,
+			Scope:        cfg.Crowdfunding.Scope,
+			Timeout:      cfg.Crowdfunding.Timeout,
+		}))
+	}
 	programTermSvc := service.NewProgramTermService(programTermRepo, applicationRepo)
 	programMemberSvc := service.NewProgramMemberService(programMemberRepo, programRepo, notifier, cfg.Local.InviteSecret)
 	applicationSvc := service.NewApplicationService(applicationRepo, taskRepo, programTermRepo, programRepo, notifier)
@@ -133,6 +145,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		r.Get("/mentors/{id}", mentorH.GetByID)
 		r.Get("/summary", platformSummaryH.Get)
 		r.Get("/programs/{id}/funding-stats", programH.GetFundingStats)
+		r.Get("/programs/{id}/transactions", programH.GetCategorizedTransactions)
 		r.Get("/programs/{id}/terms", programTermH.ListByProgram)
 		r.Get("/programs/{id}/members", programMemberH.List)
 

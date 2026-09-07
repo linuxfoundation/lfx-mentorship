@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
+	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/clients"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -23,11 +24,18 @@ type ProgramService struct {
 	repo     domain.ProgramRepository
 	termRepo domain.ProgramTermRepository
 	appRepo  domain.ApplicationRepository
+	cfClient clients.CrowdfundingClient
 }
 
 // NewProgramService returns a ProgramService.
 func NewProgramService(repo domain.ProgramRepository, termRepo domain.ProgramTermRepository, appRepo domain.ApplicationRepository) *ProgramService {
 	return &ProgramService{repo: repo, termRepo: termRepo, appRepo: appRepo}
+}
+
+// SetCrowdfundingClient configures the outbound crowdfunding client used by
+// cross-service program transaction endpoints.
+func (s *ProgramService) SetCrowdfundingClient(client clients.CrowdfundingClient) {
+	s.cfClient = client
 }
 
 // programTransitions defines the valid next states for each program status.
@@ -342,6 +350,28 @@ func (s *ProgramService) GetFundingStats(ctx context.Context, programID string) 
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("get funding stats: %w", err)
+	}
+	return stats, nil
+}
+
+// GetCategorizedTransactions proxies the crowdfunding category-transactions contract
+// for the given program. categoryType defaults to mentorship when omitted.
+func (s *ProgramService) GetCategorizedTransactions(ctx context.Context, programID, categoryType string, subscriptionOnly bool, limit, offset int) (*models.ProgramCategorizedTransactions, error) {
+	ctx, span := programSvcTracer.Start(ctx, "ProgramService.GetCategorizedTransactions")
+	defer span.End()
+
+	if s.cfClient == nil {
+		return nil, fmt.Errorf("crowdfunding client not configured: %w", domain.ErrUpstreamUnavailable)
+	}
+
+	if strings.TrimSpace(categoryType) == "" {
+		categoryType = string(models.MentorshipCategory)
+	}
+
+	stats, err := s.cfClient.GetCategorizedTransactions(ctx, programID, categoryType, subscriptionOnly, limit, offset)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("get categorized transactions: %w", err)
 	}
 	return stats, nil
 }
