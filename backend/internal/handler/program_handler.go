@@ -57,6 +57,27 @@ func NewProgramHandler(svc programService) *ProgramHandler {
 	return &ProgramHandler{svc: svc}
 }
 
+func (h *ProgramHandler) resolveVisibleProgram(w http.ResponseWriter, r *http.Request) (*models.Program, bool) {
+	id := chi.URLParam(r, "id")
+	program, err := h.svc.GetByID(r.Context(), id)
+	if err != nil {
+		program, err = h.svc.GetBySlug(r.Context(), id)
+		if err != nil {
+			Error(w, err)
+			return nil, false
+		}
+	}
+	if program.Status == models.ProgramStatusHidden {
+		principal := auth.PrincipalFromContext(r.Context())
+		isOwner := principal != nil && program.LFID != nil && *program.LFID == principal.Username
+		if !isOwner {
+			Error(w, domain.ErrProgramNotFound)
+			return nil, false
+		}
+	}
+	return program, true
+}
+
 // List handles GET /v1/programs.
 func (h *ProgramHandler) List(w http.ResponseWriter, r *http.Request) {
 	limit, offset, ok := parsePaginationParams(w, r)
@@ -117,22 +138,9 @@ func (h *ProgramHandler) GetCatalog(w http.ResponseWriter, r *http.Request) {
 
 // ListCatalogMentees handles GET /v1/programs/{id}/mentees.
 func (h *ProgramHandler) ListCatalogMentees(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	program, err := h.svc.GetByID(r.Context(), id)
-	if err != nil {
-		program, err = h.svc.GetBySlug(r.Context(), id)
-		if err != nil {
-			Error(w, err)
-			return
-		}
-	}
-	if program.Status == models.ProgramStatusHidden {
-		principal := auth.PrincipalFromContext(r.Context())
-		isOwner := principal != nil && program.LFID != nil && *program.LFID == principal.Username
-		if !isOwner {
-			Error(w, domain.ErrProgramNotFound)
-			return
-		}
+	program, ok := h.resolveVisibleProgram(w, r)
+	if !ok {
+		return
 	}
 	mentees, err := h.svc.ListCatalogMentees(r.Context(), program.ID)
 	if err != nil {
@@ -144,24 +152,9 @@ func (h *ProgramHandler) ListCatalogMentees(w http.ResponseWriter, r *http.Reque
 
 // GetByID handles GET /v1/programs/{id}.
 func (h *ProgramHandler) GetByID(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	program, err := h.svc.GetByID(r.Context(), id)
-	if err != nil {
-		// Try by slug if not found by UUID
-		program, err = h.svc.GetBySlug(r.Context(), id)
-		if err != nil {
-			Error(w, err)
-			return
-		}
-	}
-	// FR-009: hidden programs return 404 to everyone except the owner (matched by LFID).
-	if program.Status == models.ProgramStatusHidden {
-		principal := auth.PrincipalFromContext(r.Context())
-		isOwner := principal != nil && program.LFID != nil && *program.LFID == principal.Username
-		if !isOwner {
-			Error(w, domain.ErrProgramNotFound)
-			return
-		}
+	program, ok := h.resolveVisibleProgram(w, r)
+	if !ok {
+		return
 	}
 	JSON(w, http.StatusOK, program)
 }
@@ -287,14 +280,9 @@ func (h *ProgramHandler) GetFundingStats(w http.ResponseWriter, r *http.Request)
 
 // GetCategorizedTransactions handles GET /v1/programs/{id}/transactions.
 func (h *ProgramHandler) GetCategorizedTransactions(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	program, err := h.svc.GetByID(r.Context(), id)
-	if err != nil {
-		program, err = h.svc.GetBySlug(r.Context(), id)
-		if err != nil {
-			Error(w, err)
-			return
-		}
+	program, ok := h.resolveVisibleProgram(w, r)
+	if !ok {
+		return
 	}
 
 	limit, offset, ok := parsePaginationParams(w, r)
@@ -323,14 +311,9 @@ func (h *ProgramHandler) GetCategorizedTransactions(w http.ResponseWriter, r *ht
 
 // GetProgramSponsors handles GET /v1/programs/{id}/sponsors.
 func (h *ProgramHandler) GetProgramSponsors(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	program, err := h.svc.GetByID(r.Context(), id)
-	if err != nil {
-		program, err = h.svc.GetBySlug(r.Context(), id)
-		if err != nil {
-			Error(w, err)
-			return
-		}
+	program, ok := h.resolveVisibleProgram(w, r)
+	if !ok {
+		return
 	}
 
 	categoryType := strings.TrimSpace(r.URL.Query().Get("categoryType"))

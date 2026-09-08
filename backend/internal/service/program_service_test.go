@@ -523,6 +523,74 @@ func TestProgramService_GetProgramSponsors_AggregateDoesNotStopOnEmptyPage(t *te
 	}
 }
 
+func TestProgramService_GetProgramSponsors_AggregateUsesReturnedLimitForOffsets(t *testing.T) {
+	svc := newProgramSvc(&stubProgRepo{}, &stubTermRepo{}, &stubAppRepo{})
+
+	callArgs := make([][2]int, 0, 3)
+	svc.SetCrowdfundingClient(&fakeCrowdfundingClient{
+		getCategorizedTransactions: func(_ context.Context, _ string, _ string, _ bool, limit, offset int) (*models.ProgramCategorizedTransactions, error) {
+			callArgs = append(callArgs, [2]int{limit, offset})
+			switch offset {
+			case 0:
+				return &models.ProgramCategorizedTransactions{
+					OrganizationTransactions: []models.ProgramTransaction{
+						{ID: "o1", DonorType: "organization", DonorName: "Google", AmountCents: 1000},
+					},
+					TotalCount: 250,
+					Limit:      100,
+					Offset:     0,
+				}, nil
+			case 100:
+				return &models.ProgramCategorizedTransactions{
+					IndividualTransactions: []models.ProgramTransaction{
+						{ID: "i1", DonorType: "individual", DonorName: "Alice", AmountCents: 200},
+					},
+					TotalCount: 250,
+					Limit:      100,
+					Offset:     100,
+				}, nil
+			case 200:
+				return &models.ProgramCategorizedTransactions{
+					OrganizationTransactions: []models.ProgramTransaction{
+						{ID: "o2", DonorType: "organization", DonorName: "Google", AmountCents: 300},
+					},
+					TotalCount: 250,
+					Limit:      100,
+					Offset:     200,
+				}, nil
+			default:
+				return &models.ProgramCategorizedTransactions{TotalCount: 250, Limit: 100, Offset: offset}, nil
+			}
+		},
+	})
+
+	out, err := svc.GetProgramSponsors(context.Background(), "prog-1", "mentorship", false, true)
+	if err != nil {
+		t.Fatalf("GetProgramSponsors: %v", err)
+	}
+	if len(callArgs) != 3 {
+		t.Fatalf("calls = %d; want 3", len(callArgs))
+	}
+	seen := map[[2]int]bool{}
+	for _, args := range callArgs {
+		seen[args] = true
+	}
+	for _, want := range [][2]int{{2000, 0}, {2000, 100}, {2000, 200}} {
+		if !seen[want] {
+			t.Fatalf("missing call args %v in %+v", want, callArgs)
+		}
+	}
+	if len(out) != 2 {
+		t.Fatalf("len(out) = %d; want 2", len(out))
+	}
+	if out[0].ID != "google" || out[0].AmountCents != 1300 {
+		t.Errorf("out[0] = %+v; want Google 1300", out[0])
+	}
+	if out[1].ID != "individual-donors" || out[1].AmountCents != 200 {
+		t.Errorf("out[1] = %+v; want Individual donors 200", out[1])
+	}
+}
+
 func TestProgramService_GetCategorizedTransactions_ClientNotConfigured(t *testing.T) {
 	svc := newProgramSvc(&stubProgRepo{}, &stubTermRepo{}, &stubAppRepo{})
 	_, err := svc.GetCategorizedTransactions(context.Background(), "prog-1", "mentorship", false, 10, 0)

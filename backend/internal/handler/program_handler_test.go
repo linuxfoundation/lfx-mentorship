@@ -293,6 +293,22 @@ func TestProgramHandler_GetCategorizedTransactions_DefaultsAndSlugFallback(t *te
 	}
 }
 
+func TestProgramHandler_GetCategorizedTransactions_HiddenReturns404(t *testing.T) {
+	lfid := "owner"
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		getByID: func(_ context.Context, id string) (*models.Program, error) {
+			return &models.Program{ID: id, Status: models.ProgramStatusHidden, LFID: &lfid}, nil
+		},
+	})
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/p1/transactions", nil)
+	r = requestWithChiParam(r, "id", "p1")
+	w := httptest.NewRecorder()
+	h.GetCategorizedTransactions(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("got %d; want 404", w.Code)
+	}
+}
+
 func TestProgramHandler_GetProgramSponsors_OK(t *testing.T) {
 	h := handler.NewProgramHandler(&stubProgramSvc{
 		getByID: func(_ context.Context, id string) (*models.Program, error) {
@@ -353,5 +369,21 @@ func TestProgramHandler_GetProgramSponsors_AggregateQueryParam(t *testing.T) {
 	h.GetProgramSponsors(w, r)
 	if w.Code != http.StatusOK {
 		t.Fatalf("got %d; want 200", w.Code)
+	}
+}
+
+func TestProgramHandler_GetProgramSponsors_HiddenReturns404(t *testing.T) {
+	lfid := "owner"
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		getByID: func(_ context.Context, id string) (*models.Program, error) {
+			return &models.Program{ID: id, Status: models.ProgramStatusHidden, LFID: &lfid}, nil
+		},
+	})
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/p1/sponsors", nil)
+	r = requestWithChiParam(r, "id", "p1")
+	w := httptest.NewRecorder()
+	h.GetProgramSponsors(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("got %d; want 404", w.Code)
 	}
 }

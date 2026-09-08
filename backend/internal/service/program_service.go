@@ -463,22 +463,17 @@ func (s *ProgramService) GetProgramSponsors(ctx context.Context, programID, cate
 	}
 	all = append(all, firstPage.OrganizationTransactions...)
 	all = append(all, firstPage.IndividualTransactions...)
-
-	totalCount := firstPage.TotalCount
-	if totalCount <= pageSize {
+	if !aggregate {
 		return aggregateProgramSponsors(all), nil
 	}
 
-	if !aggregate {
-		for offset := pageSize; offset < totalCount; offset += pageSize {
-			page, err := s.cfClient.GetCategorizedTransactions(ctx, programID, categoryType, subscriptionOnly, pageSize, offset)
-			if err != nil {
-				span.RecordError(err)
-				return nil, fmt.Errorf("get sponsors transactions page: %w", err)
-			}
-			all = append(all, page.OrganizationTransactions...)
-			all = append(all, page.IndividualTransactions...)
-		}
+	effectivePageSize := firstPage.Limit
+	if effectivePageSize <= 0 || effectivePageSize > pageSize {
+		effectivePageSize = pageSize
+	}
+
+	totalCount := firstPage.TotalCount
+	if totalCount <= effectivePageSize {
 		return aggregateProgramSponsors(all), nil
 	}
 
@@ -489,7 +484,7 @@ func (s *ProgramService) GetProgramSponsors(ctx context.Context, programID, cate
 	var wg sync.WaitGroup
 
 	workerCount := aggregateWorkers
-	remainingPages := (totalCount + pageSize - 1) / pageSize
+	remainingPages := (totalCount + effectivePageSize - 1) / effectivePageSize
 	if workerCount > remainingPages {
 		workerCount = remainingPages
 	}
@@ -514,7 +509,7 @@ func (s *ProgramService) GetProgramSponsors(ctx context.Context, programID, cate
 		}()
 	}
 
-	for offset := pageSize; offset < totalCount; offset += pageSize {
+	for offset := effectivePageSize; offset < totalCount; offset += effectivePageSize {
 		select {
 		case offsets <- offset:
 		case err := <-errCh:

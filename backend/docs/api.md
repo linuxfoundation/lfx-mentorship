@@ -1034,6 +1034,7 @@ Returns categorized donation transactions for a mentorship program by proxying t
 |---|---|---|
 | `categoryType` | string | Donation category filter (default: `mentorship`) |
 | `subscriptionOnly` | `true\|false` | When `true`, include recurring-only transactions |
+| `aggregate` | `true\|1\|yes\|aggregate` | When present/truthy, pages through all transactions and returns totals across the full dataset; otherwise only the first upstream page is aggregated |
 | `aggregate` | `true\|1\|yes\|aggregate` | When present/truthy, pages through all transactions (`limit=2000`) and returns sponsors aggregated by organization plus one combined `Individual donors` row |
 | `limit` / `offset` | — | Pagination (default `limit=10`, `offset=0`, max `limit=100`) |
 
