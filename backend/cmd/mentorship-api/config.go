@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/auth"
@@ -15,11 +16,12 @@ import (
 
 // Config holds all runtime configuration for the service.
 type Config struct {
-	Server   ServerConfig
-	Database DatabaseConfig
-	JWT      JWTConfig
-	OTel     OTelConfig
-	Local    LocalConfig
+	Server       ServerConfig
+	Database     DatabaseConfig
+	JWT          JWTConfig
+	Crowdfunding CrowdfundingConfig
+	OTel         OTelConfig
+	Local        LocalConfig
 }
 
 // ServerConfig holds HTTP server settings.
@@ -45,6 +47,22 @@ type JWTConfig struct {
 	Audience  string
 	Issuer    string
 	ClockSkew time.Duration
+}
+
+// CrowdfundingConfig holds outbound crowdfunding API and M2M auth settings.
+type CrowdfundingConfig struct {
+	BaseURL      string
+	TokenURL     string
+	ClientID     string
+	ClientSecret string
+	Audience     string
+	Scope        string
+	Timeout      time.Duration
+}
+
+// IsConfigured reports whether all required crowdfunding client settings are present.
+func (c CrowdfundingConfig) IsConfigured() bool {
+	return c.BaseURL != "" && c.TokenURL != "" && c.ClientID != "" && c.ClientSecret != "" && c.Audience != ""
 }
 
 // OTelConfig holds OpenTelemetry settings.
@@ -88,6 +106,18 @@ func loadConfig() (*Config, error) {
 		clockSkew = d
 	}
 
+	crowdfundingTimeout := 10 * time.Second
+	if v := os.Getenv("CROWDFUNDING_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return nil, fmt.Errorf("CROWDFUNDING_TIMEOUT: %w", err)
+		}
+		if d <= 0 {
+			return nil, fmt.Errorf("CROWDFUNDING_TIMEOUT: must be greater than 0")
+		}
+		crowdfundingTimeout = d
+	}
+
 	return &Config{
 		Server: ServerConfig{
 			Port:            serverPort,
@@ -107,6 +137,15 @@ func loadConfig() (*Config, error) {
 			Audience:  os.Getenv("JWT_AUDIENCE"),
 			Issuer:    os.Getenv("JWT_ISSUER"),
 			ClockSkew: clockSkew,
+		},
+		Crowdfunding: CrowdfundingConfig{
+			BaseURL:      strings.TrimRight(os.Getenv("CROWDFUNDING_BASE_URL"), "/"),
+			TokenURL:     os.Getenv("CROWDFUNDING_TOKEN_URL"),
+			ClientID:     os.Getenv("CROWDFUNDING_CLIENT_ID"),
+			ClientSecret: os.Getenv("CROWDFUNDING_CLIENT_SECRET"),
+			Audience:     os.Getenv("CROWDFUNDING_AUDIENCE"),
+			Scope:        getEnv("CROWDFUNDING_SCOPE", "access:manage"),
+			Timeout:      crowdfundingTimeout,
 		},
 		OTel: OTelConfig{
 			ServiceName:    getEnv("OTEL_SERVICE_NAME", "lfx-mentorship-api"),
