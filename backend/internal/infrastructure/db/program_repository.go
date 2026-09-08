@@ -743,13 +743,20 @@ func (r *ProgramRepository) BulkUpsertFundingStats(ctx context.Context, rows []m
 	}
 
 	br := r.pool.SendBatch(ctx, batch)
-	defer br.Close()
+	defer func() { _ = br.Close() }()
 
 	for i := range rows {
 		if _, err := br.Exec(); err != nil {
 			span.RecordError(err)
 			return i, fmt.Errorf("upsert program_funding_stats[%d] %s: %w", i, rows[i].ProgramID, err)
 		}
+	}
+
+	// Close reports batch-level failures that the per-row Exec calls do not, so
+	// it is checked here rather than left to the deferred call above.
+	if err := br.Close(); err != nil {
+		span.RecordError(err)
+		return 0, fmt.Errorf("close program_funding_stats batch: %w", err)
 	}
 
 	return len(rows), nil

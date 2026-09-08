@@ -6,6 +6,7 @@ package service_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -403,10 +404,15 @@ func TestProgramService_GetProgramSponsors_AggregatesOrgsAndIndividuals(t *testi
 func TestProgramService_GetProgramSponsors_AggregatePagesAllTransactions(t *testing.T) {
 	svc := newProgramSvc(&stubProgRepo{}, &stubTermRepo{}, &stubAppRepo{})
 
+	// GetProgramSponsors fetches the remaining pages concurrently, so the fake
+	// is called from several goroutines at once and must guard its own state.
+	var mu sync.Mutex
 	callArgs := make([][2]int, 0, 2)
 	svc.SetCrowdfundingClient(&fakeCrowdfundingClient{
 		getCategorizedTransactions: func(_ context.Context, _ string, _ string, _ bool, limit, offset int) (*models.ProgramCategorizedTransactions, error) {
+			mu.Lock()
 			callArgs = append(callArgs, [2]int{limit, offset})
+			mu.Unlock()
 			switch offset {
 			case 0:
 				return &models.ProgramCategorizedTransactions{
@@ -467,10 +473,15 @@ func TestProgramService_GetProgramSponsors_AggregatePagesAllTransactions(t *test
 func TestProgramService_GetProgramSponsors_AggregateDoesNotStopOnEmptyPage(t *testing.T) {
 	svc := newProgramSvc(&stubProgRepo{}, &stubTermRepo{}, &stubAppRepo{})
 
+	// GetProgramSponsors fetches the remaining pages concurrently, so the fake
+	// is called from several goroutines at once and must guard its own state.
+	var mu sync.Mutex
 	callArgs := make([][2]int, 0, 2)
 	svc.SetCrowdfundingClient(&fakeCrowdfundingClient{
 		getCategorizedTransactions: func(_ context.Context, _ string, _ string, _ bool, limit, offset int) (*models.ProgramCategorizedTransactions, error) {
+			mu.Lock()
 			callArgs = append(callArgs, [2]int{limit, offset})
+			mu.Unlock()
 			switch offset {
 			case 0:
 				return &models.ProgramCategorizedTransactions{
@@ -526,10 +537,15 @@ func TestProgramService_GetProgramSponsors_AggregateDoesNotStopOnEmptyPage(t *te
 func TestProgramService_GetProgramSponsors_AggregateUsesReturnedLimitForOffsets(t *testing.T) {
 	svc := newProgramSvc(&stubProgRepo{}, &stubTermRepo{}, &stubAppRepo{})
 
+	// GetProgramSponsors fetches the remaining pages concurrently, so the fake
+	// is called from several goroutines at once and must guard its own state.
+	var mu sync.Mutex
 	callArgs := make([][2]int, 0, 3)
 	svc.SetCrowdfundingClient(&fakeCrowdfundingClient{
 		getCategorizedTransactions: func(_ context.Context, _ string, _ string, _ bool, limit, offset int) (*models.ProgramCategorizedTransactions, error) {
+			mu.Lock()
 			callArgs = append(callArgs, [2]int{limit, offset})
+			mu.Unlock()
 			switch offset {
 			case 0:
 				return &models.ProgramCategorizedTransactions{
