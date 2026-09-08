@@ -16,11 +16,13 @@ import (
 )
 
 type stubProgramSvc struct {
-	listCatalog func(context.Context, models.ProgramFilter) ([]*models.ProgramCatalogItem, *models.PaginationMeta, error)
-	getCatalog  func(context.Context, string) (*models.ProgramCatalogItem, error)
-	getByID     func(context.Context, string) (*models.Program, error)
-	getBySlug   func(context.Context, string) (*models.Program, error)
-	listMentees func(context.Context, string) ([]*models.ProgramCatalogMentee, error)
+	listCatalog                func(context.Context, models.ProgramFilter) ([]*models.ProgramCatalogItem, *models.PaginationMeta, error)
+	getCatalog                 func(context.Context, string) (*models.ProgramCatalogItem, error)
+	getByID                    func(context.Context, string) (*models.Program, error)
+	getBySlug                  func(context.Context, string) (*models.Program, error)
+	listMentees                func(context.Context, string) ([]*models.ProgramCatalogMentee, error)
+	getCategorizedTransactions func(context.Context, string, string, bool, int, int) (*models.ProgramCategorizedTransactions, error)
+	getProgramSponsors         func(context.Context, string, string, bool, bool) ([]models.ProgramSponsor, error)
 }
 
 func (s *stubProgramSvc) GetByID(ctx context.Context, id string) (*models.Program, error) {
@@ -72,6 +74,18 @@ func (s *stubProgramSvc) AddSkill(context.Context, string, models.ProgramSkillCr
 func (s *stubProgramSvc) DeleteSkill(context.Context, string) error { return nil }
 func (s *stubProgramSvc) GetFundingStats(context.Context, string) (*models.ProgramFundingStats, error) {
 	return &models.ProgramFundingStats{}, nil
+}
+func (s *stubProgramSvc) GetCategorizedTransactions(ctx context.Context, programID, categoryType string, subscriptionOnly bool, limit, offset int) (*models.ProgramCategorizedTransactions, error) {
+	if s.getCategorizedTransactions != nil {
+		return s.getCategorizedTransactions(ctx, programID, categoryType, subscriptionOnly, limit, offset)
+	}
+	return &models.ProgramCategorizedTransactions{}, nil
+}
+func (s *stubProgramSvc) GetProgramSponsors(ctx context.Context, programID, categoryType string, subscriptionOnly bool, aggregate bool) ([]models.ProgramSponsor, error) {
+	if s.getProgramSponsors != nil {
+		return s.getProgramSponsors(ctx, programID, categoryType, subscriptionOnly, aggregate)
+	}
+	return []models.ProgramSponsor{}, nil
 }
 
 func TestProgramHandler_ListCatalog_OK(t *testing.T) {
@@ -199,5 +213,177 @@ func TestProgramHandler_ListCatalogMentees_NotFound(t *testing.T) {
 	h.ListCatalogMentees(w, r)
 	if w.Code != http.StatusNotFound {
 		t.Errorf("got %d; want 404", w.Code)
+	}
+}
+
+func TestProgramHandler_GetCategorizedTransactions_OK(t *testing.T) {
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		getByID: func(_ context.Context, id string) (*models.Program, error) {
+			return &models.Program{ID: id, Status: models.ProgramStatusPublished}, nil
+		},
+		getCategorizedTransactions: func(_ context.Context, programID, categoryType string, subscriptionOnly bool, limit, offset int) (*models.ProgramCategorizedTransactions, error) {
+			if programID != "p1" {
+				t.Errorf("programID = %q; want p1", programID)
+			}
+			if categoryType != "mentorship" {
+				t.Errorf("categoryType = %q; want mentorship", categoryType)
+			}
+			if !subscriptionOnly {
+				t.Error("subscriptionOnly = false; want true")
+			}
+			if limit != 20 || offset != 5 {
+				t.Errorf("limit/offset = %d/%d; want 20/5", limit, offset)
+			}
+			return &models.ProgramCategorizedTransactions{
+				IndividualTransactions:   []models.ProgramTransaction{{ID: "ind-1", DonorType: "individual", AmountCents: 100}},
+				OrganizationTransactions: []models.ProgramTransaction{{ID: "org-1", DonorType: "organization", AmountCents: 250}},
+				TotalCount:               2,
+				Limit:                    20,
+				Offset:                   5,
+			}, nil
+		},
+	})
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/p1/transactions?categoryType=mentorship&subscriptionOnly=true&limit=20&offset=5", nil)
+	r = requestWithChiParam(r, "id", "p1")
+	w := httptest.NewRecorder()
+	h.GetCategorizedTransactions(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d; want 200", w.Code)
+	}
+
+	var body models.ProgramCategorizedTransactions
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.IndividualTransactions) != 1 || len(body.OrganizationTransactions) != 1 {
+		t.Errorf("unexpected body: %+v", body)
+	}
+}
+
+func TestProgramHandler_GetCategorizedTransactions_DefaultsAndSlugFallback(t *testing.T) {
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		getByID: func(_ context.Context, _ string) (*models.Program, error) {
+			return nil, domain.ErrProgramNotFound
+		},
+		getBySlug: func(_ context.Context, slug string) (*models.Program, error) {
+			return &models.Program{ID: "resolved-program-id", Slug: slug, Status: models.ProgramStatusPublished}, nil
+		},
+		getCategorizedTransactions: func(_ context.Context, programID, categoryType string, subscriptionOnly bool, limit, offset int) (*models.ProgramCategorizedTransactions, error) {
+			if programID != "resolved-program-id" {
+				t.Errorf("programID = %q; want resolved-program-id", programID)
+			}
+			if categoryType != "" {
+				t.Errorf("categoryType = %q; want empty string for service default", categoryType)
+			}
+			if subscriptionOnly {
+				t.Error("subscriptionOnly = true; want false")
+			}
+			if limit != 10 || offset != 0 {
+				t.Errorf("limit/offset = %d/%d; want 10/0", limit, offset)
+			}
+			return &models.ProgramCategorizedTransactions{}, nil
+		},
+	})
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/kubernetes/transactions", nil)
+	r = requestWithChiParam(r, "id", "kubernetes")
+	w := httptest.NewRecorder()
+	h.GetCategorizedTransactions(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d; want 200", w.Code)
+	}
+}
+
+func TestProgramHandler_GetCategorizedTransactions_HiddenReturns404(t *testing.T) {
+	lfid := "owner"
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		getByID: func(_ context.Context, id string) (*models.Program, error) {
+			return &models.Program{ID: id, Status: models.ProgramStatusHidden, LFID: &lfid}, nil
+		},
+	})
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/p1/transactions", nil)
+	r = requestWithChiParam(r, "id", "p1")
+	w := httptest.NewRecorder()
+	h.GetCategorizedTransactions(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("got %d; want 404", w.Code)
+	}
+}
+
+func TestProgramHandler_GetProgramSponsors_OK(t *testing.T) {
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		getByID: func(_ context.Context, id string) (*models.Program, error) {
+			return &models.Program{ID: id, Status: models.ProgramStatusPublished}, nil
+		},
+		getProgramSponsors: func(_ context.Context, programID, categoryType string, subscriptionOnly bool, aggregate bool) ([]models.ProgramSponsor, error) {
+			if programID != "p1" {
+				t.Errorf("programID = %q; want p1", programID)
+			}
+			if categoryType != "mentorship" {
+				t.Errorf("categoryType = %q; want mentorship", categoryType)
+			}
+			if !subscriptionOnly {
+				t.Error("subscriptionOnly = false; want true")
+			}
+			if aggregate {
+				t.Error("aggregate = true; want false")
+			}
+			return []models.ProgramSponsor{{ID: "gmc", Name: "GMC", AmountCents: 250000}}, nil
+		},
+	})
+
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/p1/sponsors?categoryType=mentorship&subscriptionOnly=true", nil)
+	r = requestWithChiParam(r, "id", "p1")
+	w := httptest.NewRecorder()
+	h.GetProgramSponsors(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d; want 200", w.Code)
+	}
+
+	var body struct {
+		Data []models.ProgramSponsor `json:"data"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.Data) != 1 || body.Data[0].ID != "gmc" {
+		t.Errorf("unexpected body: %+v", body)
+	}
+}
+
+func TestProgramHandler_GetProgramSponsors_AggregateQueryParam(t *testing.T) {
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		getByID: func(_ context.Context, id string) (*models.Program, error) {
+			return &models.Program{ID: id, Status: models.ProgramStatusPublished}, nil
+		},
+		getProgramSponsors: func(_ context.Context, _ string, _ string, _ bool, aggregate bool) ([]models.ProgramSponsor, error) {
+			if !aggregate {
+				t.Fatal("aggregate = false; want true")
+			}
+			return []models.ProgramSponsor{}, nil
+		},
+	})
+
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/p1/sponsors?aggregate=aggregate", nil)
+	r = requestWithChiParam(r, "id", "p1")
+	w := httptest.NewRecorder()
+	h.GetProgramSponsors(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d; want 200", w.Code)
+	}
+}
+
+func TestProgramHandler_GetProgramSponsors_HiddenReturns404(t *testing.T) {
+	lfid := "owner"
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		getByID: func(_ context.Context, id string) (*models.Program, error) {
+			return &models.Program{ID: id, Status: models.ProgramStatusHidden, LFID: &lfid}, nil
+		},
+	})
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/p1/sponsors", nil)
+	r = requestWithChiParam(r, "id", "p1")
+	w := httptest.NewRecorder()
+	h.GetProgramSponsors(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("got %d; want 404", w.Code)
 	}
 }

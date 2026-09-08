@@ -152,7 +152,6 @@ type ProgramCatalogMentee struct {
 	Name         *string `json:"name,omitempty"`
 	AvatarURL    *string `json:"avatar_url,omitempty"`
 	Introduction *string `json:"introduction,omitempty"`
-	Email        *string `json:"email,omitempty"`
 	Status       string  `json:"status"` // accepted | active | graduated
 	TermID       string  `json:"term_id"`
 	TermName     string  `json:"term_name"`
