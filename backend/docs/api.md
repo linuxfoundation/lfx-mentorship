@@ -500,6 +500,47 @@ Programs are the top-level entity for a mentorship offering.
 }
 ```
 
+### Program Transaction Object
+
+```json
+{
+  "id": "txn-1",
+  "type": "donation",
+  "amount_cents": 5000,
+  "date": "2026-01-01T00:00:00Z",
+  "category": "Mentorship",
+  "recurring": false,
+  "initiative_name": "Kubernetes Contributors",
+  "donor_name": "Open Source Org",
+  "donor_type": "organization",
+  "donor_logo_url": "https://example.com/logo.png",
+  "donor_username": ""
+}
+```
+
+### Program Categorized Transactions Object
+
+```json
+{
+  "individual_transactions": [<ProgramTransaction>, ...],
+  "organization_transactions": [<ProgramTransaction>, ...],
+  "total_count": 42,
+  "limit": 10,
+  "offset": 0
+}
+```
+
+### Program Sponsor Object
+
+```json
+{
+  "id": "gmc",
+  "name": "GMC",
+  "logo_url": "https://example.com/logo.png",
+  "amount_cents": 250000
+}
+```
+
 ### Endpoints
 
 #### `GET /v1/programs` 🔓
@@ -978,6 +1019,58 @@ Remove a skill tag.
 
 **Response** `200` → `<ProgramFundingStats>`  
 **Errors** `404`
+
+---
+
+#### `GET /v1/programs/{id}/transactions` 🔓
+
+Returns categorized donation transactions for a mentorship program by proxying the Crowdfunding category-transactions contract.
+
+`{id}` accepts either program UUID or slug.
+
+**Query parameters**
+
+| Parameter | Values | Description |
+|---|---|---|
+| `categoryType` | string | Donation category filter (default: `mentorship`) |
+| `subscriptionOnly` | `true\|false` | When `true`, include recurring-only transactions |
+| `aggregate` | `true\|1\|yes\|aggregate` | When present/truthy, pages through all transactions and returns totals across the full dataset; otherwise only the first upstream page is aggregated |
+| `aggregate` | `true\|1\|yes\|aggregate` | When present/truthy, pages through all transactions (`limit=2000`) and returns sponsors aggregated by organization plus one combined `Individual donors` row |
+| `limit` / `offset` | — | Pagination (default `limit=10`, `offset=0`, max `limit=100`) |
+
+**Response** `200` → `<ProgramCategorizedTransactions>`
+
+**Errors**
+
+- `400` invalid pagination parameters
+- `404` program not found
+- `503` upstream unavailable (Crowdfunding client not configured or upstream failure)
+
+---
+
+#### `GET /v1/programs/{id}/sponsors` 🔓
+
+Returns sponsor cards aggregated in the mentorship backend from crowdfunding transactions.
+
+`{id}` accepts either program UUID or slug.
+
+**Query parameters**
+
+| Parameter | Values | Description |
+|---|---|---|
+| `categoryType` | string | Donation category filter (default: `mentorship`) |
+| `subscriptionOnly` | `true\|false` | When `true`, include recurring-only transactions |
+
+**Response** `200`
+
+```json
+{ "data": [<ProgramSponsor>, ...] }
+```
+
+**Errors**
+
+- `404` program not found
+- `503` upstream unavailable (Crowdfunding client not configured or upstream failure)
 
 ---
 
@@ -1731,6 +1824,7 @@ GET /v1/programs/{id}
 GET /v1/programs/{id}/terms
 GET /v1/programs/{id}/skills
 GET /v1/programs/{id}/members?member_type=mentor&status=active
+GET /v1/programs/{id}/transactions?categoryType=mentorship&limit=25&offset=0
 ```
 
 Alternatively, the same nested shape in one request:

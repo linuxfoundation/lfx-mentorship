@@ -59,11 +59,11 @@ var applicationTransitions = map[models.ApplicationStatus][]models.ApplicationSt
 		models.ApplicationStatusDeclined,
 		models.ApplicationStatusPending,
 	},
+	// "accepted" is the enrolled state: a mentee stays accepted for the whole
+	// term and moves straight to "graduated" at the end. There is no separate
+	// "active" status — it was never written by any code path, and every read
+	// already paired it with "accepted".
 	models.ApplicationStatusAccepted: {
-		models.ApplicationStatusActive,
-		models.ApplicationStatusDeclined,
-	},
-	models.ApplicationStatusActive: {
 		models.ApplicationStatusGraduated,
 		models.ApplicationStatusDeclined,
 	},

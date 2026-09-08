@@ -87,6 +87,10 @@ config:
   JWT_AUDIENCE: ""
   JWT_ISSUER: ""
   LEDGER_BASE_URL: ""
+  CROWDFUNDING_BASE_URL: ""
+  CROWDFUNDING_TOKEN_URL: ""
+  CROWDFUNDING_AUDIENCE: ""
+  CROWDFUNDING_SCOPE: "access:manage"
   OTEL_EXPORTER_OTLP_ENDPOINT: ""
   OTEL_SERVICE_NAME: "lfx-mentorship-backend"
 
@@ -104,6 +108,8 @@ env: []
 # Expected keys in the Secret:
 #   DATABASE_DSN — full Postgres connection string
 #   LEDGER_API_KEY — bearer token for Ledger service API
+#   CROWDFUNDING_CLIENT_ID — Auth0 M2M client ID for crowdfunding API
+#   CROWDFUNDING_CLIENT_SECRET — Auth0 M2M client secret for crowdfunding API
 #     or individual RDS components referenced via env: above:
 #     username, password, host, port, dbname
 secretName: lfx-mentorship-backend-secrets

@@ -29,9 +29,6 @@ SPDX-License-Identifier: MIT
               >
                 {{ mentee.name }}
               </NuxtLink>
-              <p class="text-xs text-neutral-500 truncate">
-                {{ mentee.email }}
-              </p>
             </div>
           </div>
         </td>

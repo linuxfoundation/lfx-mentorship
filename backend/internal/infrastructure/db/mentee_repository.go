@@ -53,7 +53,7 @@ const menteeEligibleCTE = `
 		JOIN program_terms pt ON pt.id = a.program_term_id
 		JOIN programs p ON p.id = pt.program_id
 		WHERE a.role = 'mentee'
-		  AND a.status IN ('accepted', 'active', 'graduated')
+		  AND a.status IN ('accepted', 'graduated')
 		  AND pt.status <> 'deleted'
 		  AND p.status = 'published'
 	),
@@ -156,7 +156,7 @@ func menteeListWhere(filter models.MenteeFilter, args []any) (string, []any) {
 	where := ` WHERE 1=1`
 	switch strings.ToLower(strings.TrimSpace(filter.Status)) {
 	case "active":
-		where += ` AND application_status IN ('accepted', 'active')`
+		where += ` AND application_status = 'accepted'`
 	case "graduated":
 		where += ` AND application_status = 'graduated'`
 	}
@@ -352,7 +352,7 @@ func (r *MenteeRepository) loadMenteePrograms(ctx context.Context, userID string
 		JOIN programs p ON p.id = pt.program_id
 		WHERE a.user_id = $1
 		  AND a.role = 'mentee'
-		  AND a.status IN ('accepted', 'active', 'graduated')
+		  AND a.status IN ('accepted', 'graduated')
 		  AND pt.status <> 'deleted'
 		  AND p.status = 'published'
 		ORDER BY p.name, pt.start_date_time DESC NULLS LAST`, userID)
