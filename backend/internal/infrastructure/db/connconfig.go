@@ -52,12 +52,17 @@ func ConnConfigFromEnv() (*pgx.ConnConfig, error) {
 	return cfg, nil
 }
 
-// hasDiscreteEnv reports whether the discrete DB_* variables are in use. DB_HOST
-// alone is the trigger so that a partial configuration is reported as an error
-// rather than silently falling back to DATABASE_DSN and connecting somewhere
-// unintended.
+// hasDiscreteEnv reports whether the discrete DB_* variables are in use. Any one
+// of them selects discrete mode, so a partial configuration is reported as an
+// error naming the empty variables rather than silently falling back to
+// DATABASE_DSN and connecting somewhere unintended.
 func hasDiscreteEnv() bool {
-	return os.Getenv("DB_HOST") != ""
+	for _, key := range discreteEnvVars {
+		if os.Getenv(key) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func connConfigFromDiscreteEnv() (*pgx.ConnConfig, error) {
@@ -71,7 +76,7 @@ func connConfigFromDiscreteEnv() (*pgx.ConnConfig, error) {
 		}
 	}
 	if len(missing) > 0 {
-		return nil, fmt.Errorf("DB_HOST is set, so the discrete database variables are in use, but %v are empty", missing)
+		return nil, fmt.Errorf("the discrete database variables are in use, but %v are empty", missing)
 	}
 
 	port := uint16(5432)
