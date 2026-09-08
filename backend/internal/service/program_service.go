@@ -6,7 +6,9 @@ package service
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -374,4 +376,163 @@ func (s *ProgramService) GetCategorizedTransactions(ctx context.Context, program
 		return nil, fmt.Errorf("get categorized transactions: %w", err)
 	}
 	return stats, nil
+}
+
+func normalizeDonorType(donorType string) string {
+	if strings.EqualFold(strings.TrimSpace(donorType), "organization") {
+		return "organization"
+	}
+	return "individual"
+}
+
+func aggregateProgramSponsors(transactions []models.ProgramTransaction) []models.ProgramSponsor {
+	orgTotals := make(map[string]*models.ProgramSponsor)
+	individualTotal := int64(0)
+
+	for _, txn := range transactions {
+		if txn.AmountCents <= 0 {
+			continue
+		}
+
+		if normalizeDonorType(txn.DonorType) == "organization" {
+			name := strings.TrimSpace(txn.DonorName)
+			if name == "" {
+				name = "Organization"
+			}
+			id := strings.ToLower(name)
+			existing, ok := orgTotals[id]
+			if !ok {
+				existing = &models.ProgramSponsor{ID: id, Name: name, LogoURL: txn.DonorLogoURL}
+				orgTotals[id] = existing
+			}
+			existing.AmountCents += txn.AmountCents
+			if existing.LogoURL == "" && txn.DonorLogoURL != "" {
+				existing.LogoURL = txn.DonorLogoURL
+			}
+			continue
+		}
+
+		individualTotal += txn.AmountCents
+	}
+
+	out := make([]models.ProgramSponsor, 0, len(orgTotals)+1)
+	for _, sponsor := range orgTotals {
+		out = append(out, *sponsor)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].AmountCents == out[j].AmountCents {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].AmountCents > out[j].AmountCents
+	})
+
+	if individualTotal > 0 {
+		out = append(out, models.ProgramSponsor{
+			ID:          "individual-donors",
+			Name:        "Individual donors",
+			AmountCents: individualTotal,
+		})
+	}
+
+	return out
+}
+
+// GetProgramSponsors returns backend-aggregated sponsor cards for a program.
+func (s *ProgramService) GetProgramSponsors(ctx context.Context, programID, categoryType string, subscriptionOnly bool, aggregate bool) ([]models.ProgramSponsor, error) {
+	ctx, span := programSvcTracer.Start(ctx, "ProgramService.GetProgramSponsors")
+	defer span.End()
+
+	if s.cfClient == nil {
+		return nil, fmt.Errorf("crowdfunding client not configured: %w", domain.ErrUpstreamUnavailable)
+	}
+	if strings.TrimSpace(categoryType) == "" {
+		categoryType = string(models.MentorshipCategory)
+	}
+
+	pageSize := 100
+	if aggregate {
+		pageSize = 2000
+	}
+
+	all := make([]models.ProgramTransaction, 0, pageSize)
+
+	firstPage, err := s.cfClient.GetCategorizedTransactions(ctx, programID, categoryType, subscriptionOnly, pageSize, 0)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("get sponsors transactions page: %w", err)
+	}
+	all = append(all, firstPage.OrganizationTransactions...)
+	all = append(all, firstPage.IndividualTransactions...)
+
+	totalCount := firstPage.TotalCount
+	if totalCount <= pageSize {
+		return aggregateProgramSponsors(all), nil
+	}
+
+	if !aggregate {
+		for offset := pageSize; offset < totalCount; offset += pageSize {
+			page, err := s.cfClient.GetCategorizedTransactions(ctx, programID, categoryType, subscriptionOnly, pageSize, offset)
+			if err != nil {
+				span.RecordError(err)
+				return nil, fmt.Errorf("get sponsors transactions page: %w", err)
+			}
+			all = append(all, page.OrganizationTransactions...)
+			all = append(all, page.IndividualTransactions...)
+		}
+		return aggregateProgramSponsors(all), nil
+	}
+
+	const aggregateWorkers = 4
+	offsets := make(chan int)
+	errCh := make(chan error, 1)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	workerCount := aggregateWorkers
+	remainingPages := (totalCount + pageSize - 1) / pageSize
+	if workerCount > remainingPages {
+		workerCount = remainingPages
+	}
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for offset := range offsets {
+				page, err := s.cfClient.GetCategorizedTransactions(ctx, programID, categoryType, subscriptionOnly, pageSize, offset)
+				if err != nil {
+					select {
+					case errCh <- err:
+					default:
+					}
+					return
+				}
+				mu.Lock()
+				all = append(all, page.OrganizationTransactions...)
+				all = append(all, page.IndividualTransactions...)
+				mu.Unlock()
+			}
+		}()
+	}
+
+	for offset := pageSize; offset < totalCount; offset += pageSize {
+		select {
+		case offsets <- offset:
+		case err := <-errCh:
+			close(offsets)
+			wg.Wait()
+			span.RecordError(err)
+			return nil, fmt.Errorf("get sponsors transactions page: %w", err)
+		}
+	}
+	close(offsets)
+	wg.Wait()
+
+	select {
+	case err := <-errCh:
+		span.RecordError(err)
+		return nil, fmt.Errorf("get sponsors transactions page: %w", err)
+	default:
+	}
+
+	return aggregateProgramSponsors(all), nil
 }

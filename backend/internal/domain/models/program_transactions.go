@@ -28,3 +28,11 @@ type ProgramCategorizedTransactions struct {
 	Limit                    int                  `json:"limit"`
 	Offset                   int                  `json:"offset"`
 }
+
+// ProgramSponsor is an aggregated sponsor card payload for program detail views.
+type ProgramSponsor struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	LogoURL     string `json:"logo_url,omitempty"`
+	AmountCents int64  `json:"amount_cents"`
+}

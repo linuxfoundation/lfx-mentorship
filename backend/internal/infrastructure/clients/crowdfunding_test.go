@@ -107,3 +107,54 @@ func TestCrowdfundingClient_CachesToken(t *testing.T) {
 		t.Fatalf("tokenCalls = %d; want 1", tokenCalls)
 	}
 }
+
+func TestCrowdfundingClient_GetCategorizedTransactions_FallbackDataArray(t *testing.T) {
+	t.Parallel()
+
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"test-token","expires_in":3600}`))
+	}))
+	defer tokenServer.Close()
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"data": [
+				{"id":"t1","amount_cents":1000,"donor_type":"individual","donor_name":"Alice"},
+				{"id":"t2","amount_cents":2500,"donor_type":"organization","donor_name":"Google"}
+			],
+			"total_count": 2,
+			"limit": 10,
+			"offset": 0
+		}`))
+	}))
+	defer apiServer.Close()
+
+	client := NewCrowdfundingClient(CrowdfundingConfig{
+		BaseURL:      apiServer.URL,
+		TokenURL:     tokenServer.URL,
+		ClientID:     "id",
+		ClientSecret: "secret",
+		Audience:     "https://api.example",
+		Timeout:      2 * time.Second,
+	})
+
+	out, err := client.GetCategorizedTransactions(context.Background(), "initiative-1", "mentorship", false, 10, 0)
+	if err != nil {
+		t.Fatalf("GetCategorizedTransactions: %v", err)
+	}
+
+	if len(out.IndividualTransactions) != 1 {
+		t.Fatalf("individual len = %d; want 1", len(out.IndividualTransactions))
+	}
+	if len(out.OrganizationTransactions) != 1 {
+		t.Fatalf("organization len = %d; want 1", len(out.OrganizationTransactions))
+	}
+	if out.IndividualTransactions[0].DonorName != "Alice" {
+		t.Fatalf("individual donor = %q; want Alice", out.IndividualTransactions[0].DonorName)
+	}
+	if out.OrganizationTransactions[0].DonorName != "Google" {
+		t.Fatalf("organization donor = %q; want Google", out.OrganizationTransactions[0].DonorName)
+	}
+}

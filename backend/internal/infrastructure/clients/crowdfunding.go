@@ -108,10 +108,38 @@ func (c *crowdfundingHTTPClient) GetCategorizedTransactions(ctx context.Context,
 		return nil, fmt.Errorf("crowdfunding transactions status %d: %s: %w", resp.StatusCode, strings.TrimSpace(string(body)), domain.ErrUpstreamUnavailable)
 	}
 
-	var out models.ProgramCategorizedTransactions
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	var wire struct {
+		IndividualTransactions   []models.ProgramTransaction `json:"individual_transactions"`
+		OrganizationTransactions []models.ProgramTransaction `json:"organization_transactions"`
+		Data                     []models.ProgramTransaction `json:"data"`
+		TotalCount               int                         `json:"total_count"`
+		Limit                    int                         `json:"limit"`
+		Offset                   int                         `json:"offset"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&wire); err != nil {
 		return nil, fmt.Errorf("decode crowdfunding categorized transactions: %w: %w", err, domain.ErrUpstreamUnavailable)
 	}
+
+	out := models.ProgramCategorizedTransactions{
+		IndividualTransactions:   wire.IndividualTransactions,
+		OrganizationTransactions: wire.OrganizationTransactions,
+		TotalCount:               wire.TotalCount,
+		Limit:                    wire.Limit,
+		Offset:                   wire.Offset,
+	}
+
+	// Backward/forward compatibility: some crowdfunding environments return a flat
+	// "data" array and require local categorization by donor_type.
+	if len(out.IndividualTransactions) == 0 && len(out.OrganizationTransactions) == 0 && len(wire.Data) > 0 {
+		for _, txn := range wire.Data {
+			if strings.EqualFold(strings.TrimSpace(txn.DonorType), "organization") {
+				out.OrganizationTransactions = append(out.OrganizationTransactions, txn)
+				continue
+			}
+			out.IndividualTransactions = append(out.IndividualTransactions, txn)
+		}
+	}
+
 	if out.IndividualTransactions == nil {
 		out.IndividualTransactions = []models.ProgramTransaction{}
 	}

@@ -146,6 +146,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		r.Get("/summary", platformSummaryH.Get)
 		r.Get("/programs/{id}/funding-stats", programH.GetFundingStats)
 		r.Get("/programs/{id}/transactions", programH.GetCategorizedTransactions)
+		r.Get("/programs/{id}/sponsors", programH.GetProgramSponsors)
 		r.Get("/programs/{id}/terms", programTermH.ListByProgram)
 		r.Get("/programs/{id}/members", programMemberH.List)
 

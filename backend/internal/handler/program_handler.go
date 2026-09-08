@@ -29,6 +29,22 @@ type programService interface {
 	DeleteSkill(ctx context.Context, skillID string) error
 	GetFundingStats(ctx context.Context, programID string) (*models.ProgramFundingStats, error)
 	GetCategorizedTransactions(ctx context.Context, programID, categoryType string, subscriptionOnly bool, limit, offset int) (*models.ProgramCategorizedTransactions, error)
+	GetProgramSponsors(ctx context.Context, programID, categoryType string, subscriptionOnly bool, aggregate bool) ([]models.ProgramSponsor, error)
+}
+
+func parseAggregateParam(r *http.Request) bool {
+	v, ok := r.URL.Query()["aggregate"]
+	if !ok {
+		return false
+	}
+	if len(v) == 0 {
+		return true
+	}
+	raw := strings.ToLower(strings.TrimSpace(v[0]))
+	if raw == "" {
+		return true
+	}
+	return raw == "true" || raw == "1" || raw == "yes" || raw == "aggregate"
 }
 
 // ProgramHandler holds Chi handlers for the programs resource.
@@ -303,4 +319,31 @@ func (h *ProgramHandler) GetCategorizedTransactions(w http.ResponseWriter, r *ht
 		return
 	}
 	JSON(w, http.StatusOK, txns)
+}
+
+// GetProgramSponsors handles GET /v1/programs/{id}/sponsors.
+func (h *ProgramHandler) GetProgramSponsors(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	program, err := h.svc.GetByID(r.Context(), id)
+	if err != nil {
+		program, err = h.svc.GetBySlug(r.Context(), id)
+		if err != nil {
+			Error(w, err)
+			return
+		}
+	}
+
+	categoryType := strings.TrimSpace(r.URL.Query().Get("categoryType"))
+	subscriptionOnly := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("subscriptionOnly")), "true")
+	aggregate := parseAggregateParam(r)
+
+	sponsors, err := h.svc.GetProgramSponsors(r.Context(), program.ID, categoryType, subscriptionOnly, aggregate)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	if sponsors == nil {
+		sponsors = []models.ProgramSponsor{}
+	}
+	JSON(w, http.StatusOK, map[string]any{"data": sponsors})
 }
