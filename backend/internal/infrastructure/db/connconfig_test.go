@@ -183,20 +183,40 @@ func TestConnConfigFromEnvInvalidPort(t *testing.T) {
 }
 
 // A partial discrete configuration must fail loudly rather than fall through to
-// DATABASE_DSN, which could point somewhere entirely different.
+// DATABASE_DSN, which could point somewhere entirely different. Any one of the
+// discrete variables selects discrete mode, so each is exercised on its own —
+// DB_HOST is not privileged, and a secret that syncs every key but the host must
+// not connect to the DSN target instead.
 func TestConnConfigFromEnvPartialDiscreteDoesNotFallBack(t *testing.T) {
-	clearDBEnv(t)
-	t.Setenv("DB_HOST", "rds.example.com")
-	t.Setenv("DATABASE_DSN", "postgres://someone@localhost:5432/other")
-
-	_, err := ConnConfigFromEnv()
-	if err == nil {
-		t.Fatal("expected an error when DB_HOST is set but the rest are missing")
+	values := map[string]string{
+		"DB_HOST":     "rds.example.com",
+		"DB_PORT":     "5432",
+		"DB_USER":     "mentorship",
+		"DB_PASSWORD": "s3cret",
+		"DB_NAME":     "mentorship",
 	}
-	for _, want := range []string{"DB_USER", "DB_PASSWORD", "DB_NAME"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %q does not name the missing variable %s", err, want)
-		}
+	// Required keys, in the order the missing-variable error reports them.
+	required := []string{"DB_HOST", "DB_USER", "DB_PASSWORD", "DB_NAME"}
+
+	for present := range values {
+		t.Run("only_"+present, func(t *testing.T) {
+			clearDBEnv(t)
+			t.Setenv(present, values[present])
+			t.Setenv("DATABASE_DSN", "postgres://someone@localhost:5432/other")
+
+			_, err := ConnConfigFromEnv()
+			if err == nil {
+				t.Fatalf("expected an error when only %s is set", present)
+			}
+			for _, want := range required {
+				if want == present {
+					continue
+				}
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not name the missing variable %s", err, want)
+				}
+			}
+		})
 	}
 }
 
