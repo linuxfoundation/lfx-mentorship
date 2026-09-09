@@ -214,9 +214,7 @@ curl -s -X PATCH $BASE/applications/$APP_ID $AUTH \
 ### 4f. Graduate a mentee
 
 ```bash
-curl -s -X PATCH $BASE/applications/$APP_ID $AUTH -d '{"status":"active"}'
-# Expected: 200
-
+# An accepted mentee graduates directly — there is no intermediate "active" status.
 curl -s -X PATCH $BASE/applications/$APP_ID $AUTH -d '{"status":"graduated"}'
 # Expected: 200
 ```
