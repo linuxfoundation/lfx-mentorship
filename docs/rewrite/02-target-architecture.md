@@ -131,7 +131,7 @@ erDiagram
         uuid program_term_id FK
         uuid user_id FK
         text role "mentor | mentee"
-        text status "pending | accepted | active | declined | withdrawn | graduated | hold"
+        text status "pending | accepted | declined | withdrawn | graduated | hold"
     }
     program_members {
         uuid id PK
@@ -185,7 +185,7 @@ Frontend stack mirrors Crowdfunding: Nuxt 4 + Vue 3, TypeScript, Tailwind + Prim
 - **Every route carrying a resource ID gets a Heimdall RuleSet** checking a single FGA relation. The service performs no ownership or role checks.
 - **Relations live in OpenFGA, derived from Postgres.** Postgres remains the system of record for membership; the API emits tuples through a transactional outbox to fga-sync at each state transition.
 - **`programs.project_uid` is what makes the project link derivable.** Inherited permissions depend on a `mentorship_program#project@project:{uid}` tuple, so the owning LF project must be a persisted column — the outbox re-derives payloads from current Postgres state and cannot invent it. Legacy already carries this as `lfProjectId`, and `CreateProject` requires it (`project/service.go:195`), but programs created before that rule predate it — legacy has a dedicated `GetProgramsWithLFProjectID` query precisely because the field is not universally populated. The backfill must therefore report unmapped programs rather than silently importing them: a program with no `project_uid` has no parent to inherit from and would be authorized only by its direct grants. Making the column `NOT NULL` is the forcing function; resolving the stragglers is a Backfill-phase task ([03](./03-migration-plan.md)).
-- **The one residue** is `/me/*` **list** endpoints, where the service filters rows by the caller's `principal` — data scoping on the caller's own records, not a grant/deny decision. `/me/*` is never a second way to fetch an individual object.
+- **The residue is `/me/*`, and it is self-scoping rather than authorization.** For **list** endpoints the service filters rows by the caller's `principal` — data scoping on the caller's own records, not a grant/deny decision. GW-5 in [05](./05-heimdall-gateway.md) extends the same shape to **self-service writes** on the caller's own user and profile, which become `/me` routes rather than the ID-addressed `PATCH/DELETE /v1/users/{id}` they are today: the target is derived from `principal`, never from request input or a path ID. The invariant is therefore that `/me/*` **never addresses another subject's object** — it is not a second way to reach an arbitrary object by ID, which is what would need an edge check.
 
 Three things this replaces from the Crowdfunding-derived design:
 
