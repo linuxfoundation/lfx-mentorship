@@ -912,6 +912,8 @@ Aggregated marketing/landing counts plus a small graduated-mentee preview. All c
 Fetch a program by UUID or slug.
 
 > **FR-009**: If the program has `status = "hidden"`, the endpoint returns `404` for all callers whose `principal.Username` does not match `program.lfid` (the owner's LF ID). Unauthenticated callers always receive `404` for hidden programs.
+>
+> **Known gap**: the visibility-gated routes are registered without auth middleware, so no principal is ever present on them and the owner exception is currently unreachable — hidden programs return `404` to everyone, owner included. Tracked separately.
 
 **Response** `200` → `<Program>`  
 **Errors** `404`
@@ -1232,8 +1234,9 @@ Tracks the relationship between a user and a program as either `program_admin` o
 #### `GET /v1/programs/{id}/members` 🔓
 
 Public roster. Returns `active` members only, with `email` omitted from every row.
-`{id}` may be a UUID or a slug. A hidden program returns `404` to anyone but its
-owner, matching `GET /v1/programs/{id}`.
+`{id}` may be a UUID or a slug. A hidden program returns `404`, matching
+`GET /v1/programs/{id}`. The owner exception described under FR-009 does not
+apply on this route yet — see the note there.
 
 There is no `status` filter: the status is pinned to `active` so an anonymous
 caller cannot widen the roster to `invited`, `requested`, `pending`, `declined`,
