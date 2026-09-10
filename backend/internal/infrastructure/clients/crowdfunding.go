@@ -101,7 +101,7 @@ func (c *crowdfundingHTTPClient) GetCategorizedTransactions(ctx context.Context,
 	if err != nil {
 		return nil, fmt.Errorf("crowdfunding transactions request: %w: %w", err, domain.ErrUpstreamUnavailable)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
@@ -177,7 +177,7 @@ func (c *crowdfundingHTTPClient) getAccessToken(ctx context.Context) (string, er
 	if err != nil {
 		return "", fmt.Errorf("request m2m token: %w: %w", err, domain.ErrUpstreamUnavailable)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
