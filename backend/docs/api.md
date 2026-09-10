@@ -666,7 +666,7 @@ Public list of accepted and graduated mentees for a program (UUID or slug). Hidd
 
 Paginated public directory of mentees on **published** programs. Includes `accepted` and `graduated` applications only. Pending, hold, declined, and withdrawn applications are omitted, as are mentees with no enrollment. The list is one row per mentee.
 
-The `status` field is a **display label**, not the stored application status: an `accepted` application is surfaced as `active`. See `models.MenteeStatus`.
+The response `status` is the stored application status — `accepted` or `graduated`. Note the asymmetry with the `status` **query parameter** below, which accepts `active` as a filter alias selecting `accepted` rows; `active` is never returned in a response body.
 
 `GET /v1/user-profiles` and `GET /v1/programs/{id}/mentees` are unchanged.
 
@@ -689,7 +689,7 @@ The `status` field is a **display label**, not the stored application status: an
       "avatar_url": "https://...",
       "introduction": "I contribute to Kubernetes...",
       "skills": ["Go", "Kubernetes"],
-      "status": "active",
+      "status": "accepted",
       "joined_at": "2024-01-15T00:00:00Z",
       "program": {
         "id": "uuid",
@@ -742,7 +742,7 @@ Public mentee profile by **user ID**. Programs, skills, terms, and mentors are l
   "avatar_url": "https://...",
   "introduction": "...",
   "skills": ["Go"],
-  "status": "active",
+  "status": "accepted",
   "joined_at": "2024-01-15T00:00:00Z",
   "program": { "id": "uuid", "name": "Kubernetes Contributors", "slug": "kubernetes-contributors" },
   "mentors": [],
@@ -755,7 +755,7 @@ Public mentee profile by **user ID**. Programs, skills, terms, and mentors are l
       "slug": "kubernetes-contributors",
       "description": "...",
       "logo_url": "https://...",
-      "status": "active",
+      "status": "accepted",
       "skills": ["Go", "Kubernetes"],
       "terms": [
         {
@@ -763,7 +763,7 @@ Public mentee profile by **user ID**. Programs, skills, terms, and mentors are l
           "name": "Spring 2026",
           "start_date_time": "2026-03-02T00:00:00Z",
           "end_date_time": "2026-05-25T00:00:00Z",
-          "application_status": "active"
+          "application_status": "accepted"
         }
       ],
       "mentors": []
