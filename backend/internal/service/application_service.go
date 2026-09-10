@@ -215,7 +215,7 @@ func (s *ApplicationService) Create(ctx context.Context, programTermID string, i
 // Update applies status changes to an application.
 // Enforces the state machine defined in applicationTransitions.
 // When accepting, attendance_type is required.
-// When accepting, if all prerequisite tasks are complete the admin is notified.
+// When accepting, the mentee is notified.
 func (s *ApplicationService) Update(ctx context.Context, id string, input models.ApplicationUpdateInput) (*models.Application, error) {
 	ctx, span := applicationSvcTracer.Start(ctx, "ApplicationService.Update")
 	defer span.End()

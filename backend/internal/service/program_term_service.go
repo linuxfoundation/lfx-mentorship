@@ -134,14 +134,14 @@ func (s *ProgramTermService) Update(ctx context.Context, id string, input models
 		}
 
 		if *input.Status == models.ProgramTermStatusClosed {
-			// Close guard: cannot close a term that has active/accepted applications.
+			// Close guard: cannot close a term that has accepted applications.
 			count, err := s.appRepo.CountAcceptedByTerm(ctx, id)
 			if err != nil {
 				span.RecordError(err)
 				return nil, fmt.Errorf("check accepted applications for close: %w", err)
 			}
 			if count > 0 {
-				return nil, fmt.Errorf("%w: term has %d active/accepted application(s)", domain.ErrStateLocked, count)
+				return nil, fmt.Errorf("%w: term has %d accepted application(s)", domain.ErrStateLocked, count)
 			}
 		}
 	}

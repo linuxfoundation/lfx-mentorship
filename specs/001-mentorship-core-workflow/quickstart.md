@@ -224,16 +224,18 @@ curl -s -X PATCH $BASE/applications/$APP_ID $AUTH -d '{"status":"graduated"}'
 ## Scenario 5 — Hide Guard
 
 ```bash
-# With active/pending application, attempt to hide — expect 409
+# FR-008: pending, accepted, and graduated applications all block hiding.
+# With a blocking application present, attempt to hide — expect 409
 curl -s -X PATCH $BASE/programs/$PROGRAM_ID $AUTH -d '{"status":"hidden"}'
 # Expected: 409, error listing blocking application count
 
-# After graduating / declining all blocking applications, hide succeeds
-curl -s -X PATCH $BASE/programs/$PROGRAM_ID $AUTH -d '{"status":"hidden"}'
+# Use a program whose applications are all declined or withdrawn — hide succeeds.
+# (Graduating does not clear the guard: `graduated` is itself a blocking status.)
+curl -s -X PATCH $BASE/programs/$EMPTY_PROGRAM_ID $AUTH -d '{"status":"hidden"}'
 # Expected: 200, "status":"hidden"
 
 # Unhide
-curl -s -X PATCH $BASE/programs/$PROGRAM_ID $AUTH -d '{"status":"published"}'
+curl -s -X PATCH $BASE/programs/$EMPTY_PROGRAM_ID $AUTH -d '{"status":"published"}'
 # Expected: 200, "status":"published"
 ```
 
