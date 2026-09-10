@@ -1231,18 +1231,27 @@ Tracks the relationship between a user and a program as either `program_admin` o
 
 #### `GET /v1/programs/{id}/members` 🔓
 
+Public roster. Returns `active` members only, with `email` omitted from every row.
+`{id}` may be a UUID or a slug. A hidden program returns `404` to anyone but its
+owner, matching `GET /v1/programs/{id}`.
+
+There is no `status` filter: the status is pinned to `active` so an anonymous
+caller cannot widen the roster to `invited`, `requested`, `pending`, `declined`,
+or `withdrawn` members.
+
 **Query parameters**
 
 | Parameter | Values | Description |
 |---|---|---|
 | `member_type` | `program_admin\|mentor` | Filter by type |
-| `status` | See status values | Filter by status |
 | `limit` / `offset` | — | Pagination |
 
 **Response** `200`
 ```json
 { "data": [<ProgramMember>, ...], "meta": {...} }
 ```
+
+**Errors** `404`
 
 ---
 
@@ -1768,7 +1777,7 @@ incomplete ──► in_progress ──► submitted ──► complete
 | FR-003 | Max 4 open terms per program | `ProgramTermService.Create`, `.Update` |
 | FR-004 | Submission requires all required fields + ≥1 open term | `ProgramService.Update` |
 | FR-008 | Hide blocked while pending/accepted/graduated apps exist | `ProgramService.Update` |
-| FR-009 | Hidden programs return 404 to non-owners | `ProgramHandler.GetByID` |
+| FR-009 | Hidden programs return 404 to non-owners | `handler.resolveVisibleProgram`, used by `ProgramHandler.GetByID` and `ProgramMemberHandler.List` |
 | FR-013 | Close term blocked while accepted apps exist | `ProgramTermService.Update` |
 | FR-014 | Reopen term only if end_date in the future | `ProgramTermService.Update` |
 | FR-016 | Apply only when term is open AND within window | `ApplicationService.Create` |
