@@ -144,7 +144,7 @@ erDiagram
         uuid id PK
         uuid application_id FK "NOT NULL — parent for permission inheritance"
         text category "prerequisite | non_prerequisite"
-        text status "incomplete | in_progress | completed | on_hold"
+        text status "incomplete | in_progress | complete | submitted"
         date due_date
     }
 ```
