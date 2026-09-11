@@ -289,19 +289,6 @@ func (s *ApplicationService) Update(ctx context.Context, id string, input models
 	return a, nil
 }
 
-// Delete removes an application (withdrawal).
-func (s *ApplicationService) Delete(ctx context.Context, id string) error {
-	ctx, span := applicationSvcTracer.Start(ctx, "ApplicationService.Delete")
-	defer span.End()
-	span.SetAttributes(attribute.String("application.id", id))
-
-	if err := s.repo.Delete(ctx, id); err != nil {
-		span.RecordError(err)
-		return fmt.Errorf("delete application: %w", err)
-	}
-	return nil
-}
-
 // BulkDeclineByTerm moves all pending/submitted applications in a term to declined.
 func (s *ApplicationService) BulkDeclineByTerm(ctx context.Context, termID string) (int, error) {
 	ctx, span := applicationSvcTracer.Start(ctx, "ApplicationService.BulkDeclineByTerm")

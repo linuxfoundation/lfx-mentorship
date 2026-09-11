@@ -218,11 +218,28 @@ func (s *TaskService) assertReviewer(ctx context.Context, task *models.Task, act
 	return nil
 }
 
-// Delete removes a task.
-func (s *TaskService) Delete(ctx context.Context, id string) error {
+// Delete removes a task. Only an active mentor or program admin in the
+// owning program may delete; assignees cannot delete their own tasks.
+func (s *TaskService) Delete(ctx context.Context, id string, actorID string) error {
 	ctx, span := taskSvcTracer.Start(ctx, "TaskService.Delete")
 	defer span.End()
 	span.SetAttributes(attribute.String("task.id", id))
+	if actorID == "" {
+		return fmt.Errorf("%w: actor identity is required", domain.ErrForbidden)
+	}
+
+	current, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		span.RecordError(err)
+		return fmt.Errorf("get task for delete permission check: %w", err)
+	}
+	if current.AssigneeID == actorID {
+		return fmt.Errorf("%w: task assignee cannot delete task", domain.ErrForbidden)
+	}
+	if err := s.assertReviewer(ctx, current, actorID); err != nil {
+		span.RecordError(err)
+		return err
+	}
 
 	if err := s.repo.Delete(ctx, id); err != nil {
 		span.RecordError(err)

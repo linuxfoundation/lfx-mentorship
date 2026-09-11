@@ -123,15 +123,9 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 
 	r.Route("/v1", func(r chi.Router) {
 		// ── Public endpoints ─────────────────────────────────────────────────
-		r.Get("/users", userH.List)
-		r.Get("/users/{id}", userH.GetByID)
-
-		r.Get("/user-profiles", userProfileH.List)
-		r.Get("/user-profiles/{id}", userProfileH.GetByID)
-		r.Get("/user-profiles/slug/{slug}", userProfileH.GetBySlug)
-
 		r.Get("/programs", programH.List)
 		r.Get("/programs/catalog", programH.ListCatalog)
+		r.Get("/programs/resolve/{id}", programH.ResolveID)
 		r.Get("/programs/{id}", programH.GetByID)
 		r.Get("/programs/{id}/catalog", programH.GetCatalog)
 		r.Get("/programs/{id}/mentees", programH.ListCatalogMentees)
@@ -151,8 +145,6 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		r.Get("/programs/{id}/members", programMemberH.List)
 
 		r.Get("/program-terms/{id}", programTermH.GetByID)
-		r.Get("/program-terms/{id}/applications", applicationH.ListByProgramTerm)
-		r.Get("/program-terms/{id}/tasks", taskH.ListByProgramTerm)
 
 		r.Get("/applications/{id}", applicationH.GetByID)
 		r.Get("/applications/{id}/tasks", taskH.ListByApplication)
@@ -167,12 +159,17 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			r.Use(jwtAuth.Middleware)
 
 			// Users
+			r.Get("/users", userH.List)
+			r.Get("/users/{id}", userH.GetByID)
 			r.Post("/users", userH.Create)
 			r.Patch("/users/{id}", userH.Update)
 			r.Delete("/users/{id}", userH.Delete)
 			r.Get("/users/{userId}/applications", applicationH.ListByUser)
 
 			// User profiles
+			r.Get("/user-profiles", userProfileH.List)
+			r.Get("/user-profiles/{id}", userProfileH.GetByID)
+			r.Get("/user-profiles/slug/{slug}", userProfileH.GetBySlug)
 			r.Post("/user-profiles", userProfileH.Create)
 			r.Patch("/user-profiles/{id}", userProfileH.Update)
 			r.Delete("/user-profiles/{id}", userProfileH.Delete)
@@ -195,6 +192,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			r.Delete("/program-terms/{id}", programTermH.Delete)
 
 			// Applications
+			r.Get("/program-terms/{id}/applications", applicationH.ListByProgramTerm)
 			r.Post("/program-terms/{id}/applications", applicationH.Create)
 			r.Patch("/applications/{id}", applicationH.Update)
 			r.Delete("/applications/{id}", applicationH.Delete)
@@ -203,6 +201,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			r.Get("/program-terms/{id}/past-mentees", applicationH.PastMenteesByTerm)
 
 			// Tasks
+			r.Get("/program-terms/{id}/tasks", taskH.ListByProgramTerm)
 			r.Post("/applications/{id}/tasks", taskH.Create)
 			r.Patch("/tasks/{id}", taskH.Update)
 			r.Delete("/tasks/{id}", taskH.Delete)

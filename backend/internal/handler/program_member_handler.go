@@ -95,13 +95,24 @@ func (h *ProgramMemberHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	programID := chi.URLParam(r, "id")
 	memberID := chi.URLParam(r, "memberId")
+	member, err := h.svc.GetByID(r.Context(), memberID)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	if member.ProgramID != programID {
+		Error(w, domain.ErrProgramMemberNotFound)
+		return
+	}
+
 	var input models.ProgramMemberUpdateInput
 	if !decodeBody(w, r, &input) {
 		return
 	}
 
-	member, err := h.svc.Update(r.Context(), memberID, input)
+	member, err = h.svc.Update(r.Context(), memberID, input)
 	if err != nil {
 		Error(w, err)
 		return
@@ -118,7 +129,18 @@ func (h *ProgramMemberHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	programID := chi.URLParam(r, "id")
 	memberID := chi.URLParam(r, "memberId")
+	member, err := h.svc.GetByID(r.Context(), memberID)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	if member.ProgramID != programID {
+		Error(w, domain.ErrProgramMemberNotFound)
+		return
+	}
+
 	withdrawn := models.ProgramMemberStatusWithdrawn
 	if _, err := h.svc.Update(r.Context(), memberID, models.ProgramMemberUpdateInput{Status: &withdrawn}); err != nil {
 		Error(w, err)
