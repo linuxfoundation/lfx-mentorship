@@ -173,7 +173,12 @@ rather than schema:
 ### 3.3 What is actually implemented today
 
 The running service **authenticates but still lacks object-level authorization in key write paths**.
-Re-verified in `b07aefd`:
+
+> **Read this section against two trees.** It is re-verified in `b07aefd`, which is the head of
+> [lfx-mentorship#149](https://github.com/linuxfoundation/lfx-mentorship/pull/149) (`feat/code-refactoring`) — **not** `main`, and not this
+> branch. Items marked **(#149)** are implemented there and are **not yet on `main`**; until that PR
+> merges, the deployed behavior is the pre-#149 state noted alongside each one. Everything else
+> describes `main` today.
 
 - `backend/internal/infrastructure/auth/jwt.go` validates Auth0 JWTs and populates a principal.
   Its `Middleware` performs **no scope check and no object check** — `ScopeMe` is declared and
@@ -188,10 +193,14 @@ Re-verified in `b07aefd`:
   `task_service.go` (assignee vs. reviewer, program membership) and `application_service.go` (only the
   applicant may withdraw).
   - **Application deletion is guarded.** `ApplicationHandler.Delete` routes through `Update` with the
-    authenticated `ActorID`, and the withdrawal guard rejects anyone but the applicant.
-  - **Task deletion is now guarded.** `TaskHandler.Delete` passes the authenticated actor to
-    `TaskService.Delete`, which rejects assignee-deletes and requires an active mentor/program-admin
-    membership on the owning program.
+    authenticated `ActorID`, and the withdrawal guard rejects anyone but the applicant. On `main`,
+    `ApplicationService.Delete(ctx, id)` still exists and takes no actor, but no route reaches it —
+    dead code that reads like an exposed hole; **(#149)** deletes it.
+  - **Task deletion is guarded — (#149).** There, `TaskHandler.Delete` passes the authenticated actor
+    to `TaskService.Delete(ctx, id, actorID)`, which rejects assignee-deletes and requires reviewer
+    standing on the owning program. **On `main` this is still open**:
+    `TaskService.Delete(ctx, id)` takes no actor and `TaskHandler.Delete` null-checks the principal
+    and then discards it, so any authenticated user can delete any task.
 - `program_service.go`, `program_term_service.go`, `program_member_service.go`,
   `user_service.go` and `user_profile_service.go` contain **no authorization at all**.
   `ProgramService.Delete(ctx, id)` does not receive a principal, so it structurally cannot check one.
@@ -200,7 +209,7 @@ Re-verified in `b07aefd`:
 
 **Therefore, as deployed to dev: any authenticated LF user can create, modify, or delete any
 program, term, member, user, or user profile** — and can still modify applications and tasks through
-routes that are authenticated but not object-authorized. `user` belongs in that list for the same
+routes that are authenticated but not object-authorized (on `main`, that includes deleting any task). `user` belongs in that list for the same
 structural reason as the rest:
 `UserHandler.Create`, `Update` and `Delete` null-check the principal and nothing else, and
 `UserService.Update(ctx, id, input)` / `Delete(ctx, id)` take no actor, so they cannot compare the
@@ -209,7 +218,32 @@ caller to the record. Deletion is bounded only by referential integrity, not by 
 This is acceptable only for a dev environment with no real data. It is a release blocker for
 staging and prod, and it is the single most important thing to close.
 
-No further gap from `04`/`05` remains **not** waiting on Heimdall.
+Three further gaps from `04`/`05` are **not** waiting on Heimdall. All three are fixed on
+**(#149)** and none of the fixes are on `main` yet, so they remain live defects in the deployed
+service until that PR merges:
+
+- **Parent-authorized routes have no parent-child invariant.** On `main`,
+  `ProgramMemberHandler.Update`/`.Delete` act on `{memberId}` and discard the program `{id}`, and
+  `ProgramHandler.DeleteSkill` acts on `{skillId}` alone — so once a RuleSet checks
+  `mentorship_program:{id}`, a `writer` on program A passes the edge check and then mutates a member
+  or skill of program B. **(#149)** captures the program `{id}` on all three and enforces the link in
+  the service (`current.ProgramID != programID`). The check is referential integrity on the request,
+  so it stays in the service — FGA holds no tuple saying "this member row belongs to that program"
+  (`04` decision 7).
+- **The unauthenticated read surface serves PII.** On `main` the public group holds 29 `GET` routes,
+  including the *list* routes `GET /v1/users` and `/v1/user-profiles`, so the whole directory is
+  pageable without a token — `User` carries `email` and `lfid`
+  ([`user.go:13`](backend/internal/domain/models/user.go)) and `UserProfile` adds `phone`, `address`,
+  `demographics` and `socioeconomics`
+  ([`user_profile.go:19-27`](backend/internal/domain/models/user_profile.go)) — plus term-wide
+  application/task listings and the by-UID application/task reads. This is the most serious item on
+  this page. **(#149)** moves all ten behind the JWT middleware. The remaining public routes
+  (`/programs`, `/mentees`, `/mentors`, summaries) are the intended discovery surface and expose
+  `name` only; `05` GW-8 still owns the explicit redaction contract for whatever stays public.
+- **Program IDs resolve as UUID *or* slug, but tuples are keyed by UID.** A RuleSet built from the raw
+  `{id}` capture would check `mentorship_program:{slug}`, find no tuple, and deny a valid URL.
+  **(#149)** adds `GET /v1/programs/resolve/{id}`, a visibility-checked route returning the canonical
+  `program.ID` — the `05` GW-2 prerequisite for the RuleSets, not a cutover detail.
 
 ### 3.4 Authentication
 
@@ -315,6 +349,10 @@ Tracked here so no one builds against a contract that does not exist yet.
 | **The four `mentorship_*` types are absent from `model.fga`** | PR 1 of the four-PR path in [`04 §implementation path`](docs/rewrite/04-authorization-model.md); merge gate is `tests.yaml` passing, not that the DSL parses |
 | **Project-level program-admin relation has no owner** | Needs the `project` type extended *and* project-service to emit it — it cannot be durably written by this service (`04` AQ-4). The Self Serve permissions page also needs updating |
 | **Program-approval global team** | Team not created; no approve endpoint exists. `04` AQ-8 leaves the roster owner open — "no owner re-checks that a global tuple still exists" is the operational risk on the one guard protecting publication |
+| **Parent-child invariant missing on parent-authorized routes** | Live defect on `main`, not blocked on Heimdall; fixed on [#149](https://github.com/linuxfoundation/lfx-mentorship/pull/149) (open). See §3.3 |
+| **Unauthenticated reads serve PII** | Live defect on `main`, and the largest one: `GET /v1/users` and `/v1/user-profiles` are unauthenticated **list** routes, so the whole directory (email, LFID, phone, address, demographics, socioeconomics) is pageable without a token; term-wide application/task listings are public too. Gated on [#149](https://github.com/linuxfoundation/lfx-mentorship/pull/149) (open); the redaction contract for the remaining public routes is still owed. See §3.3 |
+| **Slug-or-UID program IDs are incompatible with FGA tuple keys** | Prerequisite for the RuleSets; the `GET /v1/programs/resolve/{id}` resolver lands with [#149](https://github.com/linuxfoundation/lfx-mentorship/pull/149) (open). See §3.3 |
+| **Task delete is open to any authenticated caller** | Live defect on `main`: `TaskService.Delete(ctx, id)` takes no actor. Actor-aware and reviewer-gated on [#149](https://github.com/linuxfoundation/lfx-mentorship/pull/149) (open). See §3.3 |
 | **ArgoCD dev wiring is half-landed** | [lfx-v2-argocd#1453](https://github.com/linuxfoundation/lfx-v2-argocd/pull/1453) merged 2026-09-10, but its ApplicationSet entries point at a frontend chart path that only exists on [lfx-mentorship#148](https://github.com/linuxfoundation/lfx-mentorship/pull/148). Staging/prod values do not exist |
 | **No transactional email** | `LogNotifier` logs every notification and sends nothing (`server.go:60`); no `lfx-v2-email-service` adapter exists. Every invite, decline, and acceptance notice is silently dropped. See §4 |
 | **No file uploads** | Program logos and task submissions need S3 presigned URLs; no S3 client, upload route, or presigner exists anywhere in the repo. See §4 |
