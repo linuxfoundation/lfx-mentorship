@@ -55,7 +55,7 @@ flowchart TB
     AUTH0["Auth0"]
     LEDGER["Ledger API<br/>mentorship-credit transactions"]
     S3[("S3 uploads<br/>unbuilt")]
-    MANDRILL["Mandrill<br/>unbuilt"]
+    EMAIL["lfx-v2-email-service<br/>NATS → SES · unbuilt"]
     SF[("Snowflake")]
 
     USERS & ADMIN --> NUXT
@@ -65,7 +65,7 @@ flowchart TB
     SS -- "user token" --> API
     API --> PG
     API -. "planned" .-> S3
-    API -. "planned" .-> MANDRILL
+    API -. "planned" .-> EMAIL
     CRON -- "API key: transactions" --> LEDGER
     CRON --> PG
     PG -- "Fivetran" --> SF
@@ -286,7 +286,7 @@ Token validation is built; the browser-facing half is not.
 | **Ledger API** | Mentorship → Ledger | Hourly CronJob, `LEDGER_API_KEY` bearer token; reads mentorship-credit transactions and caches them in `program_funding_stats` | Last cached values served |
 | **Crowdfunding API** | Mentorship → CF | Request-time call from `ProgramService`, Auth0 M2M token (`access:manage`); fetches categorized transactions and sponsors | Optional — the client is wired only when configured (`server.go:66`) |
 | **Snowflake** | Mentorship → SF | Fivetran Postgres connector; `fivetran_mentorship_*` dbt models repointed | Analytics-plane only — never in the serving path |
-| **Mandrill** | Mentorship → Mandrill | **Unbuilt.** Intended for all transactional email; SES is dropped. Today `server.go:60` wires `LogNotifier`, which only logs the event | No email is sent at all — see §6 |
+| **lfx-v2-email-service** | Mentorship → NATS `lfx.email-service.send_email` | **Unbuilt.** The platform rail for all transactional email: a request/reply relay over Amazon SES, imported as `lfx-v2-email-service/pkg/api`. It accepts **pre-rendered** `html`/`text` only — no templating — so Mentorship owns and renders its own templates. Today `server.go:60` wires `LogNotifier`, which only logs the event. Not Mandrill: that is the legacy rail and is out of scope ([linuxfoundation/lfx-self-serve#2188](https://github.com/linuxfoundation/lfx-self-serve/issues/2188)) | No email is sent at all — see §6 |
 | **S3** | Mentorship → S3 | **Unbuilt.** Intended for program logos and task submissions via presigned URLs. No S3 client, upload route, or presigner exists | — see §6 |
 | **LFX Self Serve** | SS → Mentorship | User token against `/v1` | — |
 
@@ -358,7 +358,7 @@ Tracked here so no one builds against a contract that does not exist yet.
 | **Unauthenticated reads serve PII** | Live defect, and the largest one. `GET /v1/users` and `/v1/user-profiles` are unauthenticated **list** routes, so the whole directory (email, LFID, phone, address, demographics, socioeconomics) is pageable without a token; term-wide application/task listings are public too. Needs gating plus a redaction contract. See §3.3 |
 | **Slug-or-UID program IDs are incompatible with FGA tuple keys** | Prerequisite for the RuleSets; needs a public slug-to-UID resolver. See §3.3 |
 | **ArgoCD dev wiring is half-landed** | [lfx-v2-argocd#1453](https://github.com/linuxfoundation/lfx-v2-argocd/pull/1453) merged 2026-09-10, but its ApplicationSet entries point at a frontend chart path that only exists on [lfx-mentorship#148](https://github.com/linuxfoundation/lfx-mentorship/pull/148). Staging/prod values do not exist |
-| **No transactional email** | `LogNotifier` logs every notification and sends nothing (`server.go:60`); no Mandrill adapter exists. Every invite, decline, and acceptance notice is silently dropped. See §4 |
+| **No transactional email** | `LogNotifier` logs every notification and sends nothing (`server.go:60`); no `lfx-v2-email-service` adapter exists. Every invite, decline, and acceptance notice is silently dropped. See §4 |
 | **No file uploads** | Program logos and task submissions need S3 presigned URLs; no S3 client, upload route, or presigner exists anywhere in the repo. See §4 |
 | **Frontend has no session handling** | `isAuthEnabled = false` in `frontend/app/composables/useAuth.ts`; the authenticated apply flow does not exist on the public site. See §1 |
 | **Search is `ILIKE`, not Postgres FTS** | No `tsvector` column or GIN index in any migration. Acceptable at current data volumes; revisit before launch. See §5 |
