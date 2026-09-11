@@ -444,3 +444,192 @@ func TestTaskService_Delete_MissingActorForbidden(t *testing.T) {
 		t.Fatalf("expected ErrForbidden, got %v", err)
 	}
 }
+
+func TestTaskService_GetByIDForActor_AssigneeAllowed(t *testing.T) {
+	appID := "app-1"
+	svc := newTaskSvc(&stubTaskRepo{
+		getByID: func(_ context.Context, id string) (*models.Task, error) {
+			return &models.Task{ID: id, AssigneeID: "mentee-1", ApplicationID: &appID}, nil
+		},
+	}, &stubAppRepo{}, &stubTermRepo{}, &stubMemberRepo{})
+
+	task, err := svc.GetByIDForActor(context.Background(), "task-1", "mentee-1")
+	if err != nil {
+		t.Fatalf("GetByIDForActor: %v", err)
+	}
+	if task.ID != "task-1" {
+		t.Fatalf("task.ID = %q; want task-1", task.ID)
+	}
+}
+
+func TestTaskService_GetByIDForActor_ReviewerAllowed(t *testing.T) {
+	appID := "app-1"
+	termID := "term-1"
+	active := models.ProgramMemberStatusActive
+	svc := newTaskSvc(&stubTaskRepo{
+		getByID: func(_ context.Context, id string) (*models.Task, error) {
+			return &models.Task{ID: id, AssigneeID: "mentee-1", ApplicationID: &appID}, nil
+		},
+	}, &stubAppRepo{
+		getByID: func(_ context.Context, _ string) (*models.Application, error) {
+			return &models.Application{ID: appID, ProgramTermID: termID}, nil
+		},
+	}, &stubTermRepo{
+		getByID: func(_ context.Context, _ string) (*models.ProgramTerm, error) {
+			return &models.ProgramTerm{ID: termID, ProgramID: "prog-1"}, nil
+		},
+	}, &stubMemberRepo{
+		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
+			return &models.ProgramMember{MemberType: models.MemberTypeMentor, Status: &active}, nil
+		},
+	})
+
+	if _, err := svc.GetByIDForActor(context.Background(), "task-1", "mentor-1"); err != nil {
+		t.Fatalf("GetByIDForActor: %v", err)
+	}
+}
+
+func TestTaskService_GetByIDForActor_NonMemberForbidden(t *testing.T) {
+	appID := "app-1"
+	termID := "term-1"
+	svc := newTaskSvc(&stubTaskRepo{
+		getByID: func(_ context.Context, id string) (*models.Task, error) {
+			return &models.Task{ID: id, AssigneeID: "mentee-1", ApplicationID: &appID}, nil
+		},
+	}, &stubAppRepo{
+		getByID: func(_ context.Context, _ string) (*models.Application, error) {
+			return &models.Application{ID: appID, ProgramTermID: termID}, nil
+		},
+	}, &stubTermRepo{
+		getByID: func(_ context.Context, _ string) (*models.ProgramTerm, error) {
+			return &models.ProgramTerm{ID: termID, ProgramID: "prog-1"}, nil
+		},
+	}, &stubMemberRepo{
+		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
+			return nil, domain.ErrProgramMemberNotFound
+		},
+	})
+
+	_, err := svc.GetByIDForActor(context.Background(), "task-1", "stranger-1")
+	if !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("expected ErrForbidden, got %v", err)
+	}
+}
+
+func TestTaskService_ListByApplicationForActor_NonReviewerForbidden(t *testing.T) {
+	appID := "app-1"
+	termID := "term-1"
+	svc := newTaskSvc(&stubTaskRepo{}, &stubAppRepo{
+		getByID: func(_ context.Context, _ string) (*models.Application, error) {
+			return &models.Application{ID: appID, UserID: "mentee-1", ProgramTermID: termID}, nil
+		},
+	}, &stubTermRepo{
+		getByID: func(_ context.Context, _ string) (*models.ProgramTerm, error) {
+			return &models.ProgramTerm{ID: termID, ProgramID: "prog-1"}, nil
+		},
+	}, &stubMemberRepo{
+		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
+			return nil, domain.ErrProgramMemberNotFound
+		},
+	})
+
+	_, _, err := svc.ListByApplicationForActor(context.Background(), appID, models.TaskFilter{}, "stranger-1")
+	if !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("expected ErrForbidden, got %v", err)
+	}
+}
+
+func TestTaskService_ListByProgramTermForActor_NonReviewerForcesAssigneeFilter(t *testing.T) {
+	svc := newTaskSvc(&stubTaskRepo{
+		listByProgramTerm: func(_ context.Context, _ string, f models.TaskFilter) ([]*models.Task, *models.PaginationMeta, error) {
+			if f.AssigneeID != "mentee-2" {
+				t.Fatalf("filter.AssigneeID = %q; want mentee-2", f.AssigneeID)
+			}
+			return []*models.Task{}, &models.PaginationMeta{}, nil
+		},
+	}, &stubAppRepo{}, &stubTermRepo{
+		getByID: func(_ context.Context, _ string) (*models.ProgramTerm, error) {
+			return &models.ProgramTerm{ID: "term-1", ProgramID: "prog-1"}, nil
+		},
+	}, &stubMemberRepo{
+		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
+			return nil, domain.ErrProgramMemberNotFound
+		},
+	})
+
+	_, _, err := svc.ListByProgramTermForActor(context.Background(), "term-1", models.TaskFilter{}, "mentee-2")
+	if err != nil {
+		t.Fatalf("ListByProgramTermForActor: %v", err)
+	}
+}
+
+func TestTaskService_ListByProgramTermForActor_InactiveMemberForcesAssigneeFilter(t *testing.T) {
+	inactive := models.ProgramMemberStatusInvited
+	svc := newTaskSvc(&stubTaskRepo{
+		listByProgramTerm: func(_ context.Context, _ string, f models.TaskFilter) ([]*models.Task, *models.PaginationMeta, error) {
+			if f.AssigneeID != "user-5" {
+				t.Fatalf("filter.AssigneeID = %q; want user-5", f.AssigneeID)
+			}
+			return []*models.Task{}, &models.PaginationMeta{}, nil
+		},
+	}, &stubAppRepo{}, &stubTermRepo{
+		getByID: func(_ context.Context, _ string) (*models.ProgramTerm, error) {
+			return &models.ProgramTerm{ID: "term-1", ProgramID: "prog-1"}, nil
+		},
+	}, &stubMemberRepo{
+		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
+			return &models.ProgramMember{MemberType: models.MemberTypeProgramAdmin, Status: &inactive}, nil
+		},
+	})
+
+	_, _, err := svc.ListByProgramTermForActor(context.Background(), "term-1", models.TaskFilter{}, "user-5")
+	if err != nil {
+		t.Fatalf("ListByProgramTermForActor: %v", err)
+	}
+}
+
+func TestTaskService_ListByProgramTermForActor_ReviewerKeepsAssigneeFilter(t *testing.T) {
+	active := models.ProgramMemberStatusActive
+	svc := newTaskSvc(&stubTaskRepo{
+		listByProgramTerm: func(_ context.Context, _ string, f models.TaskFilter) ([]*models.Task, *models.PaginationMeta, error) {
+			if f.AssigneeID != "explicit-assignee" {
+				t.Fatalf("filter.AssigneeID = %q; want explicit-assignee", f.AssigneeID)
+			}
+			return []*models.Task{}, &models.PaginationMeta{}, nil
+		},
+	}, &stubAppRepo{}, &stubTermRepo{
+		getByID: func(_ context.Context, _ string) (*models.ProgramTerm, error) {
+			return &models.ProgramTerm{ID: "term-1", ProgramID: "prog-1"}, nil
+		},
+	}, &stubMemberRepo{
+		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
+			return &models.ProgramMember{MemberType: models.MemberTypeProgramAdmin, Status: &active}, nil
+		},
+	})
+
+	_, _, err := svc.ListByProgramTermForActor(context.Background(), "term-1", models.TaskFilter{AssigneeID: "explicit-assignee"}, "admin-1")
+	if err != nil {
+		t.Fatalf("ListByProgramTermForActor: %v", err)
+	}
+}
+
+func TestTaskService_ListByProgramTermForActor_MembershipLookupFailurePropagates(t *testing.T) {
+	opErr := errors.New("membership lookup failed")
+	svc := newTaskSvc(&stubTaskRepo{}, &stubAppRepo{}, &stubTermRepo{
+		getByID: func(_ context.Context, _ string) (*models.ProgramTerm, error) {
+			return &models.ProgramTerm{ID: "term-1", ProgramID: "prog-1"}, nil
+		},
+	}, &stubMemberRepo{
+		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
+			return nil, opErr
+		},
+	})
+
+	_, _, err := svc.ListByProgramTermForActor(context.Background(), "term-1", models.TaskFilter{}, "user-1")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, opErr) {
+		t.Fatalf("expected wrapped lookup error, got %v", err)
+	}
+}

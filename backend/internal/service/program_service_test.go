@@ -19,6 +19,10 @@ func newProgramSvc(progRepo *stubProgRepo, termRepo *stubTermRepo, appRepo *stub
 	return service.NewProgramService(progRepo, termRepo, appRepo, &stubMemberRepo{})
 }
 
+func newProgramSvcWithMember(progRepo *stubProgRepo, termRepo *stubTermRepo, appRepo *stubAppRepo, memberRepo *stubMemberRepo) *service.ProgramService {
+	return service.NewProgramService(progRepo, termRepo, appRepo, memberRepo)
+}
+
 // ── state machine ────────────────────────────────────────────────────────────
 
 func TestProgramService_Create_AlwaysDraft(t *testing.T) {
@@ -653,5 +657,95 @@ func TestProgramService_GetCategorizedTransactions_DefaultCategoryAndArgs(t *tes
 	}
 	if out.TotalCount != 1 {
 		t.Errorf("TotalCount = %d; want 1", out.TotalCount)
+	}
+}
+
+func TestProgramService_DeleteSkill_ActiveAdmin_ScopesDeleteByProgramAndSkillID(t *testing.T) {
+	active := models.ProgramMemberStatusActive
+	called := false
+	var gotProgramID, gotSkillID string
+
+	svc := newProgramSvcWithMember(&stubProgRepo{
+		deleteSkill: func(_ context.Context, programID, skillID string) error {
+			called = true
+			gotProgramID = programID
+			gotSkillID = skillID
+			return nil
+		},
+	}, &stubTermRepo{}, &stubAppRepo{}, &stubMemberRepo{
+		findByProgramUser: func(_ context.Context, programID, userID string) (*models.ProgramMember, error) {
+			if programID != "prog-1" || userID != "admin-1" {
+				t.Fatalf("unexpected membership lookup args: %s %s", programID, userID)
+			}
+			return &models.ProgramMember{MemberType: models.MemberTypeProgramAdmin, Status: &active}, nil
+		},
+	})
+
+	if err := svc.DeleteSkill(context.Background(), "prog-1", "skill-1", "admin-1"); err != nil {
+		t.Fatalf("DeleteSkill: %v", err)
+	}
+	if !called {
+		t.Fatal("expected DeleteSkill repository call")
+	}
+	if gotProgramID != "prog-1" || gotSkillID != "skill-1" {
+		t.Fatalf("delete args = %s/%s; want prog-1/skill-1", gotProgramID, gotSkillID)
+	}
+}
+
+func TestProgramService_DeleteSkill_MembershipLookupFailurePropagates(t *testing.T) {
+	opErr := errors.New("db unavailable")
+	svc := newProgramSvcWithMember(&stubProgRepo{}, &stubTermRepo{}, &stubAppRepo{}, &stubMemberRepo{
+		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
+			return nil, opErr
+		},
+	})
+
+	err := svc.DeleteSkill(context.Background(), "prog-1", "skill-1", "admin-1")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, opErr) {
+		t.Fatalf("expected wrapped lookup error, got %v", err)
+	}
+}
+
+func TestProgramService_DeleteSkill_NonMemberForbidden(t *testing.T) {
+	svc := newProgramSvcWithMember(&stubProgRepo{}, &stubTermRepo{}, &stubAppRepo{}, &stubMemberRepo{
+		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
+			return nil, domain.ErrProgramMemberNotFound
+		},
+	})
+
+	err := svc.DeleteSkill(context.Background(), "prog-1", "skill-1", "admin-1")
+	if !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("expected ErrForbidden, got %v", err)
+	}
+}
+
+func TestProgramService_DeleteSkill_WrongRoleForbidden(t *testing.T) {
+	active := models.ProgramMemberStatusActive
+	svc := newProgramSvcWithMember(&stubProgRepo{}, &stubTermRepo{}, &stubAppRepo{}, &stubMemberRepo{
+		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
+			return &models.ProgramMember{MemberType: models.MemberTypeMentor, Status: &active}, nil
+		},
+	})
+
+	err := svc.DeleteSkill(context.Background(), "prog-1", "skill-1", "mentor-1")
+	if !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("expected ErrForbidden, got %v", err)
+	}
+}
+
+func TestProgramService_DeleteSkill_InactiveAdminForbidden(t *testing.T) {
+	inactive := models.ProgramMemberStatusInvited
+	svc := newProgramSvcWithMember(&stubProgRepo{}, &stubTermRepo{}, &stubAppRepo{}, &stubMemberRepo{
+		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
+			return &models.ProgramMember{MemberType: models.MemberTypeProgramAdmin, Status: &inactive}, nil
+		},
+	})
+
+	err := svc.DeleteSkill(context.Background(), "prog-1", "skill-1", "admin-1")
+	if !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("expected ErrForbidden, got %v", err)
 	}
 }

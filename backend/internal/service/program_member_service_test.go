@@ -255,3 +255,40 @@ func TestProgramMemberService_DeclineInvite_InvalidToken(t *testing.T) {
 		t.Errorf("expected ErrInvalidInput for bad token, got %v", err)
 	}
 }
+
+func TestProgramMemberService_Update_AdminLookupFailurePropagates(t *testing.T) {
+	opErr := errors.New("membership lookup failed")
+	memberRepo := &stubMemberRepo{
+		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
+			return nil, opErr
+		},
+	}
+	svc := newMemberSvc(memberRepo, &stubProgRepo{}, &stubNotifier{})
+
+	active := models.ProgramMemberStatusActive
+	_, err := svc.Update(context.Background(), "prog-1", "member-1", models.ProgramMemberUpdateInput{Status: &active}, "admin-1")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, opErr) {
+		t.Fatalf("expected wrapped lookup error, got %v", err)
+	}
+}
+
+func TestProgramMemberService_Delete_AdminLookupFailurePropagates(t *testing.T) {
+	opErr := errors.New("membership lookup failed")
+	memberRepo := &stubMemberRepo{
+		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
+			return nil, opErr
+		},
+	}
+	svc := newMemberSvc(memberRepo, &stubProgRepo{}, &stubNotifier{})
+
+	err := svc.Delete(context.Background(), "prog-1", "member-1", "admin-1")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, opErr) {
+		t.Fatalf("expected wrapped lookup error, got %v", err)
+	}
+}

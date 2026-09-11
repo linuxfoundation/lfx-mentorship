@@ -1425,7 +1425,7 @@ List applications for a term.
 #### `GET /v1/applications/{id}` 🔒
 
 **Response** `200` → `<Application>`  
-**Errors** `401`, `404`
+**Errors** `401`, `403`, `404`
 
 ---
 
@@ -1589,7 +1589,7 @@ Backward reset to `incomplete` is always possible (by a reviewer only).
 { "data": [<Task>, ...], "meta": {...} }
 ```
 
-**Errors** `401`, `404`
+**Errors** `401`, `403`, `404`
 
 ---
 
@@ -1609,7 +1609,7 @@ List all tasks for a program term across all applications.
 #### `GET /v1/tasks/{id}` 🔒
 
 **Response** `200` → `<Task>`  
-**Errors** `401`, `404`
+**Errors** `401`, `403`, `404`
 
 ---
 
