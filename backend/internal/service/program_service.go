@@ -5,6 +5,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -344,6 +345,9 @@ func (s *ProgramService) DeleteSkill(ctx context.Context, programID, skillID, ac
 
 	member, err := s.memberRepo.FindByProgramAndUser(ctx, programID, actorID)
 	if err != nil {
+		if !errors.Is(err, domain.ErrProgramMemberNotFound) {
+			return fmt.Errorf("find actor membership: %w", err)
+		}
 		return fmt.Errorf("%w: actor must be an active program_admin", domain.ErrForbidden)
 	}
 	if member.MemberType != models.MemberTypeProgramAdmin {

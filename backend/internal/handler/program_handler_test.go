@@ -6,6 +6,7 @@ package handler_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -344,6 +345,50 @@ func TestProgramHandler_ResolveID_BySlugReturnsCanonicalID(t *testing.T) {
 	}
 	if body["id"] != "prog-uuid-1" {
 		t.Fatalf("id = %q; want prog-uuid-1", body["id"])
+	}
+}
+
+func TestProgramHandler_ResolveID_UUIDShapedSlug_FallsBackOnNotFound(t *testing.T) {
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		getByID: func(_ context.Context, id string) (*models.Program, error) {
+			if id != "00000000-0000-0000-0000-000000000000" {
+				t.Fatalf("id = %q; want UUID-shaped slug", id)
+			}
+			return nil, domain.ErrProgramNotFound
+		},
+		getBySlug: func(_ context.Context, slug string) (*models.Program, error) {
+			return &models.Program{ID: "resolved-id", Slug: slug, Status: models.ProgramStatusPublished}, nil
+		},
+	})
+
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/resolve/00000000-0000-0000-0000-000000000000", nil)
+	r = requestWithChiParam(r, "id", "00000000-0000-0000-0000-000000000000")
+	w := httptest.NewRecorder()
+	h.ResolveID(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d; want 200", w.Code)
+	}
+}
+
+func TestProgramHandler_ResolveID_UUIDInput_OperationalErrorPropagates(t *testing.T) {
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		getByID: func(_ context.Context, _ string) (*models.Program, error) {
+			return nil, errors.New("db unavailable")
+		},
+		getBySlug: func(_ context.Context, _ string) (*models.Program, error) {
+			t.Fatal("unexpected slug fallback on operational error")
+			return nil, nil
+		},
+	})
+
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/resolve/00000000-0000-0000-0000-000000000000", nil)
+	r = requestWithChiParam(r, "id", "00000000-0000-0000-0000-000000000000")
+	w := httptest.NewRecorder()
+	h.ResolveID(w, r)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("got %d; want 500", w.Code)
 	}
 }
 

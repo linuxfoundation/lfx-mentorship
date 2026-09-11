@@ -5,6 +5,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -36,6 +37,9 @@ func (s *ProgramMemberService) assertActiveProgramAdmin(ctx context.Context, pro
 	}
 	member, err := s.repo.FindByProgramAndUser(ctx, programID, actorID)
 	if err != nil {
+		if !errors.Is(err, domain.ErrProgramMemberNotFound) {
+			return fmt.Errorf("find actor membership: %w", err)
+		}
 		return fmt.Errorf("%w: actor must be an active program_admin", domain.ErrForbidden)
 	}
 	if member.MemberType != models.MemberTypeProgramAdmin {

@@ -5,6 +5,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -67,8 +68,15 @@ func (h *ProgramHandler) resolveVisibleProgram(w http.ResponseWriter, r *http.Re
 	if _, parseErr := uuid.Parse(id); parseErr == nil {
 		program, err = h.svc.GetByID(r.Context(), id)
 		if err != nil {
-			Error(w, err)
-			return nil, false
+			if !errors.Is(err, domain.ErrProgramNotFound) {
+				Error(w, err)
+				return nil, false
+			}
+			program, err = h.svc.GetBySlug(r.Context(), id)
+			if err != nil {
+				Error(w, err)
+				return nil, false
+			}
 		}
 	} else {
 		program, err = h.svc.GetBySlug(r.Context(), id)
