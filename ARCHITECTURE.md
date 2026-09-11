@@ -206,12 +206,7 @@ caller to the record. Deletion is bounded only by referential integrity, not by 
 This is acceptable only for a dev environment with no real data. It is a release blocker for
 staging and prod, and it is the single most important thing to close.
 
-One further gap from `04`/`05` remains **not** waiting on Heimdall:
-
-- **Some application/task reads are still public.** `GET /v1/applications/{id}`,
-  `GET /v1/applications/{id}/tasks`, and `GET /v1/tasks/{id}` remain in the public route group.
-  They still need explicit gating and redaction/visibility rules aligned with the applicant,
-  mentor, and admin contract.
+No further gap from `04`/`05` remains **not** waiting on Heimdall.
 
 ### 3.4 Authentication
 
@@ -317,7 +312,6 @@ Tracked here so no one builds against a contract that does not exist yet.
 | **The four `mentorship_*` types are absent from `model.fga`** | PR 1 of the four-PR path in [`04 §implementation path`](docs/rewrite/04-authorization-model.md); merge gate is `tests.yaml` passing, not that the DSL parses |
 | **Project-level program-admin relation has no owner** | Needs the `project` type extended *and* project-service to emit it — it cannot be durably written by this service (`04` AQ-4). The Self Serve permissions page also needs updating |
 | **Program-approval global team** | Team not created; no approve endpoint exists. `04` AQ-8 leaves the roster owner open — "no owner re-checks that a global tuple still exists" is the operational risk on the one guard protecting publication |
-| **Some application/task reads are still public** | `GET /v1/applications/{id}`, `GET /v1/applications/{id}/tasks`, and `GET /v1/tasks/{id}` remain unauthenticated routes. They need gating plus a redaction/visibility contract. See §3.3 |
 | **ArgoCD dev wiring is half-landed** | [lfx-v2-argocd#1453](https://github.com/linuxfoundation/lfx-v2-argocd/pull/1453) merged 2026-09-10, but its ApplicationSet entries point at a frontend chart path that only exists on [lfx-mentorship#148](https://github.com/linuxfoundation/lfx-mentorship/pull/148). Staging/prod values do not exist |
 | **No transactional email** | `LogNotifier` logs every notification and sends nothing (`server.go:60`); no `lfx-v2-email-service` adapter exists. Every invite, decline, and acceptance notice is silently dropped. See §4 |
 | **No file uploads** | Program logos and task submissions need S3 presigned URLs; no S3 client, upload route, or presigner exists anywhere in the repo. See §4 |
