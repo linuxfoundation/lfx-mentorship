@@ -13,16 +13,25 @@ Companion documents, all narrower than this one:
 
 | Document | Purpose |
 |---|---|
+| [`docs/rewrite/00-current-authz-relations.md`](docs/rewrite/00-current-authz-relations.md) | The legacy authorization baseline the new model is validated against |
 | [`docs/rewrite/01-current-system.md`](docs/rewrite/01-current-system.md) | The legacy platform being replaced |
 | [`docs/rewrite/02-target-architecture.md`](docs/rewrite/02-target-architecture.md) | Full rewrite proposal (data model, repo layout, scope exclusions) |
 | [`docs/rewrite/03-migration-plan.md`](docs/rewrite/03-migration-plan.md) | Migration phases |
+| [`docs/rewrite/04-authorization-model.md`](docs/rewrite/04-authorization-model.md) | **The FGA model** — types, relations, the Postgres/FGA split, and which relation each route checks |
+| [`docs/rewrite/05-heimdall-gateway.md`](docs/rewrite/05-heimdall-gateway.md) | The gateway edge that consumes it, and the cutover sequence |
 | [`CLAUDE.md`](CLAUDE.md) | Conventions for working in this repo |
+
+`00`, `04` and `05` are added by [lfx-mentorship#119](https://github.com/linuxfoundation/lfx-mentorship/pull/119),
+which is still under Architecture-team review — **so the links to them above and in §3 resolve only
+once that PR merges, and it should merge first.** `04` and `05` remain proposals even then; §3 below
+records the decisions they rest on and does not restate the model.
 
 This file is a **roll-up of current state**, in the same spirit as `README.md`. Where the code,
 the spec directory, or `docs/rewrite/` disagree with this file, that is a defect in one of them —
 say so in review rather than letting the drift stand.
 
-**Last verified against the code**: 2026-09-04 (`f5970d1`).
+**Last verified against the code**: 2026-09-10 (`f951be1`). Cross-repo state (ArgoCD, Auth0) verified
+the same day.
 
 ---
 
@@ -77,10 +86,15 @@ same `/v1` surface; there is no separate admin API.
 | `mentorship` schema | PostgreSQL | System of record |
 
 Deployed by in-repo Helm charts through ArgoCD ([lfx-v2-argocd](https://github.com/linuxfoundation/lfx-v2-argocd)).
-As of 2026-09-04 the ArgoCD wiring for `lfx-mentorship-backend` and `lfx-mentorship-frontend` lives
-only on the unmerged branch `feat/mentorship-dev-deployment` (`values/dev` + `values/global`);
-nothing mentorship-related is on `main`. **No environment is deployed via GitOps yet**, and
-staging/prod values do not exist.
+
+**The dev wiring is half-landed, and the two halves are in different repos.** On the ArgoCD side,
+[lfx-v2-argocd#1453](https://github.com/linuxfoundation/lfx-v2-argocd/pull/1453) merged on 2026-09-10:
+`values/{dev,global}/lfx-mentorship-{backend,frontend}.yaml`, the backend's ExternalSecret/SecretStore,
+the image-updater configs, and both entries in `apps/dev/lfx-v2-applications.yaml` are on `main`.
+Those entries point at chart paths in *this* repo — and only `backend/charts/lfx-mentorship-backend`
+exists on `main` today. `frontend/charts/lfx-mentorship-frontend` arrives with
+[lfx-mentorship#148](https://github.com/linuxfoundation/lfx-mentorship/pull/148), still open, so dev is
+currently wired to a frontend chart path that does not resolve. Staging/prod values do not exist.
 
 ---
 
@@ -106,43 +120,51 @@ start — rather than shipping bespoke auth and retrofitting later. Decided in a
   programs for a project, including creating new ones, without being a full project admin. This
   must surface in the Self Serve project permissions page alongside viewer/manager, not in a
   separate mentorship-only UI. Naming to be confirmed with the project-lens owners.
-- **`task` may not need to be its own FGA type.** It only earns one if a task can be assigned to
-  someone who is not already a mentor or mentee on the parent application. Currently it cannot,
-  so task permissions can derive from `application`. Revisit if assignment widens.
+- **`task` is its own FGA type, parented on the application.** The 2026-09-03 call left this open —
+  a task would earn a type only if it could be assigned to someone who is not already a mentor or
+  mentee on the parent application. A second Architecture review settled it the other way: tasks get
+  `mentorship_task`, whose parent reference is the **application**, completing one inheritance chain
+  project → program → application → task. See [`04` decision 2](docs/rewrite/04-authorization-model.md).
 
-### 3.2 Proposed FGA types
+### 3.2 The FGA model lives in `04`, not here
 
-Not yet in [`model.fga`](https://github.com/linuxfoundation/lfx-v2-helm/blob/main/charts/lfx-platform/files/model.fga) — this is the shape to review, and it is
-deliberately consistent with how `survey` derives from `project`:
+**[`docs/rewrite/04-authorization-model.md`](docs/rewrite/04-authorization-model.md) is the single
+source of truth for the types, relations, route-to-relation mapping, and lifecycle emissions.** It is
+not restated here: the model has already been revised three times across two Architecture reviews, and
+a second copy under a different `CODEOWNERS` owner would drift from it — the failure mode §7 warns
+about. Four mentorship-owned types are proposed there — `mentorship_program`,
+`mentorship_application`, `mentorship_task`, `mentorship_approver_team` — plus two relations appended
+to the existing `project` type (`mentorship_program_admin`, `mentorship_program_creator`). None are in
+[`model.fga`](https://github.com/linuxfoundation/lfx-v2-helm/blob/main/charts/lfx-platform/files/model.fga)
+yet; landing them is PR 1 of the four-PR path in `04 §implementation path`, gated on `tests.yaml`
+passing.
 
-```
-type mentorship_program
-  relations
-    define project: [project]
-    # project writers manage every program on the project; program_admin is the
-    # narrower, mentorship-only grant surfaced in the project permissions page.
-    define program_admin: [user] or writer from project
-    define mentor: [user]
-    define writer: program_admin
-    define auditor: writer or mentor or auditor from project
-    define viewer: [user:*] or auditor
+What belongs in *this* document is the handful of model properties that are cross-component contracts
+rather than schema:
 
-type mentorship_application
-  relations
-    define program: [mentorship_program]
-    # the mentee who submitted it
-    define owner: [user]
-    define writer: writer from program
-    # mentors evaluate applications; the applicant sees their own
-    define auditor: owner or writer or mentor from program
-```
-
-Program approval is **not** modelled above by design: it is a global team check on
-`POST /v1/programs/{id}/approve`.
+- **Program `viewer` carries a `[user:*]` wildcard, and it is load-bearing.** It is not "always
+  public" — fga-sync writes it as a **per-object tuple** only while the program is `published`, and
+  re-emits without it on the way back down to `archived`/`hidden`. It exists because Mentorship ships
+  two front ends and only one of them authenticates: drop the wildcard and every request the public
+  Nuxt site makes is denied at the edge. Any model variant that removes it loses one of the two UIs.
+- **Approval is held deliberately outside the program's own relations.** The decision route checks
+  `member` on the static object `mentorship_approver_team:global`. Folding it into `writer` would let
+  every program admin approve their own program, so `PATCH /programs/{uid}` must reject a `status`
+  field rather than silently ignoring it.
+- **Project `writer` reaches everything by inheritance**, three levels down to tasks. There is no
+  `mentorship_super_admin`, per §3.1.
+- **`mentorship_program_admin` must be owned by project-service, not this service.** It sits on the
+  `project` type, and project-service emits full-state `update_access` for `project` objects — so a
+  tuple written independently by Mentorship is deleted by the next project update. Adding the relation
+  to `model.fga` is necessary but not sufficient; it needs an owner (`04` AQ-4), and it is the one item
+  a model merge alone does not make functional. Its sibling `mentorship_program_creator` is a pure
+  computed union, so it needs no tuples and no owner.
 
 ### 3.3 What is actually implemented today
 
-The running service **authenticates but barely authorizes**. Verified in `f5970d1`:
+The running service **authenticates but barely authorizes**. Re-verified in `f951be1`
+(`program_service.go` has grown since `f5970d1` but still contains no principal or authorization check;
+`ProgramService.Delete(ctx, id)` is unchanged):
 
 - `backend/internal/infrastructure/auth/jwt.go` validates Auth0 JWTs and populates a principal.
   Its `Middleware` performs **no scope check and no object check** — `ScopeMe` is declared and
@@ -162,6 +184,29 @@ program, term, member, or user profile.** This is acceptable only for a dev envi
 real data. It is a release blocker for staging and prod, and it is the single most important
 thing to close.
 
+Three further gaps are specified in `04`/`05` and are **not** waiting on Heimdall — they are defects in
+the service today, and two of them leak data:
+
+- **Parent-authorized routes have no parent-child invariant.** `ProgramMemberHandler.Update` and
+  `.Delete` act on `{memberId}` and discard the program `{id}`
+  ([`program_member_handler.go:98,121`](backend/internal/handler/program_member_handler.go)); so does
+  `ProgramHandler.DeleteSkill` on `{skillId}` alone
+  ([`program_handler.go:262`](backend/internal/handler/program_handler.go)). Once a RuleSet checks `mentorship_program:{id}`, a
+  `writer` on program A passes the edge check and then mutates a member or skill of program B. The
+  check is referential integrity on the request, so it stays in the service — FGA holds no tuple
+  saying "this member row belongs to that program" (`04` decision 7).
+- **Six unauthenticated reads serve PII.** `GET /v1/users/{id}` and `/v1/user-profiles/{id}` are in the
+  public group ([`server.go:126-131,157-159`](backend/cmd/mentorship-api/server.go)) and serialize the
+  full record — email and LFID, plus phone, address, demographics and socioeconomics on the profile.
+  `GET /v1/applications/{id}`, `/v1/applications/{id}/tasks` and `/v1/tasks/{id}` hand an application
+  to anyone holding a UID, contradicting the applicant/admin/mentor-only rule. `05` GW-8 resolves
+  these as "not yet gated — gate them"; whichever way the public-directory product question goes, the
+  public shape needs an explicit redaction contract rather than today's implicit exposure.
+- **Program IDs resolve as UUID *or* slug, but tuples are keyed by UID.** A RuleSet built from the raw
+  `{id}` capture would check `mentorship_program:{slug}`, find no tuple, and deny a valid URL. Slug
+  resolution has to happen ahead of any check, via a public resolver route (`05` GW-2). This is a
+  prerequisite for the RuleSets, not a cutover detail.
+
 ### 3.4 Authentication (built, and unchanged)
 
 - Users: OAuth2 PKCE via Auth0; tokens in HTTP-only session cookies, never exposed to JS.
@@ -171,6 +216,17 @@ thing to close.
 - Mentor invite acceptance (`POST /v1/mentor-invites/{token}/accept`) is deliberately
   **unauthenticated**: the token in the path is the credential. Review its entropy, single-use
   semantics, and expiry as part of the authorization work.
+- **There is a total authentication bypass for local development, and it must never reach a deployed
+  environment.** `DISABLED_MOCK_LOCAL_PRINCIPAL` sets a static principal and
+  `ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS=true` arms it
+  ([`jwt.go:40-96,143`](backend/internal/infrastructure/auth/jwt.go)); together they skip JWT
+  validation entirely and every request runs as that principal. Both are required, the principal is
+  whitespace-normalised so a blank-ish value cannot arm it, and
+  [lfx-mentorship#148](https://github.com/linuxfoundation/lfx-mentorship/pull/148) adds a chart
+  render-time guard that refuses to template unless `allowLocalAuthBypass=true` is passed explicitly —
+  checked in both `config:` and `env:`. The guard is the only thing standing between a stray values
+  entry and an unauthenticated production API, so it is a cross-component contract, not a local
+  convenience: **never set either key in an ArgoCD values file.**
 
 ---
 
@@ -205,8 +261,14 @@ Cross-component notes:
 - **`program_funding_stats`** is a cache, never authoritative. It may be stale.
 - **Search is Postgres FTS** (`tsvector` + GIN). Elasticsearch is dropped.
 - Mentorship publishes **no NATS messages** and registers **nothing with the indexer or
-  fga-sync services**. If Mentorship objects should be searchable in the v2 platform, that is
-  unbuilt work, not an oversight in this document.
+  fga-sync services** *today*. This is a statement of current state, not a target: `04` makes
+  fga-sync registration PR 2 of its four-PR path, and specifies the emission path as a
+  **transactional outbox** — a Postgres commit and a NATS publish cannot be made atomic, so each
+  state change records a dirty-object marker in the same transaction and a relay re-derives the
+  payload from current Postgres state at send time. It never replays a stored one: the
+  `GenericFGAMessage` envelope carries no object version, so a stale full-state payload retried after
+  a newer revocation would restore exactly the tuple that was revoked. If Mentorship objects should
+  also be **searchable**, that remains unbuilt work with no owner.
 
 ---
 
@@ -218,10 +280,13 @@ Tracked here so no one builds against a contract that does not exist yet.
 |---|---|
 | **No Heimdall ruleset, no OpenFGA integration** | Agreed direction, nothing built. Blocks staging/prod. See §3.3 |
 | **Write endpoints have no object-level authorization** | Blocks staging/prod. See §3.3 |
-| **`mentorship_program` / `mentorship_application` types absent from `model.fga`** | Needs a PR to [lfx-v2-helm](https://github.com/linuxfoundation/lfx-v2-helm) |
-| **Project-level program-admin relation** | Needs the `project` type extended and the Self Serve permissions page updated |
-| **Program-approval global team** | Team not created; no approve endpoint exists |
-| **ArgoCD wiring unmerged** | Dev values exist only on branch `feat/mentorship-dev-deployment`; nothing on `main`. Staging/prod values do not exist |
+| **The four `mentorship_*` types are absent from `model.fga`** | PR 1 of the four-PR path in [`04 §implementation path`](docs/rewrite/04-authorization-model.md); merge gate is `tests.yaml` passing, not that the DSL parses |
+| **Project-level program-admin relation has no owner** | Needs the `project` type extended *and* project-service to emit it — it cannot be durably written by this service (`04` AQ-4). The Self Serve permissions page also needs updating |
+| **Program-approval global team** | Team not created; no approve endpoint exists. `04` AQ-8 leaves the roster owner open — "no owner re-checks that a global tuple still exists" is the operational risk on the one guard protecting publication |
+| **Parent-child invariant missing on parent-authorized routes** | Live defect, not blocked on Heimdall. See §3.3 |
+| **Unauthenticated reads serve PII** | Live defect. Six routes; needs a redaction contract either way. See §3.3 |
+| **Slug-or-UID program IDs are incompatible with FGA tuple keys** | Prerequisite for the RuleSets; needs a public slug-to-UID resolver. See §3.3 |
+| **ArgoCD dev wiring is half-landed** | [lfx-v2-argocd#1453](https://github.com/linuxfoundation/lfx-v2-argocd/pull/1453) merged 2026-09-10, but its ApplicationSet entries point at a frontend chart path that only exists on [lfx-mentorship#148](https://github.com/linuxfoundation/lfx-mentorship/pull/148). Staging/prod values do not exist |
 | **`term-status` and `task-submission-status` CronJobs** | Planned in `02-target-architecture.md`; only `cf-funding-sync` is built |
 | **No architecture-review label on this repo** | `lfx-self-serve` has `architecture-review`; the mentorship repos have none |
 
