@@ -5,6 +5,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -28,6 +29,26 @@ type ProgramMemberService struct {
 // NewProgramMemberService returns a ProgramMemberService.
 func NewProgramMemberService(repo domain.ProgramMemberRepository, programRepo domain.ProgramRepository, notifier domain.Notifier, inviteSecret string) *ProgramMemberService {
 	return &ProgramMemberService{repo: repo, programRepo: programRepo, notifier: notifier, inviteSecret: inviteSecret}
+}
+
+func (s *ProgramMemberService) assertActiveProgramAdmin(ctx context.Context, programID, actorID string) error {
+	if actorID == "" {
+		return fmt.Errorf("%w: actor identity is required", domain.ErrForbidden)
+	}
+	member, err := s.repo.FindByProgramAndUser(ctx, programID, actorID)
+	if err != nil {
+		if !errors.Is(err, domain.ErrProgramMemberNotFound) {
+			return fmt.Errorf("find actor membership: %w", err)
+		}
+		return fmt.Errorf("%w: actor must be an active program_admin", domain.ErrForbidden)
+	}
+	if member.MemberType != models.MemberTypeProgramAdmin {
+		return fmt.Errorf("%w: actor must be an active program_admin", domain.ErrForbidden)
+	}
+	if member.Status == nil || *member.Status != models.ProgramMemberStatusActive {
+		return fmt.Errorf("%w: actor must be an active program_admin", domain.ErrForbidden)
+	}
+	return nil
 }
 
 // memberTransitions defines valid next statuses for each member status.
@@ -138,24 +159,35 @@ func (s *ProgramMemberService) Create(ctx context.Context, programID string, inp
 	return m, nil
 }
 
-// Update patches a program member, enforcing the status lifecycle.
-func (s *ProgramMemberService) Update(ctx context.Context, id string, input models.ProgramMemberUpdateInput) (*models.ProgramMember, error) {
+// Update patches a program member, enforcing program ownership, admin authorization,
+// and the status lifecycle.
+func (s *ProgramMemberService) Update(ctx context.Context, programID, id string, input models.ProgramMemberUpdateInput, actorID string) (*models.ProgramMember, error) {
 	ctx, span := programMemberSvcTracer.Start(ctx, "ProgramMemberService.Update")
 	defer span.End()
-	span.SetAttributes(attribute.String("member.id", id))
+	span.SetAttributes(attribute.String("program.id", programID), attribute.String("member.id", id), attribute.String("actor.id", actorID))
 
 	if input.Status != nil {
-		// Validate before the transition lookup: an unknown status matches no
-		// edge in memberTransitions and would otherwise surface as a 409
-		// conflict rather than a 400 naming the field.
+		// Validate before any authorization or row lookups so bad enum values
+		// consistently surface as invalid input.
 		if !input.Status.IsValid() {
 			return nil, fmt.Errorf("%w: invalid member status %q", domain.ErrInvalidInput, *input.Status)
 		}
-		current, err := s.repo.GetByID(ctx, id)
-		if err != nil {
-			span.RecordError(err)
-			return nil, fmt.Errorf("get member: %w", err)
-		}
+	}
+
+	if err := s.assertActiveProgramAdmin(ctx, programID, actorID); err != nil {
+		return nil, err
+	}
+
+	current, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("get member: %w", err)
+	}
+	if current.ProgramID != programID {
+		return nil, domain.ErrProgramMemberNotFound
+	}
+
+	if input.Status != nil {
 		var currentStatus models.ProgramMemberStatus
 		if current.Status != nil {
 			currentStatus = *current.Status
@@ -258,10 +290,23 @@ func (s *ProgramMemberService) DeclineInvite(ctx context.Context, token string) 
 }
 
 // Delete removes a program member.
-func (s *ProgramMemberService) Delete(ctx context.Context, id string) error {
+func (s *ProgramMemberService) Delete(ctx context.Context, programID, id, actorID string) error {
 	ctx, span := programMemberSvcTracer.Start(ctx, "ProgramMemberService.Delete")
 	defer span.End()
-	span.SetAttributes(attribute.String("member.id", id))
+	span.SetAttributes(attribute.String("program.id", programID), attribute.String("member.id", id), attribute.String("actor.id", actorID))
+
+	if err := s.assertActiveProgramAdmin(ctx, programID, actorID); err != nil {
+		return err
+	}
+
+	member, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		span.RecordError(err)
+		return fmt.Errorf("get member for delete: %w", err)
+	}
+	if member.ProgramID != programID {
+		return domain.ErrProgramMemberNotFound
+	}
 
 	if err := s.repo.Delete(ctx, id); err != nil {
 		span.RecordError(err)

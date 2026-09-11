@@ -5,10 +5,12 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/auth"
@@ -26,7 +28,7 @@ type programService interface {
 	Delete(ctx context.Context, id string) error
 	ListSkills(ctx context.Context, programID string) ([]*models.ProgramSkill, error)
 	AddSkill(ctx context.Context, programID string, input models.ProgramSkillCreateInput) (*models.ProgramSkill, error)
-	DeleteSkill(ctx context.Context, skillID string) error
+	DeleteSkill(ctx context.Context, programID, skillID, actorID string) error
 	GetFundingStats(ctx context.Context, programID string) (*models.ProgramFundingStats, error)
 	GetCategorizedTransactions(ctx context.Context, programID, categoryType string, subscriptionOnly bool, limit, offset int) (*models.ProgramCategorizedTransactions, error)
 	GetProgramSponsors(ctx context.Context, programID, categoryType string, subscriptionOnly bool, aggregate bool) ([]models.ProgramSponsor, error)
@@ -59,8 +61,24 @@ func NewProgramHandler(svc programService) *ProgramHandler {
 
 func (h *ProgramHandler) resolveVisibleProgram(w http.ResponseWriter, r *http.Request) (*models.Program, bool) {
 	id := chi.URLParam(r, "id")
-	program, err := h.svc.GetByID(r.Context(), id)
-	if err != nil {
+	var (
+		program *models.Program
+		err     error
+	)
+	if _, parseErr := uuid.Parse(id); parseErr == nil {
+		program, err = h.svc.GetByID(r.Context(), id)
+		if err != nil {
+			if !errors.Is(err, domain.ErrProgramNotFound) {
+				Error(w, err)
+				return nil, false
+			}
+			program, err = h.svc.GetBySlug(r.Context(), id)
+			if err != nil {
+				Error(w, err)
+				return nil, false
+			}
+		}
+	} else {
 		program, err = h.svc.GetBySlug(r.Context(), id)
 		if err != nil {
 			Error(w, err)
@@ -157,6 +175,16 @@ func (h *ProgramHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	JSON(w, http.StatusOK, program)
+}
+
+// ResolveID handles GET /v1/programs/resolve/{id}.
+// It resolves either a UUID or slug to the canonical program UUID.
+func (h *ProgramHandler) ResolveID(w http.ResponseWriter, r *http.Request) {
+	program, ok := h.resolveVisibleProgram(w, r)
+	if !ok {
+		return
+	}
+	JSON(w, http.StatusOK, map[string]string{"id": program.ID})
 }
 
 // Create handles POST /v1/programs — requires JWT.
@@ -259,8 +287,9 @@ func (h *ProgramHandler) DeleteSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	programID := chi.URLParam(r, "id")
 	skillID := chi.URLParam(r, "skillId")
-	if err := h.svc.DeleteSkill(r.Context(), skillID); err != nil {
+	if err := h.svc.DeleteSkill(r.Context(), programID, skillID, principal.UserID); err != nil {
 		Error(w, err)
 		return
 	}

@@ -5,6 +5,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -50,6 +51,24 @@ func (s *TaskService) GetByID(ctx context.Context, id string) (*models.Task, err
 	return t, nil
 }
 
+// GetByIDForActor returns one task when the actor is the assignee or an active reviewer.
+func (s *TaskService) GetByIDForActor(ctx context.Context, id, actorID string) (*models.Task, error) {
+	if actorID == "" {
+		return nil, fmt.Errorf("%w: actor identity is required", domain.ErrForbidden)
+	}
+	t, err := s.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if t.AssigneeID == actorID {
+		return t, nil
+	}
+	if err := s.assertReviewer(ctx, t, actorID); err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
 // ListByApplication returns paginated tasks for an application.
 func (s *TaskService) ListByApplication(ctx context.Context, applicationID string, filter models.TaskFilter) ([]*models.Task, *models.PaginationMeta, error) {
 	ctx, span := taskSvcTracer.Start(ctx, "TaskService.ListByApplication")
@@ -64,6 +83,24 @@ func (s *TaskService) ListByApplication(ctx context.Context, applicationID strin
 	return tasks, meta, nil
 }
 
+// ListByApplicationForActor returns tasks constrained by actor privileges.
+func (s *TaskService) ListByApplicationForActor(ctx context.Context, applicationID string, filter models.TaskFilter, actorID string) ([]*models.Task, *models.PaginationMeta, error) {
+	if actorID == "" {
+		return nil, nil, fmt.Errorf("%w: actor identity is required", domain.ErrForbidden)
+	}
+	app, err := s.appRepo.GetByID(ctx, applicationID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("get application for task list access check: %w", err)
+	}
+	if app.UserID != actorID {
+		task := &models.Task{ApplicationID: &applicationID}
+		if err := s.assertReviewer(ctx, task, actorID); err != nil {
+			return nil, nil, err
+		}
+	}
+	return s.ListByApplication(ctx, applicationID, filter)
+}
+
 // ListByProgramTerm returns paginated tasks for a program term.
 func (s *TaskService) ListByProgramTerm(ctx context.Context, programTermID string, filter models.TaskFilter) ([]*models.Task, *models.PaginationMeta, error) {
 	ctx, span := taskSvcTracer.Start(ctx, "TaskService.ListByProgramTerm")
@@ -76,6 +113,29 @@ func (s *TaskService) ListByProgramTerm(ctx context.Context, programTermID strin
 		return nil, nil, fmt.Errorf("list tasks by term: %w", err)
 	}
 	return tasks, meta, nil
+}
+
+// ListByProgramTermForActor returns term tasks constrained by actor privileges.
+func (s *TaskService) ListByProgramTermForActor(ctx context.Context, programTermID string, filter models.TaskFilter, actorID string) ([]*models.Task, *models.PaginationMeta, error) {
+	if actorID == "" {
+		return nil, nil, fmt.Errorf("%w: actor identity is required", domain.ErrForbidden)
+	}
+	term, err := s.termRepo.GetByID(ctx, programTermID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("get term for task list access check: %w", err)
+	}
+	member, err := s.memberRepo.FindByProgramAndUser(ctx, term.ProgramID, actorID)
+	if err != nil {
+		if !errors.Is(err, domain.ErrProgramMemberNotFound) {
+			return nil, nil, fmt.Errorf("find program member for term task list access check: %w", err)
+		}
+		filter.AssigneeID = actorID
+		return s.ListByProgramTerm(ctx, programTermID, filter)
+	}
+	if member.Status == nil || *member.Status != models.ProgramMemberStatusActive || (member.MemberType != models.MemberTypeMentor && member.MemberType != models.MemberTypeProgramAdmin) {
+		filter.AssigneeID = actorID
+	}
+	return s.ListByProgramTerm(ctx, programTermID, filter)
 }
 
 // Create validates input and creates a task linked to an application.
@@ -207,22 +267,42 @@ func (s *TaskService) assertReviewer(ctx context.Context, task *models.Task, act
 	}
 	member, err := s.memberRepo.FindByProgramAndUser(ctx, term.ProgramID, actorID)
 	if err != nil {
-		return fmt.Errorf("%w: actor is not a member of this program", domain.ErrForbidden)
+		if errors.Is(err, domain.ErrProgramMemberNotFound) {
+			return fmt.Errorf("%w: actor is not a member of this program", domain.ErrForbidden)
+		}
+		return fmt.Errorf("find program member for reviewer check: %w", err)
 	}
 	if member.MemberType != models.MemberTypeMentor && member.MemberType != models.MemberTypeProgramAdmin {
 		return fmt.Errorf("%w: actor must be mentor or program_admin to review tasks", domain.ErrForbidden)
 	}
-	if member.Status != nil && *member.Status != models.ProgramMemberStatusActive {
+	if member.Status == nil || *member.Status != models.ProgramMemberStatusActive {
 		return fmt.Errorf("%w: actor's program membership is not active", domain.ErrForbidden)
 	}
 	return nil
 }
 
-// Delete removes a task.
-func (s *TaskService) Delete(ctx context.Context, id string) error {
+// Delete removes a task. Only an active mentor or program admin in the
+// owning program may delete; assignees cannot delete their own tasks.
+func (s *TaskService) Delete(ctx context.Context, id string, actorID string) error {
 	ctx, span := taskSvcTracer.Start(ctx, "TaskService.Delete")
 	defer span.End()
 	span.SetAttributes(attribute.String("task.id", id))
+	if actorID == "" {
+		return fmt.Errorf("%w: actor identity is required", domain.ErrForbidden)
+	}
+
+	current, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		span.RecordError(err)
+		return fmt.Errorf("get task for delete permission check: %w", err)
+	}
+	if current.AssigneeID == actorID {
+		return fmt.Errorf("%w: task assignee cannot delete task", domain.ErrForbidden)
+	}
+	if err := s.assertReviewer(ctx, current, actorID); err != nil {
+		span.RecordError(err)
+		return err
+	}
 
 	if err := s.repo.Delete(ctx, id); err != nil {
 		span.RecordError(err)

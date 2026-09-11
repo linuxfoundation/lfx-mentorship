@@ -6,6 +6,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -24,6 +25,7 @@ type ApplicationService struct {
 	taskRepo    domain.TaskRepository
 	termRepo    domain.ProgramTermRepository
 	programRepo domain.ProgramRepository
+	memberRepo  domain.ProgramMemberRepository
 	notifier    domain.Notifier
 }
 
@@ -41,9 +43,27 @@ func NewApplicationService(
 	taskRepo domain.TaskRepository,
 	termRepo domain.ProgramTermRepository,
 	programRepo domain.ProgramRepository,
+	memberRepo domain.ProgramMemberRepository,
 	notifier domain.Notifier,
 ) *ApplicationService {
-	return &ApplicationService{repo: repo, taskRepo: taskRepo, termRepo: termRepo, programRepo: programRepo, notifier: notifier}
+	return &ApplicationService{repo: repo, taskRepo: taskRepo, termRepo: termRepo, programRepo: programRepo, memberRepo: memberRepo, notifier: notifier}
+}
+
+func (s *ApplicationService) isActiveReviewer(ctx context.Context, programID, actorID string) (bool, error) {
+	member, err := s.memberRepo.FindByProgramAndUser(ctx, programID, actorID)
+	if err != nil {
+		if errors.Is(err, domain.ErrProgramMemberNotFound) {
+			return false, nil
+		}
+		return false, fmt.Errorf("find program member: %w", err)
+	}
+	if member.Status == nil || *member.Status != models.ProgramMemberStatusActive {
+		return false, nil
+	}
+	if member.MemberType != models.MemberTypeMentor && member.MemberType != models.MemberTypeProgramAdmin {
+		return false, nil
+	}
+	return true, nil
 }
 
 // applicationTransitions maps current → allowed next statuses.
@@ -86,6 +106,32 @@ func (s *ApplicationService) GetByID(ctx context.Context, id string) (*models.Ap
 	return a, nil
 }
 
+// GetByIDForActor returns one application when the actor is the applicant or an active reviewer.
+func (s *ApplicationService) GetByIDForActor(ctx context.Context, id, actorID string) (*models.Application, error) {
+	if actorID == "" {
+		return nil, fmt.Errorf("%w: actor identity is required", domain.ErrForbidden)
+	}
+	app, err := s.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if app.UserID == actorID {
+		return app, nil
+	}
+	term, err := s.termRepo.GetByID(ctx, app.ProgramTermID)
+	if err != nil {
+		return nil, fmt.Errorf("get program term for application access check: %w", err)
+	}
+	allowed, err := s.isActiveReviewer(ctx, term.ProgramID, actorID)
+	if err != nil {
+		return nil, err
+	}
+	if !allowed {
+		return nil, fmt.Errorf("%w: actor is not allowed to access this application", domain.ErrForbidden)
+	}
+	return app, nil
+}
+
 // ListByProgramTerm returns paginated applications for a program term.
 func (s *ApplicationService) ListByProgramTerm(ctx context.Context, programTermID string, filter models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error) {
 	ctx, span := applicationSvcTracer.Start(ctx, "ApplicationService.ListByProgramTerm")
@@ -98,6 +144,25 @@ func (s *ApplicationService) ListByProgramTerm(ctx context.Context, programTermI
 		return nil, nil, fmt.Errorf("list applications: %w", err)
 	}
 	return apps, meta, nil
+}
+
+// ListByProgramTermForActor returns term applications constrained by actor privileges.
+func (s *ApplicationService) ListByProgramTermForActor(ctx context.Context, programTermID string, filter models.ApplicationFilter, actorID string) ([]*models.Application, *models.PaginationMeta, error) {
+	if actorID == "" {
+		return nil, nil, fmt.Errorf("%w: actor identity is required", domain.ErrForbidden)
+	}
+	term, err := s.termRepo.GetByID(ctx, programTermID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("get program term for application list access check: %w", err)
+	}
+	allowed, err := s.isActiveReviewer(ctx, term.ProgramID, actorID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !allowed {
+		filter.UserID = actorID
+	}
+	return s.ListByProgramTerm(ctx, programTermID, filter)
 }
 
 // ListByUser returns paginated applications for a user.
@@ -287,19 +352,6 @@ func (s *ApplicationService) Update(ctx context.Context, id string, input models
 	}
 
 	return a, nil
-}
-
-// Delete removes an application (withdrawal).
-func (s *ApplicationService) Delete(ctx context.Context, id string) error {
-	ctx, span := applicationSvcTracer.Start(ctx, "ApplicationService.Delete")
-	defer span.End()
-	span.SetAttributes(attribute.String("application.id", id))
-
-	if err := s.repo.Delete(ctx, id); err != nil {
-		span.RecordError(err)
-		return fmt.Errorf("delete application: %w", err)
-	}
-	return nil
 }
 
 // BulkDeclineByTerm moves all pending/submitted applications in a term to declined.

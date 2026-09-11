@@ -188,7 +188,7 @@ All fields except `id`, `created_on`, and `updated_on` are optional.
 
 ### Endpoints
 
-#### `GET /v1/users` 🔓
+#### `GET /v1/users` 🔒
 
 List users with optional search.
 
@@ -206,7 +206,7 @@ List users with optional search.
 
 ---
 
-#### `GET /v1/users/{id}` 🔓
+#### `GET /v1/users/{id}` 🔒
 
 Get a single user by UUID.
 
@@ -340,7 +340,7 @@ The `address`, `demographics`, `socioeconomics`, `skill_set`, and `profile_links
 
 ### Endpoints
 
-#### `GET /v1/user-profiles` 🔓
+#### `GET /v1/user-profiles` 🔒
 
 **Query parameters**
 
@@ -357,14 +357,14 @@ The `address`, `demographics`, `socioeconomics`, `skill_set`, and `profile_links
 
 ---
 
-#### `GET /v1/user-profiles/{id}` 🔓
+#### `GET /v1/user-profiles/{id}` 🔒
 
 **Response** `200` → `<UserProfile>`  
 **Errors** `404`
 
 ---
 
-#### `GET /v1/user-profiles/slug/{slug}` 🔓
+#### `GET /v1/user-profiles/slug/{slug}` 🔒
 
 Look up a profile by its unique slug.
 
@@ -917,6 +917,20 @@ Fetch a program by UUID or slug.
 
 ---
 
+#### `GET /v1/programs/resolve/{id}` 🔓
+
+Resolve a program UUID or slug to the canonical program UUID.
+
+> Hidden program visibility matches `GET /v1/programs/{id}`: non-owners receive `404`.
+
+**Response** `200`
+```json
+{ "id": "program-uuid" }
+```
+**Errors** `404`
+
+---
+
 #### `POST /v1/programs` 🔒
 
 Create a program. New programs start in `draft` status.
@@ -1388,7 +1402,7 @@ An application represents a mentee's (or mentor's) request to join a specific pr
 
 ### Endpoints
 
-#### `GET /v1/program-terms/{id}/applications` 🔓
+#### `GET /v1/program-terms/{id}/applications` 🔒
 
 List applications for a term.
 
@@ -1408,10 +1422,10 @@ List applications for a term.
 
 ---
 
-#### `GET /v1/applications/{id}` 🔓
+#### `GET /v1/applications/{id}` 🔒
 
 **Response** `200` → `<Application>`  
-**Errors** `404`
+**Errors** `401`, `403`, `404`
 
 ---
 
@@ -1560,7 +1574,7 @@ Backward reset to `incomplete` is always possible (by a reviewer only).
 
 ### Endpoints
 
-#### `GET /v1/applications/{id}/tasks` 🔓
+#### `GET /v1/applications/{id}/tasks` 🔒
 
 **Query parameters**
 
@@ -1575,9 +1589,11 @@ Backward reset to `incomplete` is always possible (by a reviewer only).
 { "data": [<Task>, ...], "meta": {...} }
 ```
 
+**Errors** `401`, `403`, `404`
+
 ---
 
-#### `GET /v1/program-terms/{id}/tasks` 🔓
+#### `GET /v1/program-terms/{id}/tasks` 🔒
 
 List all tasks for a program term across all applications.
 
@@ -1590,10 +1606,10 @@ List all tasks for a program term across all applications.
 
 ---
 
-#### `GET /v1/tasks/{id}` 🔓
+#### `GET /v1/tasks/{id}` 🔒
 
 **Response** `200` → `<Task>`  
-**Errors** `404`
+**Errors** `401`, `403`, `404`
 
 ---
 
@@ -1637,7 +1653,7 @@ Update a task's status or metadata.
 }
 ```
 
-**Actor permission rules (enforced when JWT is present)**:
+**Actor permission rules**:
 
 | Transition | Required actor |
 |---|---|
@@ -1662,7 +1678,7 @@ Invalid forward transitions (e.g. `incomplete → complete`) return `409`.
 Hard-delete a task.
 
 **Response** `204`  
-**Errors** `401`, `404`
+**Errors** `401`, `403`, `404`
 
 ---
 

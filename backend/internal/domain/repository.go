@@ -66,7 +66,7 @@ type ProgramRepository interface {
 	// Skills
 	ListSkills(ctx context.Context, programID string) ([]*models.ProgramSkill, error)
 	AddSkill(ctx context.Context, programID string, input models.ProgramSkillCreateInput) (*models.ProgramSkill, error)
-	DeleteSkill(ctx context.Context, skillID string) error
+	DeleteSkill(ctx context.Context, programID, skillID string) error
 
 	// Funding stats
 	GetFundingStats(ctx context.Context, programID string) (*models.ProgramFundingStats, error)

@@ -156,7 +156,7 @@ type stubProgRepo struct {
 	delete          func(context.Context, string) error
 	listSkills      func(context.Context, string) ([]*models.ProgramSkill, error)
 	addSkill        func(context.Context, string, models.ProgramSkillCreateInput) (*models.ProgramSkill, error)
-	deleteSkill     func(context.Context, string) error
+	deleteSkill     func(context.Context, string, string) error
 	getFundingStats func(context.Context, string) (*models.ProgramFundingStats, error)
 }
 
@@ -226,9 +226,9 @@ func (m *stubProgRepo) AddSkill(ctx context.Context, id string, in models.Progra
 	}
 	return &models.ProgramSkill{}, nil
 }
-func (m *stubProgRepo) DeleteSkill(ctx context.Context, id string) error {
+func (m *stubProgRepo) DeleteSkill(ctx context.Context, programID, id string) error {
 	if m.deleteSkill != nil {
-		return m.deleteSkill(ctx, id)
+		return m.deleteSkill(ctx, programID, id)
 	}
 	return nil
 }
@@ -309,7 +309,11 @@ func (n *stubNotifier) NotifyMenteeAccepted(_ context.Context, _, _ string) { n.
 // ── helpers ─────────────────────────────────────────────────────────────────
 
 func newApplicationSvc(appRepo *stubAppRepo, taskRepo *stubTaskRepo, termRepo *stubTermRepo, progRepo *stubProgRepo) *service.ApplicationService {
-	return service.NewApplicationService(appRepo, taskRepo, termRepo, progRepo, &stubNotifier{})
+	return service.NewApplicationService(appRepo, taskRepo, termRepo, progRepo, &stubMemberRepo{}, &stubNotifier{})
+}
+
+func newApplicationSvcWithMember(appRepo *stubAppRepo, taskRepo *stubTaskRepo, termRepo *stubTermRepo, progRepo *stubProgRepo, memberRepo *stubMemberRepo) *service.ApplicationService {
+	return service.NewApplicationService(appRepo, taskRepo, termRepo, progRepo, memberRepo, &stubNotifier{})
 }
 
 func openTerm(t time.Time) *models.ProgramTerm {
@@ -538,5 +542,159 @@ func TestApplicationService_Create_InvalidProgramTermStatus_Rejected(t *testing.
 	})
 	if !errors.Is(err, domain.ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for unknown program_term_status, got %v", err)
+	}
+}
+
+func TestApplicationService_GetByIDForActor_ApplicantAllowed(t *testing.T) {
+	svc := newApplicationSvc(&stubAppRepo{
+		getByID: func(_ context.Context, id string) (*models.Application, error) {
+			return &models.Application{ID: id, UserID: "user-1", ProgramTermID: "term-1"}, nil
+		},
+	}, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{})
+
+	app, err := svc.GetByIDForActor(context.Background(), "app-1", "user-1")
+	if err != nil {
+		t.Fatalf("GetByIDForActor: %v", err)
+	}
+	if app.ID != "app-1" {
+		t.Fatalf("app.ID = %q; want app-1", app.ID)
+	}
+}
+
+func TestApplicationService_GetByIDForActor_ActiveReviewerAllowed(t *testing.T) {
+	active := models.ProgramMemberStatusActive
+	svc := newApplicationSvcWithMember(&stubAppRepo{
+		getByID: func(_ context.Context, id string) (*models.Application, error) {
+			return &models.Application{ID: id, UserID: "user-1", ProgramTermID: "term-1"}, nil
+		},
+	}, &stubTaskRepo{}, &stubTermRepo{
+		getByID: func(_ context.Context, _ string) (*models.ProgramTerm, error) {
+			return &models.ProgramTerm{ID: "term-1", ProgramID: "prog-1"}, nil
+		},
+	}, &stubProgRepo{}, &stubMemberRepo{
+		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
+			return &models.ProgramMember{MemberType: models.MemberTypeMentor, Status: &active}, nil
+		},
+	})
+
+	if _, err := svc.GetByIDForActor(context.Background(), "app-1", "mentor-1"); err != nil {
+		t.Fatalf("GetByIDForActor: %v", err)
+	}
+}
+
+func TestApplicationService_GetByIDForActor_NonMemberForbidden(t *testing.T) {
+	svc := newApplicationSvcWithMember(&stubAppRepo{
+		getByID: func(_ context.Context, id string) (*models.Application, error) {
+			return &models.Application{ID: id, UserID: "user-1", ProgramTermID: "term-1"}, nil
+		},
+	}, &stubTaskRepo{}, &stubTermRepo{
+		getByID: func(_ context.Context, _ string) (*models.ProgramTerm, error) {
+			return &models.ProgramTerm{ID: "term-1", ProgramID: "prog-1"}, nil
+		},
+	}, &stubProgRepo{}, &stubMemberRepo{
+		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
+			return nil, domain.ErrProgramMemberNotFound
+		},
+	})
+
+	_, err := svc.GetByIDForActor(context.Background(), "app-1", "stranger-1")
+	if !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("expected ErrForbidden, got %v", err)
+	}
+}
+
+func TestApplicationService_GetByIDForActor_InactiveOrWrongRoleForbidden(t *testing.T) {
+	inactive := models.ProgramMemberStatusInvited
+	svc := newApplicationSvcWithMember(&stubAppRepo{
+		getByID: func(_ context.Context, id string) (*models.Application, error) {
+			return &models.Application{ID: id, UserID: "user-1", ProgramTermID: "term-1"}, nil
+		},
+	}, &stubTaskRepo{}, &stubTermRepo{
+		getByID: func(_ context.Context, _ string) (*models.ProgramTerm, error) {
+			return &models.ProgramTerm{ID: "term-1", ProgramID: "prog-1"}, nil
+		},
+	}, &stubProgRepo{}, &stubMemberRepo{
+		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
+			return &models.ProgramMember{MemberType: models.MemberTypeProgramAdmin, Status: &inactive}, nil
+		},
+	})
+
+	_, err := svc.GetByIDForActor(context.Background(), "app-1", "admin-1")
+	if !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("expected ErrForbidden, got %v", err)
+	}
+}
+
+func TestApplicationService_GetByIDForActor_MembershipLookupFailurePropagates(t *testing.T) {
+	opErr := errors.New("membership lookup failed")
+	svc := newApplicationSvcWithMember(&stubAppRepo{
+		getByID: func(_ context.Context, id string) (*models.Application, error) {
+			return &models.Application{ID: id, UserID: "user-1", ProgramTermID: "term-1"}, nil
+		},
+	}, &stubTaskRepo{}, &stubTermRepo{
+		getByID: func(_ context.Context, _ string) (*models.ProgramTerm, error) {
+			return &models.ProgramTerm{ID: "term-1", ProgramID: "prog-1"}, nil
+		},
+	}, &stubProgRepo{}, &stubMemberRepo{
+		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
+			return nil, opErr
+		},
+	})
+
+	_, err := svc.GetByIDForActor(context.Background(), "app-1", "mentor-1")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, opErr) {
+		t.Fatalf("expected wrapped lookup error, got %v", err)
+	}
+}
+
+func TestApplicationService_ListByProgramTermForActor_NonReviewerForcesUserFilter(t *testing.T) {
+	svc := newApplicationSvcWithMember(&stubAppRepo{
+		listByProgramTerm: func(_ context.Context, _ string, f models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error) {
+			if f.UserID != "user-2" {
+				t.Fatalf("filter.UserID = %q; want user-2", f.UserID)
+			}
+			return []*models.Application{}, &models.PaginationMeta{}, nil
+		},
+	}, &stubTaskRepo{}, &stubTermRepo{
+		getByID: func(_ context.Context, _ string) (*models.ProgramTerm, error) {
+			return &models.ProgramTerm{ID: "term-1", ProgramID: "prog-1"}, nil
+		},
+	}, &stubProgRepo{}, &stubMemberRepo{
+		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
+			return nil, domain.ErrProgramMemberNotFound
+		},
+	})
+
+	_, _, err := svc.ListByProgramTermForActor(context.Background(), "term-1", models.ApplicationFilter{}, "user-2")
+	if err != nil {
+		t.Fatalf("ListByProgramTermForActor: %v", err)
+	}
+}
+
+func TestApplicationService_ListByProgramTermForActor_ReviewerKeepsFilterUserID(t *testing.T) {
+	active := models.ProgramMemberStatusActive
+	svc := newApplicationSvcWithMember(&stubAppRepo{
+		listByProgramTerm: func(_ context.Context, _ string, f models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error) {
+			if f.UserID != "explicit-user" {
+				t.Fatalf("filter.UserID = %q; want explicit-user", f.UserID)
+			}
+			return []*models.Application{}, &models.PaginationMeta{}, nil
+		},
+	}, &stubTaskRepo{}, &stubTermRepo{
+		getByID: func(_ context.Context, _ string) (*models.ProgramTerm, error) {
+			return &models.ProgramTerm{ID: "term-1", ProgramID: "prog-1"}, nil
+		},
+	}, &stubProgRepo{}, &stubMemberRepo{
+		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
+			return &models.ProgramMember{MemberType: models.MemberTypeProgramAdmin, Status: &active}, nil
+		},
+	})
+
+	_, _, err := svc.ListByProgramTermForActor(context.Background(), "term-1", models.ApplicationFilter{UserID: "explicit-user"}, "admin-1")
+	if err != nil {
+		t.Fatalf("ListByProgramTermForActor: %v", err)
 	}
 }
