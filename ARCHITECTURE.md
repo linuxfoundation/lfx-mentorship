@@ -30,7 +30,7 @@ This file is a **roll-up of current state**, in the same spirit as `README.md`. 
 the spec directory, or `docs/rewrite/` disagree with this file, that is a defect in one of them —
 say so in review rather than letting the drift stand.
 
-**Last verified against the code**: 2026-09-10 (`f951be1`), including the §4 external contracts and
+**Last verified against the code**: 2026-09-11 (`b07aefd`), including the §4 external contracts and
 the §5 column names against `001_initial.up.sql`. Cross-repo state (ArgoCD, Auth0) verified the same
 day.
 
@@ -169,9 +169,8 @@ rather than schema:
 
 ### 3.3 What is actually implemented today
 
-The running service **authenticates but barely authorizes**. Re-verified in `f951be1`
-(`program_service.go` has grown since `f5970d1` but still contains no principal or authorization check;
-`ProgramService.Delete(ctx, id)` is unchanged):
+The running service **authenticates but still lacks object-level authorization in key write paths**.
+Re-verified in `b07aefd`:
 
 - `backend/internal/infrastructure/auth/jwt.go` validates Auth0 JWTs and populates a principal.
   Its `Middleware` performs **no scope check and no object check** — `ScopeMe` is declared and
@@ -184,18 +183,12 @@ The running service **authenticates but barely authorizes**. Re-verified in `f95
   Those are the exceptions, not the rule.
 - Hand-rolled checks exist in two services, and cover **selected transitions only, not the resource**:
   `task_service.go` (assignee vs. reviewer, program membership) and `application_service.go` (only the
-  applicant may withdraw). The two delete paths differ, and the difference matters:
-  - **Application deletion is guarded.** `ApplicationHandler.Delete` never calls
-    `ApplicationService.Delete`; it routes through `Update` with the authenticated `ActorID`
-    ([`application_handler.go:161`](backend/internal/handler/application_handler.go)), and the
-    withdrawal guard rejects anyone but the applicant
-    ([`application_service.go:255`](backend/internal/service/application_service.go)).
-    `ApplicationService.Delete(ctx, id)` takes no actor but is **unreachable** — no route calls it.
-    Dead code that looks like an exposed hole; worth deleting so it stops reading as one.
-  - **Task deletion is open.** `TaskHandler.Delete` null-checks the principal and then calls
-    `TaskService.Delete(ctx, id)`, which takes no actor
-    ([`task_handler.go:141`](backend/internal/handler/task_handler.go)), so any authenticated user can
-    delete any task.
+  applicant may withdraw).
+  - **Application deletion is guarded.** `ApplicationHandler.Delete` routes through `Update` with the
+    authenticated `ActorID`, and the withdrawal guard rejects anyone but the applicant.
+  - **Task deletion is now guarded.** `TaskHandler.Delete` passes the authenticated actor to
+    `TaskService.Delete`, which rejects assignee-deletes and requires an active mentor/program-admin
+    membership on the owning program.
 - `program_service.go`, `program_term_service.go`, `program_member_service.go`,
   `user_service.go` and `user_profile_service.go` contain **no authorization at all**.
   `ProgramService.Delete(ctx, id)` does not receive a principal, so it structurally cannot check one.
@@ -203,8 +196,9 @@ The running service **authenticates but barely authorizes**. Re-verified in `f95
   no OpenFGA client** anywhere in the repo.
 
 **Therefore, as deployed to dev: any authenticated LF user can create, modify, or delete any
-program, term, member, user, user profile, or task** — and can modify applications, though not
-withdraw someone else's. `user` belongs in that list for the same structural reason as the rest:
+program, term, member, user, or user profile** — and can still modify applications and tasks through
+routes that are authenticated but not object-authorized. `user` belongs in that list for the same
+structural reason as the rest:
 `UserHandler.Create`, `Update` and `Delete` null-check the principal and nothing else, and
 `UserService.Update(ctx, id, input)` / `Delete(ctx, id)` take no actor, so they cannot compare the
 caller to the record. Deletion is bounded only by referential integrity, not by ownership.
@@ -212,43 +206,12 @@ caller to the record. Deletion is bounded only by referential integrity, not by 
 This is acceptable only for a dev environment with no real data. It is a release blocker for
 staging and prod, and it is the single most important thing to close.
 
-Three further gaps are specified in `04`/`05` and are **not** waiting on Heimdall — they are defects in
-the service today, and two of them leak data:
+One further gap from `04`/`05` remains **not** waiting on Heimdall:
 
-- **Parent-authorized routes have no parent-child invariant.** `ProgramMemberHandler.Update` and
-  `.Delete` act on `{memberId}` and discard the program `{id}`
-  ([`program_member_handler.go:98,121`](backend/internal/handler/program_member_handler.go)); so does
-  `ProgramHandler.DeleteSkill` on `{skillId}` alone
-  ([`program_handler.go:262`](backend/internal/handler/program_handler.go)). Once a RuleSet checks `mentorship_program:{id}`, a
-  `writer` on program A passes the edge check and then mutates a member or skill of program B. The
-  check is referential integrity on the request, so it stays in the service — FGA holds no tuple
-  saying "this member row belongs to that program" (`04` decision 7).
-- **The unauthenticated read surface serves PII, and it is wider than single-record lookups.** The
-  public group holds 29 `GET` routes ([`server.go:124-162`](backend/cmd/mentorship-api/server.go)).
-  The PII-bearing ones:
-  - **Bulk enumeration, no UID needed.** `GET /v1/users` and `/v1/user-profiles`
-    ([`:126`, `:129`](backend/cmd/mentorship-api/server.go)) are *list* routes — anyone can page the
-    whole directory. The two payloads differ and the distinction matters: `User` carries `email` and
-    `lfid` ([`user.go:13`](backend/internal/domain/models/user.go)), while `UserProfile` has no
-    `lfid` and instead adds `phone`, `address`, `demographics` and `socioeconomics`
-    ([`user_profile.go:19-27`](backend/internal/domain/models/user_profile.go)). This is the most
-    serious item on this page.
-  - **Single-record lookups.** `/v1/users/{id}`, `/v1/user-profiles/{id}`, and
-    `/v1/user-profiles/slug/{slug}` ([`:127`, `:130`, `:131`](backend/cmd/mentorship-api/server.go)) —
-    the slug form needs no UID guess at all.
-  - **Term-wide application and task listings.** `/v1/program-terms/{id}/applications` and
-    `/v1/program-terms/{id}/tasks` ([`:154`, `:155`](backend/cmd/mentorship-api/server.go)) expose every
-    application and task in a term, plus `/v1/applications/{id}`, `/v1/applications/{id}/tasks` and
-    `/v1/tasks/{id}` ([`:157-159`](backend/cmd/mentorship-api/server.go)) — contradicting the
-    applicant/admin/mentor-only rule.
-
-  `05` GW-8 resolves these as "not yet gated — gate them". Remediation scope is the list routes and the
-  term-wide listings, not only the by-UID reads; whichever way the public-directory product question
-  goes, the public shape needs an explicit redaction contract rather than today's implicit exposure.
-- **Program IDs resolve as UUID *or* slug, but tuples are keyed by UID.** A RuleSet built from the raw
-  `{id}` capture would check `mentorship_program:{slug}`, find no tuple, and deny a valid URL. Slug
-  resolution has to happen ahead of any check, via a public resolver route (`05` GW-2). This is a
-  prerequisite for the RuleSets, not a cutover detail.
+- **Some application/task reads are still public.** `GET /v1/applications/{id}`,
+  `GET /v1/applications/{id}/tasks`, and `GET /v1/tasks/{id}` remain in the public route group.
+  They still need explicit gating and redaction/visibility rules aligned with the applicant,
+  mentor, and admin contract.
 
 ### 3.4 Authentication
 
@@ -354,9 +317,7 @@ Tracked here so no one builds against a contract that does not exist yet.
 | **The four `mentorship_*` types are absent from `model.fga`** | PR 1 of the four-PR path in [`04 §implementation path`](docs/rewrite/04-authorization-model.md); merge gate is `tests.yaml` passing, not that the DSL parses |
 | **Project-level program-admin relation has no owner** | Needs the `project` type extended *and* project-service to emit it — it cannot be durably written by this service (`04` AQ-4). The Self Serve permissions page also needs updating |
 | **Program-approval global team** | Team not created; no approve endpoint exists. `04` AQ-8 leaves the roster owner open — "no owner re-checks that a global tuple still exists" is the operational risk on the one guard protecting publication |
-| **Parent-child invariant missing on parent-authorized routes** | Live defect, not blocked on Heimdall. See §3.3 |
-| **Unauthenticated reads serve PII** | Live defect, and the largest one. `GET /v1/users` and `/v1/user-profiles` are unauthenticated **list** routes, so the whole directory (email, LFID, phone, address, demographics, socioeconomics) is pageable without a token; term-wide application/task listings are public too. Needs gating plus a redaction contract. See §3.3 |
-| **Slug-or-UID program IDs are incompatible with FGA tuple keys** | Prerequisite for the RuleSets; needs a public slug-to-UID resolver. See §3.3 |
+| **Some application/task reads are still public** | `GET /v1/applications/{id}`, `GET /v1/applications/{id}/tasks`, and `GET /v1/tasks/{id}` remain unauthenticated routes. They need gating plus a redaction/visibility contract. See §3.3 |
 | **ArgoCD dev wiring is half-landed** | [lfx-v2-argocd#1453](https://github.com/linuxfoundation/lfx-v2-argocd/pull/1453) merged 2026-09-10, but its ApplicationSet entries point at a frontend chart path that only exists on [lfx-mentorship#148](https://github.com/linuxfoundation/lfx-mentorship/pull/148). Staging/prod values do not exist |
 | **No transactional email** | `LogNotifier` logs every notification and sends nothing (`server.go:60`); no `lfx-v2-email-service` adapter exists. Every invite, decline, and acceptance notice is silently dropped. See §4 |
 | **No file uploads** | Program logos and task submissions need S3 presigned URLs; no S3 client, upload route, or presigner exists anywhere in the repo. See §4 |
