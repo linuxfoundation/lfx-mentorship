@@ -203,10 +203,14 @@ The running service **authenticates but barely authorizes**. Re-verified in `f95
   no OpenFGA client** anywhere in the repo.
 
 **Therefore, as deployed to dev: any authenticated LF user can create, modify, or delete any
-program, term, member, user profile, or task** — and can modify applications, though not withdraw
-someone else's. This is acceptable only for a dev environment with no
-real data. It is a release blocker for staging and prod, and it is the single most important
-thing to close.
+program, term, member, user, user profile, or task** — and can modify applications, though not
+withdraw someone else's. `user` belongs in that list for the same structural reason as the rest:
+`UserHandler.Create`, `Update` and `Delete` null-check the principal and nothing else, and
+`UserService.Update(ctx, id, input)` / `Delete(ctx, id)` take no actor, so they cannot compare the
+caller to the record. Deletion is bounded only by referential integrity, not by ownership.
+
+This is acceptable only for a dev environment with no real data. It is a release blocker for
+staging and prod, and it is the single most important thing to close.
 
 Three further gaps are specified in `04`/`05` and are **not** waiting on Heimdall — they are defects in
 the service today, and two of them leak data:
@@ -224,8 +228,9 @@ the service today, and two of them leak data:
   The PII-bearing ones:
   - **Bulk enumeration, no UID needed.** `GET /v1/users` and `/v1/user-profiles`
     ([`:126`, `:129`](backend/cmd/mentorship-api/server.go)) are *list* routes — anyone can page the
-    whole directory. The serialized models carry `email` and `lfid`, and on the profile also `phone`,
-    `address`, `demographics` and `socioeconomics`
+    whole directory. The two payloads differ and the distinction matters: `User` carries `email` and
+    `lfid` ([`user.go:13`](backend/internal/domain/models/user.go)), while `UserProfile` has no
+    `lfid` and instead adds `phone`, `address`, `demographics` and `socioeconomics`
     ([`user_profile.go:19-27`](backend/internal/domain/models/user_profile.go)). This is the most
     serious item on this page.
   - **Single-record lookups.** `/v1/users/{id}`, `/v1/user-profiles/{id}`, and
