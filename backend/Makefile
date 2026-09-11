@@ -64,13 +64,14 @@ clean:
 	rm -rf bin/
 
 ## db-migrate: run pending SQL migrations against the local database
+##   Uses the same cmd/migrate entrypoint the cluster runs as a Helm
+##   pre-install/pre-upgrade hook, so local and deployed schema changes are
+##   applied by identical code and tracked in public.schema_migrations.
 db-migrate:
-	@echo "$$DATABASE_DSN" | grep -qE "localhost|127\.0\.0\.1" || \
+	@set -a && . ./.env && set +a && \
+	  echo "$$DATABASE_DSN" | grep -qE "localhost|127\.0\.0\.1" || \
 		{ echo "ERROR: db-migrate refused — DATABASE_DSN does not point to localhost"; exit 1; }
-	@for f in db/migrations/*.up.sql; do \
-	  echo "Applying $$f..."; \
-	  psql "$$DATABASE_DSN" -f "$$f"; \
-	done
+	@set -a && . ./.env && set +a && go run ./cmd/migrate
 
 ## docker-build: build the Docker image
 docker-build:
@@ -116,6 +117,7 @@ deploy-kind:
 		--set image.pullPolicy=IfNotPresent \
 		--set autoscaling.enabled=false \
 		--set createPlaceholderSecret=false \
+		--set allowLocalAuthBypass=true \
 		--set-string config.DISABLED_MOCK_LOCAL_PRINCIPAL=local-dev-user
 	@echo "==> Waiting for rollout..."
 	@kubectl -n $(NAMESPACE) rollout status deploy/$(DEPLOYMENT_NAME) --timeout=180s

@@ -1,0 +1,16 @@
+# Copyright The Linux Foundation and each contributor to LFX.
+# SPDX-License-Identifier: MIT
+
+# Build artifacts — produced inside the image
+bin/
+
+# Local env files — never ship secrets into the image
+.env
+.env.*
+!.env.example
+
+# Dev tooling
+.git/
+.github/
+charts/
+*.md

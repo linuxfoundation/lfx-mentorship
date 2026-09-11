@@ -18,6 +18,15 @@ import (
 // ErrInvalidInviteToken is returned when the token signature or payload is invalid.
 var ErrInvalidInviteToken = errors.New("invalid invite token")
 
+// ErrNoInviteSecret is returned when an invite token is signed or verified with
+// an empty secret. HMAC accepts a zero-length key, so without this guard
+// ValidateInviteToken would verify against sign(payload, "") — a signature any
+// caller can compute, making the public accept/decline endpoints forgeable.
+// MENTOR_INVITE_SECRET is required at startup (cmd/mentorship-api/config.go), so
+// this is defence in depth: it keeps the token path failing closed if that check
+// is ever relaxed.
+var ErrNoInviteSecret = errors.New("invite secret is not configured")
+
 // inviteTokenTTL is how long mentor invite tokens remain valid.
 const inviteTokenTTL = 7 * 24 * time.Hour
 
@@ -29,6 +38,9 @@ type inviteClaims struct {
 
 // GenerateInviteToken creates a signed HMAC-SHA256 invite token for the given mentor.
 func GenerateInviteToken(programID, userID, secret string) (string, error) {
+	if secret == "" {
+		return "", ErrNoInviteSecret
+	}
 	claims := inviteClaims{
 		ProgramID: programID,
 		UserID:    userID,
@@ -46,6 +58,9 @@ func GenerateInviteToken(programID, userID, secret string) (string, error) {
 // ValidateInviteToken parses and verifies a token produced by GenerateInviteToken.
 // On success it returns the programID and userID embedded in the token.
 func ValidateInviteToken(token, secret string) (programID, userID string, err error) {
+	if secret == "" {
+		return "", "", ErrNoInviteSecret
+	}
 	parts := strings.SplitN(token, ".", 2)
 	if len(parts) != 2 {
 		return "", "", ErrInvalidInviteToken

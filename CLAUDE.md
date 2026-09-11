@@ -36,7 +36,10 @@ backend/          Go 1.25 · Chi v5 · pgx v5 (Postgres) · OpenTelemetry
     infrastructure/  Postgres repository implementations
   db/migrations/  SQL schema (source of truth for CHECK constraints)
   charts/         Helm chart
+  Dockerfile      distroless image — mentorship-api, migrate, funding-stats-sync
 frontend/         Nuxt 4 · Vue 3 · TypeScript
+  charts/         Helm chart
+  Dockerfile      Nitro server image
 specs/            feature specs and task lists
 ```
 
@@ -44,7 +47,17 @@ specs/            feature specs and task lists
 
 **Errors**: services return sentinel errors from `internal/domain` wrapped with `%w`. Not-found is per entity (`ErrUserNotFound`, `ErrProgramNotFound`, `ErrApplicationNotFound`, …); the rest are shared (`ErrInvalidInput`, `ErrIneligible`, `ErrConflict`, `ErrInvalidStateTransition`, `ErrStateLocked`, `ErrForbidden`, `ErrUnauthorized`, `ErrUpstreamUnavailable`). `handler.Error` maps them, plus Postgres SQLSTATEs, to HTTP status codes — `internal/handler/respond.go` is the single place status codes are decided, so add new mappings there rather than writing status codes in handlers.
 
-**Commands** — from `backend/`: `make build`, `make test`, `make lint`, `make license-check`, `make db-migrate`. From `frontend/`: `npm run dev`, `npm run build`, `npm run lint`, `npm run format`.
+**Commands** — from `backend/`: `make build`, `make test`, `make lint`, `make license-check`, `make db-migrate`. From `frontend/`: `pnpm dev`, `pnpm build`, `pnpm lint`, `pnpm format:check`. The frontend is pnpm-only and needs **Node 22+** (the toolchain uses `node:sqlite`, which Node 20 does not have).
+
+## Deployment
+
+Both services ship as container images and Helm charts, deployed to the LFX v2 cluster by ArgoCD from [lfx-v2-argocd](https://github.com/linuxfoundation/lfx-v2-argocd) (`values/{global,dev}/lfx-mentorship-{backend,frontend}.yaml`). A push to `main` publishes `:development` images that dev tracks by digest; a `v*.*.*` tag publishes semver images and signed OCI charts, which staging and prod pin.
+
+- **Base images are digest-pinned** — Chainguard Go to build, `gcr.io/distroless/static-debian12:nonroot` to run. Distroless has no shell and already ships CA certificates; keep it that way rather than reaching for alpine to install packages. It runs as uid 65532, matching the charts' `securityContext`.
+- **Migrations run automatically** as a Helm `pre-install`/`pre-upgrade` hook Job (`cmd/migrate`, embedding `db/migrations` via `iofs`), so schema changes land before new pods serve traffic. The hook deliberately uses the default ServiceAccount and mounts no ConfigMap — on a first install, pre-install hooks run before the chart's own ServiceAccount and ConfigMap exist.
+- **`templates/validate.yaml` is the render-time guard rail.** It fails the render when required config is missing, rather than letting pods crash-loop. Add a guard there when you add required config.
+- **Never set `DISABLED_MOCK_LOCAL_PRINCIPAL` or `ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS` in a deployed environment** — together they disable authentication entirely. The chart refuses to render unless `allowLocalAuthBypass=true` is passed explicitly, which is for local kind/minikube only and must never appear in an ArgoCD values file.
+- **Secrets** come from AWS Secrets Manager via External Secrets Operator, synced from 1Password by [lfx-secrets-management](https://github.com/linuxfoundation/lfx-secrets-management). RDS credentials are CloudOps-managed under `/cloudops/rds-managed/lfx-v2/mentorship` and referenced directly. Never commit a secret value to any repo.
 
 ## Terminology
 
@@ -83,4 +96,8 @@ Before creating or updating a PR, review the entire diff and verify:
 
 ## Status
 
-Backend implementation in progress: Go + Chi under `backend/` (`internal/{domain,service,handler,infrastructure}`), Postgres schema in `backend/db/migrations/`, Helm chart in `backend/charts/`. Run `make build`, `make test`, `make lint`, and `make license-check` from `backend/`. Tracking: [linuxfoundation/lfx-self-serve#1526](https://github.com/linuxfoundation/lfx-self-serve/issues/1526).
+Implementation in progress. The backend (Go + Chi under `backend/`, Postgres schema in `backend/db/migrations/`) and the Nuxt public site under `frontend/` both build, containerize, and have Helm charts. Run `make build`, `make test`, `make lint`, and `make license-check` from `backend/`.
+
+Dev deployment to the LFX v2 cluster is wired up but **not yet applied** — see **Deployment** above. Authorization is validated in-process against Auth0 today; moving it to the platform's Heimdall/OpenFGA edge is a separate, later piece of work and is not a reason to hold up changes here.
+
+Tracking: [linuxfoundation/lfx-self-serve#1526](https://github.com/linuxfoundation/lfx-self-serve/issues/1526).
