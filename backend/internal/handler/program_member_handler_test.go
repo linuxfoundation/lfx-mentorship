@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/handler"
 )
@@ -45,7 +46,7 @@ func TestProgramMemberHandler_List_PinsActiveStatus(t *testing.T) {
 			captured = f
 			return []*models.ProgramMember{}, &models.PaginationMeta{}, nil
 		},
-	})
+	}, &stubProgramSvc{})
 	r := httptest.NewRequest(http.MethodGet, "/v1/programs/p1/members?status=pending&member_type=mentor", nil)
 	r = requestWithChiParam(r, "id", "p1")
 	w := httptest.NewRecorder()
@@ -79,7 +80,7 @@ func TestProgramMemberHandler_List_OmitsEmail(t *testing.T) {
 				Email:      &email,
 			}}, &models.PaginationMeta{Total: 1, Limit: 20, Offset: 0}, nil
 		},
-	})
+	}, &stubProgramSvc{})
 	r := httptest.NewRequest(http.MethodGet, "/v1/programs/p1/members", nil)
 	r = requestWithChiParam(r, "id", "p1")
 	w := httptest.NewRecorder()
@@ -108,5 +109,64 @@ func TestProgramMemberHandler_List_OmitsEmail(t *testing.T) {
 	// The rest of the row must survive redaction.
 	if body.Data[0].ID != "m1" || body.Data[0].UserID != "u1" || body.Data[0].MemberType != models.MemberTypeProgramAdmin {
 		t.Errorf("unexpected member: %+v", body.Data[0])
+	}
+}
+
+// FR-009: a hidden program is a 404 for an anonymous caller here exactly as it
+// is on the program itself, so holding a hidden program's ID does not expose
+// its admins and mentors.
+func TestProgramMemberHandler_List_HiddenReturns404(t *testing.T) {
+	lfid := "owner"
+	listed := false
+	h := handler.NewProgramMemberHandler(&stubProgramMemberSvc{
+		listByProgram: func(context.Context, string, models.ProgramMemberFilter) ([]*models.ProgramMember, *models.PaginationMeta, error) {
+			listed = true
+			return []*models.ProgramMember{}, &models.PaginationMeta{}, nil
+		},
+	}, &stubProgramSvc{
+		getByID: func(_ context.Context, id string) (*models.Program, error) {
+			return &models.Program{ID: id, Status: models.ProgramStatusHidden, LFID: &lfid}, nil
+		},
+	})
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/p1/members", nil)
+	r = requestWithChiParam(r, "id", "p1")
+	w := httptest.NewRecorder()
+	h.List(w, r)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("got %d; want 404", w.Code)
+	}
+	if listed {
+		t.Error("roster was queried for a hidden program")
+	}
+}
+
+// The slug form of the route must resolve to the program's ID before the
+// roster is queried, not pass the slug through as though it were an ID.
+func TestProgramMemberHandler_List_ResolvesSlugToID(t *testing.T) {
+	var gotProgramID string
+	h := handler.NewProgramMemberHandler(&stubProgramMemberSvc{
+		listByProgram: func(_ context.Context, programID string, _ models.ProgramMemberFilter) ([]*models.ProgramMember, *models.PaginationMeta, error) {
+			gotProgramID = programID
+			return []*models.ProgramMember{}, &models.PaginationMeta{}, nil
+		},
+	}, &stubProgramSvc{
+		getByID: func(context.Context, string) (*models.Program, error) {
+			return nil, domain.ErrProgramNotFound
+		},
+		getBySlug: func(_ context.Context, slug string) (*models.Program, error) {
+			return &models.Program{ID: "p-uuid", Slug: slug, Status: models.ProgramStatusPublished}, nil
+		},
+	})
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/go-2026/members", nil)
+	r = requestWithChiParam(r, "id", "go-2026")
+	w := httptest.NewRecorder()
+	h.List(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d; want 200", w.Code)
+	}
+	if gotProgramID != "p-uuid" {
+		t.Errorf("programID = %q; want p-uuid", gotProgramID)
 	}
 }

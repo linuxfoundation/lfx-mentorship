@@ -275,7 +275,7 @@ List all applications submitted by a user across all programs.
 
 | Parameter | Values | Description |
 |---|---|---|
-| `status` | `pending\|accepted\|active\|declined\|withdrawn\|graduated\|hold` | Filter by status |
+| `status` | `pending\|accepted\|declined\|withdrawn\|graduated\|hold` | Filter by status |
 | `role` | `mentor\|mentee` | Filter by role |
 | `limit` / `offset` | — | Pagination |
 
@@ -637,7 +637,7 @@ Same catalog shape as `GET /v1/programs/catalog` for a single program (UUID or s
 
 #### `GET /v1/programs/{id}/mentees` 🔓
 
-Public list of accepted, active, and graduated mentees for a program (UUID or slug). Hidden programs follow the same FR-009 404 rule as `GET /v1/programs/{id}`. Pending, declined, withdrawn, and hold applications are omitted.
+Public list of accepted and graduated mentees for a program (UUID or slug). Hidden programs follow the same FR-009 404 rule as `GET /v1/programs/{id}`. Pending, declined, withdrawn, and hold applications are omitted.
 
 **Response** `200`
 ```json
@@ -648,8 +648,7 @@ Public list of accepted, active, and graduated mentees for a program (UUID or sl
       "name": "Alex Mentee",
       "avatar_url": "https://...",
       "introduction": "I contribute to Kubernetes...",
-      "email": "alex@example.com",
-      "status": "active",
+      "status": "accepted",
       "term_id": "uuid",
       "term_name": "Spring 2026"
     }
@@ -657,7 +656,7 @@ Public list of accepted, active, and graduated mentees for a program (UUID or sl
 }
 ```
 
-`status` is the application status: `accepted`, `active`, or `graduated`. Display fields come from `users` and the mentee `user_profiles` row. `term_name` is `program_terms.name`.
+`status` is the application status: `accepted` or `graduated`. Display fields come from `users` and the mentee `user_profiles` row. `term_name` is `program_terms.name`.
 
 **Errors** `404`
 
@@ -665,7 +664,9 @@ Public list of accepted, active, and graduated mentees for a program (UUID or sl
 
 #### `GET /v1/mentees` 🔓
 
-Paginated public directory of mentees on **published** programs. Includes `accepted`, `active`, and `graduated` only. Pending, hold, declined, and withdrawn applications are omitted, as are mentees with no enrollment. The list is one row per mentee.
+Paginated public directory of mentees on **published** programs. Includes `accepted` and `graduated` applications only. Pending, hold, declined, and withdrawn applications are omitted, as are mentees with no enrollment. The list is one row per mentee.
+
+The response `status` is the stored application status — `accepted` or `graduated`. Note the asymmetry with the `status` **query parameter** below, which accepts `active` as a filter alias selecting `accepted` rows; `active` is never returned in a response body.
 
 `GET /v1/user-profiles` and `GET /v1/programs/{id}/mentees` are unchanged.
 
@@ -675,7 +676,7 @@ Paginated public directory of mentees on **published** programs. Includes `accep
 |---|---|---|
 | `search` | string | Case-insensitive match on mentee name |
 | `skill` | string | Case-insensitive exact match on a mentee profile skill (`all` is ignored) |
-| `status` | `active\|graduated` | `active` includes `accepted` and `active`. Omit or `all` for every listed mentee. Other values return `400` |
+| `status` | `active\|graduated` | `active` selects `accepted` applications. Omit or `all` for every listed mentee. Other values return `400` |
 | `limit` / `offset` | — | Pagination |
 
 **Response** `200`
@@ -688,7 +689,7 @@ Paginated public directory of mentees on **published** programs. Includes `accep
       "avatar_url": "https://...",
       "introduction": "I contribute to Kubernetes...",
       "skills": ["Go", "Kubernetes"],
-      "status": "active",
+      "status": "accepted",
       "joined_at": "2024-01-15T00:00:00Z",
       "program": {
         "id": "uuid",
@@ -741,7 +742,7 @@ Public mentee profile by **user ID**. Programs, skills, terms, and mentors are l
   "avatar_url": "https://...",
   "introduction": "...",
   "skills": ["Go"],
-  "status": "active",
+  "status": "accepted",
   "joined_at": "2024-01-15T00:00:00Z",
   "program": { "id": "uuid", "name": "Kubernetes Contributors", "slug": "kubernetes-contributors" },
   "mentors": [],
@@ -754,7 +755,7 @@ Public mentee profile by **user ID**. Programs, skills, terms, and mentors are l
       "slug": "kubernetes-contributors",
       "description": "...",
       "logo_url": "https://...",
-      "status": "active",
+      "status": "accepted",
       "skills": ["Go", "Kubernetes"],
       "terms": [
         {
@@ -762,7 +763,7 @@ Public mentee profile by **user ID**. Programs, skills, terms, and mentors are l
           "name": "Spring 2026",
           "start_date_time": "2026-03-02T00:00:00Z",
           "end_date_time": "2026-05-25T00:00:00Z",
-          "application_status": "active"
+          "application_status": "accepted"
         }
       ],
       "mentors": []
@@ -771,7 +772,7 @@ Public mentee profile by **user ID**. Programs, skills, terms, and mentors are l
 }
 ```
 
-**Errors** `400` when `{id}` is not a UUID. `404` when the user has no accepted, active, or graduated mentee application on a published program.
+**Errors** `400` when `{id}` is not a UUID. `404` when the user has no accepted or graduated mentee application on a published program.
 
 ---
 
@@ -911,6 +912,8 @@ Aggregated marketing/landing counts plus a small graduated-mentee preview. All c
 Fetch a program by UUID or slug.
 
 > **FR-009**: If the program has `status = "hidden"`, the endpoint returns `404` for all callers whose `principal.Username` does not match `program.lfid` (the owner's LF ID). Unauthenticated callers always receive `404` for hidden programs.
+>
+> **Known gap**: the visibility-gated routes are registered without auth middleware, so no principal is ever present on them and the owner exception is currently unreachable — hidden programs return `404` to everyone, owner included. Tracked separately.
 
 **Response** `200` → `<Program>`  
 **Errors** `404`
@@ -1178,7 +1181,7 @@ Update term fields and/or status.
 | Transition | Guard condition |
 |---|---|
 | `closed → open` (reopen) | `end_date_time` must still be in the future; open-term cap must not be reached |
-| `open → closed` | No application on this term has `status = "accepted"` or `"active"` |
+| `open → closed` | No application on this term has `status = "accepted"` |
 
 **Response** `200` → `<ProgramTerm>`  
 **Errors** `400`, `404`, `409`
@@ -1230,18 +1233,28 @@ Tracks the relationship between a user and a program as either `program_admin` o
 
 #### `GET /v1/programs/{id}/members` 🔓
 
+Public roster. Returns `active` members only, with `email` omitted from every row.
+`{id}` may be a UUID or a slug. A hidden program returns `404`, matching
+`GET /v1/programs/{id}`. The owner exception described under FR-009 does not
+apply on this route yet — see the note there.
+
+There is no `status` filter: the status is pinned to `active` so an anonymous
+caller cannot widen the roster to `invited`, `requested`, `pending`, `declined`,
+or `withdrawn` members.
+
 **Query parameters**
 
 | Parameter | Values | Description |
 |---|---|---|
 | `member_type` | `program_admin\|mentor` | Filter by type |
-| `status` | See status values | Filter by status |
 | `limit` / `offset` | — | Pagination |
 
 **Response** `200`
 ```json
 { "data": [<ProgramMember>, ...], "meta": {...} }
 ```
+
+**Errors** `404`
 
 ---
 
@@ -1370,13 +1383,12 @@ An application represents a mentee's (or mentor's) request to join a specific pr
 
 **`role` values**: `mentee`, `mentor`
 
-**`status` lifecycle**: `pending → accepted → active → graduated | declined | withdrawn | hold`
+**`status` lifecycle**: `pending → accepted → graduated | declined | withdrawn | hold`
 
 | Status | Set by | Meaning |
 |---|---|---|
 | `pending` | System (on create) | Awaiting program_admin review |
-| `accepted` | Program Admin | Mentee selected; `attendance_type` required |
-| `active` | Program Admin | Program period has begun |
+| `accepted` | Program Admin | Mentee selected and enrolled for the term; `attendance_type` required |
 | `graduated` | Program Admin | Mentee completed the program |
 | `declined` | Program Admin / bulk-decline | Not selected |
 | `withdrawn` | Mentee (self) | Mentee voluntarily exited |
@@ -1511,7 +1523,7 @@ Export applications as a CSV file, optionally filtered by status.
 
 #### `GET /v1/program-terms/{id}/past-mentees` 🔒
 
-Read-only list of accepted/active/graduated mentees for a (typically closed) term.
+Read-only list of accepted/graduated mentees for a (typically closed) term.
 
 **Response** `200`
 ```json
@@ -1525,7 +1537,7 @@ Read-only list of accepted/active/graduated mentees for a (typically closed) ter
 Tasks represent units of work assigned to a mentee. They are either:
 
 - **prerequisite** — cloned from `program.task_templates` when an application is created; must all reach `submitted` or `complete` before `tasks_submitted` is set.
-- **non_prerequisite** — assigned manually by a program_admin or mentor to an active mentee.
+- **non_prerequisite** — assigned manually by a program_admin or mentor to an accepted mentee.
 
 ### Task Object
 
@@ -1599,7 +1611,7 @@ List all tasks for a program term across all applications.
 
 #### `POST /v1/applications/{id}/tasks` 🔒
 
-Create a non-prerequisite task and assign it to an active mentee.
+Create a non-prerequisite task and assign it to an accepted mentee.
 
 **Request body**
 ```json
@@ -1708,16 +1720,14 @@ deleted
 
 | From | To | Guard |
 |---|---|---|
-| `open` | `closed` | No `accepted` or `active` applications on this term |
+| `open` | `closed` | No `accepted` applications on this term |
 | `closed` | `open` | `end_date_time` is still in the future; fewer than 4 open terms on program |
 | `open` | `deleted` | (soft delete) |
 
 ### Application Status
 
 ```
-              ┌──────────────┐
-              ▼              │
-pending ──► accepted ──► active ──► graduated
+pending ──► accepted ──► graduated
   │   │        │
   │   │        └──► declined
   │   │
@@ -1725,9 +1735,12 @@ pending ──► accepted ──► active ──► graduated
   │         └──► declined
   │         └──► pending
   │
-  └──► declined
+  └──► declined ──► pending
   └──► withdrawn
 ```
+
+`accepted` is the enrolled state for the whole term; there is no intermediate
+`active` application status.
 
 | From | To | Actor | Notes |
 |---|---|---|---|
@@ -1738,10 +1751,9 @@ pending ──► accepted ──► active ──► graduated
 | `hold` | `accepted` | Program Admin | |
 | `hold` | `declined` | Program Admin | |
 | `hold` | `pending` | Program Admin | |
-| `accepted` | `active` | Program Admin | Program period begins |
+| `accepted` | `graduated` | Program Admin | Manual; never automatic |
 | `accepted` | `declined` | Program Admin | |
-| `active` | `graduated` | Program Admin | Manual; never automatic |
-| `active` | `declined` | Program Admin | |
+| `declined` | `pending` | Program Admin | Re-open a declined application |
 
 ### Task Status
 
@@ -1768,8 +1780,8 @@ incomplete ──► in_progress ──► submitted ──► complete
 | FR-003 | Max 4 open terms per program | `ProgramTermService.Create`, `.Update` |
 | FR-004 | Submission requires all required fields + ≥1 open term | `ProgramService.Update` |
 | FR-008 | Hide blocked while pending/accepted/graduated apps exist | `ProgramService.Update` |
-| FR-009 | Hidden programs return 404 to non-owners | `ProgramHandler.GetByID` |
-| FR-013 | Close term blocked while accepted/active apps exist | `ProgramTermService.Update` |
+| FR-009 | Hidden programs return 404 to non-owners | `handler.resolveVisibleProgram`, used by `ProgramHandler.GetByID` and `ProgramMemberHandler.List` |
+| FR-013 | Close term blocked while accepted apps exist | `ProgramTermService.Update` |
 | FR-014 | Reopen term only if end_date in the future | `ProgramTermService.Update` |
 | FR-016 | Apply only when term is open AND within window | `ApplicationService.Create` |
 | FR-017 | Discovery label derived from status + window | `ProgramTerm.DiscoveryLabel()` |
@@ -1777,7 +1789,7 @@ incomplete ──► in_progress ──► submitted ──► complete
 | FR-025 | One active mentee profile per user max | `UserProfileService.Create` |
 | FR-029 | New applications start at status=pending | `ApplicationService.Create` |
 | FR-030 | No reapplication from declined; withdrawn OK while window open | `ApplicationService.Create` |
-| — | Mentee accepted/active/graduated on one program cannot apply to another | `ApplicationService.Create` |
+| — | Mentee accepted/graduated on one program cannot apply to another | `ApplicationService.Create` |
 | FR-032 | Task templates cloned on application create | `ApplicationService.Create` |
 | FR-033 | Task status transitions restricted by actor role | `TaskService.Update` |
 | FR-034 | tasks_submitted auto-set + admin notified when all prereqs done | `TaskService.Update` |

@@ -321,7 +321,7 @@ func (r *ProgramRepository) GetCatalog(ctx context.Context, id string) (*models.
 	return items[0], nil
 }
 
-// ListCatalogMentees returns accepted/active/graduated mentees for a program.
+// ListCatalogMentees returns accepted/graduated mentees for a program.
 func (r *ProgramRepository) ListCatalogMentees(ctx context.Context, programID string) ([]*models.ProgramCatalogMentee, error) {
 	ctx, span := programTracer.Start(ctx, "db.programs.ListCatalogMentees")
 	defer span.End()
