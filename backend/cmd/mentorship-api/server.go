@@ -86,7 +86,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	userProfileH := handler.NewUserProfileHandler(userProfileSvc)
 	programH := handler.NewProgramHandler(programSvc)
 	programTermH := handler.NewProgramTermHandler(programTermSvc)
-	programMemberH := handler.NewProgramMemberHandler(programMemberSvc)
+	programMemberH := handler.NewProgramMemberHandler(programMemberSvc, programSvc)
 	applicationH := handler.NewApplicationHandler(applicationSvc)
 	taskH := handler.NewTaskHandler(taskSvc)
 	mentorInviteH := handler.NewMentorInviteHandler(programMemberSvc)
