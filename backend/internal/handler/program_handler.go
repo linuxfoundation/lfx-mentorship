@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/auth"
@@ -26,7 +27,7 @@ type programService interface {
 	Delete(ctx context.Context, id string) error
 	ListSkills(ctx context.Context, programID string) ([]*models.ProgramSkill, error)
 	AddSkill(ctx context.Context, programID string, input models.ProgramSkillCreateInput) (*models.ProgramSkill, error)
-	DeleteSkill(ctx context.Context, skillID string) error
+	DeleteSkill(ctx context.Context, programID, skillID, actorID string) error
 	GetFundingStats(ctx context.Context, programID string) (*models.ProgramFundingStats, error)
 	GetCategorizedTransactions(ctx context.Context, programID, categoryType string, subscriptionOnly bool, limit, offset int) (*models.ProgramCategorizedTransactions, error)
 	GetProgramSponsors(ctx context.Context, programID, categoryType string, subscriptionOnly bool, aggregate bool) ([]models.ProgramSponsor, error)
@@ -59,8 +60,17 @@ func NewProgramHandler(svc programService) *ProgramHandler {
 
 func (h *ProgramHandler) resolveVisibleProgram(w http.ResponseWriter, r *http.Request) (*models.Program, bool) {
 	id := chi.URLParam(r, "id")
-	program, err := h.svc.GetByID(r.Context(), id)
-	if err != nil {
+	var (
+		program *models.Program
+		err     error
+	)
+	if _, parseErr := uuid.Parse(id); parseErr == nil {
+		program, err = h.svc.GetByID(r.Context(), id)
+		if err != nil {
+			Error(w, err)
+			return nil, false
+		}
+	} else {
 		program, err = h.svc.GetBySlug(r.Context(), id)
 		if err != nil {
 			Error(w, err)
@@ -271,25 +281,7 @@ func (h *ProgramHandler) DeleteSkill(w http.ResponseWriter, r *http.Request) {
 
 	programID := chi.URLParam(r, "id")
 	skillID := chi.URLParam(r, "skillId")
-	skills, err := h.svc.ListSkills(r.Context(), programID)
-	if err != nil {
-		Error(w, err)
-		return
-	}
-
-	belongsToProgram := false
-	for _, skill := range skills {
-		if skill.ID == skillID {
-			belongsToProgram = true
-			break
-		}
-	}
-	if !belongsToProgram {
-		Error(w, domain.ErrProgramNotFound)
-		return
-	}
-
-	if err := h.svc.DeleteSkill(r.Context(), skillID); err != nil {
+	if err := h.svc.DeleteSkill(r.Context(), programID, skillID, principal.UserID); err != nil {
 		Error(w, err)
 		return
 	}

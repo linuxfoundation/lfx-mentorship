@@ -156,7 +156,7 @@ type stubProgRepo struct {
 	delete          func(context.Context, string) error
 	listSkills      func(context.Context, string) ([]*models.ProgramSkill, error)
 	addSkill        func(context.Context, string, models.ProgramSkillCreateInput) (*models.ProgramSkill, error)
-	deleteSkill     func(context.Context, string) error
+	deleteSkill     func(context.Context, string, string) error
 	getFundingStats func(context.Context, string) (*models.ProgramFundingStats, error)
 }
 
@@ -226,9 +226,9 @@ func (m *stubProgRepo) AddSkill(ctx context.Context, id string, in models.Progra
 	}
 	return &models.ProgramSkill{}, nil
 }
-func (m *stubProgRepo) DeleteSkill(ctx context.Context, id string) error {
+func (m *stubProgRepo) DeleteSkill(ctx context.Context, programID, id string) error {
 	if m.deleteSkill != nil {
-		return m.deleteSkill(ctx, id)
+		return m.deleteSkill(ctx, programID, id)
 	}
 	return nil
 }
@@ -309,7 +309,7 @@ func (n *stubNotifier) NotifyMenteeAccepted(_ context.Context, _, _ string) { n.
 // ── helpers ─────────────────────────────────────────────────────────────────
 
 func newApplicationSvc(appRepo *stubAppRepo, taskRepo *stubTaskRepo, termRepo *stubTermRepo, progRepo *stubProgRepo) *service.ApplicationService {
-	return service.NewApplicationService(appRepo, taskRepo, termRepo, progRepo, &stubNotifier{})
+	return service.NewApplicationService(appRepo, taskRepo, termRepo, progRepo, &stubMemberRepo{}, &stubNotifier{})
 }
 
 func openTerm(t time.Time) *models.ProgramTerm {

@@ -17,7 +17,9 @@ import (
 
 type applicationService interface {
 	GetByID(ctx context.Context, id string) (*models.Application, error)
+	GetByIDForActor(ctx context.Context, id, actorID string) (*models.Application, error)
 	ListByProgramTerm(ctx context.Context, programTermID string, filter models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error)
+	ListByProgramTermForActor(ctx context.Context, programTermID string, filter models.ApplicationFilter, actorID string) ([]*models.Application, *models.PaginationMeta, error)
 	ListByUser(ctx context.Context, userID string, filter models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error)
 	Create(ctx context.Context, programTermID string, input models.ApplicationCreateInput) (*models.Application, error)
 	Update(ctx context.Context, id string, input models.ApplicationUpdateInput) (*models.Application, error)
@@ -37,18 +39,24 @@ func NewApplicationHandler(svc applicationService) *ApplicationHandler {
 
 // ListByProgramTerm handles GET /v1/program-terms/{id}/applications.
 func (h *ApplicationHandler) ListByProgramTerm(w http.ResponseWriter, r *http.Request) {
+	principal := auth.PrincipalFromContext(r.Context())
+	if principal == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+
 	programTermID := chi.URLParam(r, "id")
 	limit, offset, ok := parsePaginationParams(w, r)
 	if !ok {
 		return
 	}
-	apps, meta, err := h.svc.ListByProgramTerm(r.Context(), programTermID, models.ApplicationFilter{
+	apps, meta, err := h.svc.ListByProgramTermForActor(r.Context(), programTermID, models.ApplicationFilter{
 		Limit:  limit,
 		Offset: offset,
 		Status: r.URL.Query().Get("status"),
 		Role:   r.URL.Query().Get("role"),
 		UserID: r.URL.Query().Get("user_id"),
-	})
+	}, principal.UserID)
 	if err != nil {
 		Error(w, err)
 		return
@@ -89,8 +97,14 @@ func (h *ApplicationHandler) ListByUser(w http.ResponseWriter, r *http.Request) 
 
 // GetByID handles GET /v1/applications/{id}.
 func (h *ApplicationHandler) GetByID(w http.ResponseWriter, r *http.Request) {
+	principal := auth.PrincipalFromContext(r.Context())
+	if principal == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+
 	id := chi.URLParam(r, "id")
-	app, err := h.svc.GetByID(r.Context(), id)
+	app, err := h.svc.GetByIDForActor(r.Context(), id, principal.UserID)
 	if err != nil {
 		Error(w, err)
 		return

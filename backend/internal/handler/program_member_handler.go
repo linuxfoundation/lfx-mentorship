@@ -17,8 +17,8 @@ type programMemberService interface {
 	GetByID(ctx context.Context, id string) (*models.ProgramMember, error)
 	ListByProgram(ctx context.Context, programID string, filter models.ProgramMemberFilter) ([]*models.ProgramMember, *models.PaginationMeta, error)
 	Create(ctx context.Context, programID string, input models.ProgramMemberCreateInput) (*models.ProgramMember, error)
-	Update(ctx context.Context, id string, input models.ProgramMemberUpdateInput) (*models.ProgramMember, error)
-	Delete(ctx context.Context, id string) error
+	Update(ctx context.Context, programID, id string, input models.ProgramMemberUpdateInput, actorID string) (*models.ProgramMember, error)
+	Delete(ctx context.Context, programID, id, actorID string) error
 }
 
 // ProgramMemberHandler holds Chi handlers for program members and admins.
@@ -97,22 +97,13 @@ func (h *ProgramMemberHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	programID := chi.URLParam(r, "id")
 	memberID := chi.URLParam(r, "memberId")
-	member, err := h.svc.GetByID(r.Context(), memberID)
-	if err != nil {
-		Error(w, err)
-		return
-	}
-	if member.ProgramID != programID {
-		Error(w, domain.ErrProgramMemberNotFound)
-		return
-	}
 
 	var input models.ProgramMemberUpdateInput
 	if !decodeBody(w, r, &input) {
 		return
 	}
 
-	member, err = h.svc.Update(r.Context(), memberID, input)
+	member, err := h.svc.Update(r.Context(), programID, memberID, input, principal.UserID)
 	if err != nil {
 		Error(w, err)
 		return
@@ -131,18 +122,9 @@ func (h *ProgramMemberHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	programID := chi.URLParam(r, "id")
 	memberID := chi.URLParam(r, "memberId")
-	member, err := h.svc.GetByID(r.Context(), memberID)
-	if err != nil {
-		Error(w, err)
-		return
-	}
-	if member.ProgramID != programID {
-		Error(w, domain.ErrProgramMemberNotFound)
-		return
-	}
 
 	withdrawn := models.ProgramMemberStatusWithdrawn
-	if _, err := h.svc.Update(r.Context(), memberID, models.ProgramMemberUpdateInput{Status: &withdrawn}); err != nil {
+	if _, err := h.svc.Update(r.Context(), programID, memberID, models.ProgramMemberUpdateInput{Status: &withdrawn}, principal.UserID); err != nil {
 		Error(w, err)
 		return
 	}

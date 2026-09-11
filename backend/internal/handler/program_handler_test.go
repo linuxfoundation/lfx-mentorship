@@ -22,7 +22,7 @@ type stubProgramSvc struct {
 	getBySlug                  func(context.Context, string) (*models.Program, error)
 	listMentees                func(context.Context, string) ([]*models.ProgramCatalogMentee, error)
 	listSkills                 func(context.Context, string) ([]*models.ProgramSkill, error)
-	deleteSkill                func(context.Context, string) error
+	deleteSkill                func(context.Context, string, string, string) error
 	getCategorizedTransactions func(context.Context, string, string, bool, int, int) (*models.ProgramCategorizedTransactions, error)
 	getProgramSponsors         func(context.Context, string, string, bool, bool) ([]models.ProgramSponsor, error)
 }
@@ -76,9 +76,9 @@ func (s *stubProgramSvc) ListSkills(ctx context.Context, programID string) ([]*m
 func (s *stubProgramSvc) AddSkill(context.Context, string, models.ProgramSkillCreateInput) (*models.ProgramSkill, error) {
 	return &models.ProgramSkill{}, nil
 }
-func (s *stubProgramSvc) DeleteSkill(ctx context.Context, skillID string) error {
+func (s *stubProgramSvc) DeleteSkill(ctx context.Context, programID, skillID, actorID string) error {
 	if s.deleteSkill != nil {
-		return s.deleteSkill(ctx, skillID)
+		return s.deleteSkill(ctx, programID, skillID, actorID)
 	}
 	return nil
 }
@@ -195,8 +195,8 @@ func TestProgramHandler_ListCatalogMentees_OK(t *testing.T) {
 func TestProgramHandler_ListCatalogMentees_HiddenReturns404(t *testing.T) {
 	lfid := "owner"
 	h := handler.NewProgramHandler(&stubProgramSvc{
-		getByID: func(_ context.Context, id string) (*models.Program, error) {
-			return &models.Program{ID: id, Status: models.ProgramStatusHidden, LFID: &lfid}, nil
+		getBySlug: func(_ context.Context, id string) (*models.Program, error) {
+			return &models.Program{ID: id, Slug: id, Status: models.ProgramStatusHidden, LFID: &lfid}, nil
 		},
 	})
 	r := httptest.NewRequest(http.MethodGet, "/v1/programs/p1/mentees", nil)
@@ -306,8 +306,8 @@ func TestProgramHandler_GetCategorizedTransactions_DefaultsAndSlugFallback(t *te
 func TestProgramHandler_GetCategorizedTransactions_HiddenReturns404(t *testing.T) {
 	lfid := "owner"
 	h := handler.NewProgramHandler(&stubProgramSvc{
-		getByID: func(_ context.Context, id string) (*models.Program, error) {
-			return &models.Program{ID: id, Status: models.ProgramStatusHidden, LFID: &lfid}, nil
+		getBySlug: func(_ context.Context, id string) (*models.Program, error) {
+			return &models.Program{ID: id, Slug: id, Status: models.ProgramStatusHidden, LFID: &lfid}, nil
 		},
 	})
 	r := httptest.NewRequest(http.MethodGet, "/v1/programs/p1/transactions", nil)
@@ -350,8 +350,8 @@ func TestProgramHandler_ResolveID_BySlugReturnsCanonicalID(t *testing.T) {
 func TestProgramHandler_ResolveID_HiddenReturns404(t *testing.T) {
 	lfid := "owner"
 	h := handler.NewProgramHandler(&stubProgramSvc{
-		getByID: func(_ context.Context, id string) (*models.Program, error) {
-			return &models.Program{ID: id, Status: models.ProgramStatusHidden, LFID: &lfid}, nil
+		getBySlug: func(_ context.Context, id string) (*models.Program, error) {
+			return &models.Program{ID: id, Slug: id, Status: models.ProgramStatusHidden, LFID: &lfid}, nil
 		},
 	})
 
@@ -431,8 +431,8 @@ func TestProgramHandler_GetProgramSponsors_AggregateQueryParam(t *testing.T) {
 func TestProgramHandler_GetProgramSponsors_HiddenReturns404(t *testing.T) {
 	lfid := "owner"
 	h := handler.NewProgramHandler(&stubProgramSvc{
-		getByID: func(_ context.Context, id string) (*models.Program, error) {
-			return &models.Program{ID: id, Status: models.ProgramStatusHidden, LFID: &lfid}, nil
+		getBySlug: func(_ context.Context, id string) (*models.Program, error) {
+			return &models.Program{ID: id, Slug: id, Status: models.ProgramStatusHidden, LFID: &lfid}, nil
 		},
 	})
 	r := httptest.NewRequest(http.MethodGet, "/v1/programs/p1/sponsors", nil)
@@ -447,12 +447,9 @@ func TestProgramHandler_GetProgramSponsors_HiddenReturns404(t *testing.T) {
 func TestProgramHandler_DeleteSkill_RejectsSkillOutsideProgram(t *testing.T) {
 	deleteCalled := false
 	h := handler.NewProgramHandler(&stubProgramSvc{
-		listSkills: func(_ context.Context, _ string) ([]*models.ProgramSkill, error) {
-			return []*models.ProgramSkill{{ID: "skill-in-other-program", ProgramID: "p1", Skill: "Go"}}, nil
-		},
-		deleteSkill: func(_ context.Context, _ string) error {
+		deleteSkill: func(_ context.Context, _, _, _ string) error {
 			deleteCalled = true
-			return nil
+			return domain.ErrProgramNotFound
 		},
 	})
 	r := httptest.NewRequest(http.MethodDelete, "/v1/programs/p1/skills/skill-2", nil)
@@ -465,21 +462,24 @@ func TestProgramHandler_DeleteSkill_RejectsSkillOutsideProgram(t *testing.T) {
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("got %d; want 404", w.Code)
 	}
-	if deleteCalled {
-		t.Fatal("expected delete not to be called for cross-program skill")
+	if !deleteCalled {
+		t.Fatal("expected delete to be called")
 	}
 }
 
 func TestProgramHandler_DeleteSkill_DeletesWhenSkillBelongsToProgram(t *testing.T) {
 	deleteCalled := false
 	h := handler.NewProgramHandler(&stubProgramSvc{
-		listSkills: func(_ context.Context, _ string) ([]*models.ProgramSkill, error) {
-			return []*models.ProgramSkill{{ID: "skill-2", ProgramID: "p1", Skill: "Go"}}, nil
-		},
-		deleteSkill: func(_ context.Context, skillID string) error {
+		deleteSkill: func(_ context.Context, programID, skillID, actorID string) error {
 			deleteCalled = true
+			if programID != "p1" {
+				t.Fatalf("programID = %q; want p1", programID)
+			}
 			if skillID != "skill-2" {
 				t.Fatalf("skillID = %q; want skill-2", skillID)
+			}
+			if actorID != "admin-1" {
+				t.Fatalf("actorID = %q; want admin-1", actorID)
 			}
 			return nil
 		},

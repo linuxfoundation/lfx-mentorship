@@ -650,12 +650,12 @@ func (r *ProgramRepository) AddSkill(ctx context.Context, programID string, inpu
 	return &s, nil
 }
 
-// DeleteSkill removes a skill by its ID.
-func (r *ProgramRepository) DeleteSkill(ctx context.Context, skillID string) error {
+// DeleteSkill removes a skill scoped to its owning program.
+func (r *ProgramRepository) DeleteSkill(ctx context.Context, programID, skillID string) error {
 	ctx, span := programTracer.Start(ctx, "db.programs.DeleteSkill")
 	defer span.End()
 
-	cmd, err := r.pool.Exec(ctx, `DELETE FROM program_skills WHERE id = $1`, skillID)
+	cmd, err := r.pool.Exec(ctx, `DELETE FROM program_skills WHERE id = $1 AND program_id = $2`, skillID, programID)
 	if err != nil {
 		span.RecordError(err)
 		return fmt.Errorf("delete skill: %w", err)

@@ -62,7 +62,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	// Services
 	userSvc := service.NewUserService(userRepo)
 	userProfileSvc := service.NewUserProfileService(userProfileRepo)
-	programSvc := service.NewProgramService(programRepo, programTermRepo, applicationRepo)
+	programSvc := service.NewProgramService(programRepo, programTermRepo, applicationRepo, programMemberRepo)
 	if cfg.Crowdfunding.IsConfigured() {
 		programSvc.SetCrowdfundingClient(clients.NewCrowdfundingClient(clients.CrowdfundingConfig{
 			BaseURL:      cfg.Crowdfunding.BaseURL,
@@ -76,7 +76,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	}
 	programTermSvc := service.NewProgramTermService(programTermRepo, applicationRepo)
 	programMemberSvc := service.NewProgramMemberService(programMemberRepo, programRepo, notifier, cfg.Local.InviteSecret)
-	applicationSvc := service.NewApplicationService(applicationRepo, taskRepo, programTermRepo, programRepo, notifier)
+	applicationSvc := service.NewApplicationService(applicationRepo, taskRepo, programTermRepo, programRepo, programMemberRepo, notifier)
 	taskSvc := service.NewTaskService(taskRepo, applicationRepo, programTermRepo, programMemberRepo, notifier)
 	menteeSvc := service.NewMenteeService(menteeRepo)
 	mentorSvc := service.NewMentorService(mentorRepo)
@@ -122,13 +122,14 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	})
 
 	r.Route("/v1", func(r chi.Router) {
+		optionalJWT := jwtAuth.OptionalMiddleware
 		// ── Public endpoints ─────────────────────────────────────────────────
 		r.Get("/programs", programH.List)
 		r.Get("/programs/catalog", programH.ListCatalog)
-		r.Get("/programs/resolve/{id}", programH.ResolveID)
-		r.Get("/programs/{id}", programH.GetByID)
+		r.With(optionalJWT).Get("/programs/resolve/{id}", programH.ResolveID)
+		r.With(optionalJWT).Get("/programs/{id}", programH.GetByID)
 		r.Get("/programs/{id}/catalog", programH.GetCatalog)
-		r.Get("/programs/{id}/mentees", programH.ListCatalogMentees)
+		r.With(optionalJWT).Get("/programs/{id}/mentees", programH.ListCatalogMentees)
 		r.Get("/programs/{id}/skills", programH.ListSkills)
 
 		r.Get("/mentees", menteeH.List)
@@ -139,8 +140,8 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		r.Get("/mentors/{id}", mentorH.GetByID)
 		r.Get("/summary", platformSummaryH.Get)
 		r.Get("/programs/{id}/funding-stats", programH.GetFundingStats)
-		r.Get("/programs/{id}/transactions", programH.GetCategorizedTransactions)
-		r.Get("/programs/{id}/sponsors", programH.GetProgramSponsors)
+		r.With(optionalJWT).Get("/programs/{id}/transactions", programH.GetCategorizedTransactions)
+		r.With(optionalJWT).Get("/programs/{id}/sponsors", programH.GetProgramSponsors)
 		r.Get("/programs/{id}/terms", programTermH.ListByProgram)
 		r.Get("/programs/{id}/members", programMemberH.List)
 
