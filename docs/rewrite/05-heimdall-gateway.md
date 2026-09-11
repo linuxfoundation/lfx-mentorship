@@ -118,7 +118,7 @@ Five implementation notes that are easy to get wrong:
 
 **Accepting a Heimdall JWT changes what `principal` *means*, and four comparisons depend on the old meaning.** Today both middlewares set `Principal.UserID` from `claims.Subject` — the Auth0 `sub` — the required one at `backend/internal/infrastructure/auth/jwt.go:168` and the optional-auth one at `:197`, so the resolution step below has to land on both paths. Under Heimdall the identity claim is `principal`, an LFID username, and the `sub` never reaches the service at all. Every site that compares `principal.UserID` to a database value therefore changes behavior on cutover without a single line of that code being edited:
 
-- `application_handler.go:70` compares the `{userId}` path param to `principal.UserID` as the IDOR guard on `GET /v1/users/{userId}/applications`.
+- `application_handler.go:70` compares the `{userId}` path param to `principal.UserID` as the IDOR guard on `GET /v1/users/{userId}/applications`. `{userId}` names an unmodeled `user` FGA type, so edge authorization has no tuple to check here — an authentication-only RuleSet on this route would let any caller list another user's applications once the service-side guard is removed. This route must join the GW-5 `/me` reshaping (`GET /me/applications`, `principal` resolved to the local user in the service) rather than staying ID-addressed.
 - `application_handler.go:116` and `:140`/`:163` populate `input.UserID` / `input.ActorID` from it.
 - `application_service.go:255` compares `current.UserID` — a `users.id` UUID — to that `ActorID` as the withdrawal guard.
 
