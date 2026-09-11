@@ -5,6 +5,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -207,7 +208,10 @@ func (s *TaskService) assertReviewer(ctx context.Context, task *models.Task, act
 	}
 	member, err := s.memberRepo.FindByProgramAndUser(ctx, term.ProgramID, actorID)
 	if err != nil {
-		return fmt.Errorf("%w: actor is not a member of this program", domain.ErrForbidden)
+		if errors.Is(err, domain.ErrProgramMemberNotFound) {
+			return fmt.Errorf("%w: actor is not a member of this program", domain.ErrForbidden)
+		}
+		return fmt.Errorf("find program member for reviewer check: %w", err)
 	}
 	if member.MemberType != models.MemberTypeMentor && member.MemberType != models.MemberTypeProgramAdmin {
 		return fmt.Errorf("%w: actor must be mentor or program_admin to review tasks", domain.ErrForbidden)
