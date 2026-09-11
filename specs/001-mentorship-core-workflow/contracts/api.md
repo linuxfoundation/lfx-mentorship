@@ -133,7 +133,7 @@ Authorization: Bearer {token}
 Content-Type: application/json
 
 {
-  "status": "accepted" | "declined" | "active" | "graduated" | "withdrawn" | "hold" | "pending",
+  "status": "accepted" | "declined" | "graduated" | "withdrawn" | "hold" | "pending",
   "attendance_type": "full_time" | "part_time"   // required when status = "accepted"
 }
 ```
@@ -141,7 +141,7 @@ Content-Type: application/json
 **Guards**:
 - `status = accepted` requires `attendance_type` to be present → 422 if absent
 - `status = withdrawn` is only allowed when the caller is the application's owner (mentee)
-- `status = active | graduated` requires the application currently be `accepted | active`
+- `status = graduated` requires the application currently be `accepted`
 
 **Side effects on `accepted`**:
 1. `attendance_type` written to the record

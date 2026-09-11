@@ -105,7 +105,7 @@ type ApplicationRepository interface {
 
 	// CountBlockingAppsForProgram returns applications in a non-terminal state across all terms of a program.
 	CountBlockingAppsForProgram(ctx context.Context, programID string) (int, error)
-	// CountAcceptedByTerm returns the count of accepted/active applications for a term.
+	// CountAcceptedByTerm returns the count of accepted applications for a term.
 	CountAcceptedByTerm(ctx context.Context, termID string) (int, error)
 	// FindByTermAndUser returns an application for a specific term and user, or nil.
 	FindByTermAndUser(ctx context.Context, termID, userID string) (*models.Application, error)
