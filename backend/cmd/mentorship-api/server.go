@@ -146,10 +146,6 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 
 		r.Get("/program-terms/{id}", programTermH.GetByID)
 
-		r.Get("/applications/{id}", applicationH.GetByID)
-		r.Get("/applications/{id}/tasks", taskH.ListByApplication)
-		r.Get("/tasks/{id}", taskH.GetByID)
-
 		// Mentor invite — token in path is the credential, no JWT required
 		r.Post("/mentor-invites/{token}/accept", mentorInviteH.AcceptInvite)
 		r.Post("/mentor-invites/{token}/decline", mentorInviteH.DeclineInvite)
@@ -193,6 +189,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 
 			// Applications
 			r.Get("/program-terms/{id}/applications", applicationH.ListByProgramTerm)
+			r.Get("/applications/{id}", applicationH.GetByID)
 			r.Post("/program-terms/{id}/applications", applicationH.Create)
 			r.Patch("/applications/{id}", applicationH.Update)
 			r.Delete("/applications/{id}", applicationH.Delete)
@@ -201,7 +198,9 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			r.Get("/program-terms/{id}/past-mentees", applicationH.PastMenteesByTerm)
 
 			// Tasks
+			r.Get("/applications/{id}/tasks", taskH.ListByApplication)
 			r.Get("/program-terms/{id}/tasks", taskH.ListByProgramTerm)
+			r.Get("/tasks/{id}", taskH.GetByID)
 			r.Post("/applications/{id}/tasks", taskH.Create)
 			r.Patch("/tasks/{id}", taskH.Update)
 			r.Delete("/tasks/{id}", taskH.Delete)
