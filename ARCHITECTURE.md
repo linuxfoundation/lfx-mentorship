@@ -1,6 +1,6 @@
 <!--
 Copyright The Linux Foundation and each contributor to LFX.
-SPDX-License-Identifier: CC-BY-4.0
+SPDX-License-Identifier: MIT
 -->
 
 # LFX Mentorship — Architecture
@@ -30,8 +30,9 @@ This file is a **roll-up of current state**, in the same spirit as `README.md`. 
 the spec directory, or `docs/rewrite/` disagree with this file, that is a defect in one of them —
 say so in review rather than letting the drift stand.
 
-**Last verified against the code**: 2026-09-10 (`f951be1`). Cross-repo state (ArgoCD, Auth0) verified
-the same day.
+**Last verified against the code**: 2026-09-10 (`f951be1`), including the §4 external contracts and
+the §5 column names against `001_initial.up.sql`. Cross-repo state (ArgoCD, Auth0) verified the same
+day.
 
 ---
 
@@ -40,21 +41,21 @@ the same day.
 ```mermaid
 flowchart TB
     USERS(["Mentee / Mentor"])
-    ADMIN(["Program Admin<br/>(maintainer)"])
+    ADMIN(["Program Admin"])
     APPROVER(["Program Approver<br/>(LF staff)"])
 
     subgraph K8S["lfx-mentorship — LFX v2 Kubernetes"]
-        NUXT["Nuxt 4 SSR BFF<br/>public discovery · apply"]
+        NUXT["Nuxt 4 SSR<br/>public discovery · apply<br/>(BFF session unbuilt)"]
         API["Go API (Chi)<br/>REST /v1"]
-        PG[("PostgreSQL<br/>mentorship schema<br/>shared LFX v2 RDS")]
-        CRON["CronJob<br/>cf-funding-sync"]
+        PG[("PostgreSQL<br/>public schema<br/>shared LFX v2 RDS")]
+        CRON["CronJob<br/>program-funding-stats-sync"]
     end
 
     SS["LFX Self Serve<br/>manage programs · applications · tasks"]
     AUTH0["Auth0"]
-    S3[("S3 uploads")]
-    MANDRILL["Mandrill"]
-    CFAPI["Crowdfunding API"]
+    LEDGER["Ledger API<br/>mentorship-credit transactions"]
+    S3[("S3 uploads<br/>unbuilt")]
+    MANDRILL["Mandrill<br/>unbuilt"]
     SF[("Snowflake")]
 
     USERS & ADMIN --> NUXT
@@ -63,16 +64,22 @@ flowchart TB
     NUXT --> AUTH0
     SS -- "user token" --> API
     API --> PG
-    API --> S3
-    API --> MANDRILL
-    CRON -- "M2M: funding stats" --> CFAPI
+    API -. "planned" .-> S3
+    API -. "planned" .-> MANDRILL
+    CRON -- "API key: transactions" --> LEDGER
     CRON --> PG
     PG -- "Fivetran" --> SF
 ```
 
-**Two front ends, one API.** The public Nuxt site owns unauthenticated discovery and the apply
-flow. Everything authenticated and management-shaped lives in LFX Self Serve. Both talk to the
-same `/v1` surface; there is no separate admin API.
+**Two front ends, one API — as intended.** The public Nuxt site is to own unauthenticated
+discovery and the apply flow; everything authenticated and management-shaped is to live in LFX
+Self Serve. Both talk to the same `/v1` surface, and there is no separate admin API.
+
+That is the target split, not today's behavior. The Nuxt app has no session handling yet
+(`frontend/app/composables/useAuth.ts` sets `isAuthEnabled = false` and the auth plugin forces a
+signed-out state), so the authenticated apply flow does not exist there. And the API does not yet
+enforce the split in the other direction either — several application and task reads are served
+unauthenticated (§3.3).
 
 ---
 
@@ -81,9 +88,9 @@ same `/v1` surface; there is no separate admin API.
 | Component | Runtime | Responsibility |
 |---|---|---|
 | `mentorship-api` | Go 1.25, Chi v5, pgx v5 | The entire REST surface (`/v1`) and all business rules |
-| `mentorship-frontend` | Nuxt 4 SSR | Public site + BFF session handling |
-| `cf-funding-sync` | Go CronJob | Hourly refresh of cached Crowdfunding stats |
-| `mentorship` schema | PostgreSQL | System of record |
+| `mentorship-frontend` | Nuxt 4 SSR | Public site. BFF session handling is planned, not built — see §1 |
+| `program-funding-stats-sync` | Go CronJob | Hourly refresh of `program_funding_stats` from the Ledger API |
+| `public` schema | PostgreSQL | System of record. A dedicated `mentorship` schema is the target (`02-target-architecture.md`); the migration creates no schema, so the tables are in `public` today |
 
 Deployed by in-repo Helm charts through ArgoCD ([lfx-v2-argocd](https://github.com/linuxfoundation/lfx-v2-argocd)).
 
@@ -170,9 +177,16 @@ The running service **authenticates but barely authorizes**. Re-verified in `f95
   Its `Middleware` performs **no scope check and no object check** — `ScopeMe` is declared and
   `HasScope` exists, but no route calls it.
 - `backend/cmd/mentorship-api/server.go` guards the write routes with nothing but that middleware.
-  Handlers null-check the principal and return 401; none compares it to the resource.
-- Real authorization exists in exactly two services, hand-rolled: `task_service.go` (assignee vs.
-  reviewer, program membership) and `application_service.go` (only the applicant may withdraw).
+  Handlers null-check the principal and return 401. A few go further: `application_handler.go`
+  rejects a cross-user application listing with `ErrForbidden`
+  ([`:70`](backend/internal/handler/application_handler.go)) and binds application ownership and the
+  update actor to the principal rather than the request body ([`:116`, `:140`](backend/internal/handler/application_handler.go)).
+  Those are the exceptions, not the rule.
+- Hand-rolled checks exist in two services, and cover **selected transitions only, not the resource**:
+  `task_service.go` (assignee vs. reviewer, program membership) and `application_service.go` (only the
+  applicant may withdraw). Both leave their delete paths open — `ApplicationService.Delete(ctx, id)`
+  and `TaskService.Delete(ctx, id)` take no actor, so applications and tasks are **not** excluded from
+  the risk below.
 - `program_service.go`, `program_term_service.go`, `program_member_service.go`,
   `user_service.go` and `user_profile_service.go` contain **no authorization at all**.
   `ProgramService.Delete(ctx, id)` does not receive a principal, so it structurally cannot check one.
@@ -180,7 +194,7 @@ The running service **authenticates but barely authorizes**. Re-verified in `f95
   no OpenFGA client** anywhere in the repo.
 
 **Therefore, as deployed to dev: any authenticated LF user can create, modify, or delete any
-program, term, member, or user profile.** This is acceptable only for a dev environment with no
+program, term, member, user profile, application, or task.** This is acceptable only for a dev environment with no
 real data. It is a release blocker for staging and prod, and it is the single most important
 thing to close.
 
@@ -207,10 +221,15 @@ the service today, and two of them leak data:
   resolution has to happen ahead of any check, via a public resolver route (`05` GW-2). This is a
   prerequisite for the RuleSets, not a cutover detail.
 
-### 3.4 Authentication (built, and unchanged)
+### 3.4 Authentication
 
-- Users: OAuth2 PKCE via Auth0; tokens in HTTP-only session cookies, never exposed to JS.
-- LFID from the `https://sso.linuxfoundation.org/claims/username` claim.
+Token validation is built; the browser-facing half is not.
+
+- Users: OAuth2 PKCE via Auth0, tokens in HTTP-only session cookies, never exposed to JS. **This is
+  the intended shape, and it is unbuilt in this repo** — the Nuxt app has no session handling and no
+  `server/api/auth/*` routes (§1). Today the API is reached with a token minted elsewhere.
+- LFID from the `https://sso.linuxfoundation.org/claims/username` claim (the claim name; the column
+  that stores it is `users.lfid` — §5).
 - Self Serve obtains a token for the Mentorship audience and forwards it — the mechanism it
   already uses for Crowdfunding.
 - Mentor invite acceptance (`POST /v1/mentor-invites/{token}/accept`) is deliberately
@@ -235,31 +254,44 @@ the service today, and two of them leak data:
 | Counterparty | Direction | Mechanism | Failure behavior |
 |---|---|---|---|
 | **Auth0** | inbound | PKCE for users, client-credentials for M2M, JWKS validation | Requests rejected 401 |
-| **Crowdfunding API** | Mentorship → CF | Hourly CronJob, M2M token, caches stats in `program_funding_stats` | Last cached values served |
+| **Ledger API** | Mentorship → Ledger | Hourly CronJob, `LEDGER_API_KEY` bearer token; reads mentorship-credit transactions and caches them in `program_funding_stats` | Last cached values served |
+| **Crowdfunding API** | Mentorship → CF | Request-time call from `ProgramService`, Auth0 M2M token (`access:manage`); fetches categorized transactions and sponsors | Optional — the client is wired only when configured (`server.go:66`) |
 | **Snowflake** | Mentorship → SF | Fivetran Postgres connector; `fivetran_mentorship_*` dbt models repointed | Analytics-plane only — never in the serving path |
-| **Mandrill** | Mentorship → Mandrill | All transactional email. SES is dropped | Email lost; no retry queue today |
-| **S3** | Mentorship → S3 | Program logos, task submissions via presigned URLs | — |
+| **Mandrill** | Mentorship → Mandrill | **Unbuilt.** Intended for all transactional email; SES is dropped. Today `server.go:60` wires `LogNotifier`, which only logs the event | No email is sent at all — see §6 |
+| **S3** | Mentorship → S3 | **Unbuilt.** Intended for program logos and task submissions via presigned URLs. No S3 client, upload route, or presigner exists | — see §6 |
 | **LFX Self Serve** | SS → Mentorship | User token against `/v1` | — |
 
-**Direction of dependency matters:** Mentorship reads from Crowdfunding, never the reverse.
-Crowdfunding consumes Mentorship data only through Snowflake, so nothing in Mentorship's serving
-path may depend on Crowdfunding being up.
+Two upstreams, not one: the cache job and the request-time call go to **different services with
+different credentials**. Do not implement against the wrong one.
+
+**Direction of dependency matters:** Mentorship reads from Crowdfunding and Ledger, never the
+reverse. Crowdfunding consumes Mentorship data only through Snowflake, so nothing in Mentorship's
+serving path may depend on Crowdfunding being up.
 
 ---
 
 ## 5. Data ownership
 
-PostgreSQL (`mentorship` schema, shared LFX v2 RDS) is the system of record, replacing 8 DynamoDB
-tables and 30 GSIs. Full ERD in
+PostgreSQL (shared LFX v2 RDS) is the system of record, replacing 8 DynamoDB
+tables and 30 GSIs. The tables live in the `public` schema today; the dedicated `mentorship` schema
+is a target the migration does not yet create (§2). Full ERD in
 [`docs/rewrite/02-target-architecture.md`](docs/rewrite/02-target-architecture.md#data-model-proposal-level-erd).
 
 Cross-component notes:
 
-- **Users are mirrored, not owned.** `users.username` holds the LFID. Auth0/LF SSO remains
+- **Users are mirrored, not owned.** `users.lfid` holds the LFID
+  ([`001_initial.up.sql:30`](backend/db/migrations/001_initial.up.sql)). Auth0/LF SSO remains
   authoritative for identity.
-- **`programs.cf_initiative_id`** is the only foreign reference into Crowdfunding.
+- **`programs.cii_project_id`** is the only foreign project reference on a program. It is *not* the
+  Crowdfunding join key: `ProgramService.GetCategorizedTransactions` passes the mentorship
+  `programID` straight through as the initiative id
+  ([`program_service.go:373`](backend/internal/service/program_service.go)), so the two systems are
+  coupled on program id. Worth settling deliberately rather than inheriting.
 - **`program_funding_stats`** is a cache, never authoritative. It may be stale.
-- **Search is Postgres FTS** (`tsvector` + GIN). Elasticsearch is dropped.
+- **Search is `ILIKE`, not full-text.** Postgres FTS (`tsvector` + GIN) is the target and
+  Elasticsearch is dropped, but no migration defines a `tsvector` column or GIN index; repositories
+  filter with `ILIKE` ([`program_repository.go:125`](backend/internal/infrastructure/db/program_repository.go),
+  `user_repository.go:73`). Planned, not built — see §6.
 - Mentorship publishes **no NATS messages** and registers **nothing with the indexer or
   fga-sync services** *today*. This is a statement of current state, not a target: `04` makes
   fga-sync registration PR 2 of its four-PR path, and specifies the emission path as a
@@ -287,7 +319,12 @@ Tracked here so no one builds against a contract that does not exist yet.
 | **Unauthenticated reads serve PII** | Live defect. Six routes; needs a redaction contract either way. See §3.3 |
 | **Slug-or-UID program IDs are incompatible with FGA tuple keys** | Prerequisite for the RuleSets; needs a public slug-to-UID resolver. See §3.3 |
 | **ArgoCD dev wiring is half-landed** | [lfx-v2-argocd#1453](https://github.com/linuxfoundation/lfx-v2-argocd/pull/1453) merged 2026-09-10, but its ApplicationSet entries point at a frontend chart path that only exists on [lfx-mentorship#148](https://github.com/linuxfoundation/lfx-mentorship/pull/148). Staging/prod values do not exist |
-| **`term-status` and `task-submission-status` CronJobs** | Planned in `02-target-architecture.md`; only `cf-funding-sync` is built |
+| **No transactional email** | `LogNotifier` logs every notification and sends nothing (`server.go:60`); no Mandrill adapter exists. Every invite, decline, and acceptance notice is silently dropped. See §4 |
+| **No file uploads** | Program logos and task submissions need S3 presigned URLs; no S3 client, upload route, or presigner exists anywhere in the repo. See §4 |
+| **Frontend has no session handling** | `isAuthEnabled = false` in `frontend/app/composables/useAuth.ts`; the authenticated apply flow does not exist on the public site. See §1 |
+| **Search is `ILIKE`, not Postgres FTS** | No `tsvector` column or GIN index in any migration. Acceptable at current data volumes; revisit before launch. See §5 |
+| **Tables are in `public`, not a `mentorship` schema** | The migration creates no schema. Cosmetic today, but it contradicts `02-target-architecture.md` and affects any cross-schema grant or Fivetran config. See §2 |
+| **`term-status` and `task-submission-status` CronJobs** | Planned in `02-target-architecture.md`; only `program-funding-stats-sync` is built |
 | **No architecture-review label on this repo** | `lfx-self-serve` has `architecture-review`; the mentorship repos have none |
 
 ---
@@ -295,17 +332,25 @@ Tracked here so no one builds against a contract that does not exist yet.
 ## 7. Changing this file
 
 This file is owned by the architecture review team. `CODEOWNERS` carries a line that overrides the
-`*` rule, so any PR touching cross-component contracts, authorization, or external dependencies
-gets an architecture review through the normal PR process:
+`*` rule:
 
 ```
 *                 @linuxfoundation/lfx-mentorship
 /ARCHITECTURE.md  @linuxfoundation/lfx-architecture-team
 ```
 
-Two practical limits worth knowing: a code owner cannot approve their own PR, so the team needs
-more than one member for the guard to function; and the guard only bites if code-owner review is
-required by branch protection.
+**Be clear about what that does and does not buy.** The pattern matches this file's path, so it
+requests architecture-team review when *this file* changes. It does **not** fire on a
+contract-changing code PR that omits this file — that PR matches only `*`. So the guard enforces
+"review the doc when it is edited", not "review every contract change"; the rule below is a
+convention the guard cannot enforce on its own. Extending ownership to the contract-bearing code
+(the auth middleware, the outbound clients, the chart's routing) would close that hole, at the cost
+of pulling the architecture team into routine PRs — worth deciding explicitly rather than assuming
+the current line already covers it.
+
+Two further limits: a code owner cannot approve their own PR, so the team needs more than one
+member for the guard to function; and the guard only bites if code-owner review is required by
+branch protection.
 
 Update this file in the **same PR** as the change it describes. A contract change that lands
 without the corresponding edit here is incomplete.
