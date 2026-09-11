@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/handler"
 )
@@ -18,7 +19,7 @@ import (
 type stubProgramMemberSvc struct {
 	getByID       func(context.Context, string) (*models.ProgramMember, error)
 	listByProgram func(context.Context, string, models.ProgramMemberFilter) ([]*models.ProgramMember, *models.PaginationMeta, error)
-	update        func(context.Context, string, models.ProgramMemberUpdateInput) (*models.ProgramMember, error)
+	update        func(context.Context, string, string, models.ProgramMemberUpdateInput, string) (*models.ProgramMember, error)
 }
 
 func (s *stubProgramMemberSvc) GetByID(ctx context.Context, id string) (*models.ProgramMember, error) {
@@ -36,13 +37,13 @@ func (s *stubProgramMemberSvc) ListByProgram(ctx context.Context, programID stri
 func (s *stubProgramMemberSvc) Create(context.Context, string, models.ProgramMemberCreateInput) (*models.ProgramMember, error) {
 	return &models.ProgramMember{}, nil
 }
-func (s *stubProgramMemberSvc) Update(ctx context.Context, id string, in models.ProgramMemberUpdateInput) (*models.ProgramMember, error) {
+func (s *stubProgramMemberSvc) Update(ctx context.Context, programID, id string, in models.ProgramMemberUpdateInput, actorID string) (*models.ProgramMember, error) {
 	if s.update != nil {
-		return s.update(ctx, id, in)
+		return s.update(ctx, programID, id, in, actorID)
 	}
 	return &models.ProgramMember{}, nil
 }
-func (s *stubProgramMemberSvc) Delete(context.Context, string) error { return nil }
+func (s *stubProgramMemberSvc) Delete(context.Context, string, string, string) error { return nil }
 
 // The public roster is active members only, and the caller must not be able to
 // widen it by asking for another status.
@@ -122,12 +123,9 @@ func TestProgramMemberHandler_List_OmitsEmail(t *testing.T) {
 func TestProgramMemberHandler_Update_RejectsMemberFromDifferentProgram(t *testing.T) {
 	updateCalled := false
 	h := handler.NewProgramMemberHandler(&stubProgramMemberSvc{
-		getByID: func(_ context.Context, _ string) (*models.ProgramMember, error) {
-			return &models.ProgramMember{ID: "m1", ProgramID: "p2"}, nil
-		},
-		update: func(_ context.Context, _ string, _ models.ProgramMemberUpdateInput) (*models.ProgramMember, error) {
+		update: func(_ context.Context, _, _ string, _ models.ProgramMemberUpdateInput, _ string) (*models.ProgramMember, error) {
 			updateCalled = true
-			return &models.ProgramMember{}, nil
+			return nil, domain.ErrProgramMemberNotFound
 		},
 	})
 	body := strings.NewReader(`{"status":"active"}`)
@@ -141,20 +139,17 @@ func TestProgramMemberHandler_Update_RejectsMemberFromDifferentProgram(t *testin
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("got %d; want 404", w.Code)
 	}
-	if updateCalled {
-		t.Fatal("expected update not to be called for cross-program member")
+	if !updateCalled {
+		t.Fatal("expected update to be called")
 	}
 }
 
 func TestProgramMemberHandler_Delete_RejectsMemberFromDifferentProgram(t *testing.T) {
 	updateCalled := false
 	h := handler.NewProgramMemberHandler(&stubProgramMemberSvc{
-		getByID: func(_ context.Context, _ string) (*models.ProgramMember, error) {
-			return &models.ProgramMember{ID: "m1", ProgramID: "p2"}, nil
-		},
-		update: func(_ context.Context, _ string, _ models.ProgramMemberUpdateInput) (*models.ProgramMember, error) {
+		update: func(_ context.Context, _, _ string, _ models.ProgramMemberUpdateInput, _ string) (*models.ProgramMember, error) {
 			updateCalled = true
-			return &models.ProgramMember{}, nil
+			return nil, domain.ErrProgramMemberNotFound
 		},
 	})
 	r := httptest.NewRequest(http.MethodDelete, "/v1/programs/p1/members/m1", nil)
@@ -167,7 +162,7 @@ func TestProgramMemberHandler_Delete_RejectsMemberFromDifferentProgram(t *testin
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("got %d; want 404", w.Code)
 	}
-	if updateCalled {
-		t.Fatal("expected update not to be called for cross-program member")
+	if !updateCalled {
+		t.Fatal("expected update to be called")
 	}
 }

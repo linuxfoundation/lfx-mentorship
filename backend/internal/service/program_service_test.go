@@ -16,7 +16,7 @@ import (
 )
 
 func newProgramSvc(progRepo *stubProgRepo, termRepo *stubTermRepo, appRepo *stubAppRepo) *service.ProgramService {
-	return service.NewProgramService(progRepo, termRepo, appRepo)
+	return service.NewProgramService(progRepo, termRepo, appRepo, &stubMemberRepo{})
 }
 
 // ── state machine ────────────────────────────────────────────────────────────

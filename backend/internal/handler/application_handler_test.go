@@ -21,14 +21,16 @@ import (
 // ── stub application service ─────────────────────────────────────────────────
 
 type stubApplicationSvc struct {
-	listByUser    func(ctx context.Context, userID string, f models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error)
-	create        func(ctx context.Context, termID string, in models.ApplicationCreateInput) (*models.Application, error)
-	getByID       func(ctx context.Context, id string) (*models.Application, error)
-	listByTerm    func(ctx context.Context, termID string, f models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error)
-	update        func(ctx context.Context, id string, in models.ApplicationUpdateInput) (*models.Application, error)
-	delete        func(ctx context.Context, id string) error
-	bulkDecline   func(ctx context.Context, termID string) (int, error)
-	listPastMentees func(ctx context.Context, termID string) ([]*models.Application, error)
+	listByUser         func(ctx context.Context, userID string, f models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error)
+	create             func(ctx context.Context, termID string, in models.ApplicationCreateInput) (*models.Application, error)
+	getByID            func(ctx context.Context, id string) (*models.Application, error)
+	getByIDForActor    func(ctx context.Context, id, actorID string) (*models.Application, error)
+	listByTerm         func(ctx context.Context, termID string, f models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error)
+	listByTermForActor func(ctx context.Context, termID string, f models.ApplicationFilter, actorID string) ([]*models.Application, *models.PaginationMeta, error)
+	update             func(ctx context.Context, id string, in models.ApplicationUpdateInput) (*models.Application, error)
+	delete             func(ctx context.Context, id string) error
+	bulkDecline        func(ctx context.Context, termID string) (int, error)
+	listPastMentees    func(ctx context.Context, termID string) ([]*models.Application, error)
 }
 
 func (s *stubApplicationSvc) ListByUser(ctx context.Context, userID string, f models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error) {
@@ -49,7 +51,25 @@ func (s *stubApplicationSvc) GetByID(ctx context.Context, id string) (*models.Ap
 	}
 	return &models.Application{ID: id}, nil
 }
+func (s *stubApplicationSvc) GetByIDForActor(ctx context.Context, id, actorID string) (*models.Application, error) {
+	if s.getByIDForActor != nil {
+		return s.getByIDForActor(ctx, id, actorID)
+	}
+	if s.getByID != nil {
+		return s.getByID(ctx, id)
+	}
+	return &models.Application{ID: id, UserID: actorID}, nil
+}
 func (s *stubApplicationSvc) ListByProgramTerm(ctx context.Context, termID string, f models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error) {
+	if s.listByTerm != nil {
+		return s.listByTerm(ctx, termID, f)
+	}
+	return []*models.Application{}, &models.PaginationMeta{}, nil
+}
+func (s *stubApplicationSvc) ListByProgramTermForActor(ctx context.Context, termID string, f models.ApplicationFilter, actorID string) ([]*models.Application, *models.PaginationMeta, error) {
+	if s.listByTermForActor != nil {
+		return s.listByTermForActor(ctx, termID, f, actorID)
+	}
 	if s.listByTerm != nil {
 		return s.listByTerm(ctx, termID, f)
 	}
@@ -90,7 +110,10 @@ func requestWithPrincipal(r *http.Request, userID string) *http.Request {
 
 // requestWithChiParam attaches a chi route param to the request context.
 func requestWithChiParam(r *http.Request, key, val string) *http.Request {
-	rctx := chi.NewRouteContext()
+	rctx, _ := r.Context().Value(chi.RouteCtxKey).(*chi.Context)
+	if rctx == nil {
+		rctx = chi.NewRouteContext()
+	}
 	rctx.URLParams.Add(key, val)
 	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
 }
@@ -186,12 +209,13 @@ func TestApplicationHandler_Create_UserIDBoundToPrincipal(t *testing.T) {
 
 func TestApplicationHandler_GetByID_ServiceError_MapsToNotFound(t *testing.T) {
 	svc := &stubApplicationSvc{
-		getByID: func(_ context.Context, _ string) (*models.Application, error) {
+		getByIDForActor: func(_ context.Context, _, _ string) (*models.Application, error) {
 			return nil, domain.ErrApplicationNotFound
 		},
 	}
 	h := newApplicationHandler(svc)
 	r := httptest.NewRequest(http.MethodGet, "/applications/missing", nil)
+	r = requestWithPrincipal(r, "u1")
 	r = requestWithChiParam(r, "id", "missing")
 	w := httptest.NewRecorder()
 	h.GetByID(w, r)
