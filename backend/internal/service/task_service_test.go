@@ -215,6 +215,48 @@ func TestTaskService_Update_Reviewer_CannotMarkComplete_NotMember(t *testing.T) 
 	}
 }
 
+func TestTaskService_Update_Reviewer_MembershipLookupFailure_Propagates(t *testing.T) {
+	appID := "app-1"
+	termID := "term-1"
+	taskRepo := &stubTaskRepo{
+		getByID: func(_ context.Context, id string) (*models.Task, error) {
+			return &models.Task{ID: id, AssigneeID: "mentee-1", Status: "submitted", ApplicationID: &appID}, nil
+		},
+	}
+	appRepo := &stubAppRepo{
+		getByID: func(_ context.Context, _ string) (*models.Application, error) {
+			return &models.Application{ID: appID, ProgramTermID: termID}, nil
+		},
+	}
+	termRepo := &stubTermRepo{
+		getByID: func(_ context.Context, _ string) (*models.ProgramTerm, error) {
+			return &models.ProgramTerm{ID: termID, ProgramID: "prog-1"}, nil
+		},
+	}
+	membershipErr := errors.New("membership lookup failed")
+	memberRepo := &stubMemberRepo{
+		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
+			return nil, membershipErr
+		},
+	}
+
+	svc := newTaskSvc(taskRepo, appRepo, termRepo, memberRepo)
+	next := models.TaskStatusComplete
+	_, err := svc.Update(context.Background(), "task-1", models.TaskUpdateInput{
+		Status:  &next,
+		ActorID: "mentor-1",
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("expected non-forbidden error for lookup failure, got %v", err)
+	}
+	if !errors.Is(err, membershipErr) {
+		t.Fatalf("expected wrapped membership lookup error, got %v", err)
+	}
+}
+
 func TestTaskService_Update_Reviewer_CannotMarkComplete_WrongRole(t *testing.T) {
 	appID := "app-1"
 	termID := "term-1"
