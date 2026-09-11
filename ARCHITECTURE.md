@@ -54,6 +54,7 @@ flowchart TB
     SS["LFX Self Serve<br/>manage programs · applications · tasks"]
     AUTH0["Auth0"]
     LEDGER["Ledger API<br/>mentorship-credit transactions"]
+    CF["Crowdfunding API<br/>categorized transactions · sponsors"]
     S3[("S3 uploads<br/>unbuilt")]
     EMAIL["lfx-v2-email-service<br/>NATS → SES · unbuilt"]
     SF[("Snowflake")]
@@ -66,6 +67,8 @@ flowchart TB
     API --> PG
     API -. "planned" .-> S3
     API -. "planned" .-> EMAIL
+    API -- "M2M access:manage" --> CF
+    CF -- "reads" --> LEDGER
     CRON -- "API key: transactions" --> LEDGER
     CRON --> PG
     PG -- "Fivetran" --> SF
@@ -241,8 +244,8 @@ Token validation is built; the browser-facing half is not.
 | Counterparty | Direction | Mechanism | Failure behavior |
 |---|---|---|---|
 | **Auth0** | inbound | PKCE for users, client-credentials for M2M, JWKS validation | Requests rejected 401 |
-| **Ledger API** | Mentorship → Ledger | Hourly CronJob, `LEDGER_API_KEY` bearer token; reads mentorship-credit transactions and caches them in `program_funding_stats` | Last cached values served |
-| **Crowdfunding API** | Mentorship → CF | Request-time call from `ProgramService`, Auth0 M2M token (`access:manage`); fetches categorized transactions and sponsors | Optional — the client is wired only when configured (`server.go:66`) |
+| **Ledger API** | Mentorship → Ledger | Hourly CronJob, `LEDGER_API_KEY` bearer token; reads mentorship-credit transactions and caches them in `program_funding_stats`. **Direct, not proxied** — `LEDGER_BASE_URL` points at the Ledger service itself (`https://ledger.dev.platform.linuxfoundation.org` in dev), and this repo has its own client ([`clients/ledger.go`](backend/internal/infrastructure/clients/ledger.go)) | Last cached values served |
+| **Crowdfunding API** | Mentorship → CF → Ledger | Request-time call from `ProgramService`, Auth0 M2M token (`access:manage`); fetches categorized transactions and sponsors. **Crowdfunding is a proxy for the Ledger on this path**: `GET /v1/initiatives/{id}/transactions` is served by CF's `InitiativeService` calling the Ledger's `/transactions` ([`initiative_service.go`](https://github.com/linuxfoundation/lfx-crowdfunding/blob/main/backend/internal/service/initiative_service.go)), and `ProgramService.GetCategorizedTransactions` is documented in-code as proxying that contract. The categorization and sponsor resolution are CF's own, which is why this does not collapse into the direct Ledger call above | Optional — the client is wired only when configured (`server.go:66`) |
 | **Snowflake** | Mentorship → SF | Fivetran Postgres connector; `fivetran_mentorship_*` dbt models repointed | Analytics-plane only — never in the serving path |
 | **lfx-v2-email-service** | Mentorship → NATS `lfx.email-service.send_email` | **Unbuilt.** The platform rail for all transactional email: a request/reply relay over Amazon SES, imported as `lfx-v2-email-service/pkg/api`. It accepts **pre-rendered** `html`/`text` only — no templating — so Mentorship owns and renders its own templates. Today `server.go:60` wires `LogNotifier`, which only logs the event. Not Mandrill: that is the legacy rail and is out of scope ([linuxfoundation/lfx-self-serve#2188](https://github.com/linuxfoundation/lfx-self-serve/issues/2188)) | No email is sent at all — see §6 |
 | **S3** | Mentorship → S3 | **Unbuilt.** Intended for program logos and task submissions via presigned URLs. No S3 client, upload route, or presigner exists | — see §6 |
