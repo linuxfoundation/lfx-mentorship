@@ -159,6 +159,16 @@ func (h *ProgramHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, program)
 }
 
+// ResolveID handles GET /v1/programs/resolve/{id}.
+// It resolves either a UUID or slug to the canonical program UUID.
+func (h *ProgramHandler) ResolveID(w http.ResponseWriter, r *http.Request) {
+	program, ok := h.resolveVisibleProgram(w, r)
+	if !ok {
+		return
+	}
+	JSON(w, http.StatusOK, map[string]string{"id": program.ID})
+}
+
 // Create handles POST /v1/programs — requires JWT.
 func (h *ProgramHandler) Create(w http.ResponseWriter, r *http.Request) {
 	principal := auth.PrincipalFromContext(r.Context())
@@ -259,7 +269,26 @@ func (h *ProgramHandler) DeleteSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	programID := chi.URLParam(r, "id")
 	skillID := chi.URLParam(r, "skillId")
+	skills, err := h.svc.ListSkills(r.Context(), programID)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+
+	belongsToProgram := false
+	for _, skill := range skills {
+		if skill.ID == skillID {
+			belongsToProgram = true
+			break
+		}
+	}
+	if !belongsToProgram {
+		Error(w, domain.ErrProgramNotFound)
+		return
+	}
+
 	if err := h.svc.DeleteSkill(r.Context(), skillID); err != nil {
 		Error(w, err)
 		return

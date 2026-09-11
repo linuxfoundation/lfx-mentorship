@@ -308,3 +308,97 @@ func TestTaskService_InvalidCategory_Rejected(t *testing.T) {
 		t.Errorf("expected ErrInvalidInput for unknown category on update, got %v", err)
 	}
 }
+
+func TestTaskService_Delete_ReviewerCanDeleteWhenActiveMember(t *testing.T) {
+	appID := "app-1"
+	termID := "term-1"
+	activeStatus := models.ProgramMemberStatusActive
+	deleteCalled := false
+
+	taskRepo := &stubTaskRepo{
+		getByID: func(_ context.Context, id string) (*models.Task, error) {
+			return &models.Task{ID: id, AssigneeID: "mentee-1", ApplicationID: &appID}, nil
+		},
+		delete: func(_ context.Context, _ string) error {
+			deleteCalled = true
+			return nil
+		},
+	}
+	appRepo := &stubAppRepo{
+		getByID: func(_ context.Context, _ string) (*models.Application, error) {
+			return &models.Application{ID: appID, ProgramTermID: termID}, nil
+		},
+	}
+	termRepo := &stubTermRepo{
+		getByID: func(_ context.Context, _ string) (*models.ProgramTerm, error) {
+			return &models.ProgramTerm{ID: termID, ProgramID: "prog-1"}, nil
+		},
+	}
+	memberRepo := &stubMemberRepo{
+		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
+			return &models.ProgramMember{MemberType: models.MemberTypeMentor, Status: &activeStatus}, nil
+		},
+	}
+
+	svc := newTaskSvc(taskRepo, appRepo, termRepo, memberRepo)
+	if err := svc.Delete(context.Background(), "task-1", "mentor-1"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if !deleteCalled {
+		t.Fatal("expected repository delete to be called")
+	}
+}
+
+func TestTaskService_Delete_AssigneeForbidden(t *testing.T) {
+	appID := "app-1"
+	taskRepo := &stubTaskRepo{
+		getByID: func(_ context.Context, id string) (*models.Task, error) {
+			return &models.Task{ID: id, AssigneeID: "mentee-1", ApplicationID: &appID}, nil
+		},
+	}
+
+	svc := newTaskSvc(taskRepo, &stubAppRepo{}, &stubTermRepo{}, &stubMemberRepo{})
+	err := svc.Delete(context.Background(), "task-1", "mentee-1")
+	if !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("expected ErrForbidden, got %v", err)
+	}
+}
+
+func TestTaskService_Delete_NonMemberForbidden(t *testing.T) {
+	appID := "app-1"
+	termID := "term-1"
+	taskRepo := &stubTaskRepo{
+		getByID: func(_ context.Context, id string) (*models.Task, error) {
+			return &models.Task{ID: id, AssigneeID: "mentee-1", ApplicationID: &appID}, nil
+		},
+	}
+	appRepo := &stubAppRepo{
+		getByID: func(_ context.Context, _ string) (*models.Application, error) {
+			return &models.Application{ID: appID, ProgramTermID: termID}, nil
+		},
+	}
+	termRepo := &stubTermRepo{
+		getByID: func(_ context.Context, _ string) (*models.ProgramTerm, error) {
+			return &models.ProgramTerm{ID: termID, ProgramID: "prog-1"}, nil
+		},
+	}
+	memberRepo := &stubMemberRepo{
+		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
+			return nil, domain.ErrProgramMemberNotFound
+		},
+	}
+
+	svc := newTaskSvc(taskRepo, appRepo, termRepo, memberRepo)
+	err := svc.Delete(context.Background(), "task-1", "stranger-1")
+	if !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("expected ErrForbidden, got %v", err)
+	}
+}
+
+func TestTaskService_Delete_MissingActorForbidden(t *testing.T) {
+	svc := newTaskSvc(&stubTaskRepo{}, &stubAppRepo{}, &stubTermRepo{}, &stubMemberRepo{})
+	err := svc.Delete(context.Background(), "task-1", "")
+	if !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("expected ErrForbidden, got %v", err)
+	}
+}

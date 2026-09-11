@@ -19,7 +19,7 @@ type taskService interface {
 	ListByProgramTerm(ctx context.Context, programTermID string, filter models.TaskFilter) ([]*models.Task, *models.PaginationMeta, error)
 	Create(ctx context.Context, applicationID string, input models.TaskCreateInput) (*models.Task, error)
 	Update(ctx context.Context, id string, input models.TaskUpdateInput) (*models.Task, error)
-	Delete(ctx context.Context, id string) error
+	Delete(ctx context.Context, id string, actorID string) error
 }
 
 // TaskHandler holds Chi handlers for tasks.
@@ -138,7 +138,7 @@ func (h *TaskHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := chi.URLParam(r, "id")
-	if err := h.svc.Delete(r.Context(), id); err != nil {
+	if err := h.svc.Delete(r.Context(), id, principal.UserID); err != nil {
 		Error(w, err)
 		return
 	}

@@ -21,6 +21,8 @@ type stubProgramSvc struct {
 	getByID                    func(context.Context, string) (*models.Program, error)
 	getBySlug                  func(context.Context, string) (*models.Program, error)
 	listMentees                func(context.Context, string) ([]*models.ProgramCatalogMentee, error)
+	listSkills                 func(context.Context, string) ([]*models.ProgramSkill, error)
+	deleteSkill                func(context.Context, string) error
 	getCategorizedTransactions func(context.Context, string, string, bool, int, int) (*models.ProgramCategorizedTransactions, error)
 	getProgramSponsors         func(context.Context, string, string, bool, bool) ([]models.ProgramSponsor, error)
 }
@@ -65,13 +67,21 @@ func (s *stubProgramSvc) Update(context.Context, string, models.ProgramUpdateInp
 	return &models.Program{}, nil
 }
 func (s *stubProgramSvc) Delete(context.Context, string) error { return nil }
-func (s *stubProgramSvc) ListSkills(context.Context, string) ([]*models.ProgramSkill, error) {
+func (s *stubProgramSvc) ListSkills(ctx context.Context, programID string) ([]*models.ProgramSkill, error) {
+	if s.listSkills != nil {
+		return s.listSkills(ctx, programID)
+	}
 	return []*models.ProgramSkill{}, nil
 }
 func (s *stubProgramSvc) AddSkill(context.Context, string, models.ProgramSkillCreateInput) (*models.ProgramSkill, error) {
 	return &models.ProgramSkill{}, nil
 }
-func (s *stubProgramSvc) DeleteSkill(context.Context, string) error { return nil }
+func (s *stubProgramSvc) DeleteSkill(ctx context.Context, skillID string) error {
+	if s.deleteSkill != nil {
+		return s.deleteSkill(ctx, skillID)
+	}
+	return nil
+}
 func (s *stubProgramSvc) GetFundingStats(context.Context, string) (*models.ProgramFundingStats, error) {
 	return &models.ProgramFundingStats{}, nil
 }
@@ -309,6 +319,52 @@ func TestProgramHandler_GetCategorizedTransactions_HiddenReturns404(t *testing.T
 	}
 }
 
+func TestProgramHandler_ResolveID_BySlugReturnsCanonicalID(t *testing.T) {
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		getByID: func(_ context.Context, _ string) (*models.Program, error) {
+			return nil, domain.ErrProgramNotFound
+		},
+		getBySlug: func(_ context.Context, slug string) (*models.Program, error) {
+			return &models.Program{ID: "prog-uuid-1", Slug: slug, Status: models.ProgramStatusPublished}, nil
+		},
+	})
+
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/resolve/program-creation", nil)
+	r = requestWithChiParam(r, "id", "program-creation")
+	w := httptest.NewRecorder()
+	h.ResolveID(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d; want 200", w.Code)
+	}
+
+	var body map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["id"] != "prog-uuid-1" {
+		t.Fatalf("id = %q; want prog-uuid-1", body["id"])
+	}
+}
+
+func TestProgramHandler_ResolveID_HiddenReturns404(t *testing.T) {
+	lfid := "owner"
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		getByID: func(_ context.Context, id string) (*models.Program, error) {
+			return &models.Program{ID: id, Status: models.ProgramStatusHidden, LFID: &lfid}, nil
+		},
+	})
+
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/resolve/p1", nil)
+	r = requestWithChiParam(r, "id", "p1")
+	w := httptest.NewRecorder()
+	h.ResolveID(w, r)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("got %d; want 404", w.Code)
+	}
+}
+
 func TestProgramHandler_GetProgramSponsors_OK(t *testing.T) {
 	h := handler.NewProgramHandler(&stubProgramSvc{
 		getByID: func(_ context.Context, id string) (*models.Program, error) {
@@ -385,5 +441,60 @@ func TestProgramHandler_GetProgramSponsors_HiddenReturns404(t *testing.T) {
 	h.GetProgramSponsors(w, r)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("got %d; want 404", w.Code)
+	}
+}
+
+func TestProgramHandler_DeleteSkill_RejectsSkillOutsideProgram(t *testing.T) {
+	deleteCalled := false
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		listSkills: func(_ context.Context, _ string) ([]*models.ProgramSkill, error) {
+			return []*models.ProgramSkill{{ID: "skill-in-other-program", ProgramID: "p1", Skill: "Go"}}, nil
+		},
+		deleteSkill: func(_ context.Context, _ string) error {
+			deleteCalled = true
+			return nil
+		},
+	})
+	r := httptest.NewRequest(http.MethodDelete, "/v1/programs/p1/skills/skill-2", nil)
+	r = requestWithPrincipal(r, "admin-1")
+	r = requestWithChiParam(r, "id", "p1")
+	r = requestWithChiParam(r, "skillId", "skill-2")
+	w := httptest.NewRecorder()
+	h.DeleteSkill(w, r)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("got %d; want 404", w.Code)
+	}
+	if deleteCalled {
+		t.Fatal("expected delete not to be called for cross-program skill")
+	}
+}
+
+func TestProgramHandler_DeleteSkill_DeletesWhenSkillBelongsToProgram(t *testing.T) {
+	deleteCalled := false
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		listSkills: func(_ context.Context, _ string) ([]*models.ProgramSkill, error) {
+			return []*models.ProgramSkill{{ID: "skill-2", ProgramID: "p1", Skill: "Go"}}, nil
+		},
+		deleteSkill: func(_ context.Context, skillID string) error {
+			deleteCalled = true
+			if skillID != "skill-2" {
+				t.Fatalf("skillID = %q; want skill-2", skillID)
+			}
+			return nil
+		},
+	})
+	r := httptest.NewRequest(http.MethodDelete, "/v1/programs/p1/skills/skill-2", nil)
+	r = requestWithPrincipal(r, "admin-1")
+	r = requestWithChiParam(r, "id", "p1")
+	r = requestWithChiParam(r, "skillId", "skill-2")
+	w := httptest.NewRecorder()
+	h.DeleteSkill(w, r)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("got %d; want 204", w.Code)
+	}
+	if !deleteCalled {
+		t.Fatal("expected delete to be called")
 	}
 }

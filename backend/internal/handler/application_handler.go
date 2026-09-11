@@ -21,7 +21,6 @@ type applicationService interface {
 	ListByUser(ctx context.Context, userID string, filter models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error)
 	Create(ctx context.Context, programTermID string, input models.ApplicationCreateInput) (*models.Application, error)
 	Update(ctx context.Context, id string, input models.ApplicationUpdateInput) (*models.Application, error)
-	Delete(ctx context.Context, id string) error
 	BulkDeclineByTerm(ctx context.Context, termID string) (int, error)
 	ListPastMenteesByTerm(ctx context.Context, termID string) ([]*models.Application, error)
 }
