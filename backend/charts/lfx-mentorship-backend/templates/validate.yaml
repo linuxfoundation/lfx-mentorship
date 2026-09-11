@@ -67,12 +67,18 @@ Two things this guard must get right, both learned from review:
 {{/*
 Required runtime configuration. The binary exits at startup without these
 (the database connection variables and MENTOR_INVITE_SECRET are hard-required;
-the JWT settings
-fail when the authenticator is constructed), so catch it at render time
-rather than in a crash-looping pod.
+the JWT settings fail when the authenticator is constructed), so catch it at
+render time rather than in a crash-looping pod.
+
+Skipped when the auth bypass is active: internal/infrastructure/auth/jwt.go
+returns a mock-principal authenticator before parsing JWKS_URL / JWT_AUDIENCE /
+JWT_ISSUER, so requiring them would block the documented local bypass flow
+(see make deploy-kind) for values the service never reads in that mode.
 */}}
+{{- if not $bypassSet }}
 {{- range $key := list "JWKS_URL" "JWT_AUDIENCE" "JWT_ISSUER" }}
 {{- if not (get $.Values.config $key) }}
 {{- fail (printf "\n\nvalues.yaml: config.%s is required — the service fails to start without it.\nSet it per environment in the ArgoCD values file." $key) }}
+{{- end }}
 {{- end }}
 {{- end }}

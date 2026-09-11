@@ -149,6 +149,29 @@ func TestConnConfigFromEnvRejectsMalformedHost(t *testing.T) {
 	}
 }
 
+// DB_SSLMODE is interpolated into the keyword/value string pgx parses, so a
+// value carrying extra "key=value" pairs must be rejected rather than let
+// through to retarget the connection or disable TLS.
+func TestConnConfigFromEnvRejectsInvalidSSLMode(t *testing.T) {
+	for _, mode := range []string{"disable port=6543", "disable sslmode=verify-full", "not-a-mode", ""} {
+		if mode == "" {
+			continue
+		}
+		t.Run(mode, func(t *testing.T) {
+			clearDBEnv(t)
+			t.Setenv("DB_HOST", "rds.example.com")
+			t.Setenv("DB_USER", "mentorship")
+			t.Setenv("DB_PASSWORD", "s3cret")
+			t.Setenv("DB_NAME", "mentorship")
+			t.Setenv("DB_SSLMODE", mode)
+
+			if _, err := ConnConfigFromEnv(); err == nil {
+				t.Fatalf("expected an error for DB_SSLMODE=%q, got nil", mode)
+			}
+		})
+	}
+}
+
 func TestConnConfigFromEnvDefaultPort(t *testing.T) {
 	clearDBEnv(t)
 	t.Setenv("DB_HOST", "rds.example.com")

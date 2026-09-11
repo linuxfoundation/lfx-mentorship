@@ -22,6 +22,19 @@ const SearchPath = "mentorship,public"
 // cluster from the ESO-managed RDS secret.
 var discreteEnvVars = []string{"DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME"}
 
+// validSSLModes are the sslmode values pgx recognizes. DB_SSLMODE is
+// interpolated into the keyword/value string ConnConfigFromEnv builds, so an
+// unrecognized value (e.g. one carrying extra "key=value" pairs) must be
+// rejected before formatting rather than passed through to pgx.ParseConfig.
+var validSSLModes = map[string]bool{
+	"disable":     true,
+	"allow":       true,
+	"prefer":      true,
+	"require":     true,
+	"verify-ca":   true,
+	"verify-full": true,
+}
+
 // ConnConfigFromEnv builds a *pgx.ConnConfig from the environment.
 //
 // It prefers the discrete DB_HOST / DB_PORT / DB_USER / DB_PASSWORD / DB_NAME
@@ -94,6 +107,8 @@ func connConfigFromDiscreteEnv() (*pgx.ConnConfig, error) {
 	sslMode := os.Getenv("DB_SSLMODE")
 	if sslMode == "" {
 		sslMode = "require"
+	} else if !validSSLModes[sslMode] {
+		return nil, fmt.Errorf("DB_SSLMODE must be one of disable, allow, prefer, require, verify-ca, verify-full, got %q", sslMode)
 	}
 
 	// Built through ParseConfig so pgx applies its own defaults and TLS setup,
