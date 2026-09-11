@@ -166,7 +166,7 @@ func (s *ProgramService) GetCatalog(ctx context.Context, id string) (*models.Pro
 	return item, nil
 }
 
-// ListCatalogMentees returns accepted/active/graduated mentees for a program.
+// ListCatalogMentees returns accepted/graduated mentees for a program.
 func (s *ProgramService) ListCatalogMentees(ctx context.Context, programID string) ([]*models.ProgramCatalogMentee, error) {
 	ctx, span := programSvcTracer.Start(ctx, "ProgramService.ListCatalogMentees")
 	defer span.End()

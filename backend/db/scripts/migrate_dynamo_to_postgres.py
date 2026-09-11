@@ -21,7 +21,7 @@ Source → Target mapping
   jobspring-prod-program-terms        → program_terms
   jobspring-prod-project-members      → program_members
   jobspring-prod-program-term-mentees → applications     (full lifecycle;
-                                        active|graduated|hold map directly)
+                                        graduated|hold map directly)
   jobspring-prod-tasks                → tasks
                                         (application_id resolved via
                                         (program_term_id, assignee_id) lookup)
@@ -32,9 +32,11 @@ Key notes
 - startDateTime / endDateTime in program-terms are Unix epoch strings (seconds).
 - user-profiles rows with recordKind='github-profile-reservation' are skipped.
 - The enrollments table no longer exists; applications now covers the full mentee
-  lifecycle (pending → accepted → active → graduated|withdrawn).
+  lifecycle (pending → accepted → graduated|withdrawn).
 - attendance_type is not captured in DynamoDB; it is migrated as NULL.
-- DynamoDB member/mentee status "approved" maps to Postgres "active".
+- DynamoDB member status "approved" maps to program_members.status "active".
+- DynamoDB mentee status "approved" (and "active") maps to applications.status
+  "accepted" — applications.status has no "active" value.
 - DynamoDB user-profile type for mentees maps to Postgres profile_type "mentee".
 - tasks.application_id is resolved post-scan by matching (program_term_id, assignee_id)
   against inserted applications. Tasks with no match get application_id=NULL.
@@ -254,14 +256,16 @@ def _normalize_program_status(status: str | None) -> str:
     return m.get(status.lower(), "draft")
 
 
-_VALID_APP_STATUSES = {"pending", "accepted", "active", "declined", "withdrawn", "graduated", "hold"}
+_VALID_APP_STATUSES = {"pending", "accepted", "declined", "withdrawn", "graduated", "hold"}
+# DynamoDB used "approved" and "active" for an enrolled mentee; applications.status
+# has no "active" value — "accepted" is the enrolled state until graduation.
+_APP_STATUS_MAP = {"approved": "accepted", "active": "accepted"}
 
 
 def _map_application_status(dynamo_status: str | None) -> str:
     """Map DynamoDB mentee status → applications.status."""
     s = (dynamo_status or "pending").lower()
-    if s == "approved":
-        return "active"
+    s = _APP_STATUS_MAP.get(s, s)
     return s if s in _VALID_APP_STATUSES else "pending"
 
 
@@ -811,7 +815,7 @@ def migrate_mentees(
     # Deterministic dedup: for duplicate (term, user) rows keep the highest-status row;
     # break ties by newest updated_on so scan-order cannot change the outcome.
     _STATUS_PRIORITY = {
-        "graduated": 6, "active": 5, "accepted": 4,
+        "graduated": 5, "accepted": 4,
         "hold": 3, "pending": 2, "declined": 1, "withdrawn": 0,
     }
     best: dict = {}
