@@ -61,8 +61,8 @@ var applicationTransitions = map[models.ApplicationStatus][]models.ApplicationSt
 	},
 	// "accepted" is the enrolled state: a mentee stays accepted for the whole
 	// term and moves straight to "graduated" at the end. There is no separate
-	// "active" status — it was never written by any code path, and every read
-	// already paired it with "accepted".
+	// "active" applications.status — "active" survives only as a display label
+	// (see models.MenteeStatus) and as a program_members.status value.
 	models.ApplicationStatusAccepted: {
 		models.ApplicationStatusGraduated,
 		models.ApplicationStatusDeclined,
@@ -215,7 +215,7 @@ func (s *ApplicationService) Create(ctx context.Context, programTermID string, i
 // Update applies status changes to an application.
 // Enforces the state machine defined in applicationTransitions.
 // When accepting, attendance_type is required.
-// When transitioning to active, if all prerequisite tasks are complete the admin is notified.
+// When accepting, the mentee is notified.
 func (s *ApplicationService) Update(ctx context.Context, id string, input models.ApplicationUpdateInput) (*models.Application, error) {
 	ctx, span := applicationSvcTracer.Start(ctx, "ApplicationService.Update")
 	defer span.End()
@@ -316,7 +316,7 @@ func (s *ApplicationService) BulkDeclineByTerm(ctx context.Context, termID strin
 	return count, nil
 }
 
-// ListPastMenteesByTerm returns accepted/active/graduated applications for a term.
+// ListPastMenteesByTerm returns accepted/graduated applications for a term.
 func (s *ApplicationService) ListPastMenteesByTerm(ctx context.Context, termID string) ([]*models.Application, error) {
 	ctx, span := applicationSvcTracer.Start(ctx, "ApplicationService.ListPastMenteesByTerm")
 	defer span.End()
