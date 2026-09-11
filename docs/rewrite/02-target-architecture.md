@@ -41,7 +41,7 @@ flowchart TB
     SYNC["fga-sync"]
     AUTH0["Auth0"]
     S3[("S3 uploads")]
-    MANDRILL["Mandrill"]
+    EMAIL["lfx-v2-email-service<br/>NATS → SES"]
     CFAPI["Crowdfunding API"]
     SF[("Snowflake")]
     DASH["Dashboards"]
@@ -55,7 +55,7 @@ flowchart TB
     NUXT --> AUTH0
     API --> PG
     API --> S3
-    API --> MANDRILL
+    API -- "NATS send_email" --> EMAIL
     API -- "outbox → NATS" --> SYNC
     SYNC --> FGA
     CRONS --> PG
@@ -77,7 +77,7 @@ lfx-mentorship/
 │   │   ├── domain/         # models, repository interfaces
 │   │   ├── service/        # business logic
 │   │   ├── handler/        # Chi routes, request/response
-│   │   └── infrastructure/ # postgres repos, auth0 middleware, clients (crowdfunding, mandrill, s3)
+│   │   └── infrastructure/ # postgres repos, auth0 middleware, clients (crowdfunding, email, s3)
 │   ├── db/migrations/      # golang-migrate SQL
 │   └── charts/             # Helm chart
 ├── frontend/
@@ -205,7 +205,7 @@ The allowlist and the HMAC links were each a second authorization mechanism outs
 | Crowdfunding   | Mentorship → CF       | **CronJob calls CF API (M2M `access:manage`), caches funding stats (`amountRaised`, etc.) in `program_funding_stats`.** Replaces legacy SNS/SQS eventing and the Snowflake round-trip for serving-path data. If CF is unavailable, Mentorship serves the last cached values. The funding-stats endpoint is a **new Crowdfunding-repo deliverable** (no such M2M route exists in CF today): exposed under `access:manage`, keyed by `cf_initiative_id`, contract defined with the CF team during Build. |
 | Snowflake      | Mentorship → SF       | Fivetran **Postgres** connector (replacing the DynamoDB connector); existing `fivetran_mentorship_*` dbt models repointed. Feeds dashboards and CF analytics. Analytics-plane only — never in the serving path.                                                              |
 | Auth0          | both                  | PKCE (users), client-credentials (M2M). After the gateway cutover Auth0 sits **in front of Heimdall** and its token never reaches this service — the API middleware validates the **Heimdall**-issued JWT against the cluster-internal Heimdall JWKS, not Auth0's. See [05](./05-heimdall-gateway.md) for the two token contracts and the dual-accept window. |
-| Mandrill       | Mentorship → Mandrill | All transactional email (invitations, application status, task notifications, program-submission notification to LF staff — a notification only, no longer a signed approval link). **SES is dropped**; existing Mandrill templates are audited and migrated.                                                                    |
+| Email          | Mentorship → NATS     | All transactional email (invitations, application status, task notifications, program-submission notification to LF staff — a notification only, no longer a signed approval link) goes through **[lfx-v2-email-service](https://github.com/linuxfoundation/lfx-v2-email-service)** — NATS request/reply on `lfx.email-service.send_email` over Amazon SES, via its Go client `pkg/api`. No service sends its own email, so Mentorship holds no SMTP or provider credentials. The relay is **pre-rendered only** (no templating), so this repo owns the templates and the Go backend renders `html` and `text` per notification — replacing the legacy Mandrill arrangement, where ~47 templates lived in Mailchimp's editor and were hand-synced. Mandrill is legacy-only and out of scope; the rail decision is recorded in [linuxfoundation/lfx-self-serve#2188](https://github.com/linuxfoundation/lfx-self-serve/issues/2188). Known limits to design around: **no send retry** in the relay, no attachments, no CC/BCC, and a non-prod recipient-domain allowlist. `Notifier` stays fire-and-forget — a failed send must never fail the business operation. |
 | S3             | Mentorship → S3       | Program logos, task submission files (presigned URLs, as in CF)                                                                                                                                                                                                              |
 | LFX Self Serve | SS → Mentorship       | User tokens through the API Gateway; Heimdall authorizes each route against FGA before it reaches the service                                                                                                                                                                |
 
@@ -225,7 +225,7 @@ The allowlist and the HMAC links were each a second authorization mechanism outs
 | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Employer portal**                    | Not reachable from the production UI (no entry point on `/participate`); vestigial. Pre-decommission data check in the migration plan. Related marketing copy ("referred to employers") to be removed. |
 | **Elasticsearch**                      | Replaced by Postgres FTS.                                                                                                                                                                              |
-| **SES**                                | Mandrill only.                                                                                                                                                                                         |
+| **A Mentorship-owned email sender**    | No direct Mandrill, SES, or SendGrid client in this repo. Sending is delegated to `lfx-v2-email-service` (see Integrations), which reaches SES on our behalf; the ~47 legacy Mandrill templates are a parity *checklist*, not a porting target.                                                                              |
 | **Slack ops alerts**                   | Ops signal moves to standard K8s/CI channels.                                                                                                                                                          |
 | **OpenSSF badge fetch**                | Cosmetic; can return later if wanted.                                                                                                                                                                  |
 | **Observability stack**                | Deferred; not part of the initial release.                                                                                                                                                             |
