@@ -131,7 +131,7 @@ erDiagram
         uuid program_term_id FK
         uuid user_id FK
         text role "mentor | mentee"
-        text status "pending | accepted | declined | withdrawn | graduated | hold"
+        text status "pending | accepted | declined | withdrawn | graduated"
     }
     program_members {
         uuid id PK
@@ -155,7 +155,7 @@ Notes:
 - **Denormalization jobs eliminated**: mentor lists, skill mappings, and counts become queries/views instead of cron-materialized copies.
 - **Funding stats**: `program_funding_stats` is an hourly-refreshed local cache of Crowdfunding data (see Integrations) — the same pattern Crowdfunding uses for Ledger stats.
 - **No enrollment entity, and no mentor assignment.** The application *is* the lifecycle object — one row per user per term, whose status runs `pending → accepted → graduated` (there is no `active` application status; AQ-10 in [04](./04-authorization-model.md) resolved it as dropped). This matches legacy, where acceptance and graduation are status changes on a single `program-term-mentees` row — the term-keyed mentee source ([00](./00-current-authz-relations.md)); `project-members` is the program-level membership table and carries no term identity — and mentors relate to the **program**, not to individual mentees (the legacy per-mentee "mentors" list is a cron-denormalized copy of the program's approved mentors). Tasks therefore hang off the application, with `category` distinguishing `prerequisite` from `non_prerequisite` tasks. Introducing `enrollments` + `enrollment_mentors` would add a parity feature nobody asked for; see "No enrollment entity" and decision 2 in [04](./04-authorization-model.md).
-- **`hold` is shown as the merged schema has it, not as this series recommends it.** `applications_status_check` permits `hold` (`backend/db/migrations/001_initial.up.sql:184`) and the ERD reflects that, but [03](./03-migration-plan.md) argues it describes a *paused accepted mentorship* rather than an application outcome and belongs in its own column. That divergence is an open decision, not settled here — the ERD tracks what exists today so the two documents disagree visibly rather than silently.
+- **`hold` is not a valid application status.** The merged schema's `applications_status_check` still permits it today (`backend/db/migrations/001_initial.up.sql:184`), but it describes a *paused accepted mentorship*, not an application outcome, and does not belong in this enum — a follow-up migration drops it from the constraint. The ERD above omits it accordingly.
 - Exact column-level schema is an implementation-phase deliverable; this ERD fixes the entity boundaries.
 
 ## Frontend split: Nuxt public site + Self Serve management
@@ -192,7 +192,7 @@ Three things this replaces from the Crowdfunding-derived design:
 | Was | Now |
 | --- | --- |
 | Service-layer role checks against `program_members` / `enrollments` | Heimdall + FGA relations at the edge |
-| Super-admin LFID allowlist injected at deploy time | `member` on a global approver-team object of the platform's existing `team` type (AQ-5 in [04](./04-authorization-model.md), resolved; which object, and how approvers read a non-public program, are AQ-8/AQ-9) |
+| Super-admin LFID allowlist injected at deploy time | `member` on `mentorship_approver_team:global`, a dedicated approver-team type this service owns (AQ-5 in [04](./04-authorization-model.md), resolved; roster ownership and how approvers read a non-public program are AQ-8/AQ-9, both resolved) |
 | HMAC-signed email approval links, no login | Authenticated approval in Self Serve, gated on approver-team membership |
 
 The allowlist and the HMAC links were each a second authorization mechanism outside the model; both are retired.
