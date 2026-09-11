@@ -1422,10 +1422,10 @@ List applications for a term.
 
 ---
 
-#### `GET /v1/applications/{id}` 🔓
+#### `GET /v1/applications/{id}` 🔒
 
 **Response** `200` → `<Application>`  
-**Errors** `404`
+**Errors** `401`, `404`
 
 ---
 
@@ -1574,7 +1574,7 @@ Backward reset to `incomplete` is always possible (by a reviewer only).
 
 ### Endpoints
 
-#### `GET /v1/applications/{id}/tasks` 🔓
+#### `GET /v1/applications/{id}/tasks` 🔒
 
 **Query parameters**
 
@@ -1588,6 +1588,8 @@ Backward reset to `incomplete` is always possible (by a reviewer only).
 ```json
 { "data": [<Task>, ...], "meta": {...} }
 ```
+
+**Errors** `401`, `404`
 
 ---
 
@@ -1604,10 +1606,10 @@ List all tasks for a program term across all applications.
 
 ---
 
-#### `GET /v1/tasks/{id}` 🔓
+#### `GET /v1/tasks/{id}` 🔒
 
 **Response** `200` → `<Task>`  
-**Errors** `404`
+**Errors** `401`, `404`
 
 ---
 
@@ -1651,7 +1653,7 @@ Update a task's status or metadata.
 }
 ```
 
-**Actor permission rules (enforced when JWT is present)**:
+**Actor permission rules**:
 
 | Transition | Required actor |
 |---|---|
@@ -1676,7 +1678,7 @@ Invalid forward transitions (e.g. `incomplete → complete`) return `409`.
 Hard-delete a task.
 
 **Response** `204`  
-**Errors** `401`, `404`
+**Errors** `401`, `403`, `404`
 
 ---
 
