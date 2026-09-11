@@ -26,7 +26,7 @@ A ground-truth capture of the access-control relations in the **current, legacy*
 | `program` | A mentorship program (`projects` table). |
 | `program_term` | A term/cohort within a program. |
 | `application` | A mentee's or mentor's application to a program (mentee: `program-term-mentees`; mentor: a `project-members` row in `pending`/`declined` status). |
-| `membership` | An accepted mentor or program-admin's standing relation to a program (`project-members` row in `approved`/`active`/`withdrawn` status). |
+| `membership` | An accepted mentor or program-admin's standing relation to a program (`project-members` row in `approved` status; `withdrawn` rows persist as historical records but are not enforced as a granting relation — see line 74). |
 | `task` | A mentee task/milestone. |
 
 **Status vocabulary** (`ProjectMemberStatus`, `project.go:1227-1249`) — one constant set is shared by both application types, but each validates a different subset:
