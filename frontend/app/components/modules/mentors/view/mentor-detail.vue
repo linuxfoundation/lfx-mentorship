@@ -6,10 +6,10 @@ SPDX-License-Identifier: MIT
   <div class="container max-w-full overflow-hidden px-5 py-6 md:px-10 md:py-8 space-y-6">
     <div
       v-if="isLoading"
-      class="flex items-center gap-2 text-neutral-500 py-16 justify-center"
+      class="flex flex-col items-center justify-center gap-2 text-neutral-500 py-16"
     >
+      <span class="text-sm font-medium text-neutral-500">Loading mentor…</span>
       <lfx-spinner />
-      <span>Loading mentor…</span>
     </div>
 
     <div
