@@ -686,6 +686,19 @@ func (r *ProgramRepository) GetFundingStats(ctx context.Context, programID strin
 	return &fs, nil
 }
 
+// GetFundingTotals returns the sums of amount_raised and amount_spent across all programs.
+func (r *ProgramRepository) GetFundingTotals(ctx context.Context) (float64, float64, error) {
+	ctx, span := programTracer.Start(ctx, "db.programs.GetFundingTotals")
+	defer span.End()
+
+	var amountRaised, amountSpent float64
+	if err := r.pool.QueryRow(ctx, `SELECT COALESCE(SUM(amount_raised), 0), COALESCE(SUM(amount_spent), 0) FROM program_funding_stats`).Scan(&amountRaised, &amountSpent); err != nil {
+		span.RecordError(err)
+		return 0, 0, fmt.Errorf("get funding totals: %w", err)
+	}
+	return amountRaised, amountSpent, nil
+}
+
 // ListFundingSyncProgramIDs returns active program IDs eligible for ledger sync.
 func (r *ProgramRepository) ListFundingSyncProgramIDs(ctx context.Context) ([]string, error) {
 	ctx, span := programTracer.Start(ctx, "db.programs.ListFundingSyncProgramIDs")

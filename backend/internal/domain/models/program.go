@@ -126,6 +126,12 @@ type ProgramFundingStats struct {
 	UpdatedOn    time.Time `json:"updated_on"`
 }
 
+// FundingStatsTotal is the public aggregate of program funding totals.
+type FundingStatsTotal struct {
+	AmountRaised float64 `json:"amount_raised"`
+	AmountSpent  float64 `json:"amount_spent"`
+}
+
 // ProgramFundingStatsUpsert is the payload used by the funding sync job.
 type ProgramFundingStatsUpsert struct {
 	ProgramID         string
