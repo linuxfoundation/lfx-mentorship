@@ -84,12 +84,15 @@ func (s *UserService) Update(ctx context.Context, id string, input models.UserUp
 	return user, nil
 }
 
-// Delete removes the user with the given ID.
-func (s *UserService) Delete(ctx context.Context, id string) error {
+// Delete removes the user with the given ID when the caller owns that user.
+func (s *UserService) Delete(ctx context.Context, id, actorID string) error {
 	ctx, span := userSvcTracer.Start(ctx, "UserService.Delete")
 	defer span.End()
 	span.SetAttributes(attribute.String("user.id", id))
 
+	if actorID == "" || actorID != id {
+		return fmt.Errorf("%w: caller may only delete their own user", domain.ErrForbidden)
+	}
 	if err := s.repo.Delete(ctx, id); err != nil {
 		span.RecordError(err)
 		return fmt.Errorf("delete user: %w", err)
