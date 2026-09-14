@@ -495,6 +495,7 @@ Programs are the top-level entity for a mentorship offering.
   "id":            "uuid",
   "program_id":    "uuid",
   "amount_raised": 50000.00,
+  "amount_spent":  0.00,
   "created_on":    "2026-01-01T00:00:00Z",
   "updated_on":    "2026-01-01T00:00:00Z"
 }
