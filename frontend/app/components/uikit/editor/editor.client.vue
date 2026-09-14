@@ -76,10 +76,10 @@ SPDX-License-Identifier: MIT
       class="c-editor__fallback"
       :style="resolvedEditorStyle"
     >
-    <div class="flex w-full flex-col items-center justify-center gap-2">
-      <span class="text-sm font-medium text-neutral-500">Loading editor…</span>
-      <lfx-spinner />
-    </div>
+      <div class="flex w-full flex-col items-center justify-center gap-2">
+        <span class="text-sm font-medium text-neutral-500">Loading editor…</span>
+        <lfx-spinner />
+      </div>
     </div>
   </div>
 </template>
