@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT
       v-if="isLoading"
       class="flex flex-col items-center justify-center gap-2 text-neutral-500 py-16"
     >
-    <span class="text-sm font-medium text-neutral-500">Loading mentees…</span>
+      <span class="text-sm font-medium text-neutral-500">Loading mentees…</span>
       <lfx-spinner />
     </div>
 
