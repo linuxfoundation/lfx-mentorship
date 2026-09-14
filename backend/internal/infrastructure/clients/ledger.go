@@ -25,9 +25,9 @@ type LedgerConfig struct {
 
 // LedgerTransaction is the minimal wire model needed for funding stats sync.
 type LedgerTransaction struct {
-	ProjectID   string `json:"projectID"`
+	ProjectID   string                        `json:"projectID"`
 	TxnCategory models.MentorshipCategoryType `json:"txnCategory"`
-	Amount      int64  `json:"amount"`
+	Amount      int64                         `json:"amount"`
 }
 
 // LedgerTransactionsPage is one paginated /transactions response.
@@ -38,7 +38,7 @@ type LedgerTransactionsPage struct {
 
 // LedgerClient fetches data from the Ledger HTTP API.
 type LedgerClient interface {
-	GetTransactionsPage(ctx context.Context, projectID string, page int, perPage int) (*LedgerTransactionsPage, error)
+	GetTransactionsPage(ctx context.Context, projectID, txnType string, page int, perPage int) (*LedgerTransactionsPage, error)
 }
 
 type ledgerHTTPClient struct {
@@ -58,8 +58,8 @@ func NewLedgerClient(cfg LedgerConfig) LedgerClient {
 	}
 }
 
-// GetTransactionsPage returns one filtered /transactions page for mentorship credits.
-func (c *ledgerHTTPClient) GetTransactionsPage(ctx context.Context, projectID string, page int, perPage int) (*LedgerTransactionsPage, error) {
+// GetTransactionsPage returns one filtered /transactions page for mentorship transactions.
+func (c *ledgerHTTPClient) GetTransactionsPage(ctx context.Context, projectID, txnType string, page int, perPage int) (*LedgerTransactionsPage, error) {
 	if page <= 0 {
 		page = 1
 	}
@@ -74,7 +74,7 @@ func (c *ledgerHTTPClient) GetTransactionsPage(ctx context.Context, projectID st
 	q.Set("startDate", "0")
 	q.Set("page", fmt.Sprintf("%d", page))
 	q.Set("perPage", fmt.Sprintf("%d", perPage))
-	q.Set("txnType", "credit")
+	q.Set("txnType", txnType)
 	q.Set("txnCategory", string(models.MentorshipCategory))
 	if strings.TrimSpace(projectID) != "" {
 		q.Set("projectID", projectID)

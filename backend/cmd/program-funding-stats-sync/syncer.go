@@ -18,7 +18,7 @@ type fundingStatsRepository interface {
 }
 
 type ledgerSource interface {
-	GetTransactionsPage(ctx context.Context, projectID string, page int, perPage int) (*clients.LedgerTransactionsPage, error)
+	GetTransactionsPage(ctx context.Context, projectID, txnType string, page int, perPage int) (*clients.LedgerTransactionsPage, error)
 }
 
 type syncResult struct {
@@ -62,7 +62,7 @@ func (s *syncer) Run(ctx context.Context) (syncResult, error) {
 		return result, nil
 	}
 
-	totals, pagesFetched, processedTxns, unmappedTxns, err := s.fetchTotals(ctx, programIDs)
+	raised, spent, pagesFetched, processedTxns, unmappedTxns, err := s.fetchTotals(ctx, programIDs)
 	if err != nil {
 		return syncResult{}, err
 	}
@@ -72,15 +72,16 @@ func (s *syncer) Run(ctx context.Context) (syncResult, error) {
 
 	rows := make([]models.ProgramFundingStatsUpsert, 0, len(programIDs))
 	for _, id := range programIDs {
-		cents := totals[id]
-		if cents > 0 {
+		raisedCents := raised[id]
+		if raisedCents > 0 || spent[id] > 0 {
 			result.matchedPrograms++
 		} else {
 			result.skippedPrograms++
 		}
 		rows = append(rows, models.ProgramFundingStatsUpsert{
 			ProgramID:         id,
-			AmountRaisedCents: cents,
+			AmountRaisedCents: raisedCents,
+			AmountSpentCents:  spent[id],
 		})
 	}
 	result.plannedUpserts = len(rows)
@@ -98,45 +99,59 @@ func (s *syncer) Run(ctx context.Context) (syncResult, error) {
 	return result, nil
 }
 
-func (s *syncer) fetchTotals(ctx context.Context, programIDs []string) (map[string]int64, int, int, int, error) {
-	totals := make(map[string]int64, len(programIDs))
+func (s *syncer) fetchTotals(ctx context.Context, programIDs []string) (map[string]int64, map[string]int64, int, int, int, error) {
+	raised := make(map[string]int64, len(programIDs))
+	spent := make(map[string]int64, len(programIDs))
 	pagesFetched := 0
 	processedTxns := 0
 	unmappedTxns := 0
 
 	for _, programID := range programIDs {
-		page := 1
-		for {
-			resp, err := s.ledger.GetTransactionsPage(ctx, programID, page, s.perPage)
-			if err != nil {
-				return nil, pagesFetched, processedTxns, unmappedTxns, fmt.Errorf("fetch ledger page %d for project %s: %w", page, programID, err)
-			}
-			pagesFetched++
+		for _, txnType := range []string{"credit", "debit"} {
+			page := 1
+			for {
+				resp, err := s.ledger.GetTransactionsPage(ctx, programID, txnType, page, s.perPage)
+				if err != nil {
+					return nil, nil, pagesFetched, processedTxns, unmappedTxns, fmt.Errorf("fetch ledger %s page %d for project %s: %w", txnType, page, programID, err)
+				}
+				pagesFetched++
 
-			for _, txn := range resp.Transactions {
-				if txn.Amount <= 0 {
-					continue
+				for _, txn := range resp.Transactions {
+					if txn.Amount == 0 {
+						continue
+					}
+					if !txn.TxnCategory.IsValid() {
+						continue
+					}
+					if txn.TxnCategory != models.MentorshipCategory {
+						continue
+					}
+					if txn.ProjectID != "" && txn.ProjectID != programID {
+						unmappedTxns++
+						continue
+					}
+					if txnType == "credit" && txn.Amount > 0 {
+						raised[programID] += txn.Amount
+					} else if txnType == "debit" {
+						spent[programID] -= txn.Amount
+					} else {
+						continue
+					}
+					processedTxns++
 				}
-				if !txn.TxnCategory.IsValid() {
-					continue
-				}
-				if txn.TxnCategory != models.MentorshipCategory {
-					continue
-				}
-				if txn.ProjectID != "" && txn.ProjectID != programID {
-					unmappedTxns++
-					continue
-				}
-				totals[programID] += txn.Amount
-				processedTxns++
-			}
 
-			if !resp.HasNext {
-				break
+				if !resp.HasNext {
+					break
+				}
+				page++
 			}
-			page++
+		}
+	}
+	for programID, amount := range spent {
+		if amount < 0 {
+			spent[programID] = 0
 		}
 	}
 
-	return totals, pagesFetched, processedTxns, unmappedTxns, nil
+	return raised, spent, pagesFetched, processedTxns, unmappedTxns, nil
 }

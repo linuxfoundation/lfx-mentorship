@@ -495,6 +495,7 @@ Programs are the top-level entity for a mentorship offering.
   "id":            "uuid",
   "program_id":    "uuid",
   "amount_raised": 50000.00,
+  "amount_spent":  0.00,
   "created_on":    "2026-01-01T00:00:00Z",
   "updated_on":    "2026-01-01T00:00:00Z"
 }
@@ -1022,6 +1023,23 @@ Remove a skill tag.
 
 **Response** `200` → `<ProgramFundingStats>`  
 **Errors** `404`
+
+---
+
+#### `GET /v1/funding-stats/total` 🔓
+
+Returns the total amount raised and spent across all program funding stats.
+
+**Response** `200`
+
+```json
+{
+  "amount_raised": 500.00,
+  "amount_spent": 165.50
+}
+```
+
+**Errors** `500`
 
 ---
 
