@@ -650,12 +650,12 @@ func (r *ProgramRepository) AddSkill(ctx context.Context, programID string, inpu
 	return &s, nil
 }
 
-// DeleteSkill removes a skill by its ID.
-func (r *ProgramRepository) DeleteSkill(ctx context.Context, skillID string) error {
+// DeleteSkill removes a skill scoped to its owning program.
+func (r *ProgramRepository) DeleteSkill(ctx context.Context, programID, skillID string) error {
 	ctx, span := programTracer.Start(ctx, "db.programs.DeleteSkill")
 	defer span.End()
 
-	cmd, err := r.pool.Exec(ctx, `DELETE FROM program_skills WHERE id = $1`, skillID)
+	cmd, err := r.pool.Exec(ctx, `DELETE FROM program_skills WHERE id = $1 AND program_id = $2`, skillID, programID)
 	if err != nil {
 		span.RecordError(err)
 		return fmt.Errorf("delete skill: %w", err)
@@ -673,9 +673,9 @@ func (r *ProgramRepository) GetFundingStats(ctx context.Context, programID strin
 
 	var fs models.ProgramFundingStats
 	err := r.pool.QueryRow(ctx,
-		`SELECT id, program_id, amount_raised, created_on, updated_on FROM program_funding_stats WHERE program_id = $1`,
+		`SELECT id, program_id, amount_raised, amount_spent, created_on, updated_on FROM program_funding_stats WHERE program_id = $1`,
 		programID,
-	).Scan(&fs.ID, &fs.ProgramID, &fs.AmountRaised, &fs.CreatedOn, &fs.UpdatedOn)
+	).Scan(&fs.ID, &fs.ProgramID, &fs.AmountRaised, &fs.AmountSpent, &fs.CreatedOn, &fs.UpdatedOn)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrProgramNotFound
 	}
@@ -684,6 +684,19 @@ func (r *ProgramRepository) GetFundingStats(ctx context.Context, programID strin
 		return nil, fmt.Errorf("get funding stats: %w", err)
 	}
 	return &fs, nil
+}
+
+// GetFundingTotals returns the sums of amount_raised and amount_spent across all programs.
+func (r *ProgramRepository) GetFundingTotals(ctx context.Context) (float64, float64, error) {
+	ctx, span := programTracer.Start(ctx, "db.programs.GetFundingTotals")
+	defer span.End()
+
+	var amountRaised, amountSpent float64
+	if err := r.pool.QueryRow(ctx, `SELECT COALESCE(SUM(amount_raised), 0), COALESCE(SUM(amount_spent), 0) FROM program_funding_stats`).Scan(&amountRaised, &amountSpent); err != nil {
+		span.RecordError(err)
+		return 0, 0, fmt.Errorf("get funding totals: %w", err)
+	}
+	return amountRaised, amountSpent, nil
 }
 
 // ListFundingSyncProgramIDs returns active program IDs eligible for ledger sync.
@@ -731,15 +744,16 @@ func (r *ProgramRepository) BulkUpsertFundingStats(ctx context.Context, rows []m
 	}
 
 	const q = `
-		INSERT INTO program_funding_stats (program_id, amount_raised, updated_on)
-		VALUES ($1, ($2::numeric / 100.0), NOW())
+		INSERT INTO program_funding_stats (program_id, amount_raised, amount_spent, updated_on)
+		VALUES ($1, ($2::numeric / 100.0), ($3::numeric / 100.0), NOW())
 		ON CONFLICT (program_id) DO UPDATE
 		SET amount_raised = EXCLUDED.amount_raised,
+		    amount_spent  = EXCLUDED.amount_spent,
 		    updated_on    = NOW()`
 
 	batch := &pgx.Batch{}
 	for i := range rows {
-		batch.Queue(q, rows[i].ProgramID, rows[i].AmountRaisedCents)
+		batch.Queue(q, rows[i].ProgramID, rows[i].AmountRaisedCents, rows[i].AmountSpentCents)
 	}
 
 	br := r.pool.SendBatch(ctx, batch)

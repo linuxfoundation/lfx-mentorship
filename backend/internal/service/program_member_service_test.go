@@ -14,6 +14,12 @@ import (
 )
 
 func newMemberSvc(memberRepo *stubMemberRepo, progRepo *stubProgRepo, notifier *stubNotifier) *service.ProgramMemberService {
+	if memberRepo.findByProgramUser == nil {
+		active := models.ProgramMemberStatusActive
+		memberRepo.findByProgramUser = func(_ context.Context, programID, userID string) (*models.ProgramMember, error) {
+			return &models.ProgramMember{ProgramID: programID, UserID: userID, MemberType: models.MemberTypeProgramAdmin, Status: &active}, nil
+		}
+	}
 	return service.NewProgramMemberService(memberRepo, progRepo, notifier, "test-secret")
 }
 
@@ -148,16 +154,48 @@ func TestProgramMemberService_Create_ProgramAdmin_SetsActiveStatus(t *testing.T)
 
 func TestProgramMemberService_Update_ValidTransition_InvitedToActive(t *testing.T) {
 	invited := models.ProgramMemberStatusInvited
+	active := models.ProgramMemberStatusActive
 	memberRepo := &stubMemberRepo{
+		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
+			return &models.ProgramMember{MemberType: models.MemberTypeProgramAdmin, Status: &active}, nil
+		},
 		getByID: func(_ context.Context, id string) (*models.ProgramMember, error) {
 			return &models.ProgramMember{ID: id, ProgramID: "prog-1", UserID: "u1", Status: &invited}, nil
 		},
 	}
 	svc := newMemberSvc(memberRepo, &stubProgRepo{}, &stubNotifier{})
 	next := models.ProgramMemberStatusActive
-	_, err := svc.Update(context.Background(), "member-1", models.ProgramMemberUpdateInput{Status: &next})
+	_, err := svc.Update(context.Background(), "prog-1", "member-1", models.ProgramMemberUpdateInput{Status: &next}, "admin-1")
 	if err != nil {
 		t.Errorf("invited→active should be valid, got %v", err)
+	}
+}
+
+func TestProgramMemberService_Update_RejectsMemberFromDifferentProgram_WithoutRepoWrite(t *testing.T) {
+	invited := models.ProgramMemberStatusInvited
+	active := models.ProgramMemberStatusActive
+	updateCalled := false
+	memberRepo := &stubMemberRepo{
+		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
+			return &models.ProgramMember{MemberType: models.MemberTypeProgramAdmin, Status: &active}, nil
+		},
+		getByID: func(_ context.Context, id string) (*models.ProgramMember, error) {
+			return &models.ProgramMember{ID: id, ProgramID: "prog-other", UserID: "u1", Status: &invited}, nil
+		},
+		update: func(_ context.Context, _ string, _ models.ProgramMemberUpdateInput) (*models.ProgramMember, error) {
+			updateCalled = true
+			return &models.ProgramMember{}, nil
+		},
+	}
+
+	svc := newMemberSvc(memberRepo, &stubProgRepo{}, &stubNotifier{})
+	next := models.ProgramMemberStatusActive
+	_, err := svc.Update(context.Background(), "prog-1", "member-1", models.ProgramMemberUpdateInput{Status: &next}, "admin-1")
+	if !errors.Is(err, domain.ErrProgramMemberNotFound) {
+		t.Fatalf("expected ErrProgramMemberNotFound, got %v", err)
+	}
+	if updateCalled {
+		t.Fatal("expected repo.Update not to be called for cross-program member")
 	}
 }
 
@@ -170,7 +208,7 @@ func TestProgramMemberService_Update_InvalidTransition_DeclinedToActive(t *testi
 	}
 	svc := newMemberSvc(memberRepo, &stubProgRepo{}, &stubNotifier{})
 	next := models.ProgramMemberStatusActive
-	_, err := svc.Update(context.Background(), "member-1", models.ProgramMemberUpdateInput{Status: &next})
+	_, err := svc.Update(context.Background(), "prog-1", "member-1", models.ProgramMemberUpdateInput{Status: &next}, "admin-1")
 	if !errors.Is(err, domain.ErrInvalidStateTransition) {
 		t.Errorf("expected ErrInvalidStateTransition for declined→active, got %v", err)
 	}
@@ -180,12 +218,12 @@ func TestProgramMemberService_Update_InvalidTransition_WithdrawnTerminal(t *test
 	withdrawn := models.ProgramMemberStatusWithdrawn
 	memberRepo := &stubMemberRepo{
 		getByID: func(_ context.Context, id string) (*models.ProgramMember, error) {
-			return &models.ProgramMember{ID: id, Status: &withdrawn}, nil
+			return &models.ProgramMember{ID: id, ProgramID: "prog-1", Status: &withdrawn}, nil
 		},
 	}
 	svc := newMemberSvc(memberRepo, &stubProgRepo{}, &stubNotifier{})
 	next := models.ProgramMemberStatusActive
-	_, err := svc.Update(context.Background(), "member-1", models.ProgramMemberUpdateInput{Status: &next})
+	_, err := svc.Update(context.Background(), "prog-1", "member-1", models.ProgramMemberUpdateInput{Status: &next}, "admin-1")
 	if !errors.Is(err, domain.ErrInvalidStateTransition) {
 		t.Errorf("expected ErrInvalidStateTransition for withdrawn→active, got %v", err)
 	}
@@ -204,7 +242,7 @@ func TestProgramMemberService_Update_InvalidStatus(t *testing.T) {
 	}
 	svc := newMemberSvc(memberRepo, &stubProgRepo{}, &stubNotifier{})
 	bad := models.ProgramMemberStatus("teleported")
-	_, err := svc.Update(context.Background(), "member-1", models.ProgramMemberUpdateInput{Status: &bad})
+	_, err := svc.Update(context.Background(), "prog-1", "member-1", models.ProgramMemberUpdateInput{Status: &bad}, "admin-1")
 	if !errors.Is(err, domain.ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for invalid status, got %v", err)
 	}
@@ -223,7 +261,7 @@ func TestProgramMemberService_Update_Decline_NotifiesMentor(t *testing.T) {
 	}
 	svc := newMemberSvc(memberRepo, &stubProgRepo{}, n)
 	next := models.ProgramMemberStatusDeclined
-	_, err := svc.Update(context.Background(), "member-1", models.ProgramMemberUpdateInput{Status: &next})
+	_, err := svc.Update(context.Background(), "prog-1", "member-1", models.ProgramMemberUpdateInput{Status: &next}, "admin-1")
 	if err != nil {
 		t.Fatalf("invited→declined should be valid: %v", err)
 	}
@@ -247,5 +285,42 @@ func TestProgramMemberService_DeclineInvite_InvalidToken(t *testing.T) {
 	err := svc.DeclineInvite(context.Background(), "not-a-valid-token")
 	if !errors.Is(err, domain.ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for bad token, got %v", err)
+	}
+}
+
+func TestProgramMemberService_Update_AdminLookupFailurePropagates(t *testing.T) {
+	opErr := errors.New("membership lookup failed")
+	memberRepo := &stubMemberRepo{
+		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
+			return nil, opErr
+		},
+	}
+	svc := newMemberSvc(memberRepo, &stubProgRepo{}, &stubNotifier{})
+
+	active := models.ProgramMemberStatusActive
+	_, err := svc.Update(context.Background(), "prog-1", "member-1", models.ProgramMemberUpdateInput{Status: &active}, "admin-1")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, opErr) {
+		t.Fatalf("expected wrapped lookup error, got %v", err)
+	}
+}
+
+func TestProgramMemberService_Delete_AdminLookupFailurePropagates(t *testing.T) {
+	opErr := errors.New("membership lookup failed")
+	memberRepo := &stubMemberRepo{
+		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
+			return nil, opErr
+		},
+	}
+	svc := newMemberSvc(memberRepo, &stubProgRepo{}, &stubNotifier{})
+
+	err := svc.Delete(context.Background(), "prog-1", "member-1", "admin-1")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, opErr) {
+		t.Fatalf("expected wrapped lookup error, got %v", err)
 	}
 }

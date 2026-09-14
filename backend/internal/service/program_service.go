@@ -5,6 +5,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -23,15 +24,16 @@ var programSvcTracer = otel.Tracer("programs-service")
 
 // ProgramService orchestrates program reads and writes.
 type ProgramService struct {
-	repo     domain.ProgramRepository
-	termRepo domain.ProgramTermRepository
-	appRepo  domain.ApplicationRepository
-	cfClient clients.CrowdfundingClient
+	repo       domain.ProgramRepository
+	termRepo   domain.ProgramTermRepository
+	appRepo    domain.ApplicationRepository
+	memberRepo domain.ProgramMemberRepository
+	cfClient   clients.CrowdfundingClient
 }
 
 // NewProgramService returns a ProgramService.
-func NewProgramService(repo domain.ProgramRepository, termRepo domain.ProgramTermRepository, appRepo domain.ApplicationRepository) *ProgramService {
-	return &ProgramService{repo: repo, termRepo: termRepo, appRepo: appRepo}
+func NewProgramService(repo domain.ProgramRepository, termRepo domain.ProgramTermRepository, appRepo domain.ApplicationRepository, memberRepo domain.ProgramMemberRepository) *ProgramService {
+	return &ProgramService{repo: repo, termRepo: termRepo, appRepo: appRepo, memberRepo: memberRepo}
 }
 
 // SetCrowdfundingClient configures the outbound crowdfunding client used by
@@ -332,11 +334,23 @@ func (s *ProgramService) AddSkill(ctx context.Context, programID string, input m
 }
 
 // DeleteSkill removes a skill from a program.
-func (s *ProgramService) DeleteSkill(ctx context.Context, skillID string) error {
+func (s *ProgramService) DeleteSkill(ctx context.Context, programID, skillID, actorID string) error {
 	ctx, span := programSvcTracer.Start(ctx, "ProgramService.DeleteSkill")
 	defer span.End()
+	span.SetAttributes(attribute.String("program.id", programID), attribute.String("skill.id", skillID), attribute.String("actor.id", actorID))
 
-	if err := s.repo.DeleteSkill(ctx, skillID); err != nil {
+	if actorID == "" {
+		return fmt.Errorf("%w: actor identity is required", domain.ErrForbidden)
+	}
+
+	_, err := s.memberRepo.FindActiveProgramAdminByProgramAndUser(ctx, programID, actorID)
+	if err != nil {
+		if !errors.Is(err, domain.ErrProgramMemberNotFound) {
+			return fmt.Errorf("find actor membership: %w", err)
+		}
+		return fmt.Errorf("%w: actor must be an active program_admin", domain.ErrForbidden)
+	}
+	if err := s.repo.DeleteSkill(ctx, programID, skillID); err != nil {
 		span.RecordError(err)
 		return fmt.Errorf("delete skill: %w", err)
 	}
