@@ -65,11 +65,7 @@ SPDX-License-Identifier: MIT
 </template>
 
 <script setup lang="ts">
-import {
-  SIGN_IN_TO_APPLY_BODY,
-  SIGN_IN_TO_APPLY_LABEL,
-  SIGN_IN_TO_APPLY_TITLE,
-} from '../config/program-detail.config';
+import { SIGN_IN_TO_APPLY_BODY, SIGN_IN_TO_APPLY_LABEL, SIGN_IN_TO_APPLY_TITLE } from '../config/program-detail.config';
 import LfxButton from '~/components/uikit/button/button.vue';
 import LfxIconButton from '~/components/uikit/icon-button/icon-button.vue';
 import LfxModal from '~/components/uikit/modal/modal.vue';

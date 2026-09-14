@@ -6,10 +6,10 @@ SPDX-License-Identifier: MIT
   <div class="container max-w-full overflow-hidden px-5 py-6 md:px-10 md:py-8 space-y-6">
     <div
       v-if="isLoading"
-      class="flex items-center gap-2 text-neutral-500 py-16 justify-center"
+      class="flex flex-col items-center justify-center gap-2 text-neutral-500 py-16"
     >
+      <span class="text-sm font-medium text-neutral-500">Loading program…</span>
       <lfx-spinner />
-      <span>Loading program…</span>
     </div>
 
     <div
@@ -83,7 +83,9 @@ SPDX-License-Identifier: MIT
           />
           <program-detail-sponsors
             v-else
-            :sponsors="program.sponsors"
+            :sponsors="sponsorList"
+            :is-loading="isSponsorsLoading"
+            :load-failed="Boolean(sponsorsError)"
           />
         </div>
       </section>
@@ -105,6 +107,7 @@ import { FunnelEvent, trackFunnelEvent } from '~/composables/useFunnelAnalytics'
 import { useAuth } from '~/composables/useAuth';
 import { useProgram } from '~/composables/programs/useProgram';
 import { useProgramMentees } from '~/composables/programs/useProgramMentees';
+import { useProgramSponsors } from '~/composables/programs/useProgramSponsors';
 import { programPath } from '~/config/routes';
 import LfxButton from '~/components/uikit/button/button.vue';
 import LfxSpinner from '~/components/uikit/spinner/spinner.vue';
@@ -136,19 +139,31 @@ watch(error, (err) => {
 
 const activeTab = ref(DEFAULT_PROGRAM_DETAIL_TAB);
 const menteesEnabled = computed(() => activeTab.value === 'mentees');
+const sponsorsEnabled = computed(() => activeTab.value === 'sponsors');
 const {
   data: mentees,
   isLoading: isMenteesLoading,
   error: menteesError,
 } = useProgramMentees(programId, menteesEnabled);
+const {
+  data: sponsors,
+  isLoading: isSponsorsLoading,
+  error: sponsorsError,
+} = useProgramSponsors(programId, sponsorsEnabled);
 
 watch(menteesError, (err) => {
   if (!import.meta.client || !err) return;
   showToast(getFetchErrorMessage(err, 'Failed to load mentees. Please try again.'), ToastTypesEnum.negative);
 });
 
+watch(sponsorsError, (err) => {
+  if (!import.meta.client || !err) return;
+  showToast(getFetchErrorMessage(err, 'Failed to load sponsors. Please try again.'), ToastTypesEnum.negative);
+});
+
 const currentMentees = computed(() => mentees.value?.filter((mentee) => mentee.status === 'active') ?? []);
 const graduatedMentees = computed(() => mentees.value?.filter((mentee) => mentee.status === 'graduated') ?? []);
+const sponsorList = computed(() => sponsors.value ?? []);
 
 watch(programId, () => {
   activeTab.value = DEFAULT_PROGRAM_DETAIL_TAB;

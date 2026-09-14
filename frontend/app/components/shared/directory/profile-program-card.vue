@@ -56,7 +56,9 @@ SPDX-License-Identifier: MIT
       v-if="program.terms.length"
       class="flex flex-col gap-2"
     >
-      <p class="text-xs font-semibold uppercase tracking-wide text-neutral-500">{{program.terms.length > 1 ? 'Terms' : 'Term'}}</p>
+      <p class="text-xs font-semibold uppercase tracking-wide text-neutral-500">
+        {{ program.terms.length > 1 ? 'Terms' : 'Term' }}
+      </p>
       <div class="flex flex-wrap gap-2">
         <div
           v-for="term in program.terms"

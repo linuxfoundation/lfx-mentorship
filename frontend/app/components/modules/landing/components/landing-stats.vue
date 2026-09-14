@@ -25,7 +25,6 @@ import { LANDING_STATS } from '../config/landing.config';
 import type { LandingStat, LandingSummaryResponse } from '~/types/landing.types';
 import { formatCompactUsd, formatCount } from '~/utils/currency';
 
-
 const props = defineProps<{
   summary: LandingSummaryResponse;
 }>();

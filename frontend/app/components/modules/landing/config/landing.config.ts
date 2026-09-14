@@ -21,7 +21,10 @@ export const LANDING_HERO_SUBTITLE =
 export const LANDING_HERO_FEATURES = (summary: LandingSummaryResponse): LandingHeroFeature[] => [
   { icon: 'sack-dollar', label: 'Many programs offer a stipend' },
   { icon: 'calendar', iconType: 'solid', label: 'Multi-week programs' },
-  { icon: 'layer-group', label: `${summary.programCount} programs across ${summary.foundationCount} foundations` },
+  {
+    icon: 'layer-group',
+    label: `${summary.programCount} programs across ${summary.foundationCount} foundations`,
+  },
 ];
 
 export const LANDING_STATS: LandingStat[] = [
@@ -144,7 +147,8 @@ export const LANDING_FAQ_ITEMS: LandingFaqItem[] = [
   },
 ];
 
-export const LANDING_CTA_TITLE = (acceptingProgramCount: number): string => `${acceptingProgramCount} programs are accepting applications`;
+export const LANDING_CTA_TITLE = (acceptingProgramCount: number): string =>
+  `${acceptingProgramCount} programs are accepting applications`;
 
 export const LANDING_CTA_SUBTITLE =
   'Browse by foundation, skill or term. You can have up to three applications at a time.';

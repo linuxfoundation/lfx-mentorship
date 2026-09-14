@@ -1,0 +1,56 @@
+# Copyright The Linux Foundation and each contributor to LFX.
+# SPDX-License-Identifier: MIT
+{{/*
+Validation template — aborts helm install/upgrade when required values are missing.
+No Kubernetes resource is rendered; this file only produces errors.
+*/}}
+
+{{- if not .Values.image.tag }}
+{{- fail "\n\nvalues.yaml: image.tag is required.\nSet it to the image tag to deploy, e.g.:\n  image:\n    tag: \"abc1234\"" }}
+{{- end }}
+
+{{/*
+NUXT_API_BASE_URL points the Nuxt server at the backend API. It has a
+localhost default in setup/runtime-config.ts, so an unset value in a cluster
+fails as confusing empty responses at request time rather than at startup —
+catch it at render time instead.
+*/}}
+{{- if not .Values.config.NUXT_API_BASE_URL }}
+{{- fail "\n\nvalues.yaml: config.NUXT_API_BASE_URL is required — it must point at the backend Service,\ne.g. http://lfx-mentorship-backend.mentorship-backend.svc.cluster.local" }}
+{{- end }}
+
+{{/*
+Same failure mode as above: both have build-time defaults in
+setup/runtime-config.ts, so leaving them unset yields a site that serves
+traffic while silently emitting canonical and OG URLs for http://localhost:3000
+and running with development-mode behaviour. Fail the render instead.
+*/}}
+{{- if not .Values.config.NUXT_PUBLIC_APP_URL }}
+{{- fail "\n\nvalues.yaml: config.NUXT_PUBLIC_APP_URL is required — the public URL of this site,\ne.g. https://mentorship.dev.lfx.dev\nNote the NUXT_PUBLIC_ prefix: Nuxt only re-reads this name at server startup." }}
+{{- end }}
+
+{{- if not (has (toString .Values.config.NUXT_PUBLIC_APP_ENV) (list "development" "production")) }}
+{{- fail (printf "\n\nvalues.yaml: config.NUXT_PUBLIC_APP_ENV must be exactly \"development\" or \"production\" (got %q).\nAnything else is treated as non-production by runtime-config.ts and server/plugins/robots.ts,\nso a typo such as \"prod\" deploys a production site with development behaviour and noindex." (toString .Values.config.NUXT_PUBLIC_APP_ENV)) }}
+{{- end }}
+
+{{/*
+NUXT_PUBLIC_SITE_URL feeds setup/site.ts, which drives the sitemap and site
+config. It falls back to NUXT_PUBLIC_APP_URL, but only when the image is built —
+and the image is built with no NUXT_PUBLIC_* set. At runtime nuxt-site-config
+re-reads NUXT_PUBLIC_SITE_URL alone, so an unset value leaves sitemap URLs on
+http://localhost:3000 even when canonical URLs are correct.
+*/}}
+{{- if not .Values.config.NUXT_PUBLIC_SITE_URL }}
+{{- fail "\n\nvalues.yaml: config.NUXT_PUBLIC_SITE_URL is required — normally the same value as\nNUXT_PUBLIC_APP_URL, e.g. https://mentorship.dev.lfx.dev\nIt cannot be inferred from NUXT_PUBLIC_APP_URL: that fallback is build-time only." }}
+{{- end }}
+
+{{/*
+intercomAppId is derived from appEnv when the image is built, not at server
+startup, and the image is built with no NUXT_PUBLIC_* set — so it always carries
+the development workspace id. Setting NUXT_PUBLIC_APP_ENV=production alone does
+not change it; only NUXT_PUBLIC_INTERCOM_APP_ID does. Require it in production so
+a prod deployment cannot silently report into the development Intercom workspace.
+*/}}
+{{- if and (eq .Values.config.NUXT_PUBLIC_APP_ENV "production") (not .Values.config.NUXT_PUBLIC_INTERCOM_APP_ID) }}
+{{- fail "\n\nvalues.yaml: config.NUXT_PUBLIC_INTERCOM_APP_ID is required when NUXT_PUBLIC_APP_ENV is \"production\".\nThe image bakes in the development workspace id at build time and does not re-derive it\nfrom NUXT_PUBLIC_APP_ENV at startup." }}
+{{- end }}
