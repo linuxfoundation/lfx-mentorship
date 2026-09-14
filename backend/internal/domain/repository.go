@@ -72,6 +72,11 @@ type ProgramRepository interface {
 	GetFundingStats(ctx context.Context, programID string) (*models.ProgramFundingStats, error)
 }
 
+// FundingStatsRepository defines public funding aggregate reads.
+type FundingStatsRepository interface {
+	GetFundingTotals(ctx context.Context) (amountRaised float64, amountSpent float64, err error)
+}
+
 // ProgramTermRepository defines persistence operations for program terms.
 type ProgramTermRepository interface {
 	GetByID(ctx context.Context, id string) (*models.ProgramTerm, error)

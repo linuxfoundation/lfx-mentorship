@@ -80,6 +80,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	menteeSvc := service.NewMenteeService(menteeRepo)
 	mentorSvc := service.NewMentorService(mentorRepo)
 	platformSummarySvc := service.NewPlatformSummaryService(platformSummaryRepo)
+	fundingStatsSvc := service.NewFundingStatsService(programRepo)
 
 	// Handlers
 	userH := handler.NewUserHandler(userSvc)
@@ -93,6 +94,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	menteeH := handler.NewMenteeHandler(menteeSvc)
 	mentorH := handler.NewMentorHandler(mentorSvc)
 	platformSummaryH := handler.NewPlatformSummaryHandler(platformSummarySvc)
+	fundingStatsH := handler.NewFundingStatsHandler(fundingStatsSvc)
 
 	// JWT authenticator
 	jwtAuth, err := auth.NewJWTAuthenticator(ctx, cfg.jwtAuthConfig(), logger)
@@ -138,6 +140,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		r.Get("/mentors/summary", mentorH.Summary)
 		r.Get("/mentors/{id}", mentorH.GetByID)
 		r.Get("/summary", platformSummaryH.Get)
+		r.Get("/funding-stats/total", fundingStatsH.GetTotal)
 		r.Get("/programs/{id}/funding-stats", programH.GetFundingStats)
 		r.With(optionalJWT).Get("/programs/{id}/transactions", programH.GetCategorizedTransactions)
 		r.With(optionalJWT).Get("/programs/{id}/sponsors", programH.GetProgramSponsors)

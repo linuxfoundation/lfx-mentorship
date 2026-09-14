@@ -121,14 +121,22 @@ type ProgramFundingStats struct {
 	ID           string    `json:"id"`
 	ProgramID    string    `json:"program_id"`
 	AmountRaised float64   `json:"amount_raised"`
+	AmountSpent  float64   `json:"amount_spent"`
 	CreatedOn    time.Time `json:"created_on"`
 	UpdatedOn    time.Time `json:"updated_on"`
+}
+
+// FundingStatsTotal is the public aggregate of program funding totals.
+type FundingStatsTotal struct {
+	AmountRaised float64 `json:"amount_raised"`
+	AmountSpent  float64 `json:"amount_spent"`
 }
 
 // ProgramFundingStatsUpsert is the payload used by the funding sync job.
 type ProgramFundingStatsUpsert struct {
 	ProgramID         string
 	AmountRaisedCents int64
+	AmountSpentCents  int64
 }
 
 // ProgramCatalogTerm is a program term with the computed public discovery label.
