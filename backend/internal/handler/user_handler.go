@@ -18,7 +18,7 @@ type userService interface {
 	List(ctx context.Context, filter models.UserFilter) ([]*models.User, *models.PaginationMeta, error)
 	Create(ctx context.Context, input models.UserCreateInput) (*models.User, error)
 	Update(ctx context.Context, id string, input models.UserUpdateInput) (*models.User, error)
-	Delete(ctx context.Context, id string) error
+	Delete(ctx context.Context, id, actorID string) error
 }
 
 // UserHandler holds Chi handlers for the users resource.
@@ -113,7 +113,7 @@ func (h *UserHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := chi.URLParam(r, "id")
-	if err := h.svc.Delete(r.Context(), id); err != nil {
+	if err := h.svc.Delete(r.Context(), id, principal.UserID); err != nil {
 		Error(w, err)
 		return
 	}

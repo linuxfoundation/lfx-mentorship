@@ -15,11 +15,14 @@ import (
 
 type taskService interface {
 	GetByID(ctx context.Context, id string) (*models.Task, error)
+	GetByIDForActor(ctx context.Context, id, actorID string) (*models.Task, error)
 	ListByApplication(ctx context.Context, applicationID string, filter models.TaskFilter) ([]*models.Task, *models.PaginationMeta, error)
+	ListByApplicationForActor(ctx context.Context, applicationID string, filter models.TaskFilter, actorID string) ([]*models.Task, *models.PaginationMeta, error)
 	ListByProgramTerm(ctx context.Context, programTermID string, filter models.TaskFilter) ([]*models.Task, *models.PaginationMeta, error)
+	ListByProgramTermForActor(ctx context.Context, programTermID string, filter models.TaskFilter, actorID string) ([]*models.Task, *models.PaginationMeta, error)
 	Create(ctx context.Context, applicationID string, input models.TaskCreateInput) (*models.Task, error)
 	Update(ctx context.Context, id string, input models.TaskUpdateInput) (*models.Task, error)
-	Delete(ctx context.Context, id string) error
+	Delete(ctx context.Context, id string, actorID string) error
 }
 
 // TaskHandler holds Chi handlers for tasks.
@@ -34,17 +37,23 @@ func NewTaskHandler(svc taskService) *TaskHandler {
 
 // ListByApplication handles GET /v1/applications/{id}/tasks.
 func (h *TaskHandler) ListByApplication(w http.ResponseWriter, r *http.Request) {
+	principal := auth.PrincipalFromContext(r.Context())
+	if principal == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+
 	applicationID := chi.URLParam(r, "id")
 	limit, offset, ok := parsePaginationParams(w, r)
 	if !ok {
 		return
 	}
-	tasks, meta, err := h.svc.ListByApplication(r.Context(), applicationID, models.TaskFilter{
+	tasks, meta, err := h.svc.ListByApplicationForActor(r.Context(), applicationID, models.TaskFilter{
 		Limit:      limit,
 		Offset:     offset,
 		Status:     r.URL.Query().Get("status"),
 		AssigneeID: r.URL.Query().Get("assignee_id"),
-	})
+	}, principal.UserID)
 	if err != nil {
 		Error(w, err)
 		return
@@ -54,17 +63,23 @@ func (h *TaskHandler) ListByApplication(w http.ResponseWriter, r *http.Request) 
 
 // ListByProgramTerm handles GET /v1/program-terms/{id}/tasks.
 func (h *TaskHandler) ListByProgramTerm(w http.ResponseWriter, r *http.Request) {
+	principal := auth.PrincipalFromContext(r.Context())
+	if principal == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+
 	programTermID := chi.URLParam(r, "id")
 	limit, offset, ok := parsePaginationParams(w, r)
 	if !ok {
 		return
 	}
-	tasks, meta, err := h.svc.ListByProgramTerm(r.Context(), programTermID, models.TaskFilter{
+	tasks, meta, err := h.svc.ListByProgramTermForActor(r.Context(), programTermID, models.TaskFilter{
 		Limit:      limit,
 		Offset:     offset,
 		Status:     r.URL.Query().Get("status"),
 		AssigneeID: r.URL.Query().Get("assignee_id"),
-	})
+	}, principal.UserID)
 	if err != nil {
 		Error(w, err)
 		return
@@ -74,8 +89,14 @@ func (h *TaskHandler) ListByProgramTerm(w http.ResponseWriter, r *http.Request) 
 
 // GetByID handles GET /v1/tasks/{id}.
 func (h *TaskHandler) GetByID(w http.ResponseWriter, r *http.Request) {
+	principal := auth.PrincipalFromContext(r.Context())
+	if principal == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+
 	id := chi.URLParam(r, "id")
-	task, err := h.svc.GetByID(r.Context(), id)
+	task, err := h.svc.GetByIDForActor(r.Context(), id, principal.UserID)
 	if err != nil {
 		Error(w, err)
 		return
@@ -138,7 +159,7 @@ func (h *TaskHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := chi.URLParam(r, "id")
-	if err := h.svc.Delete(r.Context(), id); err != nil {
+	if err := h.svc.Delete(r.Context(), id, principal.UserID); err != nil {
 		Error(w, err)
 		return
 	}
