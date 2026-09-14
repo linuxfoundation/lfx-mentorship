@@ -5,6 +5,7 @@ import type {
   Program,
   ProgramMember,
   ProgramMentee,
+  ProgramSponsor,
   ProgramTerm,
   TermStatus,
 } from '../../app/types/program.types';
@@ -59,6 +60,17 @@ export interface ProgramCatalogMenteesResponse {
   data: ProgramCatalogMentee[];
 }
 
+export interface ProgramCatalogSponsor {
+  id: string;
+  name: string;
+  logo_url?: string;
+  amount_cents: number;
+}
+
+export interface ProgramCatalogSponsorsResponse {
+  data: ProgramCatalogSponsor[];
+}
+
 export interface ProgramCatalogListResponse {
   data: ProgramCatalogItem[];
   meta: { total: number; limit: number; offset: number };
@@ -96,6 +108,15 @@ function mapMentor(mentor: ProgramCatalogMentor): ProgramMember {
 
 function toMenteeStatus(status: string): ProgramMentee['status'] {
   return status === 'graduated' ? 'graduated' : 'active';
+}
+
+export function mapCatalogSponsor(sponsor: ProgramCatalogSponsor): ProgramSponsor {
+  return {
+    id: sponsor.id,
+    name: sponsor.name?.trim() || 'Sponsor',
+    logoUrl: sponsor.logo_url,
+    amountCents: sponsor.amount_cents ?? 0,
+  };
 }
 
 export function mapCatalogMentee(mentee: ProgramCatalogMentee): ProgramMentee {
@@ -189,6 +210,26 @@ export async function fetchProgramMentees(id: string): Promise<ProgramCatalogMen
     throw createError({
       statusCode: fetchErrorStatus(error),
       message: fetchErrorStatus(error) === 404 ? 'Program not found' : 'Failed to load mentees',
+    });
+  }
+}
+
+export async function fetchProgramSponsors(id: string): Promise<ProgramCatalogSponsorsResponse> {
+  const config = useRuntimeConfig();
+  try {
+    return await $fetch<ProgramCatalogSponsorsResponse>(
+      `${config.apiBaseUrl}/v1/programs/${id}/sponsors`,
+      {
+        query: {
+          categoryType: 'mentorship',
+          aggregate: true,
+        },
+      },
+    );
+  } catch (error) {
+    throw createError({
+      statusCode: fetchErrorStatus(error),
+      message: fetchErrorStatus(error) === 404 ? 'Program not found' : 'Failed to load sponsors',
     });
   }
 }
