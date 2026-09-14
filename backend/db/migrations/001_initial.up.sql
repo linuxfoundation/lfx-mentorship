@@ -125,6 +125,7 @@ CREATE TABLE IF NOT EXISTS program_funding_stats (
   id            UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
   program_id    UUID         NOT NULL UNIQUE REFERENCES programs(id) ON DELETE CASCADE,
   amount_raised NUMERIC(20,2) NOT NULL DEFAULT 0,
+  amount_spent  NUMERIC(20,2) NOT NULL DEFAULT 0,
   created_on    TIMESTAMPTZ  DEFAULT NOW(),
   updated_on    TIMESTAMPTZ  DEFAULT NOW()
 );
