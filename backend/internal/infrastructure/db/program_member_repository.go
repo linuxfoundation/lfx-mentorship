@@ -75,6 +75,33 @@ func (r *ProgramMemberRepository) FindByProgramAndUser(ctx context.Context, prog
 	return m, nil
 }
 
+// FindActiveReviewerByProgramAndUser returns an active mentor or program admin membership.
+func (r *ProgramMemberRepository) FindActiveReviewerByProgramAndUser(ctx context.Context, programID, userID string) (*models.ProgramMember, error) {
+	return r.findActiveMembership(ctx, programID, userID, "member_type IN ('mentor', 'program_admin')", "find active reviewer membership")
+}
+
+// FindActiveProgramAdminByProgramAndUser returns an active program admin membership.
+func (r *ProgramMemberRepository) FindActiveProgramAdminByProgramAndUser(ctx context.Context, programID, userID string) (*models.ProgramMember, error) {
+	return r.findActiveMembership(ctx, programID, userID, "member_type = 'program_admin'", "find active program admin membership")
+}
+
+func (r *ProgramMemberRepository) findActiveMembership(ctx context.Context, programID, userID, rolePredicate, operation string) (*models.ProgramMember, error) {
+	ctx, span := programMemberTracer.Start(ctx, "db.program_members."+operation)
+	defer span.End()
+	span.SetAttributes(attribute.String("db.program_id", programID), attribute.String("db.user_id", userID))
+
+	q := `SELECT ` + programMemberCols + ` FROM program_members WHERE program_id = $1 AND user_id = $2 AND status = 'active' AND ` + rolePredicate + ` ORDER BY created_on DESC LIMIT 1`
+	m, err := scanProgramMember(r.pool.QueryRow(ctx, q, programID, userID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrProgramMemberNotFound
+	}
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("%s: %w", operation, err)
+	}
+	return m, nil
+}
+
 // ListByProgram returns paginated members for a program.
 func (r *ProgramMemberRepository) ListByProgram(ctx context.Context, programID string, filter models.ProgramMemberFilter) ([]*models.ProgramMember, *models.PaginationMeta, error) {
 	ctx, span := programMemberTracer.Start(ctx, "db.program_members.ListByProgram")

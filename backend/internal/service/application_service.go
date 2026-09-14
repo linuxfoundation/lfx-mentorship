@@ -50,18 +50,12 @@ func NewApplicationService(
 }
 
 func (s *ApplicationService) isActiveReviewer(ctx context.Context, programID, actorID string) (bool, error) {
-	member, err := s.memberRepo.FindByProgramAndUser(ctx, programID, actorID)
+	_, err := s.memberRepo.FindActiveReviewerByProgramAndUser(ctx, programID, actorID)
 	if err != nil {
 		if errors.Is(err, domain.ErrProgramMemberNotFound) {
 			return false, nil
 		}
 		return false, fmt.Errorf("find program member: %w", err)
-	}
-	if member.Status == nil || *member.Status != models.ProgramMemberStatusActive {
-		return false, nil
-	}
-	if member.MemberType != models.MemberTypeMentor && member.MemberType != models.MemberTypeProgramAdmin {
-		return false, nil
 	}
 	return true, nil
 }

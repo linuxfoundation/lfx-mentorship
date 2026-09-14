@@ -343,20 +343,13 @@ func (s *ProgramService) DeleteSkill(ctx context.Context, programID, skillID, ac
 		return fmt.Errorf("%w: actor identity is required", domain.ErrForbidden)
 	}
 
-	member, err := s.memberRepo.FindByProgramAndUser(ctx, programID, actorID)
+	_, err := s.memberRepo.FindActiveProgramAdminByProgramAndUser(ctx, programID, actorID)
 	if err != nil {
 		if !errors.Is(err, domain.ErrProgramMemberNotFound) {
 			return fmt.Errorf("find actor membership: %w", err)
 		}
 		return fmt.Errorf("%w: actor must be an active program_admin", domain.ErrForbidden)
 	}
-	if member.MemberType != models.MemberTypeProgramAdmin {
-		return fmt.Errorf("%w: actor must be an active program_admin", domain.ErrForbidden)
-	}
-	if member.Status == nil || *member.Status != models.ProgramMemberStatusActive {
-		return fmt.Errorf("%w: actor must be an active program_admin", domain.ErrForbidden)
-	}
-
 	if err := s.repo.DeleteSkill(ctx, programID, skillID); err != nil {
 		span.RecordError(err)
 		return fmt.Errorf("delete skill: %w", err)

@@ -263,7 +263,7 @@ Update mutable user fields.
 Hard-delete a user record.
 
 **Response** `204`  
-**Errors** `404`
+**Errors** `403`, `404`
 
 ---
 
@@ -1316,7 +1316,7 @@ Update a member's status or email.
 When `status = "declined"` is set via this endpoint, `NotifyMentorDeclined` is triggered.
 
 **Response** `200` → `<ProgramMember>`  
-**Errors** `400`, `404`
+**Errors** `400`, `403`, `404`
 
 ---
 
@@ -1325,7 +1325,7 @@ When `status = "declined"` is set via this endpoint, `NotifyMentorDeclined` is t
 > **FR-022**: This endpoint does **not** delete the record. It sets `status = "withdrawn"` and returns `204`.
 
 **Response** `204`  
-**Errors** `404`
+**Errors** `403`, `404`
 
 ---
 

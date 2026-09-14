@@ -35,17 +35,11 @@ func (s *ProgramMemberService) assertActiveProgramAdmin(ctx context.Context, pro
 	if actorID == "" {
 		return fmt.Errorf("%w: actor identity is required", domain.ErrForbidden)
 	}
-	member, err := s.repo.FindByProgramAndUser(ctx, programID, actorID)
+	_, err := s.repo.FindActiveProgramAdminByProgramAndUser(ctx, programID, actorID)
 	if err != nil {
 		if !errors.Is(err, domain.ErrProgramMemberNotFound) {
 			return fmt.Errorf("find actor membership: %w", err)
 		}
-		return fmt.Errorf("%w: actor must be an active program_admin", domain.ErrForbidden)
-	}
-	if member.MemberType != models.MemberTypeProgramAdmin {
-		return fmt.Errorf("%w: actor must be an active program_admin", domain.ErrForbidden)
-	}
-	if member.Status == nil || *member.Status != models.ProgramMemberStatusActive {
 		return fmt.Errorf("%w: actor must be an active program_admin", domain.ErrForbidden)
 	}
 	return nil

@@ -124,7 +124,7 @@ func (s *TaskService) ListByProgramTermForActor(ctx context.Context, programTerm
 	if err != nil {
 		return nil, nil, fmt.Errorf("get term for task list access check: %w", err)
 	}
-	member, err := s.memberRepo.FindByProgramAndUser(ctx, term.ProgramID, actorID)
+	_, err = s.memberRepo.FindActiveReviewerByProgramAndUser(ctx, term.ProgramID, actorID)
 	if err != nil {
 		if !errors.Is(err, domain.ErrProgramMemberNotFound) {
 			return nil, nil, fmt.Errorf("find program member for term task list access check: %w", err)
@@ -132,9 +132,7 @@ func (s *TaskService) ListByProgramTermForActor(ctx context.Context, programTerm
 		filter.AssigneeID = actorID
 		return s.ListByProgramTerm(ctx, programTermID, filter)
 	}
-	if member.Status == nil || *member.Status != models.ProgramMemberStatusActive || (member.MemberType != models.MemberTypeMentor && member.MemberType != models.MemberTypeProgramAdmin) {
-		filter.AssigneeID = actorID
-	}
+	// A matching active reviewer membership leaves the caller's filter intact.
 	return s.ListByProgramTerm(ctx, programTermID, filter)
 }
 
@@ -254,29 +252,28 @@ func (s *TaskService) Update(ctx context.Context, id string, input models.TaskUp
 // assertReviewer verifies that actorID holds an active mentor or program_admin role
 // on the program that owns the given task.
 func (s *TaskService) assertReviewer(ctx context.Context, task *models.Task, actorID string) error {
-	if task.ApplicationID == nil {
-		return fmt.Errorf("%w: task has no application; cannot verify reviewer role", domain.ErrForbidden)
+	programTermID := ""
+	if task.ApplicationID != nil {
+		app, err := s.appRepo.GetByID(ctx, *task.ApplicationID)
+		if err != nil {
+			return fmt.Errorf("get application for reviewer check: %w", err)
+		}
+		programTermID = app.ProgramTermID
+	} else if task.ProgramTermID != nil {
+		programTermID = *task.ProgramTermID
+	} else {
+		return fmt.Errorf("%w: task has no application or program term; cannot verify reviewer role", domain.ErrForbidden)
 	}
-	app, err := s.appRepo.GetByID(ctx, *task.ApplicationID)
-	if err != nil {
-		return fmt.Errorf("get application for reviewer check: %w", err)
-	}
-	term, err := s.termRepo.GetByID(ctx, app.ProgramTermID)
+	term, err := s.termRepo.GetByID(ctx, programTermID)
 	if err != nil {
 		return fmt.Errorf("get term for reviewer check: %w", err)
 	}
-	member, err := s.memberRepo.FindByProgramAndUser(ctx, term.ProgramID, actorID)
+	_, err = s.memberRepo.FindActiveReviewerByProgramAndUser(ctx, term.ProgramID, actorID)
 	if err != nil {
 		if errors.Is(err, domain.ErrProgramMemberNotFound) {
 			return fmt.Errorf("%w: actor is not a member of this program", domain.ErrForbidden)
 		}
 		return fmt.Errorf("find program member for reviewer check: %w", err)
-	}
-	if member.MemberType != models.MemberTypeMentor && member.MemberType != models.MemberTypeProgramAdmin {
-		return fmt.Errorf("%w: actor must be mentor or program_admin to review tasks", domain.ErrForbidden)
-	}
-	if member.Status == nil || *member.Status != models.ProgramMemberStatusActive {
-		return fmt.Errorf("%w: actor's program membership is not active", domain.ErrForbidden)
 	}
 	return nil
 }

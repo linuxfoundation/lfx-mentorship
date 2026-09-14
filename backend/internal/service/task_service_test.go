@@ -15,12 +15,14 @@ import (
 
 // stubMemberRepo implements domain.ProgramMemberRepository for task tests.
 type stubMemberRepo struct {
-	getByID           func(context.Context, string) (*models.ProgramMember, error)
-	findByProgramUser func(context.Context, string, string) (*models.ProgramMember, error)
-	listByProgram     func(context.Context, string, models.ProgramMemberFilter) ([]*models.ProgramMember, *models.PaginationMeta, error)
-	create            func(context.Context, string, models.ProgramMemberCreateInput) (*models.ProgramMember, error)
-	update            func(context.Context, string, models.ProgramMemberUpdateInput) (*models.ProgramMember, error)
-	delete            func(context.Context, string) error
+	getByID            func(context.Context, string) (*models.ProgramMember, error)
+	findByProgramUser  func(context.Context, string, string) (*models.ProgramMember, error)
+	findActiveReviewer func(context.Context, string, string) (*models.ProgramMember, error)
+	findActiveAdmin    func(context.Context, string, string) (*models.ProgramMember, error)
+	listByProgram      func(context.Context, string, models.ProgramMemberFilter) ([]*models.ProgramMember, *models.PaginationMeta, error)
+	create             func(context.Context, string, models.ProgramMemberCreateInput) (*models.ProgramMember, error)
+	update             func(context.Context, string, models.ProgramMemberUpdateInput) (*models.ProgramMember, error)
+	delete             func(context.Context, string) error
 }
 
 func (m *stubMemberRepo) GetByID(ctx context.Context, id string) (*models.ProgramMember, error) {
@@ -34,6 +36,38 @@ func (m *stubMemberRepo) FindByProgramAndUser(ctx context.Context, programID, us
 		return m.findByProgramUser(ctx, programID, userID)
 	}
 	return nil, domain.ErrProgramMemberNotFound
+}
+func (m *stubMemberRepo) FindActiveReviewerByProgramAndUser(ctx context.Context, programID, userID string) (*models.ProgramMember, error) {
+	if m.findActiveReviewer != nil {
+		return m.findActiveReviewer(ctx, programID, userID)
+	}
+	member, err := m.FindByProgramAndUser(ctx, programID, userID)
+	if err != nil {
+		if !errors.Is(err, domain.ErrProgramMemberNotFound) {
+			return nil, err
+		}
+		return nil, domain.ErrProgramMemberNotFound
+	}
+	if member.Status == nil || *member.Status != models.ProgramMemberStatusActive || (member.MemberType != models.MemberTypeMentor && member.MemberType != models.MemberTypeProgramAdmin) {
+		return nil, domain.ErrProgramMemberNotFound
+	}
+	return member, nil
+}
+func (m *stubMemberRepo) FindActiveProgramAdminByProgramAndUser(ctx context.Context, programID, userID string) (*models.ProgramMember, error) {
+	if m.findActiveAdmin != nil {
+		return m.findActiveAdmin(ctx, programID, userID)
+	}
+	member, err := m.FindByProgramAndUser(ctx, programID, userID)
+	if err != nil {
+		if !errors.Is(err, domain.ErrProgramMemberNotFound) {
+			return nil, err
+		}
+		return nil, domain.ErrProgramMemberNotFound
+	}
+	if member.Status == nil || *member.Status != models.ProgramMemberStatusActive || member.MemberType != models.MemberTypeProgramAdmin {
+		return nil, domain.ErrProgramMemberNotFound
+	}
+	return member, nil
 }
 func (m *stubMemberRepo) ListByProgram(ctx context.Context, programID string, f models.ProgramMemberFilter) ([]*models.ProgramMember, *models.PaginationMeta, error) {
 	if m.listByProgram != nil {
@@ -475,6 +509,28 @@ func TestTaskService_GetByIDForActor_ReviewerAllowed(t *testing.T) {
 			return &models.Application{ID: appID, ProgramTermID: termID}, nil
 		},
 	}, &stubTermRepo{
+		getByID: func(_ context.Context, _ string) (*models.ProgramTerm, error) {
+			return &models.ProgramTerm{ID: termID, ProgramID: "prog-1"}, nil
+		},
+	}, &stubMemberRepo{
+		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
+			return &models.ProgramMember{MemberType: models.MemberTypeMentor, Status: &active}, nil
+		},
+	})
+
+	if _, err := svc.GetByIDForActor(context.Background(), "task-1", "mentor-1"); err != nil {
+		t.Fatalf("GetByIDForActor: %v", err)
+	}
+}
+
+func TestTaskService_GetByIDForActor_ReviewerAllowedWithoutApplication(t *testing.T) {
+	termID := "term-1"
+	active := models.ProgramMemberStatusActive
+	svc := newTaskSvc(&stubTaskRepo{
+		getByID: func(_ context.Context, id string) (*models.Task, error) {
+			return &models.Task{ID: id, AssigneeID: "mentee-1", ProgramTermID: &termID}, nil
+		},
+	}, &stubAppRepo{}, &stubTermRepo{
 		getByID: func(_ context.Context, _ string) (*models.ProgramTerm, error) {
 			return &models.ProgramTerm{ID: termID, ProgramID: "prog-1"}, nil
 		},
