@@ -154,7 +154,11 @@ func TestProgramMemberService_Create_ProgramAdmin_SetsActiveStatus(t *testing.T)
 
 func TestProgramMemberService_Update_ValidTransition_InvitedToActive(t *testing.T) {
 	invited := models.ProgramMemberStatusInvited
+	active := models.ProgramMemberStatusActive
 	memberRepo := &stubMemberRepo{
+		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
+			return &models.ProgramMember{MemberType: models.MemberTypeProgramAdmin, Status: &active}, nil
+		},
 		getByID: func(_ context.Context, id string) (*models.ProgramMember, error) {
 			return &models.ProgramMember{ID: id, ProgramID: "prog-1", UserID: "u1", Status: &invited}, nil
 		},
@@ -164,6 +168,34 @@ func TestProgramMemberService_Update_ValidTransition_InvitedToActive(t *testing.
 	_, err := svc.Update(context.Background(), "prog-1", "member-1", models.ProgramMemberUpdateInput{Status: &next}, "admin-1")
 	if err != nil {
 		t.Errorf("invited→active should be valid, got %v", err)
+	}
+}
+
+func TestProgramMemberService_Update_RejectsMemberFromDifferentProgram_WithoutRepoWrite(t *testing.T) {
+	invited := models.ProgramMemberStatusInvited
+	active := models.ProgramMemberStatusActive
+	updateCalled := false
+	memberRepo := &stubMemberRepo{
+		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
+			return &models.ProgramMember{MemberType: models.MemberTypeProgramAdmin, Status: &active}, nil
+		},
+		getByID: func(_ context.Context, id string) (*models.ProgramMember, error) {
+			return &models.ProgramMember{ID: id, ProgramID: "prog-other", UserID: "u1", Status: &invited}, nil
+		},
+		update: func(_ context.Context, _ string, _ models.ProgramMemberUpdateInput) (*models.ProgramMember, error) {
+			updateCalled = true
+			return &models.ProgramMember{}, nil
+		},
+	}
+
+	svc := newMemberSvc(memberRepo, &stubProgRepo{}, &stubNotifier{})
+	next := models.ProgramMemberStatusActive
+	_, err := svc.Update(context.Background(), "prog-1", "member-1", models.ProgramMemberUpdateInput{Status: &next}, "admin-1")
+	if !errors.Is(err, domain.ErrProgramMemberNotFound) {
+		t.Fatalf("expected ErrProgramMemberNotFound, got %v", err)
+	}
+	if updateCalled {
+		t.Fatal("expected repo.Update not to be called for cross-program member")
 	}
 }
 

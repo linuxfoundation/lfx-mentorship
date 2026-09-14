@@ -35,7 +35,6 @@ func run(logger *slog.Logger) error {
 	}
 
 	pool, err := db.NewPool(ctx, db.PoolConfig{
-		DSN:             cfg.DatabaseDSN,
 		MaxConns:        cfg.DBMaxConns,
 		MinConns:        cfg.DBMinConns,
 		ConnMaxLifetime: cfg.DBConnMaxLifetime,
@@ -77,7 +76,6 @@ func run(logger *slog.Logger) error {
 }
 
 type config struct {
-	DatabaseDSN       string
 	DBMaxConns        int
 	DBMinConns        int
 	DBConnMaxLifetime time.Duration
@@ -89,7 +87,6 @@ type config struct {
 }
 
 func loadConfig() (*config, error) {
-	dbDSN := requireEnv("DATABASE_DSN")
 	ledgerBaseURL := requireEnv("LEDGER_BASE_URL")
 	ledgerAPIKey := requireEnv("LEDGER_API_KEY")
 
@@ -120,7 +117,6 @@ func loadConfig() (*config, error) {
 	}
 
 	return &config{
-		DatabaseDSN:       dbDSN,
 		DBMaxConns:        5,
 		DBMinConns:        1,
 		DBConnMaxLifetime: 5 * time.Minute,

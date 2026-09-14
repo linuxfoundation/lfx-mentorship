@@ -146,13 +146,13 @@ type ProgramCatalogMentor struct {
 	Introduction *string `json:"introduction,omitempty"`
 }
 
-// ProgramCatalogMentee is an accepted/active/graduated mentee with display fields from users, profiles, and terms.
+// ProgramCatalogMentee is an accepted/graduated mentee with display fields from users, profiles, and terms.
 type ProgramCatalogMentee struct {
 	UserID       string  `json:"user_id"`
 	Name         *string `json:"name,omitempty"`
 	AvatarURL    *string `json:"avatar_url,omitempty"`
 	Introduction *string `json:"introduction,omitempty"`
-	Status       string  `json:"status"` // accepted | active | graduated
+	Status       string  `json:"status"` // accepted | graduated
 	TermID       string  `json:"term_id"`
 	TermName     string  `json:"term_name"`
 }

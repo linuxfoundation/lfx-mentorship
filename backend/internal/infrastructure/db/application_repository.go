@@ -283,7 +283,7 @@ func (r *ApplicationRepository) CountBlockingAppsForProgram(ctx context.Context,
 	return count, nil
 }
 
-// CountAcceptedByTerm returns the count of accepted or active applications for a term.
+// CountAcceptedByTerm returns the count of accepted applications for a term.
 func (r *ApplicationRepository) CountAcceptedByTerm(ctx context.Context, termID string) (int, error) {
 	ctx, span := applicationTracer.Start(ctx, "db.applications.CountAcceptedByTerm")
 	defer span.End()

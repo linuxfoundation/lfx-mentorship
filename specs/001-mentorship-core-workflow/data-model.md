@@ -161,7 +161,7 @@ invited │ requested │ active ──manual-hold──► pending
 ### Status Lifecycle
 
 ```
-pending ──accept (+ attendance_type)──► accepted ──begin──► active ──graduate──► graduated
+pending ──accept (+ attendance_type)──► accepted ──graduate──► graduated
 pending ──decline──► declined
 pending ──withdraw (mentee)──► withdrawn
 pending ──hold──► hold ──resume──► pending
@@ -216,7 +216,7 @@ any state ──admin/mentor──► incomplete  (reset)
 | Symbol | HTTP | Trigger |
 |--------|------|---------|
 | `ErrInvalidStateTransition` | 409 | Illegal `(from, to)` status pair |
-| `ErrStateLocked` | 409 | Guard condition blocks transition (e.g. close-with-accepted, hide-with-active-apps) |
+| `ErrStateLocked` | 409 | Guard condition blocks transition (e.g. close-with-accepted, hide-with-blocking-apps) |
 | `ErrInvalidInput` | 422 | Validation failure (missing required field, bad enum) |
 | `ErrProgramNotFound` | 404 | Program ID does not exist |
 | `ErrTermNotFound` | 404 | Term ID does not exist |

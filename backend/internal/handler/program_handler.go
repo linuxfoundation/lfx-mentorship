@@ -59,27 +59,41 @@ func NewProgramHandler(svc programService) *ProgramHandler {
 	return &ProgramHandler{svc: svc}
 }
 
-func (h *ProgramHandler) resolveVisibleProgram(w http.ResponseWriter, r *http.Request) (*models.Program, bool) {
+// programLookup is the subset of programService needed to resolve a program
+// from the {id} path parameter. Handlers for sub-resources of a program depend
+// on this rather than the full service, so they can apply the same
+// hidden-program rule without taking on the rest of the interface.
+type programLookup interface {
+	GetByID(ctx context.Context, id string) (*models.Program, error)
+	GetBySlug(ctx context.Context, slug string) (*models.Program, error)
+}
+
+// resolveVisibleProgram loads the program named by the {id} path parameter,
+// which may be a UUID or a slug, and enforces FR-009: a hidden program is a
+// 404 for everyone but its owner. Every public read of a program or of one of
+// its sub-resources must go through this, or a hidden program stays reachable
+// to anyone holding its ID.
+func resolveVisibleProgram(w http.ResponseWriter, r *http.Request, svc programLookup) (*models.Program, bool) {
 	id := chi.URLParam(r, "id")
 	var (
 		program *models.Program
 		err     error
 	)
 	if _, parseErr := uuid.Parse(id); parseErr == nil {
-		program, err = h.svc.GetByID(r.Context(), id)
+		program, err = svc.GetByID(r.Context(), id)
 		if err != nil {
 			if !errors.Is(err, domain.ErrProgramNotFound) {
 				Error(w, err)
 				return nil, false
 			}
-			program, err = h.svc.GetBySlug(r.Context(), id)
+			program, err = svc.GetBySlug(r.Context(), id)
 			if err != nil {
 				Error(w, err)
 				return nil, false
 			}
 		}
 	} else {
-		program, err = h.svc.GetBySlug(r.Context(), id)
+		program, err = svc.GetBySlug(r.Context(), id)
 		if err != nil {
 			Error(w, err)
 			return nil, false
@@ -156,7 +170,7 @@ func (h *ProgramHandler) GetCatalog(w http.ResponseWriter, r *http.Request) {
 
 // ListCatalogMentees handles GET /v1/programs/{id}/mentees.
 func (h *ProgramHandler) ListCatalogMentees(w http.ResponseWriter, r *http.Request) {
-	program, ok := h.resolveVisibleProgram(w, r)
+	program, ok := resolveVisibleProgram(w, r, h.svc)
 	if !ok {
 		return
 	}
@@ -170,7 +184,7 @@ func (h *ProgramHandler) ListCatalogMentees(w http.ResponseWriter, r *http.Reque
 
 // GetByID handles GET /v1/programs/{id}.
 func (h *ProgramHandler) GetByID(w http.ResponseWriter, r *http.Request) {
-	program, ok := h.resolveVisibleProgram(w, r)
+	program, ok := resolveVisibleProgram(w, r, h.svc)
 	if !ok {
 		return
 	}
@@ -180,7 +194,7 @@ func (h *ProgramHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 // ResolveID handles GET /v1/programs/resolve/{id}.
 // It resolves either a UUID or slug to the canonical program UUID.
 func (h *ProgramHandler) ResolveID(w http.ResponseWriter, r *http.Request) {
-	program, ok := h.resolveVisibleProgram(w, r)
+	program, ok := resolveVisibleProgram(w, r, h.svc)
 	if !ok {
 		return
 	}
@@ -309,7 +323,7 @@ func (h *ProgramHandler) GetFundingStats(w http.ResponseWriter, r *http.Request)
 
 // GetCategorizedTransactions handles GET /v1/programs/{id}/transactions.
 func (h *ProgramHandler) GetCategorizedTransactions(w http.ResponseWriter, r *http.Request) {
-	program, ok := h.resolveVisibleProgram(w, r)
+	program, ok := resolveVisibleProgram(w, r, h.svc)
 	if !ok {
 		return
 	}
@@ -340,7 +354,7 @@ func (h *ProgramHandler) GetCategorizedTransactions(w http.ResponseWriter, r *ht
 
 // GetProgramSponsors handles GET /v1/programs/{id}/sponsors.
 func (h *ProgramHandler) GetProgramSponsors(w http.ResponseWriter, r *http.Request) {
-	program, ok := h.resolveVisibleProgram(w, r)
+	program, ok := resolveVisibleProgram(w, r, h.svc)
 	if !ok {
 		return
 	}

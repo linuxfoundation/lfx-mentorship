@@ -35,7 +35,6 @@ type Server struct {
 func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, error) {
 	// Database pool
 	pool, err := db.NewPool(ctx, db.PoolConfig{
-		DSN:             cfg.Database.DSN,
 		MaxConns:        cfg.Database.MaxConns,
 		MinConns:        cfg.Database.MinConns,
 		ConnMaxLifetime: cfg.Database.ConnMaxLifetime,
@@ -87,7 +86,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	userProfileH := handler.NewUserProfileHandler(userProfileSvc)
 	programH := handler.NewProgramHandler(programSvc)
 	programTermH := handler.NewProgramTermHandler(programTermSvc)
-	programMemberH := handler.NewProgramMemberHandler(programMemberSvc)
+	programMemberH := handler.NewProgramMemberHandler(programMemberSvc, programSvc)
 	applicationH := handler.NewApplicationHandler(applicationSvc)
 	taskH := handler.NewTaskHandler(taskSvc)
 	mentorInviteH := handler.NewMentorInviteHandler(programMemberSvc)

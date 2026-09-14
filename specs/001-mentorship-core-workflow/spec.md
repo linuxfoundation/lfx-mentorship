@@ -130,13 +130,12 @@ the program_admin can manage the program's visibility and terms throughout its l
 22. **Given** an application under review, **When** the program_admin needs more
     information before deciding, **Then** `status` transitions to `hold`.
 
-23. **Given** an `accepted` application whose program period has begun, **When**
-    the program_admin marks it, **Then** `status` transitions to `active`, and
-    **When** the program_admin manually marks the program period complete for that
-    mentee, **Then** `status` transitions to `graduated` (this is never automatic at
-    term end).
+23. **Given** an `accepted` application whose program period has begun, **Then** the
+    mentee stays `accepted` for the whole period, and **When** the program_admin
+    manually marks the program period complete for that mentee, **Then** `status`
+    transitions to `graduated` (this is never automatic at term end).
 
-24. **Given** an `active` mentee, **When** the program_admin or mentor assigns
+24. **Given** an `accepted` mentee, **When** the program_admin or mentor assigns
     additional work, **Then** a task is created with `category = non_prerequisite`.
 
 25. **Given** a term with multiple `pending` applications, **When** the program_admin
@@ -296,13 +295,13 @@ the program_admin can manage the program's visibility and terms throughout its l
   `pending` application to `withdrawn`.
 - **FR-040**: System MUST allow a program_admin to transition an application to `hold`
   pending additional information.
-- **FR-041**: System MUST allow a program_admin to transition an `accepted` application
-  to `active` when the program period begins.
-- **FR-042**: System MUST allow a program_admin to manually transition an `active`
+- **FR-041**: System MUST treat `accepted` as the enrolled state for the whole program
+  period; there is no separate `active` application status.
+- **FR-042**: System MUST allow a program_admin to manually transition an `accepted`
   application to `graduated`; this transition MUST NOT occur automatically at term
   end.
 - **FR-043**: System MUST allow a program_admin or mentor to assign additional tasks
-  with `category = non_prerequisite` to an `active` mentee.
+  with `category = non_prerequisite` to an `accepted` mentee.
 - **FR-044**: System MUST allow a program_admin to bulk-decline all `pending`
   applications for a given term in a single action.
 - **FR-045**: System MUST support CSV export of applications filtered by status,
@@ -329,7 +328,7 @@ the program_admin can manage the program's visibility and terms throughout its l
   current skills, skills to improve, optional demographics/socioeconomics.
 - **Application**: A mentee's request to join a specific ProgramTerm. Key attributes:
   `tasks_submitted` (boolean), `attendance_type` (`full_time` | `part_time`, set on
-  acceptance). Status lifecycle: `pending` → `accepted` → `active` → `graduated` |
+  acceptance). Status lifecycle: `pending` → `accepted` → `graduated` |
   `declined` | `withdrawn` | `hold`. Belongs to one ProgramTerm; linked to one
   UserProfile/mentee.
 - **Task**: A unit of work cloned onto or assigned to a mentee. Key attributes:

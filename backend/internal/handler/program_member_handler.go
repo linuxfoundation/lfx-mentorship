@@ -23,12 +23,15 @@ type programMemberService interface {
 
 // ProgramMemberHandler holds Chi handlers for program members and admins.
 type ProgramMemberHandler struct {
-	svc programMemberService
+	svc        programMemberService
+	programSvc programLookup
 }
 
-// NewProgramMemberHandler creates a ProgramMemberHandler.
-func NewProgramMemberHandler(svc programMemberService) *ProgramMemberHandler {
-	return &ProgramMemberHandler{svc: svc}
+// NewProgramMemberHandler creates a ProgramMemberHandler. programSvc is used
+// only to resolve the program behind the {id} path parameter and apply the
+// hidden-program rule to the public roster.
+func NewProgramMemberHandler(svc programMemberService, programSvc programLookup) *ProgramMemberHandler {
+	return &ProgramMemberHandler{svc: svc, programSvc: programSvc}
 }
 
 // List handles GET /v1/programs/{id}/members.
@@ -36,17 +39,24 @@ func NewProgramMemberHandler(svc programMemberService) *ProgramMemberHandler {
 // This route is unauthenticated, so it serves the public roster only: active
 // members, with the email stripped from every row before it is serialized.
 //
+// The program is resolved through resolveVisibleProgram so a hidden program is
+// a 404 here exactly as it is on the program itself (FR-009) — otherwise a
+// caller holding a hidden program's ID could enumerate its admins and mentors.
+//
 // Status is pinned rather than read from the query string — a caller must not
 // be able to widen a public roster to pending, declined or withdrawn members.
 // Email stays on the model because create and update accept it; it must not
 // reach an anonymous caller.
 func (h *ProgramMemberHandler) List(w http.ResponseWriter, r *http.Request) {
-	programID := chi.URLParam(r, "id")
 	limit, offset, ok := parsePaginationParams(w, r)
 	if !ok {
 		return
 	}
-	members, meta, err := h.svc.ListByProgram(r.Context(), programID, models.ProgramMemberFilter{
+	program, ok := resolveVisibleProgram(w, r, h.programSvc)
+	if !ok {
+		return
+	}
+	members, meta, err := h.svc.ListByProgram(r.Context(), program.ID, models.ProgramMemberFilter{
 		Limit:      limit,
 		Offset:     offset,
 		MemberType: r.URL.Query().Get("member_type"),

@@ -16,7 +16,10 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     -o /build/mentorship-api ./cmd/mentorship-api \
  && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -trimpath -ldflags "-s -w" \
-    -o /build/program-funding-stats-sync ./cmd/program-funding-stats-sync
+    -o /build/program-funding-stats-sync ./cmd/program-funding-stats-sync \
+ && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags "-s -w" \
+    -o /build/migrate ./cmd/migrate
 
 # Runtime stage
 # Distroless static image minimizes runtime attack surface while retaining CA certs.
@@ -25,6 +28,7 @@ FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c
 WORKDIR /app
 COPY --from=builder /build/mentorship-api ./mentorship-api
 COPY --from=builder /build/program-funding-stats-sync ./program-funding-stats-sync
+COPY --from=builder /build/migrate ./migrate
 
 EXPOSE 8080
 

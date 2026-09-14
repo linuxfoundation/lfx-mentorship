@@ -214,9 +214,7 @@ curl -s -X PATCH $BASE/applications/$APP_ID $AUTH \
 ### 4f. Graduate a mentee
 
 ```bash
-curl -s -X PATCH $BASE/applications/$APP_ID $AUTH -d '{"status":"active"}'
-# Expected: 200
-
+# An accepted mentee graduates directly — there is no intermediate "active" status.
 curl -s -X PATCH $BASE/applications/$APP_ID $AUTH -d '{"status":"graduated"}'
 # Expected: 200
 ```
@@ -226,16 +224,21 @@ curl -s -X PATCH $BASE/applications/$APP_ID $AUTH -d '{"status":"graduated"}'
 ## Scenario 5 — Hide Guard
 
 ```bash
-# With active/pending application, attempt to hide — expect 409
+# FR-008: pending, accepted, and graduated applications all block hiding.
+# $APP_ID is `graduated` after 4f, so this program is still blocked.
 curl -s -X PATCH $BASE/programs/$PROGRAM_ID $AUTH -d '{"status":"hidden"}'
 # Expected: 409, error listing blocking application count
 
-# After graduating / declining all blocking applications, hide succeeds
-curl -s -X PATCH $BASE/programs/$PROGRAM_ID $AUTH -d '{"status":"hidden"}'
+# Hiding requires a program with no pending/accepted/graduated application.
+# Note that graduating does NOT clear the guard — `graduated` blocks too — so use
+# a second published program whose only application was declined or withdrawn.
+HIDEABLE_PROGRAM_ID=<id of a published program with no blocking application>
+
+curl -s -X PATCH $BASE/programs/$HIDEABLE_PROGRAM_ID $AUTH -d '{"status":"hidden"}'
 # Expected: 200, "status":"hidden"
 
 # Unhide
-curl -s -X PATCH $BASE/programs/$PROGRAM_ID $AUTH -d '{"status":"published"}'
+curl -s -X PATCH $BASE/programs/$HIDEABLE_PROGRAM_ID $AUTH -d '{"status":"published"}'
 # Expected: 200, "status":"published"
 ```
 
