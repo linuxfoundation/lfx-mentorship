@@ -1026,6 +1026,23 @@ Remove a skill tag.
 
 ---
 
+#### `GET /v1/funding-stats/total` 🔓
+
+Returns the total amount raised and spent across all program funding stats.
+
+**Response** `200`
+
+```json
+{
+  "amount_raised": 500.00,
+  "amount_spent": 165.50
+}
+```
+
+**Errors** `500`
+
+---
+
 #### `GET /v1/programs/{id}/transactions` 🔓
 
 Returns categorized donation transactions for a mentorship program by proxying the Crowdfunding category-transactions contract.
