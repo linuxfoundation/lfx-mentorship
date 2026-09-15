@@ -890,6 +890,8 @@ Aggregated marketing/landing counts plus a small graduated-mentee preview. All c
 - `accepting_program_count` — subset of published programs with at least one open term whose `application_start_date` ≤ `NOW()` ≤ `application_end_date`.
 - `mentor_count` — distinct users who are an `active` `mentor` member of any published program.
 - `graduated_mentee_count` — distinct users with at least one mentee application in status `graduated` on a non-deleted term of a published program.
+- `amount_raised` — total amount raised by published programs.
+- `amount_spent` — total amount spent by published programs.
 - `graduated_mentee_users` — up to four most recently graduated mentees (`name`, `avatar_url`) for the landing hero.
 
 **Response** `200`
@@ -899,6 +901,8 @@ Aggregated marketing/landing counts plus a small graduated-mentee preview. All c
   "accepting_program_count": 3,
   "mentor_count": 7,
   "graduated_mentee_count": 42,
+  "amount_raised": 50000.00,
+  "amount_spent": 12500.00,
   "graduated_mentee_users": [
     { "name": "Alex Mentee", "avatar_url": "https://..." },
     { "name": "Sam Graduate", "avatar_url": "https://..." }

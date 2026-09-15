@@ -89,6 +89,12 @@ SELECT
 	(SELECT COUNT(*) FROM accepting_programs),
 	(SELECT COUNT(*) FROM mentor_users),
 	(SELECT COUNT(*) FROM graduated_mentee_users),
+	(SELECT COALESCE(SUM(pfs.amount_raised), 0)
+	 FROM program_funding_stats pfs
+	 JOIN published_programs p ON p.id = pfs.program_id),
+	(SELECT COALESCE(SUM(pfs.amount_spent), 0)
+	 FROM program_funding_stats pfs
+	 JOIN published_programs p ON p.id = pfs.program_id),
 	COALESCE((
 		SELECT json_agg(json_build_object(
 			'name', preview.name,
@@ -116,6 +122,8 @@ func (r *PlatformSummaryRepository) Summary(ctx context.Context) (*models.Platfo
 		&s.AcceptingProgramCount,
 		&s.MentorCount,
 		&s.GraduatedMenteeCount,
+		&s.AmountRaised,
+		&s.AmountSpent,
 		&preview,
 	); err != nil {
 		span.RecordError(err)
