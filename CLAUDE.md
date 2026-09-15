@@ -20,7 +20,7 @@ This repo hosts the LFX Mentorship platform — a Kubernetes-native rewrite of t
 - **Follow [lfx-crowdfunding](https://github.com/linuxfoundation/lfx-crowdfunding)** — it is the explicit template for this rewrite: same monorepo layout (`backend/` Go + Chi, `frontend/` Nuxt 4 BFF), same layered backend design (domain/service/handler/infrastructure), same deployment model (Helm charts in-repo, ArgoCD GitOps). When unsure how to structure something, look at how lfx-crowdfunding does it.
 - **License headers**: every file needs the MIT/SPDX header (`Copyright The Linux Foundation and each contributor to LFX.` / `SPDX-License-Identifier: MIT`) — enforced by CI.
 - **DCO**: sign off every commit (`git commit --signoff`) — enforced by CI.
-- **Scope**: the goal is feature parity with the legacy platform. Scope exclusions (employer portal, Elasticsearch, SES, and others) are listed in `docs/rewrite/02-target-architecture.md` — do not reintroduce them.
+- **Scope**: the goal is feature parity with the legacy platform. Scope exclusions (employer portal, Elasticsearch, a Mentorship-owned email sender, and others) are listed in `docs/rewrite/02-target-architecture.md` — do not reintroduce them. Transactional email goes through [lfx-v2-email-service](https://github.com/linuxfoundation/lfx-v2-email-service) over NATS; never add a Mandrill, SES, or SendGrid client here.
 
 ## Architecture
 
