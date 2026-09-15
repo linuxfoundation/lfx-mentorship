@@ -69,11 +69,11 @@ Per [04 §decision 7](./04-authorization-model.md), `user` has no relations of i
 
 | Route | Auth | Object | Relation | Service must also |
 | --- | --- | --- | --- | --- |
-| `GET /v1/users`, `/v1/user-profiles` | required | — | `allow_all` | Admin-ish collection reads with nothing to check. **Flagged:** these currently return every user to any authenticated caller. Either scope them or drop them from the gateway host |
+| ~~`GET /v1/users`, `/v1/user-profiles`~~ | — | — | — | **Removed** ([lfx-mentorship#153](https://github.com/linuxfoundation/lfx-mentorship/pull/153)). They returned every user's identity fields and profile PII to any authenticated caller, with nothing for the edge to check |
 | `GET /v1/users/{id}`, `/v1/user-profiles/{id}`, `/v1/user-profiles/slug/{slug}` | required | — | `allow_all` | Reads of a public-ish profile; no relation exists to check |
-| `POST /v1/users`, `POST /v1/user-profiles` | required | — | `allow_all` | **Bind `ID`/`UserID` to `principal`** (rule 3). The handlers decode these from the body today |
-| `PATCH`/`DELETE /v1/users/{id}` → **`/v1/me`** | required | — | `allow_all` | Reshape per decision 7. No target ID means no check; `principal` settles it |
-| `PATCH`/`DELETE /v1/user-profiles/{id}` → **`/v1/me/profile`** | required | — | `allow_all` | As above |
+| ~~`POST /v1/users`, `POST /v1/user-profiles`~~ | — | — | — | **Removed** ([lfx-mentorship#153](https://github.com/linuxfoundation/lfx-mentorship/pull/153)). Rule 3 could not be satisfied: the body-supplied `id`/`user_id` and the token's `principal` live in different identifier spaces. Creation returns as the `/v1/me` profile-sync upsert and `/v1/me` profile routes |
+| `PATCH`/`DELETE /v1/users/{id}` → **`/v1/me`** | required | — | `allow_all` | Reshape per decision 7. The by-ID routes are already removed ([lfx-mentorship#153](https://github.com/linuxfoundation/lfx-mentorship/pull/153)); the `/v1/me` replacements are the follow-up. No target ID means no check; `principal` settles it |
+| `PATCH`/`DELETE /v1/user-profiles/{id}` → **`/v1/me/profile`** | required | — | `allow_all` | As above — removed in the same PR, replacements in the follow-up |
 | `GET /v1/users/{userId}/applications` → **`/v1/me/applications`** | required | — | `allow_all` | Filter by `principal`. As a `{userId}` route it is uncheckable *and* lets any caller read another user's applications |
 
 ## Program routes
@@ -137,7 +137,7 @@ Terms are not an FGA type and the current paths expose no program UID, so all of
 
 Writing the table out is where the remaining decision-7-shaped exceptions appear. Four are worth an explicit call:
 
-1. **`GET /v1/users` and `GET /v1/user-profiles` return every user to any authenticated caller.** Neither has an object to check, so the gateway cannot fix it — the edge would wave both through. This is the one finding here that is a live authorization gap rather than a reshape, and it is independent of the Heimdall work.
+1. **`GET /v1/users` and `GET /v1/user-profiles` returned every user to any authenticated caller.** Neither had an object to check, so the gateway could not have fixed it — the edge would have waved both through. It was the one finding here that was a live authorization gap rather than a reshape, independent of the Heimdall work, and it is now closed: [lfx-mentorship#153](https://github.com/linuxfoundation/lfx-mentorship/pull/153) removed both routes (RM-1).
 2. **Ten routes are new** (`submit`, `decision`, `status`, `withdraw`, `withdraw-for-mentee`, `reapply`, `evaluation`, `note`, `submission`, `review`) and fourteen more move (the `/me` reshapes and the nested term routes). None is a model change; all are prerequisites landed *before* the cutover flag, which is why [05](./05-heimdall-gateway.md) step 6 is not a pure configuration change.
 3. **`manager` is the trap in this table.** It resolves to three different sets depending on type — `writer or mentor` on the program, `writer from mentorship_program` (admins only) on the application, `reviewer from mentorship_application` on the task. A RuleSet that names the relation without the type, or copies a row between sections, silently widens or narrows access. Every rule must name both.
 4. **The `optional` authenticator has no successor and should not get one.** Its only job today is the hidden-program owner case, which `auditor` already expresses. Carrying `optionalJWT` forward would re-introduce a service-side visibility decision that the model is meant to own.
@@ -146,6 +146,6 @@ Writing the table out is where the remaining decision-7-shaped exceptions appear
 
 | # | Question | Proposed default |
 | --- | --- | --- |
-| RM-1 | Do `GET /v1/users` and `GET /v1/user-profiles` stay on the gateway host at all? | **No.** They have no checkable object and no legitimate public caller. Drop them from the `HTTPRoute`, or scope them to an admin relation on a type that does not exist yet. Fixing the leak is not gated on Heimdall |
+| RM-1 | ~~Do `GET /v1/users` and `GET /v1/user-profiles` stay on the gateway host at all?~~ **Resolved — removed.** | Both routes are deleted in [lfx-mentorship#153](https://github.com/linuxfoundation/lfx-mentorship/pull/153), along with the ID-addressed identity writes ([05](./05-heimdall-gateway.md) GW-5). They had no checkable object and no legitimate caller; fixing the leak was not gated on Heimdall |
 | RM-2 | `GET /v1/mentees/{id}` and `/v1/mentors/{id}` are directory profiles with no model type. Leave them `allow_all`, or give them one? | **Leave them.** They expose only publicly-listable records, and adding a type to express "is public" duplicates what the service filter already does — the `user:*` wildcard is for objects that have a private state, which these do not |
 | RM-3 | Does `POST /v1/program-terms/{id}/applications` check `viewer` on the program, or `allow_all` plus a service-side visibility check? | **`viewer`.** It is ID-addressed and the program is in the path once nested, so there is a real object to check; `allow_all` would let a caller apply to a hidden or archived program and rely on the service to notice |
