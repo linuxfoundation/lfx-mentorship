@@ -37,8 +37,7 @@ func TestPlatformSummaryHandler_Get_OK(t *testing.T) {
 				AcceptingProgramCount: 3,
 				MentorCount:           7,
 				GraduatedMenteeCount:  42,
-				AmountRaised:          50000,
-				AmountSpent:           12500,
+				StipendsPaid:          12500,
 				GraduatedMenteeUsers: []models.PlatformSummaryMentee{
 					{Name: &john, AvatarURL: &avatar},
 					{Name: &jane, AvatarURL: &avatar},
@@ -61,8 +60,7 @@ func TestPlatformSummaryHandler_Get_OK(t *testing.T) {
 		AcceptingProgramCount: 3,
 		MentorCount:           7,
 		GraduatedMenteeCount:  42,
-		AmountRaised:          50000,
-		AmountSpent:           12500,
+		StipendsPaid:          12500,
 		GraduatedMenteeUsers: []models.PlatformSummaryMentee{
 			{Name: &john, AvatarURL: &avatar},
 			{Name: &jane, AvatarURL: &avatar},
