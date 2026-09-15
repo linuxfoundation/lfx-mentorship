@@ -85,9 +85,17 @@ flowchart TB
 ```
 
 **Two front ends, one API.** The public Nuxt site owns unauthenticated discovery and the apply flow;
-everything authenticated and management-shaped lives in LFX Self Serve. Both talk to the same `/v1`
+everything authenticated and management-shaped lives in LFX Self Serve. Both talk to the same API
 surface, and there is no separate admin API. This split is the reason the FGA model carries a public
 wildcard on programs (§3.2) — one of the two front ends does not authenticate.
+
+**The external path is `/mentorship/v1`, not `/v1`.** On the shared gateway host, `/v1/users` and
+`/v1/programs` are too generic to claim at the root alongside project-service's `/projects/*` and
+meeting-service's `/itx/*`, so the platform surface is
+`https://lfx-api.{domain}/mentorship/v1/...`. The service mounts that prefix itself — no Traefik
+rewrite, matching every other v2 service — and serves the bare `/v1` mount alongside it only until
+the interim ingress is retired (`05` GW-1). **Integrate against `/mentorship/v1`; the bare mount is
+transitional.**
 
 ---
 
@@ -95,7 +103,7 @@ wildcard on programs (§3.2) — one of the two front ends does not authenticate
 
 | Component | Runtime | Responsibility |
 |---|---|---|
-| `mentorship-api` | Go 1.25, Chi v5, pgx v5 | The entire REST surface (`/v1`) and all business rules |
+| `mentorship-api` | Go 1.25, Chi v5, pgx v5 | The entire REST surface, mounted at `/mentorship/v1` (§1), and all business rules |
 | `mentorship-frontend` | Nuxt 4 SSR | Public site, including BFF session handling for the apply flow |
 | `program-funding-stats-sync` | Go CronJob | Hourly refresh of `program_funding_stats` from the Ledger API |
 | `mentorship` schema | PostgreSQL | System of record |
@@ -184,10 +192,14 @@ service, and they are contracts rather than implementation details:
   `{id}` capture that may be a slug would check a nonexistent object and deny a valid URL.
   `GET /v1/programs/resolve/{id}` returns the canonical `program.ID` for this purpose — a
   prerequisite for the RuleSets (`05` GW-2), not a cutover detail.
-- **Redaction on the public read surface.** The public routes (`/programs`, `/mentees`, `/mentors`,
-  summaries) are the intended discovery surface and must expose `name` only. `User` carries `email`
-  and `lfid`, and `UserProfile` adds `phone`, `address`, `demographics` and `socioeconomics`; none of
-  those may appear on an unauthenticated route. `05` GW-8 owns the explicit redaction contract.
+- **The public read surface is an allowlist, not a redacted one.** Only the catalog routes
+  (`/programs`, `/mentees`, `/mentors`, summaries) stay unauthenticated, and they serve
+  purpose-built DTOs that select a fixed allowlist — `user_id`, name, avatar, introduction, skills.
+  The raw user, profile, application and task reads are **gated, not filtered**: they leave the
+  public group entirely rather than having fields stripped, because a blocklist rots the first time
+  a column is added (`05` GW-8). `User.email`, `User.lfid` and `UserProfile.phone`, `address`,
+  `demographics`, `socioeconomics` therefore never reach an unauthenticated route at all. A future
+  public profile page gets its own allowlist DTO, the way the mentor catalog does.
 
 ### 3.4 Authentication
 
@@ -217,13 +229,13 @@ service, and they are contracts rather than implementation details:
 
 | Counterparty | Direction | Mechanism | Failure behavior |
 |---|---|---|---|
-| **Auth0** | inbound | PKCE for users, client-credentials for M2M, JWKS validation | Requests rejected 401 |
+| **Auth0** | inbound | Inbound token validation only: OAuth2 PKCE for users, JWKS signature and audience checks. Outbound M2M token acquisition belongs to the Crowdfunding row below | Requests rejected 401 |
 | **Ledger API** | Mentorship → Ledger | Hourly CronJob, `LEDGER_API_KEY` bearer token; reads mentorship-credit transactions and caches them in `program_funding_stats`. **Direct, not proxied** — `LEDGER_BASE_URL` points at the Ledger service itself (`https://ledger.dev.platform.linuxfoundation.org` in dev), and this repo has its own client ([`clients/ledger.go`](backend/internal/infrastructure/clients/ledger.go)) | Last cached values served |
 | **Crowdfunding API** | Mentorship → CF → Ledger | Request-time call from `ProgramService`, Auth0 M2M token (`access:manage`); fetches categorized transactions and sponsors. **Crowdfunding is a proxy for the Ledger on this path**: `GET /v1/initiatives/{id}/transactions` is served by CF's `InitiativeService` calling the Ledger's `/transactions` ([`initiative_service.go`](https://github.com/linuxfoundation/lfx-crowdfunding/blob/main/backend/internal/service/initiative_service.go)), and `ProgramService.GetCategorizedTransactions` proxies that contract. The categorization and sponsor resolution are CF's own, which is why this does not collapse into the direct Ledger call above | `ErrUpstreamUnavailable` |
 | **Snowflake** | Mentorship → SF | Fivetran Postgres connector; `fivetran_mentorship_*` dbt models repointed | Analytics-plane only — never in the serving path |
 | **lfx-v2-email-service** | Mentorship → NATS `lfx.email-service.send_email` | The platform rail for all transactional email: a request/reply relay over Amazon SES, imported as `lfx-v2-email-service/pkg/api`. It accepts **pre-rendered** `html`/`text` only — no templating — so Mentorship owns and renders its own templates. Not Mandrill: that is the legacy rail and is out of scope ([linuxfoundation/lfx-self-serve#2188](https://github.com/linuxfoundation/lfx-self-serve/issues/2188)) | Log and continue — a failed send must not fail the business operation |
 | **S3** | Mentorship → S3 | Program logos and task submissions via presigned URLs | — |
-| **LFX Self Serve** | SS → Mentorship | User token against `/v1` | — |
+| **LFX Self Serve** | SS → Mentorship | User token against `/mentorship/v1` on the shared gateway host (§1) | — |
 
 Two Ledger upstreams, not one: the cache job and the request-time call go to **different services
 with different credentials**. Do not implement against the wrong one.
@@ -253,12 +265,18 @@ Cross-component notes:
 - **Users are mirrored, not owned.** `users.lfid` holds the LFID
   ([`001_initial.up.sql:30`](backend/db/migrations/001_initial.up.sql)). Auth0/LF SSO remains
   authoritative for identity.
-- **`programs.cii_project_id`** is the only foreign project reference on a program. It is *not* the
-  Crowdfunding join key: `ProgramService.GetCategorizedTransactions` passes the mentorship
-  `programID` straight through as the initiative id, so the two systems are coupled on program id.
-  Worth settling deliberately rather than inheriting.
+- **`programs.project_uid` is the project join key**, and the FGA parent tuple
+  `mentorship_program#project@project:{uid}` is derived from it — so every inherited permission in
+  §3.2 depends on it. The column does not exist yet and its backfill is unowned (§6);
+  `cii_project_id` is a *different*, legacy identifier and is not a substitute for it.
+- **Crowdfunding is joined on program id, not on either project reference.**
+  `ProgramService.GetCategorizedTransactions` passes the mentorship `programID` straight through as
+  the initiative id, so the two systems are coupled on program id. Worth settling deliberately
+  rather than inheriting.
 - **`program_funding_stats`** is a cache, never authoritative. It may be stale.
-- **Search is Postgres full-text** (`tsvector` + GIN). Elasticsearch is dropped from scope.
+- **Search is Postgres full-text** (`tsvector` + GIN) and Elasticsearch is dropped from scope — but
+  the `tsvector` column and GIN index are not in any migration yet (§6), so nothing may assume
+  full-text semantics such as ranking or stemming today.
 - **FGA tuples are emitted through a transactional outbox.** A Postgres commit and a NATS publish
   cannot be made atomic, so each state change records a dirty-object marker in the same transaction
   and a relay re-derives the payload from current Postgres state at send time. It never replays a
@@ -278,7 +296,8 @@ practice — which makes them different from ordinary backlog items.
 | **The four `mentorship_*` FGA types** | Absent from `model.fga`. PR 1 of the four-PR path in [`04 §implementation path`](docs/rewrite/04-authorization-model.md); the merge gate is `tests.yaml` passing, not that the DSL parses |
 | **Project-level program-admin relation** | Needs the `project` type extended *and* project-service to emit it — it cannot be durably written by this service (`04` AQ-4). The Self Serve permissions page also needs updating |
 | **Program-approval global team** | The team does not exist and there is no approve endpoint. `04` AQ-8 leaves the roster owner open — "no owner re-checks that a global tuple still exists" is the operational risk on the one guard protecting publication |
-| **Redaction contract for public routes** | `05` GW-8 owes the explicit field list for whatever stays unauthenticated (§3.3) |
+| **`programs.project_uid`** | The column does not exist; only the unrelated legacy `cii_project_id` does. Needs a nullable-first migration, an ETL from the legacy `lfProjectId`, and an unmapped-program report before it can be `NOT NULL` ([`03 §migration plan`](docs/rewrite/03-migration-plan.md)). Until it lands, the project → program FGA parent tuple cannot be derived and no inherited permission in §3.2 resolves |
+| **Postgres full-text search** | No `tsvector` column or GIN index in any migration, so §5's full-text contract is a target with no schema behind it |
 | **Indexer registration** | Mentorship registers nothing with the indexer. If Mentorship objects should be searchable platform-wide, that work has no owner |
 | **Staging and prod ArgoCD values** | Only `values/{global,dev}` exist for this service |
 | **`term-status` and `task-submission-status` CronJobs** | Planned in `02-target-architecture.md`; only `program-funding-stats-sync` is specified in detail |
