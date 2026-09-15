@@ -156,13 +156,13 @@ type ProgramCatalogMentor struct {
 
 // ProgramCatalogMentee is an accepted/graduated mentee with display fields from users, profiles, and terms.
 type ProgramCatalogMentee struct {
-	UserID       string  `json:"user_id"`
-	Name         *string `json:"name,omitempty"`
-	AvatarURL    *string `json:"avatar_url,omitempty"`
-	Introduction *string `json:"introduction,omitempty"`
-	Status       string  `json:"status"` // accepted | graduated
-	TermID       string  `json:"term_id"`
-	TermName     string  `json:"term_name"`
+	UserID       string            `json:"user_id"`
+	Name         *string           `json:"name,omitempty"`
+	AvatarURL    *string           `json:"avatar_url,omitempty"`
+	Introduction *string           `json:"introduction,omitempty"`
+	Status       ApplicationStatus `json:"status"`
+	TermID       string            `json:"term_id"`
+	TermName     string            `json:"term_name"`
 }
 
 // ProgramCatalogItem is the public catalog shape: a program plus nested skills, terms, and mentors.

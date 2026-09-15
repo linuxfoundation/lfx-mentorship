@@ -169,7 +169,7 @@ func TestProgramHandler_ListCatalogMentees_OK(t *testing.T) {
 			}
 			return []*models.ProgramCatalogMentee{{
 				UserID:   "u1",
-				Status:   "active",
+				Status:   models.ApplicationStatusAccepted,
 				TermID:   "t1",
 				TermName: "Spring 2026",
 			}}, nil
