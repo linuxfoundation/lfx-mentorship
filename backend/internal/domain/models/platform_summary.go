@@ -25,6 +25,8 @@ type PlatformSummary struct {
 	// one mentee application in status='graduated' on a non-deleted term
 	// of a published program.
 	GraduatedMenteeCount int `json:"graduated_mentee_count"`
+	// StipendsPaid is the total spent by published programs.
+	StipendsPaid float64 `json:"stipends_paid"`
 	// GraduatedMenteeUsers is a preview of the most recently graduated
 	// mentees (name + avatar) for the landing hero.
 	GraduatedMenteeUsers []PlatformSummaryMentee `json:"graduated_mentee_users"`
