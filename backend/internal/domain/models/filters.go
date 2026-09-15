@@ -10,21 +10,6 @@ type PaginationMeta struct {
 	Offset int `json:"offset"`
 }
 
-// UserFilter constrains list queries for users.
-type UserFilter struct {
-	Limit  int
-	Offset int
-	Search string // matches name, email, or lfid (ilike)
-}
-
-// UserProfileFilter constrains list queries for user profiles.
-type UserProfileFilter struct {
-	Limit       int
-	Offset      int
-	UserID      string
-	ProfileType string // mentor | mentee
-}
-
 // MenteeFilter constrains public mentee directory queries.
 type MenteeFilter struct {
 	Limit  int
