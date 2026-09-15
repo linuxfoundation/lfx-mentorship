@@ -158,20 +158,12 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			r.Use(jwtAuth.Middleware)
 
 			// Users
-			r.Get("/users", userH.List)
 			r.Get("/users/{id}", userH.GetByID)
-			r.Post("/users", userH.Create)
-			r.Patch("/users/{id}", userH.Update)
-			r.Delete("/users/{id}", userH.Delete)
 			r.Get("/users/{userId}/applications", applicationH.ListByUser)
 
 			// User profiles
-			r.Get("/user-profiles", userProfileH.List)
 			r.Get("/user-profiles/{id}", userProfileH.GetByID)
 			r.Get("/user-profiles/slug/{slug}", userProfileH.GetBySlug)
-			r.Post("/user-profiles", userProfileH.Create)
-			r.Patch("/user-profiles/{id}", userProfileH.Update)
-			r.Delete("/user-profiles/{id}", userProfileH.Delete)
 
 			// Programs
 			r.Post("/programs", programH.Create)

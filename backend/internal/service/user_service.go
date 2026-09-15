@@ -16,7 +16,7 @@ import (
 
 var userSvcTracer = otel.Tracer("users-service")
 
-// UserService orchestrates user reads and writes.
+// UserService orchestrates user reads.
 type UserService struct {
 	repo domain.UserRepository
 }
@@ -38,64 +38,4 @@ func (s *UserService) GetByID(ctx context.Context, id string) (*models.User, err
 		return nil, fmt.Errorf("get user: %w", err)
 	}
 	return user, nil
-}
-
-// List returns a paginated list of users.
-func (s *UserService) List(ctx context.Context, filter models.UserFilter) ([]*models.User, *models.PaginationMeta, error) {
-	ctx, span := userSvcTracer.Start(ctx, "UserService.List")
-	defer span.End()
-
-	users, meta, err := s.repo.List(ctx, filter)
-	if err != nil {
-		span.RecordError(err)
-		return nil, nil, fmt.Errorf("list users: %w", err)
-	}
-	return users, meta, nil
-}
-
-// Create validates input and creates a user.
-func (s *UserService) Create(ctx context.Context, input models.UserCreateInput) (*models.User, error) {
-	ctx, span := userSvcTracer.Start(ctx, "UserService.Create")
-	defer span.End()
-
-	if input.ID == "" {
-		return nil, fmt.Errorf("%w: id is required", domain.ErrInvalidInput)
-	}
-
-	user, err := s.repo.Create(ctx, input)
-	if err != nil {
-		span.RecordError(err)
-		return nil, fmt.Errorf("create user: %w", err)
-	}
-	return user, nil
-}
-
-// Update validates and applies changes to the user with the given ID.
-func (s *UserService) Update(ctx context.Context, id string, input models.UserUpdateInput) (*models.User, error) {
-	ctx, span := userSvcTracer.Start(ctx, "UserService.Update")
-	defer span.End()
-	span.SetAttributes(attribute.String("user.id", id))
-
-	user, err := s.repo.Update(ctx, id, input)
-	if err != nil {
-		span.RecordError(err)
-		return nil, fmt.Errorf("update user: %w", err)
-	}
-	return user, nil
-}
-
-// Delete removes the user with the given ID when the caller owns that user.
-func (s *UserService) Delete(ctx context.Context, id, actorID string) error {
-	ctx, span := userSvcTracer.Start(ctx, "UserService.Delete")
-	defer span.End()
-	span.SetAttributes(attribute.String("user.id", id))
-
-	if actorID == "" || actorID != id {
-		return fmt.Errorf("%w: caller may only delete their own user", domain.ErrForbidden)
-	}
-	if err := s.repo.Delete(ctx, id); err != nil {
-		span.RecordError(err)
-		return fmt.Errorf("delete user: %w", err)
-	}
-	return nil
 }
