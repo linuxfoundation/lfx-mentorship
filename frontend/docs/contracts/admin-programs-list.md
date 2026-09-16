@@ -24,12 +24,12 @@ GET /api/mentorship/programs
 
 ### Query
 
-| Param    | Type                                      | Default                                       | Notes                               |
-| -------- | ----------------------------------------- | --------------------------------------------- | ----------------------------------- |
-| `search` | string                                    | omitted                                       | Case-insensitive match on `name`.   |
-| `status` | `published` \| `pending` \| `hidden`      | omitted                                       | Exact match. Invalid value → `400`. |
-| `offset` | number                                    | `0`                                           |                                     |
-| `limit`  | number                                    | UI sends `2` (`MENTORSHIP_PROGRAM_PAGE_SIZE`) | Server default `50`, max `50`.      |
+| Param    | Type                                 | Default                                       | Notes                               |
+| -------- | ------------------------------------ | --------------------------------------------- | ----------------------------------- |
+| `search` | string                               | omitted                                       | Case-insensitive match on `name`.   |
+| `status` | `published` \| `pending` \| `hidden` | omitted                                       | Exact match. Invalid value → `400`. |
+| `offset` | number                               | `0`                                           |                                     |
+| `limit`  | number                               | UI sends `2` (`MENTORSHIP_PROGRAM_PAGE_SIZE`) | Server default `50`, max `50`.      |
 
 ### Success `200`
 
@@ -67,10 +67,10 @@ lifetime graduated count for the program.
 
 ### Errors
 
-| Status | When                                                          |
-| ------ | ------------------------------------------------------------- |
+| Status | When                                                     |
+| ------ | -------------------------------------------------------- |
 | `400`  | `status` is not one of `published`, `pending`, `hidden`. |
-| `401`  | No session.                                                   |
+| `401`  | No session.                                              |
 
 ---
 

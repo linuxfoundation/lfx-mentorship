@@ -43,13 +43,13 @@ Mentor and mentee page contracts will be added in a later pass.
 These contracts use the **backend's status values** (the source of truth). The
 Self Serve Angular UI maps them to display labels in its own BFF/constants.
 
-| Domain           | Wire values (used here)                                                  | Self Serve UI display          |
-| ---------------- | ------------------------------------------------------------------------ | ------------------------------ |
-| Program          | `pending`, `published`, `hidden`                                         | Pending Review, Open, Completed |
-| Application      | `pending`, `accepted`, `declined`, `withdrawn`, `graduated`, `hold`      | same (+ `applied`/`tasks-completed` split of `pending` in Applicants tab) |
-| Program member   | `pending`, `approved`, `declined`, `withdrawn`                           | Invited, Accepted, Declined, Withdrawn |
-| Task             | `pending`, `in_progress`, `submitted`, `completed`                       | same |
-| Term             | `open`, `closed`                                                         | same |
+| Domain         | Wire values (used here)                                             | Self Serve UI display                                                     |
+| -------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Program        | `pending`, `published`, `hidden`                                    | Pending Review, Open, Completed                                           |
+| Application    | `pending`, `accepted`, `declined`, `withdrawn`, `graduated`, `hold` | same (+ `applied`/`tasks-completed` split of `pending` in Applicants tab) |
+| Program member | `pending`, `approved`, `declined`, `withdrawn`                      | Invited, Accepted, Declined, Withdrawn                                    |
+| Task           | `pending`, `in_progress`, `submitted`, `completed`                  | same                                                                      |
+| Term           | `open`, `closed`                                                    | same                                                                      |
 
 ## Shared conventions
 

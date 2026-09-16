@@ -42,7 +42,7 @@ Tab visibility is driven by **terms**, not by program `completed`:
 | ---------------------------------------- | ----------------------------------------------------- |
 | At least one **open** (in-progress) term | show **Current Mentees**                              |
 | At least one **closed** term             | show **Past Mentees**                                 |
-| Program `status` is `pending`          | people lists are empty (no mentees / applicants data) |
+| Program `status` is `pending`            | people lists are empty (no mentees / applicants data) |
 
 A program can show **both** Current and Past when it has open terms and closed
 terms at the same time.
@@ -140,20 +140,20 @@ Filter query `term` is the term **id**, not the name.
   "id": "tsk_alex_resume",
   "name": "Resume",
   "description": "Upload the most recent version of your resume.",
-      "status": "submitted",
-      "prerequisite": false,
-      "createdOn": "2026-07-01",
-      "updatedOn": "2026-08-15",
-      "dueOn": "2026-10-01",
-      "hasSubmission": true,
-      "custom": false,
-      "file": "http://..."
+  "status": "submitted",
+  "prerequisite": false,
+  "createdOn": "2026-07-01",
+  "updatedOn": "2026-08-15",
+  "dueOn": "2026-10-01",
+  "hasSubmission": true,
+  "custom": false,
+  "file": "http://..."
 }
 ```
 
 | Field           | Notes                                                                                                              |
 | --------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `status`        | `pending` \| `in_progress` \| `submitted` \| `completed`. Read-only for admins.                                     |
+| `status`        | `pending` \| `in_progress` \| `submitted` \| `completed`. Read-only for admins.                                    |
 | `hasSubmission` | Gates the eye / download icons in the UI.                                                                          |
 | `file`          | URL of the uploaded file when `hasSubmission` is true. The UI uses this to view and download — no submission APIs. |
 | `custom`        | Admin-authored extra task.                                                                                         |
@@ -173,13 +173,13 @@ the row expands.
 GET /api/mentorship/programs/:programId/mentees
 ```
 
-| Query              | Type                         | Notes                                                                                                        |
-| ------------------ | ---------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `type`             | `current` \| `past` \| `all` | Required. See table below.                                                                                   |
-| `search`           | string                       | Name or email, case-insensitive.                                                                             |
+| Query              | Type                         | Notes                                                                                                                  |
+| ------------------ | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `type`             | `current` \| `past` \| `all` | Required. See table below.                                                                                             |
+| `search`           | string                       | Name or email, case-insensitive.                                                                                       |
 | `status`           | `ApplicationStatus`          | `pending` \| `accepted` \| `declined` \| `withdrawn` \| `graduated` \| `hold`. Omit = all statuses that `type` allows. |
-| `term`             | string                       | Term **id**.                                                                                                 |
-| `offset` / `limit` | number                       | UI page size default `10`, options `10, 25, 50`.                                                             |
+| `term`             | string                       | Term **id**.                                                                                                           |
+| `offset` / `limit` | number                       | UI page size default `10`, options `10, 25, 50`.                                                                       |
 
 | `type`    | Who is in `data`                                                                                                     | UI tab          |
 | --------- | -------------------------------------------------------------------------------------------------------------------- | --------------- |
@@ -304,14 +304,14 @@ PATCH /api/mentorship/programs/:programId/mentees/:menteeId
 
 `status` is `accepted` \| `declined` \| `withdrawn` \| `graduated` \| `hold`.
 
-| Current status | Allowed next                                            |
-| -------------- | ------------------------------------------------------- |
-| `pending`      | `accepted`, `declined`, `hold`, `withdrawn`             |
-| `hold`         | `accepted`, `declined`, `pending`                       |
-| `accepted`     | `graduated`, `declined`                                 |
-| `declined`     | `pending`                                               |
-| `withdrawn`    | *(terminal)*                                            |
-| `graduated`    | *(terminal)*                                            |
+| Current status | Allowed next                                |
+| -------------- | ------------------------------------------- |
+| `pending`      | `accepted`, `declined`, `hold`, `withdrawn` |
+| `hold`         | `accepted`, `declined`, `pending`           |
+| `accepted`     | `graduated`, `declined`                     |
+| `declined`     | `pending`                                   |
+| `withdrawn`    | _(terminal)_                                |
+| `graduated`    | _(terminal)_                                |
 
 Only `accepted` may move to `graduated`. Accepting a `pending` row enrolls them
 as a current mentee on that term. `400` if the transition is illegal.
@@ -683,7 +683,10 @@ note. The note is visible to the program's admins and mentors.
 #### Success `200`
 
 ```json
-{ "personId": "mnt_alex_rivera", "note": "Strong Go background; paired well during the screening exercise." }
+{
+  "personId": "mnt_alex_rivera",
+  "note": "Strong Go background; paired well during the screening exercise."
+}
 ```
 
 ---
