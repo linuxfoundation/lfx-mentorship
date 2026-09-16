@@ -3,7 +3,7 @@
 
 # Mentorship Rewrite - 07: Traefik, Heimdall, and OpenFGA Implementation Guide
 
-Status: Implementation guide - dependent on Architecture approval of the model and the open blockers below
+Status: Implementation guide - the reviewed FGA permission sets are accepted as design input; enforcement remains dependent on the operational blockers below
 
 Related: [04-authorization-model.md](./04-authorization-model.md), [05-heimdall-gateway.md](./05-heimdall-gateway.md), [06-route-matrix.md](./06-route-matrix.md), [02-target-architecture.md](./02-target-architecture.md)
 
@@ -16,7 +16,19 @@ This is the ordered implementation runbook for moving LFX Mentorship behind the 
 3. The Mentorship backend validates the Heimdall JWT and consumes its `principal` claim. It does not query OpenFGA or repeat relation checks.
 4. PostgreSQL remains the source of truth. Mentorship sends derived relationship changes to `lfx-v2-fga-sync` through NATS JetStream using a transactional outbox.
 
-This document says **how and in what order** to implement the design. Documents 04 and 06 remain authoritative for the relation model and per-route permissions.
+This document says **how and in what order** to implement the design. Document 04 remains authoritative for the relation model. The canonical route catalog in section 1.6 combines the current API, required URL adjustments, and routes implied by accepted product workflows. Copy that complete catalog into document 06 before treating it as the RuleSet inventory.
+
+### Source precedence
+
+The Architecture-reviewed standalone model described in the Mentorship FGA PDF validates the actor permission sets and the project -> program -> application -> task inheritance chain. Production integration follows the newer platform decisions recorded in documents 04-06 where the artifacts differ:
+
+- Use the platform's noun relations (`writer`, `manager`, `reviewer`, `auditor`, `assignee`, `mentee`, `viewer`, and `member`) in RuleSets. The PDF's `can_*` names describe equivalent permissions but are not the production relation vocabulary.
+- Heimdall performs ID-addressed authorization at the edge. Do **not** implement the PDF's earlier proposal to replace service checks with request/reply calls to `lfx.access_check.request`; that subject remains for query/list filtering.
+- Withdrawing or declining an application does not delete its tuples. The applicant and program reviewers retain access to the historical record. `delete_access` is for actual object deletion.
+- Pending mentor invitations have no FGA tuple. Emit the `mentor` relation only when an invitation or mentor application is accepted.
+- Program creation remains authenticated `allow_all` at launch. The computed project permission exists for a later policy change but is not checked by the initial create route.
+
+When this guide and the PDF disagree on transport, relation naming, tuple lifecycle, or endpoint shape, documents 04-06 and this guide control production implementation.
 
 ## Desired request and data flows
 
@@ -56,8 +68,8 @@ Do not enable gateway traffic until every item in this section is resolved.
 
 ### Architecture approval
 
-- The types and relations in document 04 must be approved and merged into the platform model.
-- The route contract in document 06 must be approved. A RuleSet is not the place to decide a route's permission.
+- The reviewed actor permission sets must be represented by the noun-relation model in document 04 and merged into the platform model.
+- The canonical route catalog in section 1.6 must be approved and copied into document 06. A RuleSet is not the place to decide a route's permission.
 - AQ-8 must name the platform authority allowed to administer `mentorship_approver_team:global`. Program admins must never be able to add themselves.
 
 ### Project relation ownership
@@ -69,11 +81,13 @@ Resolve that wording with the platform owners before implementation. This guide 
 - Mentorship owns the roster and emits `member_put` / `member_remove` against `project`.
 - Project-service preserves, but does not derive, `mentorship_program_admin`.
 
-The alternative is valid only if project-service also owns durable storage and management of that roster. Do not let both services emit competing full-state definitions.
+Under that choice, add a Mentorship-owned `mentorship_program_admins` Postgres table keyed by `(project_uid, user_id)`. Manage it through an LF-staff-authorized API, retain removal history or an outbox tombstone, and derive `project:{uid}#mentorship_program_admin@user:{lfid}` from it for seed and reconciliation. The existing `program_members` table cannot represent this project-wide roster because every row is scoped to one program.
+
+The alternative is valid only if project-service also owns durable storage and management of that roster. Do not let both services emit competing definitions, and do not enable enforcement until one source of truth can seed and reconcile the relation.
 
 ### Data invariants
 
-- Every program must have a non-empty LF project UID.
+- Add nullable `programs.project_uid`, populate it from the legacy LF project identifier, report and repair unmapped rows, then make it `NOT NULL` before tuple emission. The current initial schema has no such column, so this is a required migration rather than an assumption.
 - Every task must have an application parent.
 - `tasks.application_id` must become `NOT NULL` with `ON DELETE CASCADE` after unresolved backfill rows are repaired.
 - Every parent-authorized route must verify the path's child belongs to that parent.
@@ -107,18 +121,20 @@ Model, JWT, and route-shape work can proceed in parallel after the contract is f
 Before changing code:
 
 1. Export the current route inventory from `backend/cmd/mentorship-api/server.go`.
-2. Compare every method and path to document 06. Account for every current, removed, moved, and new route.
-3. Confirm the exact OpenFGA object type and relation for every route.
-4. Record which routes are:
+2. Export every route requirement from the public Nuxt calls, Self Serve calls, mock-backed responses, form submissions, and `MentorshipComingSoonService` actions.
+3. Reconcile all evidence into the canonical route catalog in section 1.6. Account for every current, removed, moved, new, and deferred route.
+4. Confirm the exact OpenFGA object type and relation for every route.
+5. Record which routes are:
    - authenticated and FGA-checked;
    - anonymous-capable and FGA-checked;
    - authenticated `allow_all` because no object exists;
    - anonymous `allow_all` collection reads;
    - cluster-only and absent from the gateway.
-5. Confirm object IDs and the source from which Heimdall extracts them.
-6. Confirm the service owns all FGA source data it proposes to emit.
+6. Confirm object IDs and the source from which Heimdall extracts them.
+7. Confirm the service owns all FGA source data it proposes to emit.
+8. Copy every accepted route from section 1.6 into document 06 before writing `ruleset.yaml`.
 
-The acceptance test for this step is simple: there must be no route in `server.go` without a corresponding row in document 06, and no RuleSet permission may still be described as an open product decision.
+The acceptance test for this step is broader than the current server: there must be no route in `server.go`, client call, mock-backed response, or coming-soon action without either a corresponding canonical route or an explicit deferred decision. No RuleSet permission may still be described as an open product decision.
 
 ## Step 1: Reshape the API before adding enforcement
 
@@ -135,7 +151,7 @@ Mount the same handlers under both prefixes. Do not configure a Traefik `StripPr
 
 ### 1.2 Add a public slug resolver
 
-Add `GET /v1/programs/resolve/{slug}` (and the prefixed equivalent) that returns the canonical program UID. It must resolve only publicly visible programs. All FGA-checked routes then accept UIDs only.
+Harden the existing `GET /v1/programs/resolve/{id}` route (and its prefixed equivalent) so `{id}` may be a UUID or slug and the response contains the canonical program UID. Keep the `{id}` capture name because `ResolveID` already reads it. It must resolve only publicly visible programs. All FGA-checked routes then accept UIDs only.
 
 Test the exact response and not-found mapping because a Heimdall contextualizer or client redirect depends on that contract. Do not emit tuples keyed by slugs.
 
@@ -148,7 +164,7 @@ Implement document 06 in full:
 - Nest all term routes under `/v1/programs/{program_uid}/terms/{term_id}`.
 - Add the split program, application, and task transition routes.
 - Keep reviewer notes on their own `reviewer`-gated route.
-- Require authentication on mentor-invite acceptance and decline, and compare the signed token's subject to the caller on both routes.
+- Require authentication on both mentor-invite acceptance and decline, and compare the signed token's subject to the caller on both routes.
 
 ### 1.4 Remove attribute-level authorization
 
@@ -172,7 +188,161 @@ WHERE program_id = $1 AND id = $2;
 
 Return the existing per-entity not-found sentinel on mismatch. Apply this to terms, members, skills, and every future parent-authorized child route.
 
-### 1.6 Validate this phase
+### 1.6 Canonical route catalog
+
+This is one route contract. A route is not a "backend route" or a "frontend route": current handlers, client calls, mock-backed workflows, and reviewed product requirements are all evidence for the same service API. The **State** column records delivery work without dividing the catalog by source:
+
+- **existing**: the canonical URL and payload shape already exist; add the declared edge rule;
+- **adjust**: a current route must move, split, or change authentication;
+- **new**: the accepted workflow needs a route that does not exist;
+- **remove**: the current route has no safe target contract;
+- **blocked**: the route shape is proposed, but an authority or storage decision must land first.
+
+All canonical paths are service paths under `/v1`. During migration they are also mounted under `/mentorship/v1`; RuleSets use the `/mentorship/v1/...` form and `:name` captures. BFF-local `/api/...` paths are adapters to this catalog, not a second API taxonomy.
+
+Rules for every table below:
+
+1. A collection spanning independently authorized objects uses a self-scoped query or the FGA-aware query service; it never checks a fabricated wildcard object.
+2. A parent-authorized child route verifies the parent-child association in PostgreSQL.
+3. Every ID interpolated into an FGA object is a canonical UID.
+4. Public, management, applicant, and reviewer DTOs remain separate when their admitted relations differ.
+5. Every accepted row is copied to document 06 and becomes one explicit RuleSet before enforcement.
+
+#### Platform and public discovery
+
+| State | Method and canonical path | RuleSet check | Contract |
+| --- | --- | --- | --- |
+| existing | `GET /livez`, `/healthz`, `/readyz` | none; not gateway-routed | Kubernetes probes only. |
+| existing | `GET /v1/programs` | anonymous `allow_all` | Published-only collection; reject or ignore non-public status filters. |
+| existing | `GET /v1/programs/catalog` | anonymous `allow_all` | Published catalog collection. |
+| adjust | `GET /v1/programs/resolve/{id}` | anonymous `allow_all` | Accept slug or UID and return a canonical UID only for publicly visible programs. |
+| existing | `GET /v1/programs/{uid}` | program `viewer` | Canonical program representation; UID only. |
+| existing | `GET /v1/programs/{uid}/catalog` | program `viewer` | Public catalog detail. |
+| existing | `GET /v1/programs/{uid}/skills` | program `viewer` | Public skill list. |
+| existing | `GET /v1/programs/{uid}/mentees` | program `viewer` | Accepted and graduated mentees only; public allowlist DTO. |
+| adjust | `GET /v1/programs/{uid}/members` | program `viewer` | Effective mentors only; redact email and exclude program admins. |
+| existing | `GET /v1/programs/{uid}/funding-stats` | program `viewer` | Cached funding totals. |
+| existing | `GET /v1/programs/{uid}/transactions` | program `viewer` | Public transaction contract only. |
+| existing | `GET /v1/programs/{uid}/sponsors` | program `viewer` | Public sponsor cards. |
+| existing | `GET /v1/programs/{uid}/terms` | program `viewer` | Public term representation only. |
+| existing | `GET /v1/mentees`, `/v1/mentees/summary`, `/v1/mentors`, `/v1/mentors/summary`, `/v1/summary`, `/v1/funding-stats/total` | anonymous `allow_all` | Published-scope directory and aggregate queries. |
+| existing | `GET /v1/mentees/{id}`, `/v1/mentors/{id}` | anonymous `allow_all` | Purpose-built public profile DTOs, not raw user rows. |
+
+#### Caller identity and cross-object collections
+
+| State | Method and canonical path | RuleSet check | Contract |
+| --- | --- | --- | --- |
+| new | `PUT /v1/me` | authenticated `allow_all` | Bootstrap or refresh the local user from validated `principal`; this runs before ordinary local-user resolution. |
+| adjust | `GET`, `PATCH`, `DELETE /v1/me` | authenticated `allow_all` | Resolve the target from `principal`; no user ID in path or body. |
+| new | `GET /v1/me/profiles` | authenticated `allow_all` | Return presence and summary for mentor and mentee profiles. |
+| new | `GET`, `PUT`, `PATCH`, `DELETE /v1/me/profiles/{profileType}` | authenticated `allow_all` | `{profileType}` is `mentor` or `mentee`; target user comes from `principal`. Keep persona payloads distinct. |
+| adjust | `GET /v1/me/applications?role=...&status=...&limit=...&offset=...` | authenticated `allow_all` | Self-scoped applications and mentor requests; item links use canonical application UIDs. |
+| new | `GET /v1/me/mentor-programs?limit=...&offset=...` | authenticated `allow_all` | Effective mentor memberships with current-term and review-work counts. |
+| new | `GET /v1/me/managed-programs?status=...&search=...&limit=...&offset=...` | authenticated self-scoped collection with per-result program `writer` filtering | Cross-project admin cards, including non-public programs. Implement the result selection through the FGA-aware query service; a local member query would omit inherited project writers and cross-program admins. |
+| remove | `GET /v1/users`, `GET /v1/user-profiles` | none | Raw identity/profile collections have no checkable object or legitimate consumer. |
+| remove | `POST /v1/users`, `POST /v1/user-profiles` | none | Replaced by self-scoped `PUT /v1/me` and typed profile routes. |
+| remove | `PATCH`, `DELETE /v1/users/{id}` and `/v1/user-profiles/{id}` | none | Replaced by `/me`; no admin-by-ID requirement exists. |
+| adjust | `GET /v1/users/{id}`, `/v1/user-profiles/{id}`, `/v1/user-profiles/slug/{slug}` | authenticated `allow_all` temporarily | Retain only until purpose-built self/public-directory contracts replace raw profile reads; authentication alone does not make all fields safe. |
+
+#### Programs, members, and administration
+
+| State | Method and canonical path | RuleSet check | Contract |
+| --- | --- | --- | --- |
+| new | `GET /v1/programs/name-availability?name=...` | authenticated `allow_all` | Advisory validation only; the database unique constraint remains authoritative. |
+| adjust | `POST /v1/programs` | authenticated `allow_all` at launch | Atomically create the draft, initial direct program admin, terms, skills, and prerequisite templates; return the complete representation. |
+| adjust | `PATCH /v1/programs/{uid}` | program `writer` | Metadata only; reject `status`. |
+| new | `POST /v1/programs/{uid}/submit` | program `writer` | `draft -> submitted`. |
+| new | `POST /v1/programs/{uid}/decision` | `member` on `mentorship_approver_team:global` | `submitted -> published` or `submitted -> rejected`; static authorization object. |
+| existing | `DELETE /v1/programs/{uid}` | program `writer` | Emit deletion for the program and all application/task descendants. |
+| existing | `POST /v1/programs/{uid}/skills` | program `writer` | Add normalized skill. |
+| existing | `DELETE /v1/programs/{uid}/skills/{skillId}` | program `writer` | Verify skill belongs to program. |
+| new | `GET /v1/programs/{uid}/management-summary` | program `manager` | Counts only: mentees, applicants, mentors, terms; no notes, email, or submission data. |
+| new | `GET /v1/programs/{uid}/applications?term_id=...&status=...&search=...&limit=...&offset=...` | program `manager` | Program-wide applications and prerequisite progress; no reviewer notes or cross-program application details. |
+| new | `GET /v1/programs/{uid}/applications/export?term_id=...&status=...` | program `manager` | Server-side export for applicant/current/historical views. |
+| new | `GET /v1/programs/{uid}/member-management?status=...&search=...&limit=...&offset=...` | program `writer` | Administrative roster including pending/history rows, invitation metadata, profile state, and permitted contact fields. |
+| existing | `POST /v1/programs/{uid}/members` | program `writer` | Invite or add a member; mentor tuple appears only when membership becomes effective. |
+| existing | `PATCH /v1/programs/{uid}/members/{memberId}` | program `writer` | Verify parent; apply explicit lifecycle transition and tuple change. |
+| existing | `DELETE /v1/programs/{uid}/members/{memberId}` | program `writer` | Verify parent; remove only the effective named relation. |
+| adjust | `POST /v1/mentor-invites/{token}/accept`, `/decline` | authenticated `allow_all` | Signed token subject must equal caller on both routes. |
+| blocked | `GET`, `POST`, `DELETE /v1/admin/approver-team/members` | platform LF-staff authority | AQ-8 must define an authority not satisfiable by a Mentorship relation. |
+| blocked | `GET`, `POST`, `DELETE /v1/projects/{projectUid}/mentorship-program-admins` | platform LF-staff/project authority to be agreed | Requires one approved owner for the project-wide roster and its tuple lifecycle. |
+
+#### Program terms and nested collections
+
+| State | Method and canonical path | RuleSet check | Contract |
+| --- | --- | --- | --- |
+| existing | `POST /v1/programs/{programUid}/terms` | program `writer` | Create a term for the program. |
+| adjust | `GET /v1/programs/{programUid}/terms/{termId}` | program `viewer` | Verify term belongs to program. |
+| adjust | `PATCH`, `DELETE /v1/programs/{programUid}/terms/{termId}` | program `writer` | Verify term belongs to program. |
+| new | `GET /v1/programs/{programUid}/term-management` | program `writer` | Term rows with pending, declined, accepted, graduated counts and action eligibility. |
+| new | `POST /v1/programs/{programUid}/terms/{termId}/close`, `/reopen` | program `writer` | Verify parent and enforce date/blocking-application rules. |
+| adjust | `GET /v1/programs/{programUid}/terms/{termId}/applications` | program `manager` | Verify parent; paginated term applications. |
+| adjust | `GET /v1/programs/{programUid}/terms/{termId}/applications/export` | program `manager` | Verify parent; term-scoped export. |
+| adjust | `POST /v1/programs/{programUid}/terms/{termId}/applications/bulk-decline` | program `writer` | Verify parent; affect only the contract's pending set. |
+| adjust | `GET /v1/programs/{programUid}/terms/{termId}/past-mentees` | program `manager` | Verify parent. |
+| adjust | `GET /v1/programs/{programUid}/terms/{termId}/tasks` | program `manager` | Verify parent. |
+| adjust | `POST /v1/programs/{programUid}/terms/{termId}/applications` | program `viewer` plus required authentication | Bind applicant to `principal`; enforce visibility, role, term, application window, eligibility, and duplicate rules. |
+
+#### Applications and reviewer data
+
+| State | Method and canonical path | RuleSet check | Contract |
+| --- | --- | --- | --- |
+| existing | `GET /v1/applications/{uid}` | application `auditor` | Applicant/admin/mentor-readable representation; excludes reviewer note. |
+| adjust | `PATCH /v1/applications/{uid}` | application `writer` | Applicant-editable content only; reject status, evaluation, and note fields. |
+| new | `PATCH /v1/applications/{uid}/status` | application `manager` | Admin decision and graduation transitions. |
+| new | `POST /v1/applications/{uid}/withdraw` | application `mentee` | Applicant self-withdrawal; pending-only workflow rule. |
+| new | `POST /v1/applications/{uid}/withdraw-for-mentee` | application `manager` | Staff-assisted withdrawal under its distinct workflow rules. |
+| new | `POST /v1/applications/{uid}/reapply` | application `mentee` | Applicant-owned reapplication under valid-state rules. |
+| new | `PUT /v1/applications/{uid}/evaluation` | application `reviewer` | Reviewer evaluation, never applicant-readable. |
+| new | `GET`, `PUT /v1/applications/{uid}/note` | application `reviewer` | Private note remains off every `auditor` DTO. |
+| existing | `DELETE /v1/applications/{uid}` | application `manager` | Hard delete only; emit deletion for application and tasks. Withdrawal does not delete tuples. |
+| existing | `GET /v1/applications/{uid}/tasks?category=...&status=...` | application `auditor` | Paginated or bounded task list without embedding tasks in application collections. |
+| existing | `POST /v1/applications/{uid}/tasks` | application `reviewer` | Require accepted application where product workflow requires it. |
+
+#### Tasks and submission artifacts
+
+| State | Method and canonical path | RuleSet check | Contract |
+| --- | --- | --- | --- |
+| existing | `GET /v1/tasks/{uid}` | task `auditor` | Assignee and reviewers. |
+| adjust | `PATCH /v1/tasks/{uid}` | task `manager` | Task content only; reject submission and review fields. |
+| new | `PATCH /v1/tasks/{uid}/submission` | task `assignee` | Record submission object key/text and transition under workflow rules. |
+| new | `PATCH /v1/tasks/{uid}/review` | task `manager` | Reviewer-only state. |
+| existing | `DELETE /v1/tasks/{uid}` | task `manager` | Delete task and its tuples. |
+| new | `POST /v1/tasks/{uid}/submission-upload-url` | task `assignee` | If S3 evidence is in launch scope, return a bounded presigned upload URL. |
+| new | `POST /v1/tasks/{uid}/submission-download-url` | task `auditor` | Return a separately authorized short-lived download URL. |
+
+Validate upload content type, size, object-key prefix, and expiry. Do not store presigned URLs. Resume and program-logo upload routes remain deferred until ownership, scanning, retention, and reader authorization are defined; a filename field alone is not sufficient evidence for a storage API.
+
+#### Contract composition and unresolved product points
+
+- The production client composes the management summary and selected tab from the same canonical routes above. Do not reproduce an all-in-one response containing metadata, lists, tasks, private notes, emails, and counts because those fields require different relations.
+- The "Other Active Applications" requirement is blocked. A reviewer on program A is not authorized to see applications to program B. Remove it, reduce it to non-sensitive aggregate text, or use an FGA-filtered query that checks every referenced application.
+- Program cards and links use canonical UIDs. The public resolver cannot disclose non-public program slugs. If non-public slug deep links remain required, implement an authenticated contextualizer that resolves the slug and then checks the resulting program relation.
+- Mentor applications use the same term-scoped application route with `role=mentor`. The product must add term selection or define a deterministic current-term choice because the relational model requires `program_term_id`.
+- LF-project selection and CII badge lookup remain integrations with their owning services, not Mentorship passthrough routes.
+- Client display states such as `open`, `pending-review`, `completed`, and `active-term` map explicitly from backend states. They do not alter the service enums.
+- Clients may keep local `/api/...` adapters, but those adapters forward to this catalog, request the shared gateway audience, load only required data, and block writes during impersonation in addition to edge authorization.
+
+### 1.7 Map the reviewed PDF permissions to production relations
+
+| Reviewed PDF permission | Production RuleSet check |
+| --- | --- |
+| `can_create_program` | no FGA check at launch; authenticated `POST /programs` |
+| `can_approve_program` | `member` on `mentorship_approver_team:global` |
+| program `can_view` | program `viewer` |
+| `can_invite_mentor`, `can_create_term` | program `writer` |
+| `can_view_applications`, `can_add_task`, `can_add_prerequisite_task` | program `manager` for nested lists; application `reviewer` when the application UID is the path object |
+| `can_decide_application` / application `can_decide` | application `manager` |
+| application `can_view` | application `auditor` |
+| `can_withdraw` | applicant route checks `mentee`; staff-assisted route checks application `manager` |
+| `can_reapply` | application `mentee` |
+| `can_add_note`, `can_view_notes` | application `reviewer` on the separate note routes |
+| task `can_view` | task `auditor` |
+| task `can_update_status` | submission route checks `assignee`; review route checks task `manager` |
+
+This mapping preserves the reviewed actor sets while allowing Heimdall to authorize one relation per endpoint. In particular, the PDF's combined withdraw and task-update permissions become separate routes because the admitted actors have different workflow rights.
+
+### 1.8 Validate this phase
 
 From `backend/` run:
 
@@ -183,7 +353,7 @@ make lint
 make license-check
 ```
 
-Add handler tests showing both route mounts reach the same behavior, slug input is rejected on UID-only routes, protected fields are rejected, and a child from program B cannot be accessed through program A's nested path.
+Add handler tests showing both route mounts reach the same behavior, slug input is rejected on UID-only routes, protected fields are rejected, and a child from program B cannot be accessed through program A's nested path. Add contract tests for every canonical route, including pagination/filter forwarding, management/public DTO separation, selective response composition, and denial of cross-program application details.
 
 ## Step 2: Add the shared OpenFGA model
 
@@ -216,7 +386,7 @@ Adding the four Mentorship types requires a major bump. The chart version in `Ch
 
 ### 2.3 Add executable model fixtures
 
-Add or extend the platform `tests.yaml` using the repository's established fixture layout. Cover at least:
+Port the reviewed standalone suite (14 scenarios and 87 checks) into the platform repository's fixture layout, adapting its `can_*` assertions to the noun-relation mapping in section 1.7. Add or extend `tests.yaml` so it covers at least:
 
 Positive cases:
 
@@ -308,12 +478,13 @@ Require a non-empty `principal` for a successfully authenticated gateway request
 
 Heimdall's `principal` is an LFID username, while application foreign keys use `users.id`. Resolve a human LFID through the unique local LFID column and place both the LFID and local user UUID on the request principal.
 
-- Fail closed with `401` when an authenticated human LFID has no local user.
+- Fail closed with `401` when an authenticated human LFID has no local user on routes that require an existing local user.
+- Exempt the `PUT /v1/me` profile-sync bootstrap route from that precondition. It validates the Heimdall token, uses `principal` as the LFID, and atomically creates or refreshes the local user before returning it. Otherwise a first-time user could never create the row needed by the resolver.
 - Do not resolve `_anonymous`.
 - Do not resolve M2M principals ending in `@clients` unless a route explicitly requires a local human user.
 - Prefer applying resolution only to routes that need a local user if that keeps the exemption logic smaller.
 
-After Heimdall supplies object authorization, remove service role/ownership checks rather than translating them to LFIDs. Keep workflow checks and parent-child invariants.
+After Heimdall supplies object authorization, remove service role/ownership checks that duplicate a RuleSet rather than translating them to LFIDs. Keep workflow checks, parent-child invariants, `/me` self-scoping, create-body binding to `principal`, and the invite accept/decline signed-token subject comparison: those are documented residues the edge cannot express.
 
 ### 3.4 Handle both route mounts during migration
 
@@ -351,14 +522,22 @@ github.com/linuxfoundation/lfx-v2-fga-sync/pkg/types
 
 Subject constants should be centralized locally or imported from the shared package; do not repeat subject strings across call sites.
 
-### 4.2 Add a generation-guarded dirty-object outbox
+### 4.2 Add generation-guarded object and membership outboxes
 
-Create an `fga_outbox` migration. The logical key is `(object_type, object_uid)`. Each state transaction upserts that key and increments a generation. Store enough deletion intent to emit a tombstone after the source row is gone, but do not store frozen `update_access` payloads.
+Create an `fga_outbox` migration with two logical marker shapes:
+
+1. **Whole-object marker**, keyed by `(object_type, object_uid)`, for `update_access` and `delete_access`.
+2. **Membership marker**, keyed by `(object_type, object_uid, relation, username)`, for `member_put` and `member_remove`.
+
+Each state transaction upserts the affected marker and increments a generation. A membership marker is a dirty relation-member key, not a frozen message: at send time the relay checks the owning roster to decide whether the tuple currently should exist (`member_put`) or be absent (`member_remove`). Keeping `relation` and `username` in the key means a deleted roster row remains reconstructible as a removal and changes for different people are never coalesced together.
+
+Whole-object deletion still needs durable delete intent after the source row is gone, but no `update_access` payload is stored frozen.
 
 The row needs, at minimum:
 
-- object type and UID;
-- desired operation (`sync` or `delete`);
+- marker kind, object type, and UID;
+- relation and username for membership markers;
+- desired whole-object operation (`sync` or `delete`); membership operation is derived at send time from roster presence;
 - monotonically increasing generation;
 - pending/in-flight state or claim metadata;
 - retry count, next-attempt time, last error, and timestamps.
@@ -366,7 +545,7 @@ The row needs, at minimum:
 In the same Postgres transaction as each authorization-relevant write:
 
 1. mutate business state;
-2. upsert the object's dirty marker and increment its generation;
+2. upsert the affected object or membership marker and increment its generation;
 3. commit both together.
 
 ### 4.3 Build the relay
@@ -375,14 +554,22 @@ The relay must:
 
 1. claim a bounded batch with row locking that permits concurrent workers;
 2. record the claimed generation;
-3. re-read current Postgres state;
-4. derive a fresh full-state payload;
+3. re-read current Postgres state or the relevant owned roster membership;
+4. derive a fresh full-state object payload or the current membership put/remove operation;
 5. publish to the appropriate fga-sync JetStream subject and wait for the JetStream publish acknowledgement;
 6. clear the row only when its generation still equals the claimed generation;
 7. leave a mid-flight newer generation pending;
 8. retry transient failures with bounded backoff and observable error state.
 
-For a deleted object, emit the stored delete intent. For an object that changed while an older sync was in flight, never replay the older frozen state.
+For a deleted object, emit the stored delete intent. For a removed member, derive `member_remove` from the absent roster row plus the marker's relation and username. Preserve ordering per marker and allow only one in-flight generation for that key, so an older put cannot arrive after a newer remove. For an object or membership that changed while an older sync was in flight, never clear the newer generation.
+
+The source rosters required by this design are:
+
+- `program_members` for direct program `writer` and `mentor` grants;
+- `mentorship_program_admins` for project `mentorship_program_admin` grants;
+- `mentorship_approver_team_members` for `mentorship_approver_team:global#member`.
+
+Both global/project-wide roster APIs must be restricted to the platform authority agreed under AQ-8, not to program admins.
 
 ### 4.4 Use the generic fga-sync contract
 
@@ -406,7 +593,7 @@ The `operation` field must match the subject suffix. A representative program fu
     "public": true,
     "relations": {
       "writer": ["<program-admin-lfid>"],
-      "mentor": ["<active-mentor-lfid>"]
+      "mentor": ["<effective-mentor-lfid>"]
     },
     "references": {
       "project": ["<project-uid>"],
@@ -423,7 +610,7 @@ Important encoding rules:
 - A full `type:uid` or `type:uid#relation` reference is passed through.
 - `public: true` creates the per-object `viewer@user:*` grant expected by the model.
 - `update_access` is a full sync: omitted publisher-managed relations are removed.
-- `member_remove` must name `mentor` or `writer`; an empty relation list removes every direct relation that user holds on the object.
+- `member_remove` must name the precise relation: `mentor` or `writer` on a program, `mentorship_program_admin` on a project, and `member` on `mentorship_approver_team:global`. An empty relation list removes every direct relation that user holds on the object and is forbidden for these flows.
 
 Application sync:
 
@@ -460,7 +647,7 @@ Task sync:
 Implement the complete table from document 04, including often-missed revocations:
 
 - program create and every transition into or out of `published`;
-- direct admin/mentor activation and removal;
+- direct admin/mentor grants becoming effective and their removal;
 - application submission;
 - mentor-application acceptance, which creates a program mentor grant;
 - task creation;
@@ -611,7 +798,7 @@ Create a `gateway.networking.k8s.io/v1` `HTTPRoute` that:
 
 ### 7.3 Heimdall RuleSet
 
-Create a `heimdall.dadrus.github.com/v1alpha4` `RuleSet`. Add one rule per route from document 06. Set `allow_encoded_slashes: "off"` and use explicit methods so a newly added method cannot inherit a neighboring permission.
+Create a `heimdall.dadrus.github.com/v1alpha4` `RuleSet`. Add one rule per accepted route in the canonical catalog after copying it into document 06. Set `allow_encoded_slashes: "off"` and use explicit methods so a newly added method cannot inherit a neighboring permission.
 
 Representative protected UID rule:
 
@@ -627,7 +814,7 @@ Representative protected UID rule:
     - authorizer: openfga_check
       config:
         values:
-          object: 'mentorship_application:{{- .Request.URL.Captures.uid -}}'
+          object: 'mentorship_application:{{ "{{- .Request.URL.Captures.uid -}}" }}'
           relation: auditor
     - finalizer: create_jwt
       config:
@@ -644,7 +831,7 @@ execute:
   - authorizer: openfga_check
     config:
       values:
-        object: 'mentorship_program:{{- .Request.URL.Captures.uid -}}'
+        object: 'mentorship_program:{{ "{{- .Request.URL.Captures.uid -}}" }}'
         relation: viewer
   - finalizer: create_jwt
     config:
@@ -766,14 +953,13 @@ Capture Traefik, Heimdall, backend, relay, fga-sync, and OpenFGA correlation ide
 Perform dev first, then staging, then production. For each environment:
 
 1. Confirm the external project-service prerequisite and tuple coverage again.
-2. Set `openfga.enabled=true` and `heimdall.enabled=true`.
-3. Point the Nuxt BFF and Self Serve clients to the shared gateway path.
-4. Change the requested Auth0 audience to the shared gateway audience.
-5. Confirm the HTTPRoute is accepted by the shared Gateway and its backend reference resolves.
-6. Run the end-to-end smoke matrix.
-7. Watch edge denials, backend `401`s, outbox lag, fga-sync retry/terminal counters, and latency.
+2. Set `openfga.enabled=true` and `heimdall.enabled=true` while clients remain on the interim host.
+3. Confirm the HTTPRoute is accepted by the shared Gateway, its backend reference resolves, and direct gateway smoke tests pass with both authenticated and anonymous callers.
+4. Point the Nuxt BFF and Self Serve clients to the shared gateway path and change the requested Auth0 audience in the same client deployment.
+5. Run the complete end-to-end smoke matrix through normal clients.
+6. Watch edge denials, backend `401`s, outbox lag, fga-sync retry/terminal counters, and latency.
 
-The gateway flag, BFF base URL, and browser audience are one change set. A partial change strands clients with a token or URL the receiving side does not accept.
+Gateway activation is additive while the backend accepts both token types: enable and verify it first. The BFF base URL and browser audience are the atomic client change set; splitting those two strands clients with a token or URL the receiving side does not accept.
 
 Because the interim hostname bypasses Heimdall, disable its ingress and Auth0-only path in the same launch window. Do not leave a known authorization bypass available as a loosely scheduled cleanup.
 
@@ -794,10 +980,10 @@ Repeat cutover and retirement per environment; do not remove dual acceptance glo
 
 Rollback before retirement is configuration-driven but must also be atomic:
 
-1. Disable the gateway HTTPRoute/RuleSet.
-2. Restore the client's interim API base URL.
-3. Restore the standalone Auth0 audience.
-4. Re-enable the interim ingress and Auth0 validation branch if they were disabled.
+1. Re-enable and smoke-test the interim ingress and Auth0 validation branch while the gateway remains available.
+2. Restore the client's interim API base URL and standalone Auth0 audience in one client deployment.
+3. Confirm normal client traffic is using the interim host successfully.
+4. Disable the gateway HTTPRoute/RuleSet only after traffic has moved.
 
 Do not roll back the shared OpenFGA model or delete tuples during an application rollback. They are inert while no RuleSet checks them, and preserving them avoids destructive authorization-data churn.
 
@@ -823,6 +1009,7 @@ Do not roll back the outbox relay when revocations are pending. Stop enforcement
 
 - Shared model and tests are merged and deployed.
 - All routes match document 06 and all FGA object captures are UIDs.
+- Every current handler, client call, mock-backed read, registration form, and coming-soon action is either backed by an accepted canonical route in document 06 or explicitly recorded as deferred.
 - Backend validates PS256 Heimdall JWTs and resolves human `principal` safely.
 - Every authorization transition is transactionally represented in the outbox.
 - Seed and reconciliation prove complete tuple coverage.
