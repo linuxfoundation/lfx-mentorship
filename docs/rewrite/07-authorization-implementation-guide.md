@@ -148,7 +148,7 @@ Implement document 06 in full:
 - Nest all term routes under `/v1/programs/{program_uid}/terms/{term_id}`.
 - Add the split program, application, and task transition routes.
 - Keep reviewer notes on their own `reviewer`-gated route.
-- Require authentication on mentor-invite acceptance and compare the signed token's subject to the caller.
+- Require authentication on mentor-invite acceptance and decline, and compare the signed token's subject to the caller on both routes.
 
 ### 1.4 Remove attribute-level authorization
 
