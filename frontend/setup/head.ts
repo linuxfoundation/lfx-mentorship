@@ -40,7 +40,6 @@ export default {
     },
   ],
   script: [
-    // Same Font Awesome kit as LFX platform apps (required by uikit icons)
-    { src: 'https://kit.fontawesome.com/0c49a28643.js', crossorigin: 'anonymous', async: true },
+    { src: 'https://kit.fontawesome.com/e4b2c26195.js', crossorigin: 'anonymous', async: true },
   ],
 };
