@@ -188,23 +188,9 @@ All fields except `id`, `created_on`, and `updated_on` are optional.
 
 ### Endpoints
 
-#### `GET /v1/users` 🔒
-
-List users with optional search.
-
-**Query parameters**
-
-| Parameter | Description |
-|---|---|
-| `search` | Case-insensitive substring match on `name`, `email`, or `lfid` |
-| `limit` / `offset` | Pagination |
-
-**Response** `200`
-```json
-{ "data": [<User>, ...], "meta": { "total": 1, "limit": 20, "offset": 0 } }
-```
-
----
+User records are read-only over the API. The former collection read and the create/update/delete
+routes were removed; self-service identity writes arrive with the `/v1/me` routes
+(see `docs/rewrite/06-route-matrix.md`).
 
 #### `GET /v1/users/{id}` 🔒
 
@@ -212,58 +198,6 @@ Get a single user by UUID.
 
 **Response** `200` → `<User>`  
 **Errors** `404`
-
----
-
-#### `POST /v1/users` 🔒
-
-Create a user record. The caller must supply an `id` (UUID from the SSO system).
-
-**Request body**
-```json
-{
-  "id":          "uuid",           // required
-  "email":       "user@example.com",
-  "lfid":        "lf-username",
-  "name":        "Alice Smith",
-  "given_name":  "Alice",
-  "family_name": "Smith",
-  "avatar_url":  "https://..."
-}
-```
-
-**Response** `201` → `<User>`  
-**Errors** `400`, `409` (duplicate id/email/lfid)
-
----
-
-#### `PATCH /v1/users/{id}` 🔒
-
-Update mutable user fields.
-
-**Request body** (all optional)
-```json
-{
-  "email":       "new@example.com",
-  "lfid":        "new-lfid",
-  "name":        "New Name",
-  "given_name":  "New",
-  "family_name": "Name",
-  "avatar_url":  "https://..."
-}
-```
-
-**Response** `200` → `<User>`  
-**Errors** `400`, `404`
-
----
-
-#### `DELETE /v1/users/{id}` 🔒
-
-Hard-delete a user record.
-
-**Response** `204`  
-**Errors** `403`, `404`
 
 ---
 
@@ -340,22 +274,9 @@ The `address`, `demographics`, `socioeconomics`, `skill_set`, and `profile_links
 
 ### Endpoints
 
-#### `GET /v1/user-profiles` 🔒
-
-**Query parameters**
-
-| Parameter | Values | Description |
-|---|---|---|
-| `user_id` | UUID | Filter to one user's profiles |
-| `profile_type` | `mentor\|mentee` | Filter by type |
-| `limit` / `offset` | — | Pagination |
-
-**Response** `200`
-```json
-{ "data": [<UserProfile>, ...], "meta": {...} }
-```
-
----
+User profiles are read-only over the API. The former collection read and the create/update/delete
+routes were removed; self-service profile writes arrive with the `/v1/me` routes
+(see `docs/rewrite/06-route-matrix.md`).
 
 #### `GET /v1/user-profiles/{id}` 🔒
 
@@ -369,57 +290,6 @@ The `address`, `demographics`, `socioeconomics`, `skill_set`, and `profile_links
 Look up a profile by its unique slug.
 
 **Response** `200` → `<UserProfile>`  
-**Errors** `404`
-
----
-
-#### `POST /v1/user-profiles` 🔒
-
-Create a user profile.
-
-**Eligibility gate (mentee only)**: A user may not hold more than one active `mentee` profile. The request is rejected with `422` if the user already has one.
-
-**Request body**
-```json
-{
-  "id":           "uuid",           // required; caller-supplied UUID
-  "user_id":      "uuid",           // required
-  "profile_type": "mentee",         // required; "mentor" | "mentee"
-  "slug":         "alice-smith",
-  "first_name":   "Alice",
-  "last_name":    "Smith",
-  "email":        "alice@example.com",
-  "phone":        "+1-555-0100",
-  "logo_url":     "https://...",
-  "introduction": "...",
-  "terms_and_conditions": true,
-  "address":       { ... },
-  "skill_set":     { "skills": ["Go"], "improvementSkills": [], "comments": "" },
-  "profile_links": { "githubProfileLink": "https://github.com/alice", ... },
-  "demographics":  { ... },
-  "socioeconomics":{ ... }
-}
-```
-
-**Response** `201` → `<UserProfile>`  
-**Errors** `400`, `409` (duplicate id/slug), `422` (eligibility gate)
-
----
-
-#### `PATCH /v1/user-profiles/{id}` 🔒
-
-Update mutable profile fields (all optional).
-
-**Response** `200` → `<UserProfile>`  
-**Errors** `400`, `404`
-
----
-
-#### `DELETE /v1/user-profiles/{id}` 🔒
-
-Hard-delete a profile.
-
-**Response** `204`  
 **Errors** `404`
 
 ---
@@ -669,7 +539,7 @@ Paginated public directory of mentees on **published** programs. Includes `accep
 
 The response `status` is the stored application status — `accepted` or `graduated`. Note the asymmetry with the `status` **query parameter** below, which accepts `active` as a filter alias selecting `accepted` rows; `active` is never returned in a response body.
 
-`GET /v1/user-profiles` and `GET /v1/programs/{id}/mentees` are unchanged.
+`GET /v1/programs/{id}/mentees` is unchanged.
 
 **Query parameters**
 
@@ -781,7 +651,7 @@ Public mentee profile by **user ID**. Programs, skills, terms, and mentors are l
 
 Paginated public directory of **active** mentors on **published** programs. Invited, pending, declined, and withdrawn memberships are omitted, as are mentor-profile-only users with no membership. The list is one row per mentor.
 
-`GET /v1/user-profiles` and `GET /v1/programs/{id}/members` are unchanged.
+`GET /v1/programs/{id}/members` is unchanged.
 
 **Query parameters**
 
@@ -1909,7 +1779,7 @@ GET /v1/mentees/{user_id}
 → Profile: same card fields plus github_url, linkedin_url, and programs[]
 ```
 
-Do not compose the directory from `GET /v1/user-profiles` or by calling `GET /v1/programs/{id}/mentees` for every program.
+Do not compose the directory by calling `GET /v1/programs/{id}/mentees` for every program.
 
 #### Mentors Directory
 
@@ -1926,7 +1796,7 @@ GET /v1/mentors/{user_id}
 → Profile: same card fields plus github_url, linkedin_url, stats, programs[], current_mentees[], and graduated_mentees[]
 ```
 
-Do not compose the directory from `GET /v1/user-profiles` or by calling `GET /v1/programs/{id}/members` for every program.
+Do not compose the directory by calling `GET /v1/programs/{id}/members` for every program.
 
 #### Landing Page
 
@@ -1940,20 +1810,15 @@ Foundations and stipend totals are not on this endpoint yet — keep those as st
 
 #### Applying to a Term (Mentee)
 
-1. Check that the user has a mentee profile:
-   ```
-   GET /v1/user-profiles?user_id=<uid>&profile_type=mentee
-   ```
-2. If no profile exists, create one (enforce eligibility checks client-side before calling):
-   ```
-   POST /v1/user-profiles
-   ```
-3. Submit the application:
+1. Ensure the caller has a mentee profile. The profile check and creation move to the
+   `/v1/me` routes (see `docs/rewrite/06-route-matrix.md`); the former
+   `GET /v1/user-profiles` collection read and `POST /v1/user-profiles` were removed.
+2. Submit the application:
    ```
    POST /v1/program-terms/{termId}/applications
    Body: { "user_id": "<uid>", "role": "mentee" }
    ```
-4. Poll / display the returned `status` and `tasks_submitted` flag.
+3. Poll / display the returned `status` and `tasks_submitted` flag.
 
 #### Mentee Task Workflow
 

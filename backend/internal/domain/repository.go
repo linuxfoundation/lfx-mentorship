@@ -12,23 +12,12 @@ import (
 // UserRepository defines persistence operations for users.
 type UserRepository interface {
 	GetByID(ctx context.Context, id string) (*models.User, error)
-	List(ctx context.Context, filter models.UserFilter) ([]*models.User, *models.PaginationMeta, error)
-	Create(ctx context.Context, input models.UserCreateInput) (*models.User, error)
-	Update(ctx context.Context, id string, input models.UserUpdateInput) (*models.User, error)
-	Delete(ctx context.Context, id string) error
 }
 
 // UserProfileRepository defines persistence operations for user profiles.
 type UserProfileRepository interface {
 	GetByID(ctx context.Context, id string) (*models.UserProfile, error)
 	GetBySlug(ctx context.Context, slug string) (*models.UserProfile, error)
-	List(ctx context.Context, filter models.UserProfileFilter) ([]*models.UserProfile, *models.PaginationMeta, error)
-	Create(ctx context.Context, input models.UserProfileCreateInput) (*models.UserProfile, error)
-	Update(ctx context.Context, id string, input models.UserProfileUpdateInput) (*models.UserProfile, error)
-	Delete(ctx context.Context, id string) error
-
-	// CountActiveMenteeProfiles returns the count of non-deleted mentee profiles for a user.
-	CountActiveMenteeProfiles(ctx context.Context, userID string) (int, error)
 }
 
 // MenteeRepository defines public directory reads for mentees.
