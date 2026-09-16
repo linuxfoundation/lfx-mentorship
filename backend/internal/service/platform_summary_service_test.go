@@ -34,6 +34,7 @@ func TestPlatformSummaryService_Summary(t *testing.T) {
 				AcceptingProgramCount: 3,
 				MentorCount:           7,
 				GraduatedMenteeCount:  42,
+				StipendsPaid:          12500,
 				GraduatedMenteeUsers: []models.PlatformSummaryMentee{
 					{Name: &john, AvatarURL: &avatar},
 					{Name: &jane, AvatarURL: &avatar},
@@ -50,6 +51,7 @@ func TestPlatformSummaryService_Summary(t *testing.T) {
 		AcceptingProgramCount: 3,
 		MentorCount:           7,
 		GraduatedMenteeCount:  42,
+		StipendsPaid:          12500,
 		GraduatedMenteeUsers: []models.PlatformSummaryMentee{
 			{Name: &john, AvatarURL: &avatar},
 			{Name: &jane, AvatarURL: &avatar},
