@@ -296,10 +296,12 @@ Cross-component notes:
   `mentorship_program#project@project:{uid}` is derived from it — so every inherited permission in
   §3.2 depends on it. The column does not exist yet and its backfill is unowned (§6);
   `cii_project_id` is a *different*, legacy identifier and is not a substitute for it.
-- **Crowdfunding is joined on program id, not on either project reference.**
-  `ProgramService.GetCategorizedTransactions` passes the mentorship `programID` straight through as
-  the initiative id, so the two systems are coupled on program id. Worth settling deliberately
-  rather than inheriting.
+- **Crowdfunding is joined on program id, not on the `cf_initiative_id` column `02` defines for
+  this.** `ProgramService.GetCategorizedTransactions` passes the mentorship `programID` straight
+  through as the initiative id — so the implemented join key and the schema's join key disagree.
+  `02`'s ERD carries `programs.cf_initiative_id` and `03` OQ-1 says CF's tables are "keyed by
+  `cf_initiative_id`", but nothing reads or writes that column. This is not yet a settled contract
+  (§6).
 - **`program_funding_stats`** is a cache, never authoritative. It may be stale.
 - **Search is Postgres full-text** (`tsvector` + GIN) and Elasticsearch is dropped from scope — but
   the `tsvector` column and GIN index are not in any migration yet (§6), so nothing may assume
@@ -326,6 +328,7 @@ practice — which makes them different from ordinary backlog items.
 | **`/mentorship/v1` mount** | The router serves only `/v1` (`backend/cmd/mentorship-api/server.go`); the platform prefix lands with cutover step 2 (`05` GW-1). §1 names it as the integration target, so nothing should be pointed at it yet |
 | **`tasks.application_id` as a parent** | The column is nullable with `ON DELETE SET NULL` ([`001_initial.up.sql:208`](backend/db/migrations/001_initial.up.sql)), but task permissions inherit through the parent application (`04` decision 2). Needs an unmapped-task report, then `NOT NULL` and `ON DELETE CASCADE` ([`02`](docs/rewrite/02-target-architecture.md)); until then an orphaned task inherits no reviewer access |
 | **`programs.project_uid`** | The column does not exist; only the unrelated legacy `cii_project_id` does. Needs a nullable-first migration, an ETL from the legacy `lfProjectId`, and an unmapped-program report before it can be `NOT NULL` ([`03 §migration plan`](docs/rewrite/03-migration-plan.md)). Until it lands, the project → program FGA parent tuple cannot be derived and no inherited permission in §3.2 resolves |
+| **Crowdfunding join key** | `02` and `03` OQ-1 name `programs.cf_initiative_id` as the join key; the implementation instead passes `programID` through as the initiative id, and no code reads or writes `cf_initiative_id` (§5). Either adopt the pass-through as the contract and drop the column from `02`, or implement the column and migrate the client — not yet decided |
 | **Postgres full-text search** | No `tsvector` column or GIN index in any migration, so §5's full-text contract is a target with no schema behind it |
 | **Indexer registration** | Mentorship registers nothing with the indexer. If Mentorship objects should be searchable platform-wide, that work has no owner |
 | **Staging and prod ArgoCD values** | Only `values/{global,dev}` exist for this service |
