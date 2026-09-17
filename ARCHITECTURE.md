@@ -12,8 +12,8 @@ allowed to do what, and which services own what.
 **This file describes the target architecture**, not the current state of the build. It is the
 contract to build against. Implementation status — what is built, what is half-built, and what is a
 live defect — belongs in issues and PRs, not here, so that this file stays stable as the code moves.
-The one exception is §6, which records contracts that do **not** exist yet, precisely so that nobody
-builds against them.
+The exceptions are §6, which records contracts that do **not** exist yet, and the callout below —
+both there precisely so that nobody builds against something that is not yet real.
 
 > **Authorization is the largest gap between this document and the running service.** The write
 > paths do not yet perform object-level authorization, and the edge described in §3 is not deployed.
@@ -221,15 +221,19 @@ service, and they are contracts rather than implementation details:
 - Users: OAuth2 PKCE via Auth0, tokens in HTTP-only session cookies, never exposed to JS.
 - LFID from the `https://sso.linuxfoundation.org/claims/username` claim (the claim name; the column
   that stores it is `users.lfid` — §5).
-- Self Serve obtains a token for the Mentorship audience and forwards it — the mechanism it
-  already uses for Crowdfunding.
-- Mentor invite acceptance (`POST /v1/mentor-invites/{token}/accept`) **requires authentication**,
-  and carries no FGA check — `allow_all` at the edge, because the invitee holds no relation on the
-  program yet. Ownership is enforced in the service: the token HMACs the `(programID, userID)` pair,
-  so it names its own subject, and the handler **rejects the request unless that subject matches the
-  authenticated principal** (`04` AQ-7, `06`). Without that binding, `allow_all` would let any
-  authenticated caller accept a known invitation. The token's entropy, single-use semantics, and
-  expiry back the binding; they do not replace it.
+- Self Serve obtains a token for the **shared gateway audience**
+  (`https://lfx-api.{lfx.domain}/`) by silent secondary auth and forwards it — the mechanism it
+  already uses for Crowdfunding. Behind Heimdall there is no per-service Auth0 audience to acquire:
+  the service-specific `lfx-mentorship-backend` audience appears only on the Heimdall-issued token
+  and is never requested by the caller (`02`, `05` GW-3).
+- **Both mentor-invite routes** (`POST /v1/mentor-invites/{token}/accept` and `.../decline`)
+  **require authentication**, and carry no FGA check — `allow_all` at the edge, because the invitee
+  holds no relation on the program yet. Ownership is enforced in the service: the token HMACs the
+  `(programID, userID)` pair, so it names its own subject, and the handler **rejects the request
+  unless that subject matches the authenticated principal** (`04` AQ-7, `06`). This applies to
+  decline exactly as it does to accept. Without that binding, `allow_all` would let any
+  authenticated caller accept or decline a known invitation. The token's entropy, single-use
+  semantics, and expiry back the binding; they do not replace it.
 - **There is a total authentication bypass for local development, and it must never reach a deployed
   environment.** `DISABLED_MOCK_LOCAL_PRINCIPAL` sets a static principal and
   `ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS=true` arms it
@@ -250,7 +254,7 @@ service, and they are contracts rather than implementation details:
 |---|---|---|---|
 | **Auth0** | inbound | Inbound token validation only: OAuth2 PKCE for users, JWKS signature and audience checks. Outbound M2M token acquisition belongs to the Crowdfunding row below | Requests rejected 401 |
 | **Ledger API** | Mentorship → Ledger | Hourly CronJob, `LEDGER_API_KEY` bearer token; reads mentorship-credit transactions and caches them in `program_funding_stats`. **Direct, not proxied** — `LEDGER_BASE_URL` points at the Ledger service itself (`https://ledger.dev.platform.linuxfoundation.org` in dev), and this repo has its own client ([`clients/ledger.go`](backend/internal/infrastructure/clients/ledger.go)) | Last cached values served |
-| **Crowdfunding API** | Mentorship → CF → Ledger | Request-time call from `ProgramService`, Auth0 M2M token (`access:manage`); fetches categorized transactions and sponsors. **Crowdfunding is a proxy for the Ledger on this path**: `GET /v1/initiatives/{id}/transactions` is served by CF's `InitiativeService` calling the Ledger's `/transactions` ([`initiative_service.go`](https://github.com/linuxfoundation/lfx-crowdfunding/blob/main/backend/internal/service/initiative_service.go)), and `ProgramService.GetCategorizedTransactions` proxies that contract. The categorization and sponsor resolution are CF's own, which is why this does not collapse into the direct Ledger call above | `ErrUpstreamUnavailable` |
+| **Crowdfunding API** | Mentorship → CF → Ledger | Request-time call from `ProgramService`, Auth0 M2M token (`access:manage`); fetches categorized transactions. **Crowdfunding is a proxy for the Ledger on this path**: `GET /v1/initiatives/{id}/transactions` is served by CF's `InitiativeService` calling the Ledger's `/transactions` ([`initiative_service.go`](https://github.com/linuxfoundation/lfx-crowdfunding/blob/main/backend/internal/service/initiative_service.go)), and `ProgramService.GetCategorizedTransactions` proxies that contract. The **categorization** is CF's own — the organization/individual split and the `DonorName`/`DonorLogoURL`/`DonorType` donor metadata do not exist on a raw Ledger transaction — which is why this does not collapse into the direct Ledger call above. Sponsor cards are **not** fetched from CF: `GET /programs/{uid}/sponsors` aggregates those same transactions locally (`aggregateProgramSponsors`), so sponsor presentation is Mentorship's own | `ErrUpstreamUnavailable` |
 | **Snowflake** | Mentorship → SF | Fivetran Postgres connector; `fivetran_mentorship_*` dbt models repointed | Analytics-plane only — never in the serving path |
 | **lfx-v2-email-service** | Mentorship → NATS `lfx.email-service.send_email` | The platform rail for all transactional email: a request/reply relay over Amazon SES, imported as `lfx-v2-email-service/pkg/api`. It accepts **pre-rendered** `html`/`text` only — no templating — so Mentorship owns and renders its own templates. Not Mandrill: that is the legacy rail and is out of scope ([linuxfoundation/lfx-self-serve#2188](https://github.com/linuxfoundation/lfx-self-serve/issues/2188)) | Log and continue — a failed send must not fail the business operation |
 | **S3** | Mentorship → S3 | Program logos and task submissions via presigned URLs | — |
