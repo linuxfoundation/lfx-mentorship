@@ -57,9 +57,10 @@ flowchart TB
     subgraph K8S["lfx-mentorship — LFX v2 Kubernetes"]
         NUXT["Nuxt 4 SSR<br/>public discovery · apply<br/>BFF session"]
         API["Go API (Chi)<br/>REST /v1"]
-        PG[("PostgreSQL<br/>mentorship schema<br/>shared LFX v2 RDS")]
         CRON["CronJob<br/>program-funding-stats-sync"]
     end
+
+    PG[("PostgreSQL<br/>mentorship schema<br/>shared LFX v2 RDS")]
 
     SS["LFX Self Serve<br/>manage programs · applications · tasks"]
     AUTH0["Auth0"]
@@ -185,7 +186,7 @@ rather than schema:
 
 ### 3.3 Service-side invariants the edge cannot enforce
 
-Heimdall authorizes the object named in the request. Three classes of check therefore stay in the
+Heimdall authorizes the object named in the request. Five classes of check therefore stay in the
 service, and they are contracts rather than implementation details:
 
 - **Parent-child invariants on parent-authorized routes.** Wherever the edge checks a relation on a
@@ -252,7 +253,7 @@ service, and they are contracts rather than implementation details:
 
 | Counterparty | Direction | Mechanism | Failure behavior |
 |---|---|---|---|
-| **Auth0** | inbound | Inbound token validation only: OAuth2 PKCE for users, JWKS signature and audience checks. Outbound M2M token acquisition belongs to the Crowdfunding row below | Requests rejected 401 |
+| **Auth0** | both | **Inbound**: token validation — OAuth2 PKCE for users, JWKS signature and audience checks. **Outbound**: the Crowdfunding client acquires an M2M token by `client_credentials` before each uncached call, caching it until expiry ([`clients/crowdfunding.go`](backend/internal/infrastructure/clients/crowdfunding.go)); the call it protects is described in the Crowdfunding row below | Inbound: requests rejected 401. Outbound: token acquisition failure surfaces as `ErrUpstreamUnavailable` on the Crowdfunding routes |
 | **Ledger API** | Mentorship → Ledger | Hourly CronJob, `LEDGER_API_KEY` bearer token; reads mentorship-credit transactions and caches them in `program_funding_stats`. **Direct, not proxied** — `LEDGER_BASE_URL` points at the Ledger service itself (`https://ledger.dev.platform.linuxfoundation.org` in dev), and this repo has its own client ([`clients/ledger.go`](backend/internal/infrastructure/clients/ledger.go)) | Last cached values served |
 | **Crowdfunding API** | Mentorship → CF → Ledger | Request-time call from `ProgramService`, Auth0 M2M token (`access:manage`); fetches categorized transactions. **Crowdfunding is a proxy for the Ledger on this path**: `GET /v1/initiatives/{id}/transactions` is served by CF's `InitiativeService` calling the Ledger's `/transactions` ([`initiative_service.go`](https://github.com/linuxfoundation/lfx-crowdfunding/blob/main/backend/internal/service/initiative_service.go)), and `ProgramService.GetCategorizedTransactions` proxies that contract. The **categorization** is CF's own — the organization/individual split and the `DonorName`/`DonorLogoURL`/`DonorType` donor metadata do not exist on a raw Ledger transaction — which is why this does not collapse into the direct Ledger call above. Sponsor cards are **not** fetched from CF: `GET /programs/{uid}/sponsors` aggregates those same transactions locally (`aggregateProgramSponsors`), so sponsor presentation is Mentorship's own | `ErrUpstreamUnavailable` |
 | **Snowflake** | Mentorship → SF | Fivetran Postgres connector; `fivetran_mentorship_*` dbt models repointed | Analytics-plane only — never in the serving path |
@@ -319,7 +320,7 @@ practice — which makes them different from ordinary backlog items.
 | Contract | What is missing |
 |---|---|
 | **The four `mentorship_*` FGA types** | Absent from `model.fga`. PR 1 of the five-PR path in [`04 §implementation path`](docs/rewrite/04-authorization-model.md); the merge gate is `tests.yaml` passing, not that the DSL parses |
-| **Project-level program-admin relation** | Needs the `project` type extended *and* project-service to add `mentorship_program_admin` to its `update_access` `exclude_relations` — Mentorship writes the tuple itself, but without the exclusion the next project update deletes it (`04` AQ-4, mandatory PR 5). The exclusion only keeps an existing tuple alive; **the grant itself has no owner yet.** `04`'s emission table is scoped to program, application and task objects and has no row for a `project`-scoped grant, so three things are still undefined: the Mentorship-side source of record for who holds project-level admin (no table carries it — `program_members` is program-scoped), the route that grants and revokes it, and what the reconciliation job compares against. The Self Serve permissions page needs updating once those exist |
+| **Project-level program-admin relation** | Needs the `project` type extended *and* project-service to add `mentorship_program_admin` to its `update_access` `exclude_relations` — Mentorship writes and removes the tuple itself, but without the exclusion the next project update deletes it (`04` AQ-4, mandatory PR 5). **Cross-service ownership is settled; the Mentorship side of it is not.** The exclusion only keeps an existing tuple alive, and `04`'s emission table is scoped to program, application and task objects with no row for a `project`-scoped grant — so three things are still undefined: the Mentorship-side source of record for who holds project-level admin (no table carries it — `program_members` is program-scoped), the route that grants and revokes it, and what the reconciliation job compares against. The Self Serve permissions page needs updating once those exist |
 | **Program-approval global team** | The team does not exist and there is no approve endpoint. `04` AQ-8 leaves the roster owner open — "no owner re-checks that a global tuple still exists" is the operational risk on the one guard protecting publication |
 | **`/mentorship/v1` mount** | The router serves only `/v1` (`backend/cmd/mentorship-api/server.go`); the platform prefix lands with cutover step 2 (`05` GW-1). §1 names it as the integration target, so nothing should be pointed at it yet |
 | **`tasks.application_id` as a parent** | The column is nullable with `ON DELETE SET NULL` ([`001_initial.up.sql:208`](backend/db/migrations/001_initial.up.sql)), but task permissions inherit through the parent application (`04` decision 2). Needs an unmapped-task report, then `NOT NULL` and `ON DELETE CASCADE` ([`02`](docs/rewrite/02-target-architecture.md)); until then an orphaned task inherits no reviewer access |
