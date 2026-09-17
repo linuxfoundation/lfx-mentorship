@@ -44,9 +44,10 @@ that replaces that mock.
 GET /api/mentorship/programs
 ```
 
-Same contract as [admin-programs-list.md](./admin-programs-list.md). The UI
-currently calls it without `limit` (server default page). Return every program
-the admin may copy from, or page it the same way as the list.
+**Backend:** `GET /v1/me/managed-programs` — same contract as
+[admin-programs-list.md](./admin-programs-list.md). The UI currently calls it
+without `limit` (server default page). Return every program the admin may copy
+from, or page it the same way as the list.
 
 Only `id` and `name` are used in the dropdown.
 
@@ -59,6 +60,9 @@ Fired when the import dropdown changes (`onImportProgram()`).
 ```http
 GET /api/mentorship/programs/:programId/enroll-template
 ```
+
+**Backend:** BFF-only adapter. Composes from `GET /v1/programs/{uid}` +
+`GET /v1/programs/{uid}/skills` to assemble the enroll-form fields.
 
 `:programId` is the `id` chosen in the dropdown.
 
@@ -120,6 +124,9 @@ Do not copy `terms`. The wizard always starts with one default term from
 GET /api/mentorship/lf-projects?search=&offset=0&limit=10
 ```
 
+**Backend:** BFF-only adapter to the LF project catalog service. Not a
+Mentorship backend route.
+
 Powers the project picker (`MENTORSHIP_LF_PROJECT_PAGE_SIZE` = 10). Filter is
 typeahead on `name`; the picker lazy-loads the next page.
 
@@ -144,6 +151,8 @@ page, or the UI keeps a local cache).
 GET /api/mentorship/programs/name-available?name=GridFlow:%20Time-Series
 ```
 
+**Backend:** `GET /v1/programs/name-availability` (authenticated `allow_all`).
+
 Debounced on the details step. The wizard will not leave Details until the
 trimmed name is `available`. Comparison is case-insensitive against existing
 program names.
@@ -166,6 +175,10 @@ program names.
 
 There is no upload path today. The wizard only stores `logoFileName` and a
 browser `blob:` preview. Bytes must be persisted before or with create.
+
+> **Deferred.** The authorization guide notes that logo upload routes remain
+> deferred until ownership, scanning, retention, and reader authorization are
+> defined.
 
 ```http
 POST /api/mentorship/programs/logo
@@ -194,6 +207,10 @@ whichever lands.
 ```http
 POST /api/mentorship/programs
 ```
+
+**Backend:** `POST /v1/programs` (authenticated `allow_all` at launch).
+Atomically creates the program, initial direct program admin membership, terms,
+skills, and prerequisite templates.
 
 Blocked during impersonation.
 

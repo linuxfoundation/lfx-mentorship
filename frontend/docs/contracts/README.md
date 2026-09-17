@@ -21,22 +21,34 @@ Mentor and mentee page contracts will be added in a later pass.
 | Enroll a program | `/mentorship/admin/enroll`     | [admin-enroll-program.md](./admin-enroll-program.md) |
 | Program detail   | `/mentorship/admin/:programId` | [admin-program-detail.md](./admin-program-detail.md) |
 
+## BFF adapter pattern
+
+Each BFF route under `/api/mentorship/` is an adapter to a canonical backend
+route under `/v1/` (or `/mentorship/v1/` through the gateway). The contracts
+document the **BFF path** the Angular UI calls. Each endpoint's description
+names the backend route it maps to, following the canonical catalog in
+`docs/rewrite/07-authorization-implementation-guide.md` § 1.6.
+
+- BFF routes compose, translate, and forward — they are not a second API.
+- All backend IDs are canonical UUIDs, never slugs.
+- External integrations (LF project catalog, invitable users, CII badge) are
+  BFF-only adapters that do not pass through the Mentorship backend.
+
 ## How endpoints are split
 
 - **One list GET per tab.** A page with underline tabs does not load every tab in
   one payload. The page header has its own GET; each tab has its own list GET.
-  Current Mentees, Past Mentees, and Applicants all use `GET .../mentees` with
-  `type=current|past|all` — there is no `/applicants` collection.
-- **Status-changing row actions share one PATCH.** Accept / decline / withdraw /
-  graduate / close / re-open are the same operation: `PATCH` with `{ "status": "..." }`.
-  Do not add `/accept`, `/decline`, `/graduate` routes. Applicant status writes
-  use the mentee PATCH.
+- **Status-changing row actions share one PATCH per resource.** Accept / decline /
+  withdraw / graduate / close / re-open are `PATCH` with `{ "status": "..." }`.
+  The BFF maps them to the backend's dedicated transition routes.
+- **Term close and re-open use dedicated POST routes.** The backend has
+  `POST .../terms/{termId}/close` and `POST .../terms/{termId}/reopen` rather
+  than a generic status PATCH. The BFF translates.
 - **Every other table or toolbar action is its own endpoint.** Invite, remove,
   create task, list tasks, save note, create / edit / delete a term.
 - **Downloads are UI-only.** No export APIs and no task view/download APIs — the
   UI uses `task.file`.
-- **`:programId` accepts the program `id` or `slug`**, matching
-  `/mentorship/admin/:programId`.
+- **`:programId` accepts the program `id`**.
 
 ## Status vocabulary
 
@@ -57,7 +69,7 @@ Self Serve Angular UI maps them to display labels in its own BFF/constants.
 | --------------- | ------------------------------------------------------------------------------------------------------------- |
 | Auth            | Session required (`getUsernameFromAuth`). Unauthenticated → `401`.                                            |
 | Impersonation   | Reads allowed. Writes use `blockDuringImpersonation` → `403 IMPERSONATION_READ_ONLY`.                         |
-| List pagination | `{ data, total }` with `offset` + `limit`. Cap `limit` at 50.                                                 |
+| List pagination | `{ data, total }` with `offset` + `limit`. Cap `limit` at 50.                                                |
 | Search          | Case-insensitive match on the fields named in each contract.                                                  |
 | Dates           | Date-only fields are `YYYY-MM-DD`. Timestamps are ISO-8601.                                                   |
 | Errors          | `400` validation, `404` unknown resource, `409` conflict (duplicate name, cannot close term, max open terms). |

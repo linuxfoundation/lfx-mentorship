@@ -11,9 +11,6 @@ are server-side; **Load more** appends the next page. Clicking a card navigates
 to `/mentorship/admin/:programId` using the program `id`. **Enroll a Program**
 is client navigation only.
 
-The BFF already mocks `GET /api/mentorship/programs`. Keep that path; replace
-the in-memory store with the upstream mentorship service.
-
 ---
 
 ## 1. List programs
@@ -21,6 +18,10 @@ the in-memory store with the upstream mentorship service.
 ```http
 GET /api/mentorship/programs
 ```
+
+**Backend:** `GET /v1/me/managed-programs` — self-scoped collection with
+per-result program `writer` filtering. Includes non-public programs the caller
+administers. The BFF forwards the session JWT.
 
 ### Query
 
@@ -56,7 +57,7 @@ GET /api/mentorship/programs
 | Field                                                 | UI                                                                                               |
 | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
 | `logoUrl`                                             | Avatar. Omit to show an initials tile from `name`.                                               |
-| `projectName` + `term`                                | Season line, e.g. `LF Energy · Fall 2026`. `term` is the program's current / featured term name. |
+| `projectName` + `activeTerm.name`                     | Season line, e.g. `LF Energy · Fall 2026`.                                                      |
 | `status`                                              | Badge: Published / Pending / Hidden (UI maps to display labels).                                 |
 | `name`                                                | Card title.                                                                                      |
 | `stats.mentors` / `stats.mentees` / `stats.graduated` | Metric columns.                                                                                  |

@@ -10,11 +10,6 @@ The header (title, season line, status, **Edit Program**, tab labels + counts)
 loads first. Each underline tab has its own list GET. Do not return all four
 lists from the header GET.
 
-People rows (current mentees, past mentees, and applicants) all come from
-**one list:** `GET /programs/:programId/mentees` with `type=current|past|all`.
-There is no `/applicants` collection. Status writes also go through the mentee
-PATCH.
-
 The current mock BFF returns a fat `MentorshipProgramDetail` from
 `GET /api/mentorship/programs/:programId`. Split that into the endpoints below
 when wiring the real service.
@@ -34,9 +29,11 @@ UI — no export or submission endpoints.
 GET /api/mentorship/programs/:programId
 ```
 
+**Backend:** `GET /v1/programs/{uid}` (program `viewer`).
+
 `:programId` is `id`.
 
-Tab visibility is driven by **terms**, not by program `completed`:
+Tab visibility is driven by **terms**, not by program status:
 
 | Condition                                | Tab                                                   |
 | ---------------------------------------- | ----------------------------------------------------- |
@@ -79,11 +76,15 @@ terms at the same time.
 `tabCounts.mentees` is `type=current`, `pastMentees` is `type=past`,
 `applicants` is `type=all`. Do **not** include people or term arrays here.
 
-`activeTerm` is a term object (not a string). when there is no open
-term it will be latest closed term.
+`activeTerm` is a term object (not a string). When there is no open
+term it will be the latest closed term.
 
 For `pending`, `hasOpenTerm` / `hasClosedTerm` may still reflect terms,
 but `tabCounts` people counts are `0` and the mentees list returns empty.
+
+> **BFF composition:** The BFF calls `GET /v1/programs/{uid}` for the program
+> and `GET /v1/programs/{uid}/management-summary` (program `manager`) for the
+> tab counts. It merges the two responses into the shape above.
 
 #### Errors
 
@@ -98,8 +99,11 @@ prerequisites), minus `termsAccepted`. Terms on this page are edited on the
 Terms tab, not here.
 
 ```http
-PUT /api/mentorship/programs/:programId
+PATCH /api/mentorship/programs/:programId
 ```
+
+**Backend:** `PATCH /v1/programs/{uid}` (program `writer`). Must reject
+`status` — status transitions use dedicated routes.
 
 Body: `MentorshipEnrollRequest` without `termsAccepted` (and typically without
 `terms` — those stay on the Terms tab). Logo may reuse [enroll logo upload](./admin-enroll-program.md#5-upload-program-logo).
@@ -153,9 +157,9 @@ Filter query `term` is the term **id**, not the name.
 
 | Field           | Notes                                                                                                              |
 | --------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `status`        | `pending` \| `in_progress` \| `submitted` \| `completed`. Read-only for admins.                                    |
+| `status`        | `pending` \| `in_progress` \| `submitted` \| `completed`. Read-only for admins.                                   |
 | `hasSubmission` | Gates the eye / download icons in the UI.                                                                          |
-| `file`          | URL of the uploaded file when `hasSubmission` is true. The UI uses this to view and download — no submission APIs. |
+| `file`          | URL of the uploaded file when `hasSubmission` is true. The UI uses this to view and download — no submission APIs.  |
 | `custom`        | Admin-authored extra task.                                                                                         |
 | `dueOn`         | ISO `YYYY-MM-DD`. Omit for prerequisite tasks with no calendar due date (UI shows "Prerequisite Task").            |
 
@@ -167,19 +171,22 @@ the row expands.
 
 ## Tab 1 — Current Mentees / Past Mentees / Applicants (one list)
 
-### 3. List mentees
+### 3. List applications
 
 ```http
-GET /api/mentorship/programs/:programId/mentees
+GET /api/mentorship/programs/:programId/applications
 ```
 
-| Query              | Type                         | Notes                                                                                                                  |
-| ------------------ | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+**Backend:** `GET /v1/programs/{uid}/applications` (program `manager`).
+Program-wide applications across all terms.
+
+| Query              | Type                          | Notes                                                                                                                  |
+| ------------------ | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `type`             | `current` \| `past` \| `all` | Required. See table below.                                                                                             |
-| `search`           | string                       | Name or email, case-insensitive.                                                                                       |
-| `status`           | `ApplicationStatus`          | `pending` \| `accepted` \| `declined` \| `withdrawn` \| `graduated` \| `hold`. Omit = all statuses that `type` allows. |
-| `term`             | string                       | Term **id**.                                                                                                           |
-| `offset` / `limit` | number                       | UI page size default `10`, options `10, 25, 50`.                                                                       |
+| `search`           | string                        | Name or email, case-insensitive.                                                                                       |
+| `status`           | `ApplicationStatus`           | `pending` \| `accepted` \| `declined` \| `withdrawn` \| `graduated` \| `hold`. Omit = all statuses that `type` allows. |
+| `term`             | string                        | Term **id**.                                                                                                           |
+| `offset` / `limit` | number                        | UI page size default `10`, options `10, 25, 50`.                                                                       |
 
 | `type`    | Who is in `data`                                                                                                     | UI tab          |
 | --------- | -------------------------------------------------------------------------------------------------------------------- | --------------- |
@@ -196,7 +203,8 @@ GET /api/mentorship/programs/:programId/mentees
   "type": "current",
   "data": [
     {
-      "id": "mnt_alex_rivera",
+      "userId": "user_122",
+      "applicationId":"app_445454",
       "name": "Alex Rivera",
       "email": "alex.rivera@example.com",
       "avatarUrl": "https://…",
@@ -204,7 +212,7 @@ GET /api/mentorship/programs/:programId/mentees
       "term": {
         "id": "trm_gridflow_fall26",
         "name": "Fall 2026",
-        "status": "published",
+        "status": "open",
         "startDate": "2026-09-01",
         "endDate": "2026-11-01",
         "applicationStartDate": "2026-05-01",
@@ -257,13 +265,15 @@ row actions, reviewer note.
 **Applicants (`type=all`) columns:** person, `term`, status, application dates,
 other applications, View Tasks, row actions, reviewer note.
 
-### 4. List mentee tasks
+### 4. List application tasks
 
-Fired when **View Tasks** expands a row. Not nested in the mentees list.
+Fired when **View Tasks** expands a row. Not nested in the applications list.
 
 ```http
-GET /api/mentorship/programs/:programId/mentees/:menteeId/tasks
+GET /api/mentorship/applications/:applicationId/tasks
 ```
+
+**Backend:** `GET /v1/applications/{uid}/tasks` (application `auditor`).
 
 #### Success `200`
 
@@ -290,13 +300,15 @@ GET /api/mentorship/programs/:programId/mentees/:menteeId/tasks
 
 The UI views / downloads a submission from `file`. No task-file APIs.
 
-### 5. Update mentee status
+### 5. Update application status
 
 One endpoint for Current Mentees **and** Applicants row menus.
 
 ```http
-PATCH /api/mentorship/programs/:programId/mentees/:menteeId
+PATCH /api/mentorship/applications/:applicationId/status
 ```
+
+**Backend:** `PATCH /v1/applications/{uid}/status` (application `manager`).
 
 ```json
 { "status": "withdrawn" }
@@ -310,8 +322,8 @@ PATCH /api/mentorship/programs/:programId/mentees/:menteeId
 | `hold`         | `accepted`, `declined`, `pending`           |
 | `accepted`     | `graduated`, `declined`                     |
 | `declined`     | `pending`                                   |
-| `withdrawn`    | _(terminal)_                                |
-| `graduated`    | _(terminal)_                                |
+| `withdrawn`    | *(terminal)*                                |
+| `graduated`    | *(terminal)*                                |
 
 Only `accepted` may move to `graduated`. Accepting a `pending` row enrolls them
 as a current mentee on that term. `400` if the transition is illegal.
@@ -320,19 +332,19 @@ There is **no** `PATCH .../applicants/:applicantId`.
 
 #### Success `200`
 
-The updated mentee row (same shape as list, still no nested `tasks`).
+The updated application row (same shape as list, still no nested `tasks`).
 
 ### 6. Create task
 
-**Create Task** may assign the same task to **multiple** mentees.
+**Create Task** may assign the same task to **multiple** applications.
 
 ```http
-POST /api/mentorship/programs/:programId/tasks
+POST /api/mentorship/applications/tasks
 ```
 
 ```json
 {
-  "assigneeIds": ["mnt_alex_rivera", "mnt_priya_shah"],
+  "applicationIds": ["app_alex_rivera_fall26", "app_priya_shah_fall26"],
   "name": "Midterm Report",
   "description": "Summarize progress on your mentorship project goals.",
   "prerequisite": false,
@@ -342,8 +354,7 @@ POST /api/mentorship/programs/:programId/tasks
 }
 ```
 
-`assigneeIds` is required and must contain at least one mentee id. No mentee id
-in the URL.
+`applicationIds` is required and must contain at least one application id.
 
 #### Success `201`
 
@@ -375,12 +386,11 @@ Toolbar **Decline by Term**. Bulk status update, so it is its own endpoint
 rather than N row PATCHes.
 
 ```http
-POST /api/mentorship/programs/:programId/mentees/decline-by-term
+POST /api/mentorship/programs/:programId/terms/:termId/bulk-decline
 ```
 
-```json
-{ "termId": "trm_gridflow_fall26" }
-```
+**Backend:** `POST /v1/programs/{uid}/terms/{termId}/applications/bulk-decline`
+(program `writer`).
 
 Declines every `pending` row on that term. Does not touch accepted /
 graduated / already declined / withdrawn rows.
@@ -400,6 +410,10 @@ graduated / already declined / withdrawn rows.
 ```http
 GET /api/mentorship/programs/:programId/mentors
 ```
+
+**Backend:** `GET /v1/programs/{uid}/member-management` (program `writer`).
+Administrative roster including pending/history rows, invitation metadata,
+profile state, and email.
 
 | Query              | Type   | Notes                                                             |
 | ------------------ | ------ | ----------------------------------------------------------------- |
@@ -481,6 +495,10 @@ Toolbar **Invite**. Not a status change.
 POST /api/mentorship/programs/:programId/mentors
 ```
 
+**Backend:** `POST /v1/programs/{uid}/members` (program `writer`). The BFF
+resolves the username to a `user_id` before forwarding, and sets
+`member_type=mentor`.
+
 ```json
 { "username": "ada.lovelace" }
 ```
@@ -494,14 +512,16 @@ The new `MentorshipProgramMentor`.
 
 ### 11. Update mentor status
 
-Row **Accept** / **Decline**. One endpoint.
+Row **Approve** / **Decline**. One endpoint.
 
 ```http
 PATCH /api/mentorship/programs/:programId/mentors/:mentorId
 ```
 
+**Backend:** `PATCH /v1/programs/{uid}/members/{memberId}` (program `writer`).
+
 ```json
-{ "status": "accepted" }
+{ "status": "approved" }
 ```
 
 `status` is `approved` \| `declined`. Honor the visibility table in endpoint 8.
@@ -520,6 +540,8 @@ write.
 DELETE /api/mentorship/programs/:programId/mentors/:mentorId
 ```
 
+**Backend:** `DELETE /v1/programs/{uid}/members/{memberId}` (program `writer`).
+
 #### Success `204`
 
 Empty body.
@@ -534,6 +556,10 @@ Empty body.
 GET /api/mentorship/programs/:programId/terms
 ```
 
+**Backend:** `GET /v1/programs/{uid}/term-management` (program `writer`).
+Administrative term list with per-term application counts and action
+eligibility.
+
 #### Success `200`
 
 ```json
@@ -542,7 +568,7 @@ GET /api/mentorship/programs/:programId/terms
     {
       "id": "trm_gridflow_fall26",
       "name": "Fall 2026",
-      "status": "published",
+      "status": "open",
       "pending": 3,
       "declined": 1,
       "accepted": 2,
@@ -563,8 +589,8 @@ Counters are application counts for that term. `startDate` / `endDate` are
 A term **should close** when `status === open` and its end month is in the past.
 The UI shows a warning icon; closing still goes through endpoint 16.
 
-A term **cannot close** while `accepted > 0`. Return `409` from the status
-PATCH with the message in `MENTORSHIP_TERM_CANNOT_CLOSE_MESSAGE`.
+A term **cannot close** while `accepted > 0`. Return `409` from the close
+endpoint with the message in `MENTORSHIP_TERM_CANNOT_CLOSE_MESSAGE`.
 
 Max **4 open** terms (`MENTORSHIP_MAX_OPEN_TERMS`). Create and re-open must
 enforce that.
@@ -576,6 +602,8 @@ Toolbar **Create Term**. Disabled when 4 terms are already open.
 ```http
 POST /api/mentorship/programs/:programId/terms
 ```
+
+**Backend:** `POST /v1/programs/{uid}/terms` (program `writer`).
 
 ```json
 {
@@ -605,8 +633,10 @@ Row menu **Edit**. Allowed unless the term is both `closed` **and** past its
 end date (historical terms are locked).
 
 ```http
-PUT /api/mentorship/programs/:programId/terms/:termId
+PATCH /api/mentorship/programs/:programId/terms/:termId
 ```
+
+**Backend:** `PATCH /v1/programs/{uid}/terms/{termId}` (program `writer`).
 
 Body is the same date/name payload as create. This is not a status write.
 
@@ -614,19 +644,15 @@ Body is the same date/name payload as create. This is not a status write.
 
 Updated `MentorshipProgramTermRow`.
 
-### 16. Update term status
+### 16. Close term
 
-Row **Close** / **Re-Open**. One endpoint.
+Row **Close**. Dedicated action.
 
 ```http
-PATCH /api/mentorship/programs/:programId/terms/:termId
+POST /api/mentorship/programs/:programId/terms/:termId/close
 ```
 
-```json
-{ "status": "closed" }
-```
-
-`status` is `open` \| `closed`.
+**Backend:** `POST /v1/programs/{uid}/terms/{termId}/close` (program `writer`).
 
 **Close** (`open` → `closed`):
 
@@ -635,6 +661,26 @@ PATCH /api/mentorship/programs/:programId/terms/:termId
   moves to `declined` on the term counters). Confirm copy is
   `MENTORSHIP_TERM_CLOSE_CONFIRM`.
 
+#### Success `200`
+
+Updated `MentorshipProgramTermRow` (including adjusted counters after close).
+
+#### Errors
+
+| Status | When                                                       |
+| ------ | ---------------------------------------------------------- |
+| `409`  | Term has accepted applications that haven't graduated yet. |
+
+### 17. Re-open term
+
+Row **Re-Open**. Dedicated action.
+
+```http
+POST /api/mentorship/programs/:programId/terms/:termId/reopen
+```
+
+**Backend:** `POST /v1/programs/{uid}/terms/{termId}/reopen` (program `writer`).
+
 **Re-open** (`closed` → `open`):
 
 - Only if the term has **not** ended.
@@ -642,9 +688,15 @@ PATCH /api/mentorship/programs/:programId/terms/:termId
 
 #### Success `200`
 
-Updated `MentorshipProgramTermRow` (including adjusted counters after close).
+Updated `MentorshipProgramTermRow`.
 
-### 17. Delete term
+#### Errors
+
+| Status | When                                                  |
+| ------ | ----------------------------------------------------- |
+| `409`  | Term has ended, or would exceed 4 open terms. |
+
+### 18. Delete term
 
 Row **Delete**. Allowed only when the term has **no** applications
 (`pending + declined + accepted + graduated === 0`).
@@ -652,6 +704,8 @@ Row **Delete**. Allowed only when the term has **no** applications
 ```http
 DELETE /api/mentorship/programs/:programId/terms/:termId
 ```
+
+**Backend:** `DELETE /v1/programs/{uid}/terms/{termId}` (program `writer`).
 
 #### Success `204`
 
@@ -665,13 +719,16 @@ DELETE /api/mentorship/programs/:programId/terms/:termId
 
 ## Shared actions
 
-### 18. Save reviewer note
+### 19. Save reviewer note
 
 Note dialog on a mentee row (Current Mentees or Applicants). Local-only today.
 
 ```http
-PUT /api/mentorship/programs/:programId/notes/:personId
+PUT /api/mentorship/applications/:applicationId/note
 ```
+
+**Backend:** `PUT /v1/applications/{uid}/note` (application `reviewer`).
+The note is scoped to the application, not to a program+person pair.
 
 ```json
 { "note": "Strong Go background; paired well during the screening exercise." }
@@ -684,7 +741,7 @@ note. The note is visible to the program's admins and mentors.
 
 ```json
 {
-  "personId": "mnt_alex_rivera",
+  "applicationId": "app_alex_rivera_fall26",
   "note": "Strong Go background; paired well during the screening exercise."
 }
 ```
@@ -695,30 +752,32 @@ note. The note is visible to the program's admins and mentors.
 
 - **Download By Status** (mentees / applicants) — UI-only export from the loaded rows.
 - **View / download task submission** — UI opens `task.file`.
+- **Other Active Applications** — deferred. See authorization guide for rationale.
 
 ---
 
 ## Endpoint index
 
-| #   | Method   | Path                                           | Why                                    |
-| --- | -------- | ---------------------------------------------- | -------------------------------------- |
-| 1   | `GET`    | `/programs/:programId`                         | Page header + tab counts               |
-| 2   | `PUT`    | `/programs/:programId`                         | Edit Program                           |
-| 3   | `GET`    | `/programs/:programId/mentees`                 | Current / past / all people (`type`)   |
-| 4   | `GET`    | `/programs/:programId/mentees/:menteeId/tasks` | View Tasks expansion                   |
-| 5   | `PATCH`  | `/programs/:programId/mentees/:menteeId`       | Accept / Withdraw / Decline / Graduate |
-| 6   | `POST`   | `/programs/:programId/tasks`                   | Create Task (`assigneeIds`)            |
-| 7   | `POST`   | `/programs/:programId/mentees/decline-by-term` | Decline by Term                        |
-| 8   | `GET`    | `/programs/:programId/mentors`                 | Mentors tab list                       |
-| 9   | `GET`    | `/invitable-users`                             | Invite picker                          |
-| 10  | `POST`   | `/programs/:programId/mentors`                 | Invite (`username`)                    |
-| 11  | `PATCH`  | `/programs/:programId/mentors/:mentorId`       | Accept / Decline                       |
-| 12  | `DELETE` | `/programs/:programId/mentors/:mentorId`       | Remove                                 |
-| 13  | `GET`    | `/programs/:programId/terms`                   | Terms tab list                         |
-| 14  | `POST`   | `/programs/:programId/terms`                   | Create Term                            |
-| 15  | `PUT`    | `/programs/:programId/terms/:termId`           | Edit Term                              |
-| 16  | `PATCH`  | `/programs/:programId/terms/:termId`           | Close / Re-Open                        |
-| 17  | `DELETE` | `/programs/:programId/terms/:termId`           | Delete Term                            |
-| 18  | `PUT`    | `/programs/:programId/notes/:personId`         | Reviewer note                          |
+| #   | Method   | BFF path                                                | Backend route                                            | Why                         |
+| --- | -------- | ------------------------------------------------------- | -------------------------------------------------------- | --------------------------- |
+| 1   | `GET`    | `/programs/:programId`                                  | `GET /v1/programs/{uid}` + `GET /v1/programs/{uid}/management-summary` | Page header + tab counts    |
+| 2   | `PATCH`  | `/programs/:programId`                                  | `PATCH /v1/programs/{uid}`                               | Edit Program                |
+| 3   | `GET`    | `/programs/:programId/applications`                     | `GET /v1/programs/{uid}/applications`                    | Current / past / all (`type`) |
+| 4   | `GET`    | `/applications/:applicationId/tasks`                    | `GET /v1/applications/{uid}/tasks`                       | View Tasks expansion        |
+| 5   | `PATCH`  | `/applications/:applicationId/status`                   | `PATCH /v1/applications/{uid}/status`                    | Accept / Decline / Graduate / Hold |
+| 6   | `POST`   | `/applications/tasks`                                   | `POST /v1/applications/{uid}/tasks` × N                  | Create Task (BFF loops applicationIds) |
+| 7   | `POST`   | `/programs/:programId/terms/:termId/bulk-decline`       | `POST /v1/programs/{uid}/terms/{termId}/applications/bulk-decline` | Decline by Term |
+| 8   | `GET`    | `/programs/:programId/mentors`                          | `GET /v1/programs/{uid}/member-management`               | Mentors tab list            |
+| 9   | `GET`    | `/invitable-users`                                      | BFF-only (LF platform)                                   | Invite picker               |
+| 10  | `POST`   | `/programs/:programId/mentors`                          | `POST /v1/programs/{uid}/members`                        | Invite (username → user_id) |
+| 11  | `PATCH`  | `/programs/:programId/mentors/:mentorId`                | `PATCH /v1/programs/{uid}/members/{memberId}`            | Approve / Decline           |
+| 12  | `DELETE` | `/programs/:programId/mentors/:mentorId`                | `DELETE /v1/programs/{uid}/members/{memberId}`            | Remove                      |
+| 13  | `GET`    | `/programs/:programId/terms`                            | `GET /v1/programs/{uid}/term-management`                 | Terms tab list (with counts) |
+| 14  | `POST`   | `/programs/:programId/terms`                            | `POST /v1/programs/{uid}/terms`                          | Create Term                 |
+| 15  | `PATCH`  | `/programs/:programId/terms/:termId`                    | `PATCH /v1/programs/{uid}/terms/{termId}`                | Edit Term                   |
+| 16  | `POST`   | `/programs/:programId/terms/:termId/close`              | `POST /v1/programs/{uid}/terms/{termId}/close`           | Close Term                  |
+| 17  | `POST`   | `/programs/:programId/terms/:termId/reopen`             | `POST /v1/programs/{uid}/terms/{termId}/reopen`          | Re-open Term                |
+| 18  | `DELETE` | `/programs/:programId/terms/:termId`                    | `DELETE /v1/programs/{uid}/terms/{termId}`                | Delete Term                 |
+| 19  | `PUT`    | `/applications/:applicationId/note`                     | `PUT /v1/applications/{uid}/note`                        | Reviewer note               |
 
-All paths are under `/api/mentorship`.
+All BFF paths are under `/api/mentorship`.
