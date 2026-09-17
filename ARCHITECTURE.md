@@ -166,9 +166,9 @@ rather than schema:
 
 - **Program `viewer` carries a `[user:*]` wildcard, and it is load-bearing.** It is not "always
   public" — fga-sync writes it as a **per-object tuple** only while the program is `published`, and
-  re-emits without it on the way back down to `archived`/`hidden`. It exists because Mentorship ships
-  two front ends and only one of them authenticates: drop the wildcard and every request the public
-  Nuxt site makes is denied at the edge. Any model variant that removes it loses one of the two UIs.
+  re-emits without it on the way back down to `archived`/`hidden`. It exists because the public
+  Nuxt site's callers are anonymous, or hold no relation on the program yet: drop the wildcard and
+  every discovery request is denied at the edge. Any model variant that removes it loses that UI.
 - **Approval is held deliberately outside the program's own relations.** The decision route checks
   `member` on the static object `mentorship_approver_team:global`. Folding it into `writer` would let
   every program admin approve their own program, so `PATCH /programs/{uid}` must reject a `status`
