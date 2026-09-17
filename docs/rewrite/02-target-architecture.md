@@ -43,6 +43,7 @@ flowchart TB
     S3[("S3 uploads")]
     EMAIL["lfx-v2-email-service<br/>NATS → SES"]
     CFAPI["Crowdfunding API"]
+    LEDGER["Ledger API"]
     SF[("Snowflake")]
     DASH["Dashboards"]
 
@@ -59,7 +60,7 @@ flowchart TB
     API -- "outbox → NATS" --> SYNC
     SYNC --> FGA
     CRONS --> PG
-    CRONS -- "M2M: funding stats" --> CFAPI
+    CRONS -- "M2M: funding stats" --> LEDGER
     PG -- "Fivetran (Postgres connector)" --> SF
     SF --> DASH
     SF --> CFAPI
@@ -101,7 +102,7 @@ erDiagram
     programs ||--o{ program_terms : has
     programs ||--o{ program_members : has
     programs ||--o{ program_skills : requires
-    programs ||--|| program_funding_stats : "caches CF stats"
+    programs ||--|| program_funding_stats : "caches Ledger stats"
     program_terms ||--o{ applications : receives
     applications ||--o{ tasks : "works on"
     programs ||--o{ invitation_tokens : issues
@@ -229,6 +230,6 @@ The allowlist and the HMAC links were each a second authorization mechanism outs
 | **Slack ops alerts**                   | Ops signal moves to standard K8s/CI channels.                                                                                                                                                          |
 | **OpenSSF badge fetch**                | Cosmetic; can return later if wanted.                                                                                                                                                                  |
 | **Observability stack**                | Deferred; not part of the initial release.                                                                                                                                                             |
-| **SNS/SQS eventing with Crowdfunding** | Replaced by the CF API sync + Snowflake analytics path.                                                                                                                                                |
+| **SNS/SQS eventing with Crowdfunding** | Replaced by the direct Ledger API pull + Snowflake analytics path.                                                                                                                                                |
 
 Everything else is **feature parity**: same roles, same program/term/application/task lifecycle, same email notifications, same discovery capability.

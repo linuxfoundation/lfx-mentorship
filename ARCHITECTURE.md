@@ -237,7 +237,7 @@ service, and they are contracts rather than implementation details:
 - **There is a total authentication bypass for local development, and it must never reach a deployed
   environment.** `DISABLED_MOCK_LOCAL_PRINCIPAL` sets a static principal and
   `ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS=true` arms it
-  ([`jwt.go:40-96,143`](backend/internal/infrastructure/auth/jwt.go)); together they skip JWT
+  ([`jwt.go:40-99,143`](backend/internal/infrastructure/auth/jwt.go)); together they skip JWT
   validation entirely and every request runs as that principal. Both are required, the principal is
   whitespace-normalised so a blank-ish value cannot arm it, and
   [lfx-mentorship#148](https://github.com/linuxfoundation/lfx-mentorship/pull/148) adds a chart
@@ -266,7 +266,9 @@ with different credentials**. Do not implement against the wrong one.
 **Direction of dependency matters, and it is asymmetric — state both halves:**
 
 - **Crowdfunding does not depend on Mentorship at request time.** It consumes Mentorship data only
-  through Snowflake, so nothing in *Crowdfunding's* serving path waits on this service.
+  through a batch feed — Snowflake today, with the transport still open between that and a direct
+  Mentorship API (`03` OQ-2) — so nothing in *Crowdfunding's* serving path waits on this service
+  under either option.
 - **Mentorship does depend on Crowdfunding at request time.** `GET /v1/programs/{id}/transactions`
   and `/sponsors` call Crowdfunding synchronously and return `ErrUpstreamUnavailable` when it is
   absent. Both are **public** routes, so a Crowdfunding outage degrades unauthenticated pages.
@@ -317,7 +319,7 @@ practice — which makes them different from ordinary backlog items.
 | Contract | What is missing |
 |---|---|
 | **The four `mentorship_*` FGA types** | Absent from `model.fga`. PR 1 of the five-PR path in [`04 §implementation path`](docs/rewrite/04-authorization-model.md); the merge gate is `tests.yaml` passing, not that the DSL parses |
-| **Project-level program-admin relation** | Needs the `project` type extended *and* project-service to add `mentorship_program_admin` to its `update_access` `exclude_relations` — Mentorship writes the tuple itself, but without the exclusion the next project update deletes it (`04` AQ-4, mandatory PR 5). The Self Serve permissions page also needs updating |
+| **Project-level program-admin relation** | Needs the `project` type extended *and* project-service to add `mentorship_program_admin` to its `update_access` `exclude_relations` — Mentorship writes the tuple itself, but without the exclusion the next project update deletes it (`04` AQ-4, mandatory PR 5). The exclusion only keeps an existing tuple alive; **the grant itself has no owner yet.** `04`'s emission table is scoped to program, application and task objects and has no row for a `project`-scoped grant, so three things are still undefined: the Mentorship-side source of record for who holds project-level admin (no table carries it — `program_members` is program-scoped), the route that grants and revokes it, and what the reconciliation job compares against. The Self Serve permissions page needs updating once those exist |
 | **Program-approval global team** | The team does not exist and there is no approve endpoint. `04` AQ-8 leaves the roster owner open — "no owner re-checks that a global tuple still exists" is the operational risk on the one guard protecting publication |
 | **`/mentorship/v1` mount** | The router serves only `/v1` (`backend/cmd/mentorship-api/server.go`); the platform prefix lands with cutover step 2 (`05` GW-1). §1 names it as the integration target, so nothing should be pointed at it yet |
 | **`tasks.application_id` as a parent** | The column is nullable with `ON DELETE SET NULL` ([`001_initial.up.sql:208`](backend/db/migrations/001_initial.up.sql)), but task permissions inherit through the parent application (`04` decision 2). Needs an unmapped-task report, then `NOT NULL` and `ON DELETE CASCADE` ([`02`](docs/rewrite/02-target-architecture.md)); until then an orphaned task inherits no reviewer access |
