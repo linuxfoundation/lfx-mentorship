@@ -27,14 +27,16 @@ Companion documents, all narrower than this one:
 | [`docs/rewrite/01-current-system.md`](docs/rewrite/01-current-system.md) | The legacy platform being replaced |
 | [`docs/rewrite/02-target-architecture.md`](docs/rewrite/02-target-architecture.md) | Full rewrite proposal (data model, repo layout, scope exclusions) |
 | [`docs/rewrite/03-migration-plan.md`](docs/rewrite/03-migration-plan.md) | Migration phases |
-| [`docs/rewrite/04-authorization-model.md`](docs/rewrite/04-authorization-model.md) | **The FGA model** — types, relations, the Postgres/FGA split, and which relation each route checks |
+| [`docs/rewrite/04-authorization-model.md`](docs/rewrite/04-authorization-model.md) | **The FGA model** — types, relations, and the Postgres/FGA split |
 | [`docs/rewrite/05-heimdall-gateway.md`](docs/rewrite/05-heimdall-gateway.md) | The gateway edge that consumes it, and the cutover sequence |
+| [`docs/rewrite/06-route-matrix.md`](docs/rewrite/06-route-matrix.md) | **The per-route matrix** — every route's authenticator, authorizer, object extraction and relation; the implementation contract for the RuleSets |
 | [`CLAUDE.md`](CLAUDE.md) | Conventions for working in this repo |
 
-`00`, `04` and `05` are added by [lfx-mentorship#119](https://github.com/linuxfoundation/lfx-mentorship/pull/119),
-which is still under Architecture-team review — **so the links to them above and in §3 resolve only
-once that PR merges, and it should merge first.** `04` and `05` remain proposals even then; §3 below
-records the decisions they rest on and does not restate the model.
+`00`, `04`, `05` and `06` were added by
+[lfx-mentorship#119](https://github.com/linuxfoundation/lfx-mentorship/pull/119), which merged on
+2026-09-15. `04`, `05` and `06` record decisions the Architecture team has resolved, but the model
+they describe is not yet deployed; §3 below records the decisions they rest on and does not restate
+the model.
 
 Where the code, the spec directory, or `docs/rewrite/` contradict the *contract* stated here, that is
 a defect in one of them — say so in review rather than letting the drift stand.
@@ -92,10 +94,10 @@ wildcard on programs (§3.2) — one of the two front ends does not authenticate
 **The external path is `/mentorship/v1`, not `/v1`.** On the shared gateway host, `/v1/users` and
 `/v1/programs` are too generic to claim at the root alongside project-service's `/projects/*` and
 meeting-service's `/itx/*`, so the platform surface is
-`https://lfx-api.{domain}/mentorship/v1/...`. The service mounts that prefix itself — no Traefik
-rewrite, matching every other v2 service — and serves the bare `/v1` mount alongside it only until
-the interim ingress is retired (`05` GW-1). **Integrate against `/mentorship/v1`; the bare mount is
-transitional.**
+`https://lfx-api.{domain}/mentorship/v1/...`. The service is to mount that prefix itself — no Traefik
+rewrite, matching every other v2 service — serving the bare `/v1` mount alongside it only until the
+interim ingress is retired (`05` GW-1). **`/mentorship/v1` is the path to integrate against once it
+is served; today the router mounts only `/v1` (§6).**
 
 ---
 
@@ -143,17 +145,19 @@ start — rather than shipping bespoke auth and retrofitting later. Decided in a
   `mentorship_task`, whose parent reference is the **application**, completing one inheritance chain
   project → program → application → task. See [`04` decision 2](docs/rewrite/04-authorization-model.md).
 
-### 3.2 The FGA model lives in `04`, not here
+### 3.2 The FGA model lives in `04` and `06`, not here
 
 **[`docs/rewrite/04-authorization-model.md`](docs/rewrite/04-authorization-model.md) is the single
-source of truth for the types, relations, route-to-relation mapping, and lifecycle emissions.** It is
-not restated here: the model has already been revised three times across two Architecture reviews, and
-a second copy maintained separately would drift from it. Four mentorship-owned types are
-proposed there — `mentorship_program`, `mentorship_application`, `mentorship_task`,
+source of truth for the types, relations, and lifecycle emissions, and
+[`06-route-matrix.md`](docs/rewrite/06-route-matrix.md) is the single source of truth for the
+route-by-route mapping the RuleSets implement.** Neither is restated here: the model has already been
+revised three times across two Architecture reviews, and a second copy maintained separately would
+drift from it. Four mentorship-owned types are proposed there — `mentorship_program`,
+`mentorship_application`, `mentorship_task`,
 `mentorship_approver_team` — plus two relations appended to the existing `project` type
 (`mentorship_program_admin`, `mentorship_program_creator`). Landing them in
 [`model.fga`](https://github.com/linuxfoundation/lfx-v2-helm/blob/main/charts/lfx-platform/files/model.fga)
-is PR 1 of the four-PR path in `04 §implementation path`, gated on `tests.yaml` passing.
+is PR 1 of the five-PR path in `04 §implementation path`, gated on `tests.yaml` passing.
 
 What belongs in *this* document is the handful of model properties that are cross-component contracts
 rather than schema:
@@ -169,12 +173,15 @@ rather than schema:
   field rather than silently ignoring it.
 - **Project `writer` reaches everything by inheritance**, three levels down to tasks. There is no
   `mentorship_super_admin`, per §3.1.
-- **`mentorship_program_admin` must be owned by project-service, not this service.** It sits on the
-  `project` type, and project-service emits full-state `update_access` for `project` objects — so a
-  tuple written independently by Mentorship is deleted by the next project update. Adding the relation
-  to `model.fga` is necessary but not sufficient; it needs an owner (`04` AQ-4), and it is the one item
-  a model merge alone does not make functional. Its sibling `mentorship_program_creator` is a pure
-  computed union, so it needs no tuples and no owner.
+- **`mentorship_program_admin` is written by this service, but only project-service can keep it
+  alive.** It sits on the `project` type, and project-service emits full-state `update_access` for
+  `project` objects — so a tuple Mentorship writes is deleted by the next project update unless
+  project-service names the relation in `exclude_relations`. That one field is the whole ask (`04`
+  AQ-4): project-service does not own, store or expose the grant, and Mentorship continues to write
+  and remove the tuple itself via `member_put`/`member_remove`, which touch only the relations they
+  name. Adding the relation to `model.fga` is necessary but not sufficient; the exclusion is the one
+  item a model merge alone does not make functional. Its sibling `mentorship_program_creator` is a
+  pure computed union, so it needs no tuples at all.
 
 ### 3.3 Service-side invariants the edge cannot enforce
 
@@ -192,14 +199,22 @@ service, and they are contracts rather than implementation details:
   `{id}` capture that may be a slug would check a nonexistent object and deny a valid URL.
   `GET /v1/programs/resolve/{id}` returns the canonical `program.ID` for this purpose — a
   prerequisite for the RuleSets (`05` GW-2), not a cutover detail.
-- **The public read surface is an allowlist, not a redacted one.** Only the catalog routes
-  (`/programs`, `/mentees`, `/mentors`, summaries) stay unauthenticated, and they serve
-  purpose-built DTOs that select a fixed allowlist — `user_id`, name, avatar, introduction, skills.
-  The raw user, profile, application and task reads are **gated, not filtered**: they leave the
+- **The raw user, profile, application and task reads are gated, not filtered.** They leave the
   public group entirely rather than having fields stripped, because a blocklist rots the first time
   a column is added (`05` GW-8). `User.email`, `User.lfid` and `UserProfile.phone`, `address`,
   `demographics`, `socioeconomics` therefore never reach an unauthenticated route at all. A future
   public profile page gets its own allowlist DTO, the way the mentor catalog does.
+- **The anonymous route list is `06`, not a rule of thumb.** It is wider than the catalog: program
+  reads by uid, terms, funding-stats, transactions, sponsors and the `GET /mentees/{id}` /
+  `/mentors/{id}` directory details are all anonymous too (`06` §route matrix, and §4 below on the
+  Crowdfunding-backed pair). The catalog routes serve purpose-built DTOs — `MenteeItem` and its
+  mentor equivalent select `user_id`, name, avatar, introduction and skills; the `*Detail` DTOs add
+  `github_url`, `linkedin_url` and program history, which are public by intent.
+- **Where a route is public but one field is not, redaction in the handler is correct.**
+  `GET /v1/programs/{uid}/members` stays public with `Email` nil'd in the handler (`05` GW-9): the
+  field is withheld from every caller the route admits, so splitting the route by audience would be
+  wrong (`06`). Redaction is the exception for a single legacy invite artifact, not the general
+  pattern — the general pattern is the two bullets above.
 
 ### 3.4 Authentication
 
@@ -208,9 +223,13 @@ service, and they are contracts rather than implementation details:
   that stores it is `users.lfid` — §5).
 - Self Serve obtains a token for the Mentorship audience and forwards it — the mechanism it
   already uses for Crowdfunding.
-- Mentor invite acceptance (`POST /v1/mentor-invites/{token}/accept`) is deliberately
-  **unauthenticated**: the token in the path is the credential. Its entropy, single-use semantics,
-  and expiry are part of the authorization contract.
+- Mentor invite acceptance (`POST /v1/mentor-invites/{token}/accept`) **requires authentication**,
+  and carries no FGA check — `allow_all` at the edge, because the invitee holds no relation on the
+  program yet. Ownership is enforced in the service: the token HMACs the `(programID, userID)` pair,
+  so it names its own subject, and the handler **rejects the request unless that subject matches the
+  authenticated principal** (`04` AQ-7, `06`). Without that binding, `allow_all` would let any
+  authenticated caller accept a known invitation. The token's entropy, single-use semantics, and
+  expiry back the binding; they do not replace it.
 - **There is a total authentication bypass for local development, and it must never reach a deployed
   environment.** `DISABLED_MOCK_LOCAL_PRINCIPAL` sets a static principal and
   `ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS=true` arms it
@@ -263,7 +282,7 @@ Full ERD in
 Cross-component notes:
 
 - **Users are mirrored, not owned.** `users.lfid` holds the LFID
-  ([`001_initial.up.sql:30`](backend/db/migrations/001_initial.up.sql)). Auth0/LF SSO remains
+  ([`001_initial.up.sql:38`](backend/db/migrations/001_initial.up.sql)). Auth0/LF SSO remains
   authoritative for identity.
 - **`programs.project_uid` is the project join key**, and the FGA parent tuple
   `mentorship_program#project@project:{uid}` is derived from it — so every inherited permission in
@@ -282,7 +301,7 @@ Cross-component notes:
   and a relay re-derives the payload from current Postgres state at send time. It never replays a
   stored one: the `GenericFGAMessage` envelope carries no object version, so a stale full-state
   payload retried after a newer revocation would restore exactly the tuple that was revoked.
-  fga-sync registration is PR 2 of the four-PR path in `04`.
+  fga-sync registration is PR 2 of the five-PR path in `04`.
 
 ---
 
@@ -293,12 +312,13 @@ practice — which makes them different from ordinary backlog items.
 
 | Contract | What is missing |
 |---|---|
-| **The four `mentorship_*` FGA types** | Absent from `model.fga`. PR 1 of the four-PR path in [`04 §implementation path`](docs/rewrite/04-authorization-model.md); the merge gate is `tests.yaml` passing, not that the DSL parses |
-| **Project-level program-admin relation** | Needs the `project` type extended *and* project-service to emit it — it cannot be durably written by this service (`04` AQ-4). The Self Serve permissions page also needs updating |
+| **The four `mentorship_*` FGA types** | Absent from `model.fga`. PR 1 of the five-PR path in [`04 §implementation path`](docs/rewrite/04-authorization-model.md); the merge gate is `tests.yaml` passing, not that the DSL parses |
+| **Project-level program-admin relation** | Needs the `project` type extended *and* project-service to add `mentorship_program_admin` to its `update_access` `exclude_relations` — Mentorship writes the tuple itself, but without the exclusion the next project update deletes it (`04` AQ-4, mandatory PR 5). The Self Serve permissions page also needs updating |
 | **Program-approval global team** | The team does not exist and there is no approve endpoint. `04` AQ-8 leaves the roster owner open — "no owner re-checks that a global tuple still exists" is the operational risk on the one guard protecting publication |
+| **`/mentorship/v1` mount** | The router serves only `/v1` (`backend/cmd/mentorship-api/server.go`); the platform prefix lands with cutover step 2 (`05` GW-1). §1 names it as the integration target, so nothing should be pointed at it yet |
+| **`tasks.application_id` as a parent** | The column is nullable with `ON DELETE SET NULL` ([`001_initial.up.sql:208`](backend/db/migrations/001_initial.up.sql)), but task permissions inherit through the parent application (`04` decision 2). Needs an unmapped-task report, then `NOT NULL` and `ON DELETE CASCADE` ([`02`](docs/rewrite/02-target-architecture.md)); until then an orphaned task inherits no reviewer access |
 | **`programs.project_uid`** | The column does not exist; only the unrelated legacy `cii_project_id` does. Needs a nullable-first migration, an ETL from the legacy `lfProjectId`, and an unmapped-program report before it can be `NOT NULL` ([`03 §migration plan`](docs/rewrite/03-migration-plan.md)). Until it lands, the project → program FGA parent tuple cannot be derived and no inherited permission in §3.2 resolves |
 | **Postgres full-text search** | No `tsvector` column or GIN index in any migration, so §5's full-text contract is a target with no schema behind it |
 | **Indexer registration** | Mentorship registers nothing with the indexer. If Mentorship objects should be searchable platform-wide, that work has no owner |
 | **Staging and prod ArgoCD values** | Only `values/{global,dev}` exist for this service |
 | **`term-status` and `task-submission-status` CronJobs** | Planned in `02-target-architecture.md`; only `program-funding-stats-sync` is specified in detail |
-| **`architecture-review` label** | `lfx-self-serve` has one; the mentorship repos have none, so there is no way to flag a contract-changing PR |
