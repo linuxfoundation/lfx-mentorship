@@ -87,10 +87,11 @@ flowchart TB
     PG -- "Fivetran" --> SF
 ```
 
-**Two front ends, one API.** The public Nuxt site owns unauthenticated discovery and the apply flow;
-everything authenticated and management-shaped lives in LFX Self Serve. Both talk to the same API
-surface, and there is no separate admin API. This split is the reason the FGA model carries a public
-wildcard on programs (§3.2) — one of the two front ends does not authenticate.
+**Two front ends, one API.** The public Nuxt site owns unauthenticated discovery and the apply flow,
+plus **initial program creation**, which is authenticated — the one management-shaped flow it keeps
+(`02`). Everything else authenticated and management-shaped lives in LFX Self Serve. Both talk to
+the same API surface, and there is no separate admin API. This split is the reason the FGA model
+carries a public wildcard on programs (§3.2) — most of the Nuxt site's traffic is unauthenticated.
 
 **The external path is `/mentorship/v1`, not `/v1`.** On the shared gateway host, `/v1/users` and
 `/v1/programs` are too generic to claim at the root alongside project-service's `/projects/*` and
@@ -253,7 +254,7 @@ service, and they are contracts rather than implementation details:
 
 | Counterparty | Direction | Mechanism | Failure behavior |
 |---|---|---|---|
-| **Auth0** | both | **Inbound**: token validation — OAuth2 PKCE for users, JWKS signature and audience checks. **Outbound**: the Crowdfunding client acquires an M2M token by `client_credentials` before each uncached call, caching it until expiry ([`clients/crowdfunding.go`](backend/internal/infrastructure/clients/crowdfunding.go)); the call it protects is described in the Crowdfunding row below | Inbound: requests rejected 401. Outbound: token acquisition failure surfaces as `ErrUpstreamUnavailable` on the Crowdfunding routes |
+| **Auth0** | both | **Inbound**: OAuth2 PKCE user login. In the target flow the caller's Auth0 token terminates at Heimdall and never reaches this service — the API validates the **Heimdall**-issued JWT against the cluster-internal Heimdall JWKS (§3.4, `05`). Direct Auth0 audience/JWKS validation is the interim arrangement only, and is retired at cutover. **Outbound**: the Crowdfunding client acquires an M2M token by `client_credentials` before each uncached call, caching it until expiry ([`clients/crowdfunding.go`](backend/internal/infrastructure/clients/crowdfunding.go)); the call it protects is described in the Crowdfunding row below | Inbound: requests rejected 401 (by Heimdall after cutover). Outbound: token acquisition failure surfaces as `ErrUpstreamUnavailable` on the Crowdfunding routes |
 | **Ledger API** | Mentorship → Ledger | Hourly CronJob, `LEDGER_API_KEY` bearer token; reads mentorship-credit transactions and caches them in `program_funding_stats`. **Direct, not proxied** — `LEDGER_BASE_URL` points at the Ledger service itself (`https://ledger.dev.platform.linuxfoundation.org` in dev), and this repo has its own client ([`clients/ledger.go`](backend/internal/infrastructure/clients/ledger.go)) | Last cached values served |
 | **Crowdfunding API** | Mentorship → CF → Ledger | Request-time call from `ProgramService`, Auth0 M2M token (`access:manage`); fetches categorized transactions. **Crowdfunding is a proxy for the Ledger on this path**: `GET /v1/initiatives/{id}/transactions` is served by CF's `InitiativeService` calling the Ledger's `/transactions` ([`initiative_service.go`](https://github.com/linuxfoundation/lfx-crowdfunding/blob/main/backend/internal/service/initiative_service.go)), and `ProgramService.GetCategorizedTransactions` proxies that contract. The **categorization** is CF's own — the organization/individual split and the `DonorName`/`DonorLogoURL`/`DonorType` donor metadata do not exist on a raw Ledger transaction — which is why this does not collapse into the direct Ledger call above. Sponsor cards are **not** fetched from CF: `GET /programs/{uid}/sponsors` aggregates those same transactions locally (`aggregateProgramSponsors`), so sponsor presentation is Mentorship's own | `ErrUpstreamUnavailable` |
 | **Snowflake** | Mentorship → SF | Fivetran Postgres connector; `fivetran_mentorship_*` dbt models repointed | Analytics-plane only — never in the serving path |
