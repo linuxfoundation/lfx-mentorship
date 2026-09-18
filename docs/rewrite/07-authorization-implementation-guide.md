@@ -13,7 +13,7 @@ This is the ordered implementation runbook for moving LFX Mentorship behind the 
 
 1. Traefik accepts traffic on the shared gateway host and delegates authentication and authorization to Heimdall with `forwardAuth`.
 2. Heimdall authenticates the incoming Auth0 token, checks one OpenFGA relation for the route, and replaces the request's `Authorization` header with a short-lived, service-audience JWT.
-3. The Mentorship backend validates the Heimdall JWT and consumes its `principal` claim. It does not query OpenFGA or repeat relation checks.
+3. The Mentorship backend validates the Heimdall JWT and consumes its `principal` claim. It never repeats an ID-addressed relation check that Heimdall already performed at the edge — but `/me/*` collections still query OpenFGA through the FGA-aware query service for list filtering (see the `query/list` exception below and `GET /me/managed-programs` in section 1.6), because no single edge check can express "every object this caller may see."
 4. PostgreSQL remains the source of truth. Mentorship sends derived relationship changes to `lfx-v2-fga-sync` through NATS JetStream using a transactional outbox.
 
 This document says **how and in what order** to implement the design. Document 04 remains authoritative for the relation model. The canonical route catalog in section 1.6 combines the current API, required URL adjustments, and routes implied by accepted product workflows. Copy that complete catalog into document 06 before treating it as the RuleSet inventory.
@@ -74,7 +74,7 @@ Do not enable gateway traffic until every item in this section is resolved.
 
 ### Project relation ownership
 
-Mentorship writes and removes direct `project:{uid}#mentorship_program_admin@user:{lfid}` tuples, and project-service excludes `mentorship_program_admin` from its full-state `project` sync (`exclude_relations`) so that sync does not delete them — document 04's design, and document 05's "own and emit" summary names the same one-field exclusion, not a competing ownership model.
+Mentorship writes and removes direct `project:{uid}#mentorship_program_admin@user:{lfid}` tuples, and project-service only adds `mentorship_program_admin` to `exclude_relations` on its full-state `project` sync so that sync does not delete them — document 04's design (`04 §implementation path` PR 5, and AQ-4's "one field, not storage, a management API, or ownership of the grant"). [05-heimdall-gateway.md](./05-heimdall-gateway.md) has been corrected to state this same one-field ask rather than a competing "project-service owns and emits the relation" model.
 
 - Mentorship owns the roster and emits `member_put` / `member_remove` against `project`.
 - Project-service preserves, but does not derive, `mentorship_program_admin`.
@@ -157,7 +157,7 @@ Test the exact response and not-found mapping because a Heimdall contextualizer 
 
 Implement document 06 in full:
 
-- Move self-service identity operations to `/v1/me` and `/v1/me/profile`.
+- Move self-service identity operations to `/v1/me` and `/v1/me/profiles` (plural, matching the collection `GET /v1/me/profiles` and the per-type `/v1/me/profiles/{profileType}` in section 1.6 — update document 06's singular `/v1/me/profile` to match).
 - Move `GET /v1/users/{userId}/applications` to `/v1/me/applications`.
 - Nest all term routes under `/v1/programs/{program_uid}/terms/{term_id}`.
 - Add the split program, application, and task transition routes.
@@ -240,7 +240,7 @@ Rules for every table below:
 | remove | `GET /v1/users`, `GET /v1/user-profiles` | none | Raw identity/profile collections have no checkable object or legitimate consumer. |
 | remove | `POST /v1/users`, `POST /v1/user-profiles` | none | Replaced by self-scoped `PUT /v1/me` and typed profile routes. |
 | remove | `PATCH`, `DELETE /v1/users/{id}` and `/v1/user-profiles/{id}` | none | Replaced by `/me`; no admin-by-ID requirement exists. |
-| adjust | `GET /v1/users/{id}`, `/v1/user-profiles/{id}`, `/v1/user-profiles/slug/{slug}` | authenticated `allow_all` temporarily | Retain only until purpose-built self/public-directory contracts replace raw profile reads; authentication alone does not make all fields safe. |
+| remove | `GET /v1/users/{id}`, `/v1/user-profiles/{id}`, `/v1/user-profiles/slug/{slug}` | none | The current handlers serialize the full `User`/`UserProfile` models — email, and for profiles phone, address, demographics, and socioeconomics. Any authenticated caller who knows an ID or slug could read another user's record, so authenticated `allow_all` is not safe here. Keep these routes off the gateway entirely until self-scoped `/me/*` routes and a purpose-built public directory DTO replace every legitimate caller of them. |
 
 #### Programs, members, and administration
 
@@ -561,6 +561,8 @@ The relay must:
 
 For a deleted object, emit the stored delete intent. For a removed member, derive `member_remove` from the absent roster row plus the marker's relation and username. Preserve ordering per marker and allow only one in-flight generation for that key, so an older put cannot arrive after a newer remove. For an object or membership that changed while an older sync was in flight, never clear the newer generation.
 
+**Whole-object and membership markers on the same `(object_type, object_uid)` race each other, not just markers of the same kind.** A whole-object worker can read Postgres before a membership removal, the membership worker can publish `member_remove` first, and the stale `update_access` can still publish afterward and restore that writer/mentor — `update_access` is a full sync, and per-marker generation checks on two different keys cannot detect a cross-key ordering violation. Serialize all object and membership mutations for the same `(object_type, object_uid)` — for example, a per-object advisory lock or single-worker-per-key claim — or exclude member-managed relations from the whole-object payload entirely and let only the membership path own them.
+
 The source rosters required by this design are:
 
 - `program_members` for direct program `writer` and `mentor` grants;
@@ -696,6 +698,8 @@ Report and fail on missing project UIDs, missing task parents, unknown LFIDs, or
 
 Run a scheduled reconciliation that derives expected access from current PostgreSQL state and re-enqueues full-state syncs. It may re-emit unconditionally; request-path code must not read OpenFGA.
 
+Whole-object reconciliation alone misses two cases: project-level `mentorship_program_admin` (Mentorship does not own the `project` full-state payload, so a whole-object sync of `project` never runs here) and a stale approver-team membership left behind after a downstream failure past the relay's JetStream acknowledgement. Reconciliation must also diff each owned roster (`mentorship_program_admins`, `mentorship_approver_team_members`) against the corresponding OpenFGA relation — or against retained removal history where a hard delete has already erased the Postgres row — and enqueue precise `member_remove` markers for any tuple no longer backed by a roster row, not just `member_put` for current members.
+
 Reconciliation cannot discover tuples for hard-deleted rows, so deletion transitions remain mandatory.
 
 ### 5.3 Verify coverage, not merely relay success
@@ -757,7 +761,9 @@ Semantics:
 - `openfga.enabled=true` renders real `openfga_check` authorizers.
 - defaults are all false, making the initial chart change inert.
 
-For a deployed Mentorship environment, `validate.yaml` must reject `heimdall.enabled=true` when `openfga.enabled=false`. An `allow_all` fallback for an FGA-protected route is acceptable only for an explicitly local test render, never as a production migration stage.
+For a deployed Mentorship environment, `validate.yaml` must reject `heimdall.enabled=true` when `openfga.enabled=false`. An `allow_all` fallback for an FGA-protected route is acceptable only for an explicitly local test render, gated by the chart's existing `allowLocalAuthBypass` (defaults `false`, forbidden in ArgoCD values) — never an unnamed guard inferred from `openfga.enabled=false` alone or from an environment heuristic.
+
+`validate.yaml` must also reject `heimdall.enabled=true` when `heimdall.add_middleware=false`. The HTTPRoute always references this chart's `heimdall` Middleware by `ExtensionRef`, so enabling the route without the Middleware renders an HTTPRoute pointing at a Middleware that does not exist — a failure `validate.yaml` would otherwise let through. Either require both flags together, or make `heimdall.enabled=true` render the Middleware automatically instead of tracking it as a separate gate.
 
 Also fail rendering when an enabled feature lacks its required gateway name/namespace, LFX domain, Heimdall URL, audience, or Heimdall JWT config.
 
@@ -886,6 +892,7 @@ Separately update the frontend/BFF configuration ready for cutover:
 - browser audience: shared gateway audience;
 - browser API URL: public shared gateway host plus `/mentorship`;
 - Nuxt server-side API URL: the gateway's cluster-internal address plus `/mentorship`, not the backend Service and not an external round trip.
+- `frontend/charts/lfx-mentorship-frontend/templates/validate.yaml`: its current render-time guidance requires `config.NUXT_API_BASE_URL` to point directly at the backend Service and fails otherwise. Update that check (and its failure message) to accept the shared gateway URL as of this step, or operators following the render-time error will be directed back to the backend Service and bypass the gateway after cutover.
 
 Do not flip those client values yet.
 
