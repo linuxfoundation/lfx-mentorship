@@ -74,22 +74,20 @@ Do not enable gateway traffic until every item in this section is resolved.
 
 ### Project relation ownership
 
-The detailed contract in document 04 says Mentorship writes and removes direct `project:{uid}#mentorship_program_admin@user:{lfid}` tuples, while project-service includes `mentorship_program_admin` in `exclude_relations` so its full-state `project` sync does not delete them. One summary in document 05 instead says project-service owns and emits the relation.
-
-Resolve that wording with the platform owners before implementation. This guide uses the more detailed document 04 design:
+Mentorship writes and removes direct `project:{uid}#mentorship_program_admin@user:{lfid}` tuples, and project-service excludes `mentorship_program_admin` from its full-state `project` sync (`exclude_relations`) so that sync does not delete them — document 04's design, and document 05's "own and emit" summary names the same one-field exclusion, not a competing ownership model.
 
 - Mentorship owns the roster and emits `member_put` / `member_remove` against `project`.
 - Project-service preserves, but does not derive, `mentorship_program_admin`.
 
-Under that choice, add a Mentorship-owned `mentorship_program_admins` Postgres table keyed by `(project_uid, user_id)`. Manage it through an LF-staff-authorized API, retain removal history or an outbox tombstone, and derive `project:{uid}#mentorship_program_admin@user:{lfid}` from it for seed and reconciliation. The existing `program_members` table cannot represent this project-wide roster because every row is scoped to one program.
+Add a Mentorship-owned `mentorship_program_admins` Postgres table keyed by `(project_uid, user_id)`. Manage it through an LF-staff-authorized API, retain removal history or an outbox tombstone, and derive `project:{uid}#mentorship_program_admin@user:{lfid}` from it for seed and reconciliation. The existing `program_members` table cannot represent this project-wide roster because every row is scoped to one program.
 
-The alternative is valid only if project-service also owns durable storage and management of that roster. Do not let both services emit competing definitions, and do not enable enforcement until one source of truth can seed and reconcile the relation.
+The real blocker is delivery, not design: project-service has to actually ship the `exclude_relations` PR (PR 5 of [04 §implementation path](./04-authorization-model.md); see also [05](./05-heimdall-gateway.md)). Do not enable enforcement until that field is live and the relation has been seeded and reconciled — without it, `mentorship_program.writer` inherits through a relation with no durable tuples and every cross-program admin check fails closed (AQ-4).
 
 ### Data invariants
 
 - Add nullable `programs.project_uid`, populate it from the legacy LF project identifier, report and repair unmapped rows, then make it `NOT NULL` before tuple emission. The current initial schema has no such column, so this is a required migration rather than an assumption.
 - Every task must have an application parent.
-- `tasks.application_id` must become `NOT NULL` with `ON DELETE CASCADE` after unresolved backfill rows are repaired.
+- `tasks.application_id` must become `NOT NULL` with `ON DELETE CASCADE` after unresolved backfill rows are repaired. Today the column is `ON DELETE SET NULL` (`backend/db/migrations/001_initial.up.sql:208`), so deleting an application currently orphans its tasks rather than removing them; run that orphan repair *before* the `NOT NULL` migration, since the project → program → application → task inheritance chain hangs off this column.
 - Every parent-authorized route must verify the path's child belongs to that parent.
 - All IDs interpolated into FGA checks must be canonical UIDs, never slugs.
 
@@ -608,6 +606,7 @@ Important encoding rules:
 - `relations` values are LFIDs; fga-sync prefixes them with `user:`.
 - Parent objects and usersets belong in `references`.
 - A full `type:uid` or `type:uid#relation` reference is passed through.
+- `references.auditor` above is a relation on `mentorship_program`, not a parent reference — it belongs in `references` anyway because its value is a userset (`mentorship_approver_team:global#member`), not an LFID. Moving it into `relations` would have fga-sync prefix it with `user:`, producing the malformed `user:mentorship_approver_team:global#member` and silently breaking the approver read path (AQ-9 in [04](./04-authorization-model.md)).
 - `public: true` creates the per-object `viewer@user:*` grant expected by the model.
 - `update_access` is a full sync: omitted publisher-managed relations are removed.
 - `member_remove` must name the precise relation: `mentor` or `writer` on a program, `mentorship_program_admin` on a project, and `member` on `mentorship_approver_team:global`. An empty relation list removes every direct relation that user holds on the object and is forbidden for these flows.
