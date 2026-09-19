@@ -40,7 +40,9 @@ flowchart TB
     SS["LFX Self Serve<br/>manage programs, applications, tasks"]
     SYNC["fga-sync"]
     AUTH0["Auth0"]
-    S3[("S3 uploads")]
+    S3PUB[("S3 public bucket<br/>logos, avatars")]
+    S3PRIV[("S3 private bucket<br/>resumes, submissions")]
+    CDN["CloudFront<br/>(OAC → public bucket)"]
     EMAIL["lfx-v2-email-service<br/>NATS → SES"]
     CFAPI["Crowdfunding API"]
     SF[("Snowflake")]
@@ -54,7 +56,10 @@ flowchart TB
     HEIMDALL -- "authorized requests<br/>+ principal claim" --> API
     NUXT --> AUTH0
     API --> PG
-    API --> S3
+    API --> S3PUB
+    API --> S3PRIV
+    S3PUB --> CDN
+    USERS --> CDN
     API -- "NATS send_email" --> EMAIL
     API -- "outbox → NATS" --> SYNC
     SYNC --> FGA
@@ -206,8 +211,46 @@ The allowlist and the HMAC links were each a second authorization mechanism outs
 | Snowflake      | Mentorship → SF       | Fivetran **Postgres** connector (replacing the DynamoDB connector); existing `fivetran_mentorship_*` dbt models repointed. Feeds dashboards and CF analytics. Analytics-plane only — never in the serving path.                                                              |
 | Auth0          | both                  | PKCE (users), client-credentials (M2M). After the gateway cutover Auth0 sits **in front of Heimdall** and its token never reaches this service — the API middleware validates the **Heimdall**-issued JWT against the cluster-internal Heimdall JWKS, not Auth0's. See [05](./05-heimdall-gateway.md) for the two token contracts and the dual-accept window. |
 | Email          | Mentorship → NATS     | All transactional email (invitations, application status, task notifications, program-submission notification to LF staff — a notification only, no longer a signed approval link) goes through **[lfx-v2-email-service](https://github.com/linuxfoundation/lfx-v2-email-service)** — NATS request/reply on `lfx.email-service.send_email` over Amazon SES, via its Go client `pkg/api`. No service sends its own email, so Mentorship holds no SMTP or provider credentials. The relay is **pre-rendered only** (no templating), so this repo owns the templates and the Go backend renders `html` and `text` per notification — replacing the legacy Mandrill arrangement, where ~47 templates lived in Mailchimp's editor and were hand-synced. Mandrill is legacy-only and out of scope; the rail decision is recorded in [linuxfoundation/lfx-self-serve#2188](https://github.com/linuxfoundation/lfx-self-serve/issues/2188). Known limits to design around: **no send retry** in the relay, no attachments, no CC/BCC, and a non-prod recipient-domain allowlist. `Notifier` stays fire-and-forget — a failed send must never fail the business operation. |
-| S3             | Mentorship → S3       | Program logos, task submission files (presigned URLs, as in CF)                                                                                                                                                                                                              |
+| S3             | Mentorship → S3       | Program logos, profile logos and avatars (public); resumes and task submission files (private). **Uploads go through the API, not presigned URLs** — see [Object storage](#object-storage) below. This supersedes the earlier "presigned URLs, as in CF" note: CF's pattern stores every object in one world-readable bucket, which is wrong for the resumes and submissions Mentorship holds. |
 | LFX Self Serve | SS → Mentorship       | User tokens through the API Gateway; Heimdall authorizes each route against FGA before it reaches the service                                                                                                                                                                |
+
+## Object storage
+
+Mentorship follows the platform object-store design ([lfx-object-store-design](https://github.com/linuxfoundation/lfx-skills/blob/main/skills/lfx-object-store-design/SKILL.md), provisioned per [lfx-object-store-ops](https://github.com/linuxfoundation/lfx-skills/blob/main/skills/lfx-object-store-ops/SKILL.md)) rather than Crowdfunding's presigned-PUT pattern. Two rules drive everything below: **uploads go through the API** (browsers never write to S3 directly), and **public and private files live in separate buckets** — a CDN's origin authorization can read every key in its origin bucket, so one mixed bucket would make resumes anonymously retrievable to anyone who knows the key.
+
+Crowdfunding's objects are initiative logos, public either way, so a single world-readable bucket costs it nothing. Mentorship stores resumes and task submissions, and that difference is the whole reason the pattern is not copied.
+
+**Implementers: read both skills before writing code or HCL.** This section states what Mentorship stores and where; it does not restate the platform baseline. [lfx-object-store-design](https://github.com/linuxfoundation/lfx-skills/blob/main/skills/lfx-object-store-design/SKILL.md) owns the application side — SDK wiring and the credential chain, `EnsureBucket`, the chart contract (`s3.endpointURL`, `s3.createMissingBucket`, `cdnURLPrefix`, the nats-s3 sidecar), and the local stack. [lfx-object-store-ops](https://github.com/linuxfoundation/lfx-skills/blob/main/skills/lfx-object-store-ops/SKILL.md) owns provisioning, in [lfx-v2-opentofu](https://github.com/linuxfoundation/lfx-v2-opentofu) rather than this repo. Where this document and a skill disagree, the skill is the baseline and the difference is a bug in this document — raise it rather than diverging silently.
+
+### File classes
+
+| Class | Columns | Bucket | Served by |
+| --- | --- | --- | --- |
+| Program logos | `programs.logo_url` | public | CDN (`CDN_URL_PREFIX`) |
+| Profile logos and avatars | `user_profiles.logo_url`, `users.avatar_url` | public | CDN |
+| Resumes | `user_profiles.profile_links.resumeLink` | **private** | service download route |
+| Task submissions | `tasks.file` | **private** | service download route |
+
+`tasks.submit_file` is not a file reference — it is the template flag (`required` / unset) saying whether a task demands an upload. The schema comment on `001_initial.up.sql:219` suggesting it may hold a URL is wrong and should be corrected when that column is next touched.
+
+### Stored value and delivery
+
+What the column stores differs by class — and the difference is deliberate:
+
+- **Public files** are addressed by their **S3 object key**, and the CDN URL `{CDN_URL_PREFIX}/{key}?v={upload-unix-timestamp}` is what callers receive. The key is the locator the service resolves for its own download route — which has to work when `CDN_URL_PREFIX` is unset, and there is then no URL to parse a key back out of. So **the key is what is stored, and the CDN URL is composed at response time** from the configured prefix. Storing the URL instead would make the object unnameable whenever the prefix is unset or changes, and would bake a deployment-specific hostname into a data column. The `?v=` parameter is a cache-busting hint and must be in the CloudFront cache key; it is **not** the S3 `VersionId`. **Its value is persisted, not read live from S3 on each response.** A public-class row carries the key's upload/copy Unix timestamp alongside it — set once when the object is written and read back on every response that composes a `public_url`, the same source [03 §migration](./03-migration-plan.md#s3-objects) already uses for migrated rows (there, the copy script's manifest). Refetching it from S3 (a `HeadObject` per response) is not an option: `public_url` is minted on every response that surfaces a public file — not only the upload response, but `GET /v1/programs/{uid}`, profile fetches, and any directory listing row with an avatar — so a live S3 call there is a cost paid on a hot path, not a one-off. `Cache-Control: public, max-age=86400` is set as object metadata at upload, so a persisted copy of the URL converges to the current object within a day. `CopyObject` preserves source metadata by default, so the migration copy must pass `MetadataDirective: REPLACE` to set `ContentType` and `Cache-Control` rather than inheriting whatever the legacy bucket happened to store.
+- **Private files** store the **S3 object key** (for example `resumes/{user_uid}/{uuid}.pdf`), not a URL and not a route. The download route is derived from the owning entity, so a stored route would carry an entity ID and no key — leaving the handler nothing to pass `GetObject`. The bucket has no CDN attached.
+
+  **The key is repository-internal and must never appear in a response body.** This is a requirement on the API, not a property it has today: `tasks.file` and `user_profiles.profile_links` are currently serialized straight to the client (`Task.File`, `UserProfile.ProfileLinks`), so adopting this mapping without also projecting those fields out would replace a public URL with an internal locator in the same response — strictly worse than what it replaces. Responses carry the **download route** for callers the ruleset admits. For `tasks.file` and `avatar_url`/`logo_url` this means omitting the field entirely for everyone else, but `user_profiles.profile_links` also carries `linkedinProfileLink` and `githubProfileLink` — public metadata unrelated to resume access — so denying resume access omits or replaces **`resumeLink` alone**, matching the per-field reservation in [06 §file routes](./06-route-matrix.md#file-routes); the other two links are always returned. Whether the projection is done with response DTOs or by narrowing the models is an implementation choice; the contract is only that the key does not leave the service.
+
+Per-file cap is **20 MB**; no presigned uploads and no resumable/chunked uploads. Buckets are private with versioning, SSE, and lifecycle rules. Write access in **deployed** environments is via IRSA; the local `nats-s3` sidecar uses a locally generated static SigV4 pair, which is the platform's documented local mode and must never appear in a deployed values file.
+
+### Routes
+
+Upload and download are ordinary API routes, authorized by Heimdall like any other — the full rows are in [06](./06-route-matrix.md). Private downloads stream from S3 after the ruleset authorizes the request, with `Content-Disposition: attachment` and `Range` pass-through, and **`Cache-Control: private, no-store`** on both the response and the stored object metadata — resumes and submissions are PII, and the default would otherwise let a browser or an intermediary retain an authenticated response. The migration copy sets it explicitly for the same reason it sets `ContentType`: legacy objects predate the split and may carry a public policy.
+
+**Every file class has a service download route, public ones included.** The CDN does not replace that route, it only supplements it for public reads: when `CDN_URL_PREFIX` is set, the API returns the CDN URL as `public_url` and clients fetch the bytes from the edge; when it is unset — local development without the `nginx-s3-gateway` stand-in, or a CDN outage — the service route is the only path. The public download routes carry the same relation as the record that holds the URL, but that does not make the two paths equivalent: the CDN serves the object to anyone holding the URL, with no relation check at all. The service route is the authorized path; the CDN is an unauthenticated cache in front of the same bytes, which is why only classes that are public by intent may be CDN-fronted (RM-6).
+
+Traefik needs `maxRequestBodyBytes` above `20971520`, with margin for multipart overhead, on the upload routes. Attach that `Buffering` middleware to the **upload routers only** — the platform skill phrases the download side as `responseBuffering: false`, but Traefik's `Buffering` CRD has no such field, so the way to keep downloads streaming is simply not to attach the middleware to them. Buffering a 20 MB response would also defeat the `Range` pass-through the private download routes rely on.
 
 ## Kubernetes resources
 
