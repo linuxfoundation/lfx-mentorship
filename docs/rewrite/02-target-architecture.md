@@ -220,6 +220,8 @@ Mentorship follows the platform object-store design ([lfx-object-store-design](h
 
 Crowdfunding's objects are initiative logos, public either way, so a single world-readable bucket costs it nothing. Mentorship stores resumes and task submissions, and that difference is the whole reason the pattern is not copied.
 
+**Implementers: read both skills before writing code or HCL.** This section states what Mentorship stores and where; it does not restate the platform baseline. [lfx-object-store-design](https://github.com/linuxfoundation/lfx-skills/blob/main/skills/lfx-object-store-design/SKILL.md) owns the application side — SDK wiring and the credential chain, `EnsureBucket`, the chart contract (`s3.endpointURL`, `s3.createMissingBucket`, `cdnURLPrefix`, the nats-s3 sidecar), and the local stack. [lfx-object-store-ops](https://github.com/linuxfoundation/lfx-skills/blob/main/skills/lfx-object-store-ops/SKILL.md) owns provisioning, in [lfx-v2-opentofu](https://github.com/linuxfoundation/lfx-v2-opentofu) rather than this repo. Where this document and a skill disagree, the skill is the baseline and the difference is a bug in this document — raise it rather than diverging silently.
+
 ### File classes
 
 | Class | Columns | Bucket | Served by |

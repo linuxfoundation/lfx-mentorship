@@ -137,6 +137,8 @@ Terms are not an FGA type and the current paths expose no program UID, so all of
 
 New routes, none of which exist today. The storage contract is [02 §object storage](./02-target-architecture.md#object-storage): uploads go through the API, public and private files live in separate buckets. **Authorization is per file class, and the class determines the bucket** — a public-class upload writing to the private bucket (or the reverse) is an access bug the edge cannot catch, so the handler must pick the bucket from the route, never from a request field.
 
+The handler side is the platform baseline, not invented here: read [lfx-object-store-design](https://github.com/linuxfoundation/lfx-skills/blob/main/skills/lfx-object-store-design/SKILL.md) for the upload/download flow, body encoding (raw for these singletons, not multipart), the SDK and chart contract, and the local stack. This table adds only what is Mentorship-specific — which relation guards each route, and which bucket each class writes to.
+
 | Route | Auth | Object | Relation | Service must also |
 | --- | --- | --- | --- | --- |
 | `POST /v1/programs/{uid}/logo` | required | `mentorship_program:{uid}` | `writer` | Public class. Image allowlist, **SVG excluded**. Returns `public_url` |
