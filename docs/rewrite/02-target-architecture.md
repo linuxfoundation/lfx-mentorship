@@ -233,18 +233,20 @@ Crowdfunding's objects are initiative logos, public either way, so a single worl
 
 ### Stored value and delivery
 
-Each column stores the **canonical URL the client should use**, not a bare key:
+What the column stores differs by class — and the difference is deliberate:
 
-- **Public files** store the CDN URL, `{CDN_URL_PREFIX}/{key}?v={upload-unix-timestamp}`. The `?v=` parameter is a cache-busting hint and must be in the CloudFront cache key; it is **not** the S3 `VersionId`. `Cache-Control: public, max-age=86400` is set as object metadata at upload, so a persisted copy of the URL converges to the current object within a day.
-- **Private files** store the service download route (the rows in [06](./06-route-matrix.md)). Nothing outside the service can resolve them, and the bucket has no CDN attached.
+- **Public files** store the CDN URL, `{CDN_URL_PREFIX}/{key}?v={upload-unix-timestamp}`. The `?v=` parameter is a cache-busting hint and must be in the CloudFront cache key; it is **not** the S3 `VersionId`. `Cache-Control: public, max-age=86400` is set as object metadata at upload, so a persisted copy of the URL converges to the current object within a day. `CopyObject` preserves source metadata by default, so the migration copy must pass `MetadataDirective: REPLACE` to set `ContentType` and `Cache-Control` rather than inheriting whatever the legacy bucket happened to store.
+- **Private files** store the **S3 object key** (for example `resumes/{user_uid}/{uuid}.pdf`), not a URL and not a route. The download route is derived from the owning entity, so a stored route would carry an entity ID and no key — leaving the handler nothing to pass `GetObject`. Clients never see the key: the API returns the download route in its response, and the bucket has no CDN attached.
 
-Per-file cap is **20 MB**; no presigned uploads and no resumable/chunked uploads. Buckets are private with versioning, SSE, and lifecycle rules; write access is via IRSA, never static credentials.
+Per-file cap is **20 MB**; no presigned uploads and no resumable/chunked uploads. Buckets are private with versioning, SSE, and lifecycle rules. Write access in **deployed** environments is via IRSA; the local `nats-s3` sidecar uses a locally generated static SigV4 pair, which is the platform's documented local mode and must never appear in a deployed values file.
 
 ### Routes
 
-Upload and download are ordinary API routes, authorized by Heimdall like any other — the full rows are in [06](./06-route-matrix.md). Private downloads stream from S3 after the ruleset authorizes the request, with `Content-Disposition: attachment` and `Range` pass-through. The download route always exists and is authoritative; the CDN only supplements it for public reads.
+Upload and download are ordinary API routes, authorized by Heimdall like any other — the full rows are in [06](./06-route-matrix.md). Private downloads stream from S3 after the ruleset authorizes the request, with `Content-Disposition: attachment` and `Range` pass-through.
 
-Traefik needs `maxRequestBodyBytes` above `20971520` with margin for multipart overhead on upload routes, and `responseBuffering: false` on download routes.
+**Every file class has a service download route, public ones included.** The CDN does not replace that route, it only supplements it for public reads: when `CDN_URL_PREFIX` is set, the API returns the CDN URL as `public_url` and clients fetch the bytes from the edge; when it is unset — local development without the `nginx-s3-gateway` stand-in, or a CDN outage — the service route is the only path. The public download routes therefore carry the same authorization as the record that holds the URL, so the two paths can never enforce different policies for the same bytes.
+
+Traefik needs `maxRequestBodyBytes` above `20971520`, with margin for multipart overhead, on the upload routes. Attach that `Buffering` middleware to the **upload routers only** — the platform skill phrases the download side as `responseBuffering: false`, but Traefik's `Buffering` CRD has no such field, so the way to keep downloads streaming is simply not to attach the middleware to them. Buffering a 20 MB response would also defeat the `Range` pass-through the private download routes rely on.
 
 ## Kubernetes resources
 
