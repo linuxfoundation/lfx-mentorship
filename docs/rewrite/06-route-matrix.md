@@ -133,6 +133,24 @@ Terms are not an FGA type and the current paths expose no program UID, so all of
 | `PATCH /v1/tasks/{uid}/review` | required | `mentorship_task:{uid}` | `manager` | New route — mentors and admins (`reviewer from mentorship_application`) |
 | `DELETE /v1/tasks/{uid}` | required | `mentorship_task:{uid}` | `manager` | — |
 
+## File routes
+
+New routes, none of which exist today. The storage contract is [02 §object storage](./02-target-architecture.md#object-storage): uploads go through the API, public and private files live in separate buckets. **Authorization is per file class, and the class determines the bucket** — a public-class upload writing to the private bucket (or the reverse) is an access bug the edge cannot catch, so the handler must pick the bucket from the route, never from a request field.
+
+| Route | Auth | Object | Relation | Service must also |
+| --- | --- | --- | --- | --- |
+| `POST /v1/programs/{uid}/logo` | required | `mentorship_program:{uid}` | `writer` | Public class. Validate content type against an image allowlist that **excludes SVG** (stored-XSS: S3 serves it executable) and size ≤ 20 MB. Returns the CDN `public_url` |
+| `DELETE /v1/programs/{uid}/logo` | required | `mentorship_program:{uid}` | `writer` | Null the column; `DeleteObject` is idempotent |
+| `PUT /v1/me/profile/logo`, `PUT /v1/me/avatar` | required | — | `allow_all` | Public class, self-scoped. **No object to check — the target is the principal's own profile**, so the handler must resolve it from `principal` and never from a body field (rule 3) |
+| `PUT /v1/me/profile/resume` | required | — | `allow_all` | **Private class**, self-scoped, same `principal` rule. PDF/doc allowlist |
+| `GET /v1/me/profile/resume` | required | — | `allow_all` | Owner reads their own. Streams from the private bucket |
+| `GET /v1/user-profiles/{uid}/resume` | required | `mentorship_application:{uid}` | `manager` | **The reviewer read path, and the one row here worth arguing about.** A resume is profile-level but is read *because* someone is reviewing an application, so the object checked is the application, not the profile — there is no profile type in the model and adding one to express "a reviewer may read this" would duplicate the application relation. Consequence: the route must take an application UID, so the path above is provisional pending the handler design (see RM-3) |
+| `PUT /v1/tasks/{uid}/submission/file` | required | `mentorship_task:{uid}` | `assignee` | **Private class.** The mentee uploads; pairs with `PATCH /v1/tasks/{uid}/submission` in the task section |
+| `GET /v1/tasks/{uid}/submission/file` | required | `mentorship_task:{uid}` | `auditor` | Admits the assignee and the reviewers. `Content-Disposition: attachment`, `Range` pass-through |
+| `DELETE /v1/tasks/{uid}/submission/file` | required | `mentorship_task:{uid}` | `assignee` | Only before review closes — a state rule, service-side |
+
+Two things the edge cannot express here. First, **no download route may be `anonymous`** even for the public classes: public logos are read from the CDN, not through the API, so an anonymous API download route would exist only as a way to bypass the bucket split. Second, the 20 MB cap and the content-type allowlist are service concerns — Heimdall authorizes the caller, not the payload.
+
 ## What this matrix surfaces
 
 Writing the table out is where the remaining decision-7-shaped exceptions appear. Four are worth an explicit call:
@@ -148,4 +166,5 @@ Writing the table out is where the remaining decision-7-shaped exceptions appear
 | --- | --- | --- |
 | RM-1 | ~~Do `GET /v1/users` and `GET /v1/user-profiles` stay on the gateway host at all?~~ **Resolved — removed.** | Both routes are deleted in [lfx-mentorship#153](https://github.com/linuxfoundation/lfx-mentorship/pull/153), along with the ID-addressed identity writes ([05](./05-heimdall-gateway.md) GW-5). They had no checkable object and no legitimate caller; fixing the leak was not gated on Heimdall |
 | RM-2 | `GET /v1/mentees/{id}` and `/v1/mentors/{id}` are directory profiles with no model type. Leave them `allow_all`, or give them one? | **Leave them.** They expose only publicly-listable records, and adding a type to express "is public" duplicates what the service filter already does — the `user:*` wildcard is for objects that have a private state, which these do not |
+| RM-3 | Reviewer access to a mentee's resume is checked on `mentorship_application`, so the route needs an application UID rather than the profile UID its path suggests. Confirm the shape when the file handlers are designed. | Key it by application. The alternative — a profile type existing only to carry this one relation — adds a model type to express something the application relation already says |
 | RM-3 | Does `POST /v1/program-terms/{id}/applications` check `viewer` on the program, or `allow_all` plus a service-side visibility check? | **`viewer`.** It is ID-addressed and the program is in the path once nested, so there is a real object to check; `allow_all` would let a caller apply to a hidden or archived program and rely on the service to notice |
