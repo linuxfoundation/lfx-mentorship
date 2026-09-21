@@ -193,7 +193,7 @@ pending ──hold──► hold ──resume──► pending
 | `application_status` | VARCHAR(20) | nullable | denormalised |
 | `program_term_status` | VARCHAR(20) | nullable | denormalised |
 | `custom` | BOOLEAN | DEFAULT false | |
-| `submit_file` | TEXT | nullable | `null \| 'required' \| URL` |
+| `submit_file` | TEXT | nullable | `null \| 'required'` — template flag, not a file reference |
 | `file` | TEXT | nullable | uploaded file URL |
 | `due_date` | DATE | nullable | |
 | `created_by` | TEXT | nullable | creator LFID |
