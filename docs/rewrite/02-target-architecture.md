@@ -231,7 +231,7 @@ Crowdfunding's objects are initiative logos, public either way, so a single worl
 | Resumes | `user_profiles.profile_links.resumeLink` | **private** | service download route |
 | Task submissions | `tasks.file` | **private** | service download route |
 
-`tasks.submit_file` is not a file reference — it is the template flag (`required` / unset) saying whether a task demands an upload. The schema comment on `001_initial.up.sql:219` suggesting it may hold a URL is wrong and should be corrected when that column is next touched.
+`tasks.submit_file` is not a file reference — it is the template flag (`required` / unset) saying whether a task demands an upload. The schema comment on `001_initial.up.sql:219` suggesting it may hold a URL is wrong and should be corrected when that column is next touched — tracked in [linuxfoundation/lfx-mentorship#163](https://github.com/linuxfoundation/lfx-mentorship/issues/163).
 
 ### Stored value and delivery
 
