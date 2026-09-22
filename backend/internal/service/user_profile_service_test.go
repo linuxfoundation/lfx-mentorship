@@ -15,12 +15,12 @@ import (
 
 // stubUserProfileRepo implements domain.UserProfileRepository.
 type stubUserProfileRepo struct {
-	getByID                  func(context.Context, string) (*models.UserProfile, error)
-	getBySlug                func(context.Context, string) (*models.UserProfile, error)
-	list                     func(context.Context, models.UserProfileFilter) ([]*models.UserProfile, *models.PaginationMeta, error)
-	create                   func(context.Context, models.UserProfileCreateInput) (*models.UserProfile, error)
-	update                   func(context.Context, string, models.UserProfileUpdateInput) (*models.UserProfile, error)
-	delete                   func(context.Context, string) error
+	getByID                   func(context.Context, string) (*models.UserProfile, error)
+	getBySlug                 func(context.Context, string) (*models.UserProfile, error)
+	list                      func(context.Context, models.UserProfileFilter) ([]*models.UserProfile, *models.PaginationMeta, error)
+	create                    func(context.Context, models.UserProfileCreateInput) (*models.UserProfile, error)
+	update                    func(context.Context, string, models.UserProfileUpdateInput) (*models.UserProfile, error)
+	delete                    func(context.Context, string) error
 	countActiveMenteeProfiles func(context.Context, string) (int, error)
 }
 

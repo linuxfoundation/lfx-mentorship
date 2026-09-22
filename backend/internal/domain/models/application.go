@@ -78,6 +78,8 @@ type Application struct {
 	AttendanceType    *AttendanceType    `json:"attendance_type,omitempty"` // set on accept
 	TasksSubmitted    bool               `json:"tasks_submitted"`
 	AdminNotified     bool               `json:"admin_notified"`
+	Evaluation        *string            `json:"-"`
+	ReviewerNote      *string            `json:"-"`
 	CreatedOn         time.Time          `json:"created_on"`
 	UpdatedOn         time.Time          `json:"updated_on"`
 }
@@ -104,6 +106,8 @@ type ApplicationUpdateInput struct {
 	AttendanceType    *AttendanceType    `json:"attendance_type,omitempty"`
 	TasksSubmitted    *bool              `json:"tasks_submitted,omitempty"`
 	AdminNotified     *bool              `json:"admin_notified,omitempty"`
+	Evaluation        *string            `json:"evaluation,omitempty"`
+	ReviewerNote      *string            `json:"reviewer_note,omitempty"`
 	// ActorID is the caller's user ID for permission checks; not persisted.
 	ActorID string `json:"-"`
 }

@@ -19,6 +19,7 @@ type Config struct {
 	Server       ServerConfig
 	Database     DatabaseConfig
 	JWT          JWTConfig
+	FGA          FGAConfig
 	Crowdfunding CrowdfundingConfig
 	OTel         OTelConfig
 	Local        LocalConfig
@@ -43,10 +44,22 @@ type DatabaseConfig struct {
 
 // JWTConfig holds Auth0 / JWKS settings.
 type JWTConfig struct {
-	JWKSURL   string
-	Audience  string
-	Issuer    string
-	ClockSkew time.Duration
+	JWKSURL          string
+	Audience         string
+	Issuer           string
+	ClockSkew        time.Duration
+	HeimdallJWKSURL  string
+	HeimdallAudience string
+	HeimdallIssuer   string
+}
+
+// FGAConfig configures the optional transactional outbox relay.
+type FGAConfig struct {
+	NATSURL          string
+	RelayBatch       int
+	RelayInterval    time.Duration
+	RelayRetryDelay  time.Duration
+	RelayMaxAttempts int
 }
 
 // CrowdfundingConfig holds outbound crowdfunding API and M2M auth settings.
@@ -84,6 +97,17 @@ type LocalConfig struct {
 }
 
 func loadConfig() (*Config, error) {
+	heimdallJWKSURL := os.Getenv("HEIMDALL_JWKS_URL")
+	heimdallAudience := os.Getenv("HEIMDALL_JWT_AUDIENCE")
+	heimdallIssuer := os.Getenv("HEIMDALL_JWT_ISSUER")
+	heimdallConfigured := heimdallJWKSURL != "" || heimdallAudience != "" || heimdallIssuer != ""
+	if heimdallConfigured && (heimdallJWKSURL == "" || heimdallAudience == "" || heimdallIssuer == "") {
+		return nil, fmt.Errorf("HEIMDALL_JWKS_URL, HEIMDALL_JWT_AUDIENCE, and HEIMDALL_JWT_ISSUER must be set together")
+	}
+	if heimdallConfigured && heimdallIssuer == os.Getenv("JWT_ISSUER") {
+		return nil, fmt.Errorf("HEIMDALL_JWT_ISSUER must differ from JWT_ISSUER")
+	}
+
 	serverPort, err := parseInt(getEnv("PORT", "8080"))
 	if err != nil {
 		return nil, fmt.Errorf("PORT: %w", err)
@@ -104,6 +128,29 @@ func loadConfig() (*Config, error) {
 			return nil, fmt.Errorf("JWT_CLOCK_SKEW: %w", err)
 		}
 		clockSkew = d
+	}
+
+	relayBatch, err := parseInt(getEnv("FGA_RELAY_BATCH_SIZE", "50"))
+	if err != nil || relayBatch <= 0 {
+		return nil, fmt.Errorf("FGA_RELAY_BATCH_SIZE: must be a positive integer")
+	}
+	relayMaxAttempts, err := parseInt(getEnv("FGA_RELAY_MAX_ATTEMPTS", "10"))
+	if err != nil || relayMaxAttempts <= 0 {
+		return nil, fmt.Errorf("FGA_RELAY_MAX_ATTEMPTS: must be a positive integer")
+	}
+	relayInterval := time.Second
+	if v := os.Getenv("FGA_RELAY_INTERVAL"); v != "" {
+		relayInterval, err = time.ParseDuration(v)
+		if err != nil || relayInterval <= 0 {
+			return nil, fmt.Errorf("FGA_RELAY_INTERVAL: must be a positive duration")
+		}
+	}
+	relayRetryDelay := time.Minute
+	if v := os.Getenv("FGA_RELAY_RETRY_DELAY"); v != "" {
+		relayRetryDelay, err = time.ParseDuration(v)
+		if err != nil || relayRetryDelay <= 0 {
+			return nil, fmt.Errorf("FGA_RELAY_RETRY_DELAY: must be a positive duration")
+		}
 	}
 
 	crowdfundingTimeout := 10 * time.Second
@@ -132,10 +179,20 @@ func loadConfig() (*Config, error) {
 			ConnMaxLifetime: 30 * time.Minute,
 		},
 		JWT: JWTConfig{
-			JWKSURL:   os.Getenv("JWKS_URL"),
-			Audience:  os.Getenv("JWT_AUDIENCE"),
-			Issuer:    os.Getenv("JWT_ISSUER"),
-			ClockSkew: clockSkew,
+			JWKSURL:          os.Getenv("JWKS_URL"),
+			Audience:         os.Getenv("JWT_AUDIENCE"),
+			Issuer:           os.Getenv("JWT_ISSUER"),
+			ClockSkew:        clockSkew,
+			HeimdallJWKSURL:  heimdallJWKSURL,
+			HeimdallAudience: heimdallAudience,
+			HeimdallIssuer:   heimdallIssuer,
+		},
+		FGA: FGAConfig{
+			NATSURL:          os.Getenv("FGA_NATS_URL"),
+			RelayBatch:       relayBatch,
+			RelayInterval:    relayInterval,
+			RelayRetryDelay:  relayRetryDelay,
+			RelayMaxAttempts: relayMaxAttempts,
 		},
 		Crowdfunding: CrowdfundingConfig{
 			BaseURL:      strings.TrimRight(os.Getenv("CROWDFUNDING_BASE_URL"), "/"),
@@ -166,6 +223,9 @@ func (c *Config) jwtAuthConfig() auth.JWTAuthConfig {
 		Audience:                   c.JWT.Audience,
 		Issuer:                     c.JWT.Issuer,
 		ClockSkew:                  c.JWT.ClockSkew,
+		HeimdallJWKSURL:            c.JWT.HeimdallJWKSURL,
+		HeimdallAudience:           c.JWT.HeimdallAudience,
+		HeimdallIssuer:             c.JWT.HeimdallIssuer,
 		AllowMockPrincipalBypass:   c.Local.AllowMockLocalPrincipalBypass,
 		DisabledMockLocalPrincipal: c.Local.DisabledMockLocalPrincipal,
 	}

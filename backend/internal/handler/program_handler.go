@@ -6,6 +6,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -73,7 +74,7 @@ type programLookup interface {
 // 404 for everyone but its owner. Every public read of a program or of one of
 // its sub-resources must go through this, or a hidden program stays reachable
 // to anyone holding its ID.
-func resolveVisibleProgram(w http.ResponseWriter, r *http.Request, svc programLookup) (*models.Program, bool) {
+func resolveVisibleProgram(w http.ResponseWriter, r *http.Request, svc programLookup, gatewayNonPublic ...bool) (*models.Program, bool) {
 	id := chi.URLParam(r, "id")
 	var (
 		program *models.Program
@@ -99,9 +100,13 @@ func resolveVisibleProgram(w http.ResponseWriter, r *http.Request, svc programLo
 			return nil, false
 		}
 	}
-	if program.Status == models.ProgramStatusHidden {
+	if program.Status != models.ProgramStatusPublished {
 		principal := auth.PrincipalFromContext(r.Context())
-		isOwner := principal != nil && program.LFID != nil && *program.LFID == principal.Username
+		if (len(gatewayNonPublic) == 0 || gatewayNonPublic[0]) && auth.IsGatewayPrincipal(r.Context()) && principal != nil && principal.UserID != "_anonymous" {
+			return program, true
+		}
+		isOwner := principal != nil && principal.UserID != "_anonymous" &&
+			program.LFID != nil && *program.LFID != "" && *program.LFID == principal.Username
 		if !isOwner {
 			Error(w, domain.ErrProgramNotFound)
 			return nil, false
@@ -119,7 +124,7 @@ func (h *ProgramHandler) List(w http.ResponseWriter, r *http.Request) {
 	programs, meta, err := h.svc.List(r.Context(), models.ProgramFilter{
 		Limit:  limit,
 		Offset: offset,
-		Status: r.URL.Query().Get("status"),
+		Status: string(models.ProgramStatusPublished),
 		Search: r.URL.Query().Get("search"),
 	})
 	if err != nil {
@@ -191,10 +196,51 @@ func (h *ProgramHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, program)
 }
 
+// Submit transitions a program from draft or rejected to submitted.
+func (h *ProgramHandler) Submit(w http.ResponseWriter, r *http.Request) {
+	if auth.PrincipalFromContext(r.Context()) == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	status := models.ProgramStatusSubmitted
+	program, err := h.svc.Update(r.Context(), chi.URLParam(r, "id"), models.ProgramUpdateInput{Status: &status})
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, program)
+}
+
+// Decision applies a published or rejected decision to a submitted program.
+func (h *ProgramHandler) Decision(w http.ResponseWriter, r *http.Request) {
+	if auth.PrincipalFromContext(r.Context()) == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	var input models.ProgramUpdateInput
+	if !decodeBody(w, r, &input) {
+		return
+	}
+	if input.Status == nil {
+		Error(w, fmt.Errorf("%w: status is required", domain.ErrInvalidInput))
+		return
+	}
+	if *input.Status != models.ProgramStatusPublished && *input.Status != models.ProgramStatusRejected {
+		Error(w, fmt.Errorf("%w: decision must publish or reject a submitted program", domain.ErrInvalidInput))
+		return
+	}
+	program, err := h.svc.Update(r.Context(), chi.URLParam(r, "id"), models.ProgramUpdateInput{Status: input.Status})
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, program)
+}
+
 // ResolveID handles GET /v1/programs/resolve/{id}.
 // It resolves either a UUID or slug to the canonical program UUID.
 func (h *ProgramHandler) ResolveID(w http.ResponseWriter, r *http.Request) {
-	program, ok := resolveVisibleProgram(w, r, h.svc)
+	program, ok := resolveVisibleProgram(w, r, h.svc, false)
 	if !ok {
 		return
 	}
@@ -213,6 +259,7 @@ func (h *ProgramHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &input) {
 		return
 	}
+	input.CreatorUserID = principal.UserID
 
 	program, err := h.svc.Create(r.Context(), input)
 	if err != nil {
@@ -233,6 +280,10 @@ func (h *ProgramHandler) Update(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	var input models.ProgramUpdateInput
 	if !decodeBody(w, r, &input) {
+		return
+	}
+	if input.Status != nil {
+		Error(w, fmt.Errorf("%w: status transitions are handled by dedicated submit/decision routes", domain.ErrInvalidInput))
 		return
 	}
 

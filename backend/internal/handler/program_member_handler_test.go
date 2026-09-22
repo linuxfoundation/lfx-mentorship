@@ -66,9 +66,36 @@ func TestProgramMemberHandler_List_PinsActiveStatus(t *testing.T) {
 	if captured.Status != string(models.ProgramMemberStatusActive) {
 		t.Errorf("Status = %q; want %q", captured.Status, models.ProgramMemberStatusActive)
 	}
-	// member_type stays caller-controlled: every type on the roster is public.
-	if captured.MemberType != "mentor" {
-		t.Errorf("MemberType = %q; want mentor", captured.MemberType)
+	if captured.MemberType != string(models.MemberTypeMentor) {
+		t.Errorf("MemberType = %q; want %q", captured.MemberType, models.MemberTypeMentor)
+	}
+}
+
+func TestProgramMemberHandler_List_HidesUnpublishedProgram(t *testing.T) {
+	listCalled := false
+	h := handler.NewProgramMemberHandler(&stubProgramMemberSvc{
+		listByProgram: func(context.Context, string, models.ProgramMemberFilter) ([]*models.ProgramMember, *models.PaginationMeta, error) {
+			listCalled = true
+			return nil, nil, nil
+		},
+	}, &stubProgramSvc{
+		getByID: func(context.Context, string) (*models.Program, error) {
+			return &models.Program{ID: "p1", Status: models.ProgramStatusDraft}, nil
+		},
+		getBySlug: func(context.Context, string) (*models.Program, error) {
+			return &models.Program{ID: "p1", Status: models.ProgramStatusDraft}, nil
+		},
+	})
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/p1/members", nil)
+	r = requestWithChiParam(r, "id", "p1")
+	w := httptest.NewRecorder()
+	h.List(w, r)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("got %d; want 404", w.Code)
+	}
+	if listCalled {
+		t.Fatal("listed members for unpublished program")
 	}
 }
 

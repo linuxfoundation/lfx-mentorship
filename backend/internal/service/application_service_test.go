@@ -6,6 +6,7 @@ package service_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -22,6 +23,8 @@ type stubAppRepo struct {
 	listByProgramTerm func(context.Context, string, models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error)
 	listByUser        func(context.Context, string, models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error)
 	create            func(context.Context, string, models.ApplicationCreateInput) (*models.Application, error)
+	reapply           func(context.Context, string, string, models.ApplicationCreateInput) (*models.Application, error)
+	reapplyWithTasks  func(context.Context, string, string, models.ApplicationCreateInput, []models.TaskCreateInput) (*models.Application, error)
 	update            func(context.Context, string, models.ApplicationUpdateInput) (*models.Application, error)
 	delete            func(context.Context, string) error
 	countBlocking     func(context.Context, string) (int, error)
@@ -54,6 +57,21 @@ func (m *stubAppRepo) Create(ctx context.Context, termID string, in models.Appli
 		return m.create(ctx, termID, in)
 	}
 	return &models.Application{Status: in.Status, UserID: in.UserID, Role: in.Role}, nil
+}
+func (m *stubAppRepo) CreateWithTasks(ctx context.Context, termID string, in models.ApplicationCreateInput, _ []models.TaskCreateInput) (*models.Application, error) {
+	return m.Create(ctx, termID, in)
+}
+func (m *stubAppRepo) Reapply(ctx context.Context, oldID, termID string, in models.ApplicationCreateInput) (*models.Application, error) {
+	if m.reapply != nil {
+		return m.reapply(ctx, oldID, termID, in)
+	}
+	return &models.Application{ID: in.ID, ProgramTermID: termID, Status: in.Status, UserID: in.UserID, Role: in.Role}, nil
+}
+func (m *stubAppRepo) ReapplyWithTasks(ctx context.Context, oldID, termID string, in models.ApplicationCreateInput, tasks []models.TaskCreateInput) (*models.Application, error) {
+	if m.reapplyWithTasks != nil {
+		return m.reapplyWithTasks(ctx, oldID, termID, in, tasks)
+	}
+	return m.Reapply(ctx, oldID, termID, in)
 }
 func (m *stubAppRepo) Update(ctx context.Context, id string, in models.ApplicationUpdateInput) (*models.Application, error) {
 	if m.update != nil {
@@ -100,6 +118,7 @@ func (m *stubAppRepo) ListPastMenteesByTerm(ctx context.Context, termID string) 
 
 type stubTermRepo struct {
 	getByID            func(context.Context, string) (*models.ProgramTerm, error)
+	getByProgramAndID  func(context.Context, string, string) (*models.ProgramTerm, error)
 	listByProgram      func(context.Context, string, models.ProgramTermFilter) ([]*models.ProgramTerm, *models.PaginationMeta, error)
 	create             func(context.Context, models.ProgramTermCreateInput) (*models.ProgramTerm, error)
 	update             func(context.Context, string, models.ProgramTermUpdateInput) (*models.ProgramTerm, error)
@@ -112,6 +131,12 @@ func (m *stubTermRepo) GetByID(ctx context.Context, id string) (*models.ProgramT
 		return m.getByID(ctx, id)
 	}
 	return &models.ProgramTerm{ID: id, Status: "open"}, nil
+}
+func (m *stubTermRepo) GetByProgramAndID(ctx context.Context, programID, id string) (*models.ProgramTerm, error) {
+	if m.getByProgramAndID != nil {
+		return m.getByProgramAndID(ctx, programID, id)
+	}
+	return &models.ProgramTerm{ID: id, ProgramID: programID, Status: "open"}, nil
 }
 func (m *stubTermRepo) ListByProgram(ctx context.Context, id string, f models.ProgramTermFilter) ([]*models.ProgramTerm, *models.PaginationMeta, error) {
 	if m.listByProgram != nil {
@@ -428,8 +453,8 @@ func TestApplicationService_Create_DeclinedReapply_Blocked(t *testing.T) {
 	}
 }
 
-func TestApplicationService_Create_WithdrawnReapply_DeletesOld(t *testing.T) {
-	var deleted string
+func TestApplicationService_Create_WithdrawnReapply_ReplacesAtomically(t *testing.T) {
+	var replaced string
 	termRepo := &stubTermRepo{getByID: func(_ context.Context, _ string) (*models.ProgramTerm, error) {
 		return openTerm(time.Now()), nil
 	}}
@@ -437,9 +462,9 @@ func TestApplicationService_Create_WithdrawnReapply_DeletesOld(t *testing.T) {
 		findByTermAndUser: func(_ context.Context, _, _ string) (*models.Application, error) {
 			return &models.Application{ID: "old", Status: "withdrawn"}, nil
 		},
-		delete: func(_ context.Context, id string) error {
-			deleted = id
-			return nil
+		reapply: func(_ context.Context, oldID, _ string, _ models.ApplicationCreateInput) (*models.Application, error) {
+			replaced = oldID
+			return &models.Application{ID: "new", Status: "pending"}, nil
 		},
 	}
 	svc := newApplicationSvc(repo, &stubTaskRepo{}, termRepo, &stubProgRepo{})
@@ -447,8 +472,49 @@ func TestApplicationService_Create_WithdrawnReapply_DeletesOld(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if deleted != "old" {
-		t.Errorf("old withdrawn application was not deleted; got deleted=%q", deleted)
+	if replaced != "old" {
+		t.Errorf("old withdrawn application was not atomically replaced; got oldID=%q", replaced)
+	}
+}
+
+func TestApplicationService_Create_WithdrawnReapply_ClonesPrerequisiteTasks(t *testing.T) {
+	termRepo := &stubTermRepo{getByID: func(_ context.Context, _ string) (*models.ProgramTerm, error) {
+		term := openTerm(time.Now())
+		term.ProgramID = "program-1"
+		return term, nil
+	}}
+	repo := &stubAppRepo{
+		findByTermAndUser: func(_ context.Context, _, _ string) (*models.Application, error) {
+			return &models.Application{ID: "old", Status: models.ApplicationStatusWithdrawn}, nil
+		},
+		reapply: func(_ context.Context, oldID, termID string, in models.ApplicationCreateInput) (*models.Application, error) {
+			if oldID != "old" || termID != "term-1" {
+				t.Fatalf("reapply arguments = oldID %q, termID %q", oldID, termID)
+			}
+			return &models.Application{ID: in.ID, ProgramTermID: termID, UserID: in.UserID, Status: in.Status, Role: in.Role}, nil
+		},
+	}
+	taskCount := 0
+	repo.reapplyWithTasks = func(_ context.Context, _ string, _ string, _ models.ApplicationCreateInput, tasks []models.TaskCreateInput) (*models.Application, error) {
+		taskCount = len(tasks)
+		if len(tasks) != 1 || tasks[0].Category == nil || *tasks[0].Category != models.TaskCategoryPrerequisite || tasks[0].Status != models.TaskStatusIncomplete {
+			t.Fatalf("task payload = %+v; want one incomplete prerequisite", tasks)
+		}
+		return &models.Application{ID: "new", ProgramTermID: "term-1", UserID: "u1", Status: models.ApplicationStatusPending, Role: models.ApplicationRoleMentee}, nil
+	}
+	progRepo := &stubProgRepo{getByID: func(_ context.Context, _ string) (*models.Program, error) {
+		return &models.Program{TaskTemplates: json.RawMessage(`[{"name":"Code of Conduct","description":"Read it"}]`)}, nil
+	}}
+	svc := newApplicationSvc(repo, &stubTaskRepo{}, termRepo, progRepo)
+	_, err := svc.Create(context.Background(), "term-1", models.ApplicationCreateInput{
+		UserID: "u1",
+		Role:   models.ApplicationRoleMentee,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if taskCount != 1 {
+		t.Fatalf("cloned task count = %d; want 1", taskCount)
 	}
 }
 
@@ -464,6 +530,28 @@ func TestApplicationService_Update_ValidTransition(t *testing.T) {
 	_, err := svc.Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &next, AttendanceType: &attType})
 	if err != nil {
 		t.Errorf("expected valid transition pending→accepted, got %v", err)
+	}
+}
+
+func TestApplicationService_Update_AcceptedMenteeSendsNotification(t *testing.T) {
+	notifier := &stubNotifier{}
+	repo := &stubAppRepo{
+		getByID: func(_ context.Context, id string) (*models.Application, error) {
+			return &models.Application{ID: id, Status: models.ApplicationStatusPending, ProgramTermID: "term-1", UserID: "mentee-1", Role: models.ApplicationRoleMentee}, nil
+		},
+		update: func(_ context.Context, id string, _ models.ApplicationUpdateInput) (*models.Application, error) {
+			attType := models.AttendanceTypeFullTime
+			return &models.Application{ID: id, Status: models.ApplicationStatusAccepted, ProgramTermID: "term-1", UserID: "mentee-1", Role: models.ApplicationRoleMentee, AttendanceType: &attType}, nil
+		},
+	}
+	svc := service.NewApplicationService(repo, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{}, &stubMemberRepo{}, notifier)
+	next := models.ApplicationStatusAccepted
+	attType := models.AttendanceTypeFullTime
+	if _, err := svc.Update(context.Background(), "app-mentee-1", models.ApplicationUpdateInput{Status: &next, AttendanceType: &attType}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if notifier.menteeAcceptedCalls != 1 {
+		t.Fatalf("mentee notifications = %d; want 1", notifier.menteeAcceptedCalls)
 	}
 }
 

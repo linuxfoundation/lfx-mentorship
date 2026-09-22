@@ -193,6 +193,15 @@ func (s *ProgramService) Create(ctx context.Context, input models.ProgramCreateI
 	if strings.TrimSpace(input.Slug) == "" {
 		return nil, fmt.Errorf("%w: slug is required", domain.ErrInvalidInput)
 	}
+	if input.ProjectUID == nil || strings.TrimSpace(*input.ProjectUID) == "" {
+		return nil, fmt.Errorf("%w: project_uid is required", domain.ErrInvalidInput)
+	}
+	projectUID, err := uuid.Parse(strings.TrimSpace(*input.ProjectUID))
+	if err != nil {
+		return nil, fmt.Errorf("%w: project_uid must be a UUID", domain.ErrInvalidInput)
+	}
+	canonicalProjectUID := projectUID.String()
+	input.ProjectUID = &canonicalProjectUID
 	input.Status = models.ProgramStatusDraft // programs always start as draft
 	input.ID = uuid.New().String()
 
@@ -239,7 +248,7 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 
 		// Submission guard (FR-004): all required fields must be present and at least one open term.
 		if next == models.ProgramStatusSubmitted {
-			if current.LFID == nil || strings.TrimSpace(*current.LFID) == "" {
+			if current.ProjectUID == nil || strings.TrimSpace(*current.ProjectUID) == "" {
 				return nil, fmt.Errorf("%w: a linked LF project is required before submission", domain.ErrStateLocked)
 			}
 			if current.Description == nil || strings.TrimSpace(*current.Description) == "" {

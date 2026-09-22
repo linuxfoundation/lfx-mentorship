@@ -19,7 +19,13 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     -o /build/program-funding-stats-sync ./cmd/program-funding-stats-sync \
  && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -trimpath -ldflags "-s -w" \
-    -o /build/migrate ./cmd/migrate
+    -o /build/migrate ./cmd/migrate \
+ && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags "-s -w" \
+   -o /build/fga-reconcile ./cmd/fga-reconcile \
+ && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags "-s -w" \
+    -o /build/fga-replay ./cmd/fga-replay
 
 # Runtime stage
 # Distroless static image minimizes runtime attack surface while retaining CA certs.
@@ -29,6 +35,8 @@ WORKDIR /app
 COPY --from=builder /build/mentorship-api ./mentorship-api
 COPY --from=builder /build/program-funding-stats-sync ./program-funding-stats-sync
 COPY --from=builder /build/migrate ./migrate
+COPY --from=builder /build/fga-reconcile ./fga-reconcile
+COPY --from=builder /build/fga-replay ./fga-replay
 
 EXPOSE 8080
 

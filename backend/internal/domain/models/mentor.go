@@ -7,13 +7,13 @@ import "time"
 
 // MentorProgramTerm is one term on a program the mentor belongs to.
 type MentorProgramTerm struct {
-	ID                   string     `json:"id"`
-	Name                 string     `json:"name"`
-	Status               string     `json:"status"` // open | closed
-	StartDateTime        *time.Time `json:"start_date_time,omitempty"`
-	EndDateTime          *time.Time `json:"end_date_time,omitempty"`
-	ApplicationStartDate *time.Time `json:"application_start_date,omitempty"`
-	ApplicationEndDate   *time.Time `json:"application_end_date,omitempty"`
+	ID                   string            `json:"id"`
+	Name                 string            `json:"name"`
+	Status               ProgramTermStatus `json:"status"`
+	StartDateTime        *time.Time        `json:"start_date_time,omitempty"`
+	EndDateTime          *time.Time        `json:"end_date_time,omitempty"`
+	ApplicationStartDate *time.Time        `json:"application_start_date,omitempty"`
+	ApplicationEndDate   *time.Time        `json:"application_end_date,omitempty"`
 }
 
 // MentorProgram is a published program the mentor is an active member of.

@@ -21,6 +21,19 @@ type UserService struct {
 	repo domain.UserRepository
 }
 
+// Bootstrap resolves or creates the local user for a Heimdall LFID.
+func (s *UserService) Bootstrap(ctx context.Context, lfid string, input models.UserUpdateInput) (*models.User, error) {
+	if lfid == "" {
+		return nil, fmt.Errorf("%w: principal is required", domain.ErrInvalidInput)
+	}
+	input.LFID = &lfid
+	user, err := s.repo.UpsertByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: input.Email, Name: input.Name, GivenName: input.GivenName, FamilyName: input.FamilyName, AvatarURL: input.AvatarURL})
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap user: %w", err)
+	}
+	return user, nil
+}
+
 // NewUserService returns a UserService.
 func NewUserService(repo domain.UserRepository) *UserService {
 	return &UserService{repo: repo}
@@ -75,6 +88,10 @@ func (s *UserService) Update(ctx context.Context, id string, input models.UserUp
 	ctx, span := userSvcTracer.Start(ctx, "UserService.Update")
 	defer span.End()
 	span.SetAttributes(attribute.String("user.id", id))
+
+	if input.LFID != nil {
+		return nil, fmt.Errorf("%w: lfid cannot be updated", domain.ErrForbidden)
+	}
 
 	user, err := s.repo.Update(ctx, id, input)
 	if err != nil {

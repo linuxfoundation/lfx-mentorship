@@ -169,7 +169,7 @@ func TestProgramHandler_ListCatalogMentees_OK(t *testing.T) {
 			}
 			return []*models.ProgramCatalogMentee{{
 				UserID:   "u1",
-				Status:   "active",
+				Status:   models.ApplicationStatusAccepted,
 				TermID:   "t1",
 				TermName: "Spring 2026",
 			}}, nil
@@ -397,6 +397,23 @@ func TestProgramHandler_ResolveID_HiddenReturns404(t *testing.T) {
 	h := handler.NewProgramHandler(&stubProgramSvc{
 		getBySlug: func(_ context.Context, id string) (*models.Program, error) {
 			return &models.Program{ID: id, Slug: id, Status: models.ProgramStatusHidden, LFID: &lfid}, nil
+		},
+	})
+
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/resolve/p1", nil)
+	r = requestWithChiParam(r, "id", "p1")
+	w := httptest.NewRecorder()
+	h.ResolveID(w, r)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("got %d; want 404", w.Code)
+	}
+}
+
+func TestProgramHandler_ResolveID_DraftReturns404ToAnonymous(t *testing.T) {
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		getBySlug: func(_ context.Context, id string) (*models.Program, error) {
+			return &models.Program{ID: id, Slug: id, Status: models.ProgramStatusDraft}, nil
 		},
 	})
 
