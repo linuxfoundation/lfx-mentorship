@@ -121,11 +121,12 @@ type mentorship_program
     # union helper (cf. meetings_creator, inviter): "may act on this program's
     # children" — task assignment, not term creation (which is writer-only)
     define manager: writer or mentor
-    # @fgadoc:jtbd View program settings & member lists
-    # [mentorship_approver_team#member] lets the approver team read a
+    # The stamped global approver userset lets the approver team read a
     # submitted, non-public program in order to review it — but not manage
     # it. The grant is stamped per-program at creation (AQ-9).
-    define auditor: [user, mentorship_approver_team#member] or manager or auditor from project
+    define global_mentorship_approver: [mentorship_approver_team#member]
+    # @fgadoc:jtbd View program settings & member lists
+    define auditor: [user] or global_mentorship_approver or manager or auditor from project
     # @fgadoc:jtbd View & discover a mentorship program
     define viewer: [user:*] or auditor
 
