@@ -105,7 +105,7 @@ type project
     # in the project (and creates new ones) without holding project writer
     define mentorship_program_admin: [user]
     # @fgadoc:jtbd Create a mentorship program
-    define mentorship_program_creator: writer or mentorship_program_admin
+    define mentorship_program_creator: writer_guard or mentorship_program_admin
 
 type mentorship_program
   relations
