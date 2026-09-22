@@ -125,11 +125,12 @@ type mentorship_program
     # submitted, non-public program in order to review it — but not manage
     # it. The grant is stamped per-program at creation (AQ-9).
     define global_mentorship_approver: [mentorship_approver_team#member]
+    define approver: [user] or global_mentorship_approver
     # @fgadoc:jtbd View program settings & member lists for program writers,
     # global approvers, and project auditors. Mentors are intentionally not
     # program-level auditors; they reach applications and tasks through the
     # program manager/reviewer relations instead.
-    define auditor: [user] or global_mentorship_approver or writer or auditor from project
+    define auditor: [user] or approver or writer or auditor from project
     # @fgadoc:jtbd View & discover a mentorship program
     define viewer: [user:*] or auditor
 
