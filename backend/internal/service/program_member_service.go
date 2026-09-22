@@ -203,13 +203,16 @@ func (s *ProgramMemberService) Update(ctx context.Context, programID, id string,
 }
 
 // AcceptInvite validates a mentor invite token and transitions the member to active.
-func (s *ProgramMemberService) AcceptInvite(ctx context.Context, token string) (*models.ProgramMember, error) {
+func (s *ProgramMemberService) AcceptInvite(ctx context.Context, token, actorID string) (*models.ProgramMember, error) {
 	ctx, span := programMemberSvcTracer.Start(ctx, "ProgramMemberService.AcceptInvite")
 	defer span.End()
 
 	programID, userID, err := auth.ValidateInviteToken(token, s.inviteSecret)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", domain.ErrInvalidInput, err.Error())
+	}
+	if actorID == "" || actorID != userID {
+		return nil, fmt.Errorf("%w: invite belongs to a different user", domain.ErrForbidden)
 	}
 
 	span.SetAttributes(
@@ -244,13 +247,16 @@ func (s *ProgramMemberService) AcceptInvite(ctx context.Context, token string) (
 }
 
 // DeclineInvite validates a mentor invite token and transitions the member to declined.
-func (s *ProgramMemberService) DeclineInvite(ctx context.Context, token string) error {
+func (s *ProgramMemberService) DeclineInvite(ctx context.Context, token, actorID string) error {
 	ctx, span := programMemberSvcTracer.Start(ctx, "ProgramMemberService.DeclineInvite")
 	defer span.End()
 
 	programID, userID, err := auth.ValidateInviteToken(token, s.inviteSecret)
 	if err != nil {
 		return fmt.Errorf("%w: %s", domain.ErrInvalidInput, err.Error())
+	}
+	if actorID == "" || actorID != userID {
+		return fmt.Errorf("%w: invite belongs to a different user", domain.ErrForbidden)
 	}
 
 	span.SetAttributes(

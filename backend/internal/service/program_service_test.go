@@ -34,7 +34,8 @@ func TestProgramService_Create_AlwaysDraft(t *testing.T) {
 		},
 	}
 	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
-	_, err := svc.Create(context.Background(), models.ProgramCreateInput{Name: "Test", Slug: "test"})
+	projectUID := "00000000-0000-0000-0000-000000000001"
+	_, err := svc.Create(context.Background(), models.ProgramCreateInput{Name: "Test", Slug: "test", ProjectUID: &projectUID})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -75,12 +76,14 @@ func TestProgramService_Update_ArchivedTerminal(t *testing.T) {
 
 func fullProgram() *models.Program {
 	lfid := "lf-123"
+	projectUID := "project-1"
 	desc := "A description"
 	repo := "https://github.com/example/repo"
 	logo := "https://example.com/logo.png"
 	return &models.Program{
 		ID:          "prog-1",
 		Status:      models.ProgramStatusDraft,
+		ProjectUID:  &projectUID,
 		LFID:        &lfid,
 		Description: &desc,
 		RepoLink:    &repo,
@@ -91,12 +94,26 @@ func fullProgram() *models.Program {
 func TestProgramService_Update_Submit_NoLFID(t *testing.T) {
 	prog := fullProgram()
 	prog.LFID = nil
+	repo := &stubProgRepo{getByID: func(_ context.Context, _ string) (*models.Program, error) { return prog, nil }, listSkills: func(context.Context, string) ([]*models.ProgramSkill, error) {
+		return []*models.ProgramSkill{{ID: "s1"}}, nil
+	}}
+	svc := newProgramSvc(repo, &stubTermRepo{countOpenByProgram: func(context.Context, string) (int, error) { return 1, nil }}, &stubAppRepo{})
+	next := models.ProgramStatusSubmitted
+	_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Status: &next})
+	if err != nil {
+		t.Errorf("expected submission to ignore legacy LFID, got %v", err)
+	}
+}
+
+func TestProgramService_Update_Submit_NoProjectUID(t *testing.T) {
+	prog := fullProgram()
+	prog.ProjectUID = nil
 	repo := &stubProgRepo{getByID: func(_ context.Context, _ string) (*models.Program, error) { return prog, nil }}
 	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
 	next := models.ProgramStatusSubmitted
 	_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Status: &next})
 	if !errors.Is(err, domain.ErrStateLocked) {
-		t.Errorf("expected ErrStateLocked for missing LFID, got %v", err)
+		t.Errorf("expected ErrStateLocked for missing project_uid, got %v", err)
 	}
 }
 
@@ -307,7 +324,7 @@ func TestProgramService_ListCatalogMentees(t *testing.T) {
 	repo := &stubProgRepo{
 		listMentees: func(_ context.Context, id string) ([]*models.ProgramCatalogMentee, error) {
 			captured = id
-			return []*models.ProgramCatalogMentee{{UserID: "u1", Status: "active", TermID: "t1", TermName: "Spring 2026"}}, nil
+			return []*models.ProgramCatalogMentee{{UserID: "u1", Status: models.ApplicationStatusAccepted, TermID: "t1", TermName: "Spring 2026"}}, nil
 		},
 	}
 	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})

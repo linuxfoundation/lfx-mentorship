@@ -52,6 +52,45 @@ func (r *UserRepository) GetByID(ctx context.Context, id string) (*models.User, 
 	return &u, nil
 }
 
+// GetByLFID returns the local user mapped to a Heimdall principal.
+func (r *UserRepository) GetByLFID(ctx context.Context, lfid string) (*models.User, error) {
+	ctx, span := userTracer.Start(ctx, "db.users.GetByLFID")
+	defer span.End()
+	var u models.User
+	err := r.pool.QueryRow(ctx, `
+		SELECT id, email, lfid, name, given_name, family_name, avatar_url, created_on, updated_on
+		FROM users WHERE lfid = $1`, lfid).Scan(
+		&u.ID, &u.Email, &u.LFID, &u.Name, &u.GivenName, &u.FamilyName, &u.AvatarURL, &u.CreatedOn, &u.UpdatedOn,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrUserNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get user by LFID: %w", err)
+	}
+	return &u, nil
+}
+
+// UpsertByLFID atomically creates or refreshes the local user for a gateway principal.
+func (r *UserRepository) UpsertByLFID(ctx context.Context, input models.UserCreateInput) (*models.User, error) {
+	var u models.User
+	err := r.pool.QueryRow(ctx, `
+		INSERT INTO users (id, email, lfid, name, given_name, family_name, avatar_url)
+		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6)
+		ON CONFLICT (lfid) DO UPDATE SET
+			email = COALESCE(EXCLUDED.email, users.email), name = COALESCE(EXCLUDED.name, users.name),
+			given_name = COALESCE(EXCLUDED.given_name, users.given_name),
+			family_name = COALESCE(EXCLUDED.family_name, users.family_name),
+			avatar_url = COALESCE(EXCLUDED.avatar_url, users.avatar_url), updated_on = NOW()
+		RETURNING id, email, lfid, name, given_name, family_name, avatar_url, created_on, updated_on`,
+		input.Email, input.LFID, input.Name, input.GivenName, input.FamilyName, input.AvatarURL,
+	).Scan(&u.ID, &u.Email, &u.LFID, &u.Name, &u.GivenName, &u.FamilyName, &u.AvatarURL, &u.CreatedOn, &u.UpdatedOn)
+	if err != nil {
+		return nil, fmt.Errorf("upsert user by LFID: %w", err)
+	}
+	return &u, nil
+}
+
 // List returns a paginated slice of users, optionally filtered by a search string.
 func (r *UserRepository) List(ctx context.Context, filter models.UserFilter) ([]*models.User, *models.PaginationMeta, error) {
 	ctx, span := userTracer.Start(ctx, "db.users.List")

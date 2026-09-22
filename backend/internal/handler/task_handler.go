@@ -5,6 +5,7 @@ package handler
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -25,14 +26,38 @@ type taskService interface {
 	Delete(ctx context.Context, id string, actorID string) error
 }
 
+type taskTermScopeService interface {
+	GetByProgramAndID(ctx context.Context, programID, id string) (*models.ProgramTerm, error)
+}
+
 // TaskHandler holds Chi handlers for tasks.
 type TaskHandler struct {
-	svc taskService
+	svc     taskService
+	termSvc taskTermScopeService
 }
 
 // NewTaskHandler creates a TaskHandler.
-func NewTaskHandler(svc taskService) *TaskHandler {
-	return &TaskHandler{svc: svc}
+func NewTaskHandler(svc taskService, termSvc ...taskTermScopeService) *TaskHandler {
+	h := &TaskHandler{svc: svc}
+	if len(termSvc) > 0 {
+		h.termSvc = termSvc[0]
+	}
+	return h
+}
+
+func (h *TaskHandler) validateNestedTermScope(ctx context.Context, r *http.Request, termID string) error {
+	if h.termSvc == nil {
+		return nil
+	}
+	programID := chi.URLParam(r, "programID")
+	if programID == "" {
+		programID = chi.URLParam(r, "program_uid")
+	}
+	if programID == "" {
+		return nil
+	}
+	_, err := h.termSvc.GetByProgramAndID(ctx, programID, termID)
+	return err
 }
 
 // ListByApplication handles GET /v1/applications/{id}/tasks.
@@ -70,6 +95,10 @@ func (h *TaskHandler) ListByProgramTerm(w http.ResponseWriter, r *http.Request) 
 	}
 
 	programTermID := chi.URLParam(r, "id")
+	if err := h.validateNestedTermScope(r.Context(), r, programTermID); err != nil {
+		Error(w, err)
+		return
+	}
 	limit, offset, ok := parsePaginationParams(w, r)
 	if !ok {
 		return
@@ -97,6 +126,63 @@ func (h *TaskHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 
 	id := chi.URLParam(r, "id")
 	task, err := h.svc.GetByIDForActor(r.Context(), id, principal.UserID)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, task)
+}
+
+// UpdateSubmission handles PATCH /v1/tasks/{id}/submission.
+func (h *TaskHandler) UpdateSubmission(w http.ResponseWriter, r *http.Request) {
+	principal := auth.PrincipalFromContext(r.Context())
+	if principal == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	var input models.TaskUpdateInput
+	if !decodeBody(w, r, &input) {
+		return
+	}
+	if input.Status == nil {
+		Error(w, fmt.Errorf("%w: status is required", domain.ErrInvalidInput))
+		return
+	}
+	input.ActorID = principal.UserID
+	task, err := h.svc.Update(r.Context(), chi.URLParam(r, "id"), models.TaskUpdateInput{
+		Status:  input.Status,
+		File:    input.File,
+		ActorID: input.ActorID,
+	})
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, task)
+}
+
+// UpdateReview handles PATCH /v1/tasks/{id}/review.
+func (h *TaskHandler) UpdateReview(w http.ResponseWriter, r *http.Request) {
+	principal := auth.PrincipalFromContext(r.Context())
+	if principal == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	var input models.TaskUpdateInput
+	if !decodeBody(w, r, &input) {
+		return
+	}
+	if input.Status == nil && input.ApplicationStatus == nil && input.ProgramTermStatus == nil {
+		Error(w, fmt.Errorf("%w: review state is required", domain.ErrInvalidInput))
+		return
+	}
+	input.ActorID = principal.UserID
+	task, err := h.svc.Update(r.Context(), chi.URLParam(r, "id"), models.TaskUpdateInput{
+		Status:            input.Status,
+		ApplicationStatus: input.ApplicationStatus,
+		ProgramTermStatus: input.ProgramTermStatus,
+		ActorID:           input.ActorID,
+	})
 	if err != nil {
 		Error(w, err)
 		return
@@ -137,6 +223,10 @@ func (h *TaskHandler) Update(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	var input models.TaskUpdateInput
 	if !decodeBody(w, r, &input) {
+		return
+	}
+	if input.Status != nil || input.ApplicationStatus != nil || input.ProgramTermStatus != nil || input.SubmitFile != nil || input.File != nil {
+		Error(w, fmt.Errorf("%w: task lifecycle states are handled by dedicated submission and review routes", domain.ErrInvalidInput))
 		return
 	}
 	// Propagate caller identity for assignee permission check.

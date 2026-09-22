@@ -81,6 +81,12 @@ func (s *stubApplicationSvc) Update(ctx context.Context, id string, in models.Ap
 	}
 	return &models.Application{ID: id}, nil
 }
+func (s *stubApplicationSvc) WithdrawForMentee(ctx context.Context, id, actorID string) (*models.Application, error) {
+	return &models.Application{ID: id, UserID: actorID}, nil
+}
+func (s *stubApplicationSvc) WithdrawForMenteeAfterGatewayAuthorization(ctx context.Context, id string) (*models.Application, error) {
+	return &models.Application{ID: id}, nil
+}
 func (s *stubApplicationSvc) Delete(ctx context.Context, id string) error {
 	if s.delete != nil {
 		return s.delete(ctx, id)
@@ -118,7 +124,10 @@ func requestWithChiParam(r *http.Request, key, val string) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
 }
 
-func newApplicationHandler(svc *stubApplicationSvc) *handler.ApplicationHandler {
+func newApplicationHandler(svc *stubApplicationSvc, termSvc ...*stubProgramTermSvc) *handler.ApplicationHandler {
+	if len(termSvc) > 0 && termSvc[0] != nil {
+		return handler.NewApplicationHandler(svc, termSvc[0])
+	}
 	return handler.NewApplicationHandler(svc)
 }
 
@@ -156,6 +165,35 @@ func TestApplicationHandler_ListByUser_OwnData_Returns200(t *testing.T) {
 	h.ListByUser(w, r)
 	if w.Code != http.StatusOK {
 		t.Errorf("got %d; want 200", w.Code)
+	}
+}
+
+func TestApplicationHandler_ListByMe_NoPrincipal_Returns401(t *testing.T) {
+	h := newApplicationHandler(&stubApplicationSvc{})
+	r := httptest.NewRequest(http.MethodGet, "/me/applications", nil)
+	w := httptest.NewRecorder()
+	h.ListByMe(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("got %d; want 401", w.Code)
+	}
+}
+
+func TestApplicationHandler_ListByMe_UsesPrincipalAsScope(t *testing.T) {
+	svc := &stubApplicationSvc{
+		listByUser: func(_ context.Context, userID string, f models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error) {
+			if userID != "caller-user" {
+				t.Fatalf("userID = %q; want caller-user", userID)
+			}
+			return []*models.Application{{ID: "app-1"}}, &models.PaginationMeta{}, nil
+		},
+	}
+	h := newApplicationHandler(svc)
+	r := httptest.NewRequest(http.MethodGet, "/me/applications?status=pending", nil)
+	r = requestWithPrincipal(r, "caller-user")
+	w := httptest.NewRecorder()
+	h.ListByMe(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d; want 200", w.Code)
 	}
 }
 
@@ -202,6 +240,37 @@ func TestApplicationHandler_Create_UserIDBoundToPrincipal(t *testing.T) {
 	// The principal's ID must always win, regardless of what the body said.
 	if capturedUserID != "caller-user" {
 		t.Errorf("service received UserID=%q; want %q (principal binding)", capturedUserID, "caller-user")
+	}
+}
+
+func TestApplicationHandler_Create_NestedRouteRejectsMismatchedProgramTerm(t *testing.T) {
+	called := false
+	svc := &stubApplicationSvc{
+		create: func(_ context.Context, _ string, _ models.ApplicationCreateInput) (*models.Application, error) {
+			called = true
+			return &models.Application{}, nil
+		},
+	}
+	h := newApplicationHandler(svc, &stubProgramTermSvc{
+		getByProgramAndID: func(context.Context, string, string) (*models.ProgramTerm, error) {
+			return nil, domain.ErrProgramTermNotFound
+		},
+	})
+	body, _ := json.Marshal(map[string]string{"role": "mentee"})
+	r := httptest.NewRequest(http.MethodPost, "/v1/programs/prog-1/terms/term-1/applications", bytes.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	r = requestWithPrincipal(r, "caller-user")
+	r = requestWithChiParam(r, "programID", "prog-1")
+	r = requestWithChiParam(r, "id", "term-1")
+	w := httptest.NewRecorder()
+
+	h.Create(w, r)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("got %d; want 404", w.Code)
+	}
+	if called {
+		t.Fatal("create should not be called when nested scope validation fails")
 	}
 }
 

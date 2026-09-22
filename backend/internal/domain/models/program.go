@@ -33,6 +33,7 @@ func (s ProgramStatus) IsValid() bool {
 // Program maps to the public.programs table.
 type Program struct {
 	ID                 string             `json:"id"`
+	ProjectUID         *string            `json:"project_uid,omitempty"`
 	Name               string             `json:"name"`
 	Slug               string             `json:"slug"`
 	Status             ProgramStatus      `json:"status"`
@@ -59,7 +60,9 @@ type Program struct {
 
 // ProgramCreateInput is the request body for creating a program.
 type ProgramCreateInput struct {
+	CreatorUserID      string          `json:"-"`
 	ID                 string          `json:"id"`
+	ProjectUID         *string         `json:"project_uid,omitempty"`
 	Name               string          `json:"name"`
 	Slug               string          `json:"slug"`
 	Status             ProgramStatus   `json:"status"`
@@ -156,13 +159,13 @@ type ProgramCatalogMentor struct {
 
 // ProgramCatalogMentee is an accepted/graduated mentee with display fields from users, profiles, and terms.
 type ProgramCatalogMentee struct {
-	UserID       string  `json:"user_id"`
-	Name         *string `json:"name,omitempty"`
-	AvatarURL    *string `json:"avatar_url,omitempty"`
-	Introduction *string `json:"introduction,omitempty"`
-	Status       string  `json:"status"` // accepted | graduated
-	TermID       string  `json:"term_id"`
-	TermName     string  `json:"term_name"`
+	UserID       string            `json:"user_id"`
+	Name         *string           `json:"name,omitempty"`
+	AvatarURL    *string           `json:"avatar_url,omitempty"`
+	Introduction *string           `json:"introduction,omitempty"`
+	Status       ApplicationStatus `json:"status"`
+	TermID       string            `json:"term_id"`
+	TermName     string            `json:"term_name"`
 }
 
 // ProgramCatalogItem is the public catalog shape: a program plus nested skills, terms, and mentors.

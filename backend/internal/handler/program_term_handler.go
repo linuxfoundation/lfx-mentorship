@@ -16,6 +16,7 @@ import (
 
 type programTermService interface {
 	GetByID(ctx context.Context, id string) (*models.ProgramTerm, error)
+	GetByProgramAndID(ctx context.Context, programID, id string) (*models.ProgramTerm, error)
 	ListByProgram(ctx context.Context, programID string, filter models.ProgramTermFilter) ([]*models.ProgramTerm, *models.PaginationMeta, error)
 	Create(ctx context.Context, input models.ProgramTermCreateInput) (*models.ProgramTerm, error)
 	Update(ctx context.Context, id string, input models.ProgramTermUpdateInput) (*models.ProgramTerm, error)
@@ -66,10 +67,26 @@ func (h *ProgramTermHandler) ListByProgram(w http.ResponseWriter, r *http.Reques
 	JSON(w, http.StatusOK, map[string]any{"data": labeled, "meta": meta})
 }
 
-// GetByID handles GET /v1/program-terms/{id}.
+// GetByID handles GET /v1/programs/{programID}/terms/{termID} and legacy /v1/program-terms/{id}.
 func (h *ProgramTermHandler) GetByID(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	term, err := h.svc.GetByID(r.Context(), id)
+	programID := chi.URLParam(r, "programID")
+	if programID == "" {
+		programID = chi.URLParam(r, "program_uid")
+	}
+	id := chi.URLParam(r, "termID")
+	if id == "" {
+		id = chi.URLParam(r, "id")
+	}
+
+	var (
+		term *models.ProgramTerm
+		err  error
+	)
+	if programID != "" {
+		term, err = h.svc.GetByProgramAndID(r.Context(), programID, id)
+	} else {
+		term, err = h.svc.GetByID(r.Context(), id)
+	}
 	if err != nil {
 		Error(w, err)
 		return
@@ -100,7 +117,7 @@ func (h *ProgramTermHandler) Create(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusCreated, term)
 }
 
-// Update handles PATCH /v1/program-terms/{id} — requires JWT.
+// Update handles PATCH /v1/programs/{programID}/terms/{termID} and legacy /v1/program-terms/{id} — requires JWT.
 func (h *ProgramTermHandler) Update(w http.ResponseWriter, r *http.Request) {
 	principal := auth.PrincipalFromContext(r.Context())
 	if principal == nil {
@@ -108,10 +125,24 @@ func (h *ProgramTermHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id := chi.URLParam(r, "id")
+	programID := chi.URLParam(r, "programID")
+	if programID == "" {
+		programID = chi.URLParam(r, "program_uid")
+	}
+	id := chi.URLParam(r, "termID")
+	if id == "" {
+		id = chi.URLParam(r, "id")
+	}
 	var input models.ProgramTermUpdateInput
 	if !decodeBody(w, r, &input) {
 		return
+	}
+
+	if programID != "" {
+		if _, err := h.svc.GetByProgramAndID(r.Context(), programID, id); err != nil {
+			Error(w, err)
+			return
+		}
 	}
 
 	term, err := h.svc.Update(r.Context(), id, input)
@@ -122,7 +153,7 @@ func (h *ProgramTermHandler) Update(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, term)
 }
 
-// Delete handles DELETE /v1/program-terms/{id} — requires JWT.
+// Delete handles DELETE /v1/programs/{programID}/terms/{termID} and legacy /v1/program-terms/{id} — requires JWT.
 func (h *ProgramTermHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	principal := auth.PrincipalFromContext(r.Context())
 	if principal == nil {
@@ -130,7 +161,20 @@ func (h *ProgramTermHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id := chi.URLParam(r, "id")
+	programID := chi.URLParam(r, "programID")
+	if programID == "" {
+		programID = chi.URLParam(r, "program_uid")
+	}
+	id := chi.URLParam(r, "termID")
+	if id == "" {
+		id = chi.URLParam(r, "id")
+	}
+	if programID != "" {
+		if _, err := h.svc.GetByProgramAndID(r.Context(), programID, id); err != nil {
+			Error(w, err)
+			return
+		}
+	}
 	if err := h.svc.Delete(r.Context(), id); err != nil {
 		Error(w, err)
 		return

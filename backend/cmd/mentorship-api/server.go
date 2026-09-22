@@ -5,9 +5,11 @@ package main
 
 import (
 	"context"
+	"expvar"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -18,17 +20,22 @@ import (
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/auth"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/clients"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/db"
+	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/fga"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/service"
+	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // Server wraps the Chi router and all service dependencies.
 type Server struct {
-	router  *chi.Mux
-	pool    *pgxpool.Pool
-	cfg     *Config
-	logger  *slog.Logger
-	httpSrv *http.Server
+	router      *chi.Mux
+	pool        *pgxpool.Pool
+	cfg         *Config
+	logger      *slog.Logger
+	httpSrv     *http.Server
+	natsConn    *nats.Conn
+	relayCancel context.CancelFunc
 }
 
 // NewServer wires all dependencies and builds the Chi router.
@@ -54,6 +61,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	menteeRepo := db.NewMenteeRepository(pool)
 	mentorRepo := db.NewMentorRepository(pool)
 	platformSummaryRepo := db.NewPlatformSummaryRepository(pool)
+	rosterRepo := db.NewRosterRepository(pool)
 
 	// Notifier
 	notifier := infrastructure.NewLogNotifier(logger)
@@ -75,12 +83,40 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	}
 	programTermSvc := service.NewProgramTermService(programTermRepo, applicationRepo)
 	programMemberSvc := service.NewProgramMemberService(programMemberRepo, programRepo, notifier, cfg.Local.InviteSecret)
-	applicationSvc := service.NewApplicationService(applicationRepo, taskRepo, programTermRepo, programRepo, programMemberRepo, notifier)
+	applicationSvc := service.NewApplicationService(applicationRepo, taskRepo, programTermRepo, programRepo, programMemberRepo, notifier, rosterRepo)
 	taskSvc := service.NewTaskService(taskRepo, applicationRepo, programTermRepo, programMemberRepo, notifier)
 	menteeSvc := service.NewMenteeService(menteeRepo)
 	mentorSvc := service.NewMentorService(mentorRepo)
 	platformSummarySvc := service.NewPlatformSummaryService(platformSummaryRepo)
+	rosterSvc := service.NewRosterService(rosterRepo)
 	fundingStatsSvc := service.NewFundingStatsService(programRepo)
+
+	var natsConn *nats.Conn
+	var relayCancel context.CancelFunc
+	if cfg.FGA.NATSURL != "" {
+		natsConn, err = nats.Connect(cfg.FGA.NATSURL)
+		if err != nil {
+			pool.Close()
+			return nil, fmt.Errorf("FGA NATS connection: %w", err)
+		}
+		js, jsErr := jetstream.New(natsConn)
+		if jsErr != nil {
+			natsConn.Close()
+			pool.Close()
+			return nil, fmt.Errorf("FGA JetStream client: %w", jsErr)
+		}
+		outbox := db.NewFGAOutboxRepository(pool)
+		approverRepo := db.NewApproverRepository(pool)
+		rosterRepo := db.NewRosterRepository(pool)
+		builder := fga.NewDatabaseBuilder(programRepo, programMemberRepo, userRepo, programTermRepo, applicationRepo, taskRepo, approverRepo, rosterRepo)
+		publisher := fga.NewJetStreamPublisher(js)
+		relay := fga.NewRelay(outbox, builder, publisher, cfg.FGA.RelayBatch, cfg.FGA.RelayRetryDelay)
+		relay.SetLogger(logger)
+		relay.SetMaxAttempts(cfg.FGA.RelayMaxAttempts)
+		var relayCtx context.Context
+		relayCtx, relayCancel = context.WithCancel(ctx)
+		go relay.Run(relayCtx, cfg.FGA.RelayInterval)
+	}
 
 	// Handlers
 	userH := handler.NewUserHandler(userSvc)
@@ -88,17 +124,24 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	programH := handler.NewProgramHandler(programSvc)
 	programTermH := handler.NewProgramTermHandler(programTermSvc)
 	programMemberH := handler.NewProgramMemberHandler(programMemberSvc, programSvc)
-	applicationH := handler.NewApplicationHandler(applicationSvc)
-	taskH := handler.NewTaskHandler(taskSvc)
+	applicationH := handler.NewApplicationHandler(applicationSvc, programTermSvc)
+	taskH := handler.NewTaskHandler(taskSvc, programTermSvc)
 	mentorInviteH := handler.NewMentorInviteHandler(programMemberSvc)
 	menteeH := handler.NewMenteeHandler(menteeSvc)
 	mentorH := handler.NewMentorHandler(mentorSvc)
 	platformSummaryH := handler.NewPlatformSummaryHandler(platformSummarySvc)
+	rosterH := handler.NewRosterHandler(rosterSvc)
 	fundingStatsH := handler.NewFundingStatsHandler(fundingStatsSvc)
 
 	// JWT authenticator
 	jwtAuth, err := auth.NewJWTAuthenticator(ctx, cfg.jwtAuthConfig(), logger)
 	if err != nil {
+		if relayCancel != nil {
+			relayCancel()
+		}
+		if natsConn != nil {
+			natsConn.Close()
+		}
 		pool.Close()
 		return nil, fmt.Errorf("JWT authenticator: %w", err)
 	}
@@ -122,7 +165,8 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		w.WriteHeader(http.StatusOK)
 	})
 
-	r.Route("/v1", func(r chi.Router) {
+	var resolveInterimPrincipal func(http.Handler) http.Handler
+	routes := func(r chi.Router) {
 		optionalJWT := jwtAuth.OptionalMiddleware
 		// ── Public endpoints ─────────────────────────────────────────────────
 		r.Get("/programs", programH.List)
@@ -147,35 +191,38 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		r.Get("/programs/{id}/terms", programTermH.ListByProgram)
 		r.Get("/programs/{id}/members", programMemberH.List)
 
-		r.Get("/program-terms/{id}", programTermH.GetByID)
-
-		// Mentor invite — token in path is the credential, no JWT required
-		r.Post("/mentor-invites/{token}/accept", mentorInviteH.AcceptInvite)
-		r.Post("/mentor-invites/{token}/decline", mentorInviteH.DeclineInvite)
+		r.Get("/programs/{programID}/terms/{termID}", programTermH.GetByID)
 
 		// ── Authenticated endpoints ────────────────────────────────────────
 		r.Group(func(r chi.Router) {
 			r.Use(jwtAuth.Middleware)
+			r.Use(resolveInterimPrincipal)
+
+			// Mentor invite — both the invite token and signed principal are required.
+			r.Post("/mentor-invites/{token}/accept", mentorInviteH.AcceptInvite)
+			r.Post("/mentor-invites/{token}/decline", mentorInviteH.DeclineInvite)
 
 			// Users
-			r.Get("/users", userH.List)
-			r.Get("/users/{id}", userH.GetByID)
-			r.Post("/users", userH.Create)
-			r.Patch("/users/{id}", userH.Update)
-			r.Delete("/users/{id}", userH.Delete)
-			r.Get("/users/{userId}/applications", applicationH.ListByUser)
+			r.Get("/me", userH.GetMe)
+			r.Put("/me", userH.BootstrapMe)
+			r.Patch("/me", userH.UpdateMe)
+			r.Delete("/me", userH.DeleteMe)
+			r.Get("/me/applications", applicationH.ListByMe)
 
 			// User profiles
-			r.Get("/user-profiles", userProfileH.List)
-			r.Get("/user-profiles/{id}", userProfileH.GetByID)
-			r.Get("/user-profiles/slug/{slug}", userProfileH.GetBySlug)
-			r.Post("/user-profiles", userProfileH.Create)
-			r.Patch("/user-profiles/{id}", userProfileH.Update)
-			r.Delete("/user-profiles/{id}", userProfileH.Delete)
+			r.Get("/me/profiles", userProfileH.ListMe)
+			r.Get("/me/profiles/{profileType}", userProfileH.GetMeByType)
+			r.Post("/me/profiles", userProfileH.Create)
+			r.Patch("/me/profiles/{profileType}", userProfileH.UpdateMeByType)
+			r.Delete("/me/profiles/{profileType}", userProfileH.DeleteMeByType)
+			r.Patch("/me/profiles/by-id/{id}", userProfileH.UpdateMeByID)
+			r.Delete("/me/profiles/by-id/{id}", userProfileH.DeleteMeByID)
 
 			// Programs
 			r.Post("/programs", programH.Create)
 			r.Patch("/programs/{id}", programH.Update)
+			r.Post("/programs/{id}/submit", programH.Submit)
+			r.Post("/programs/{id}/decision", programH.Decision)
 			r.Delete("/programs/{id}", programH.Delete)
 			r.Post("/programs/{id}/skills", programH.AddSkill)
 			r.Delete("/programs/{id}/skills/{skillId}", programH.DeleteSkill)
@@ -187,28 +234,124 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 
 			// Program terms
 			r.Post("/programs/{id}/terms", programTermH.Create)
-			r.Patch("/program-terms/{id}", programTermH.Update)
-			r.Delete("/program-terms/{id}", programTermH.Delete)
+			r.Patch("/programs/{programID}/terms/{termID}", programTermH.Update)
+			r.Delete("/programs/{programID}/terms/{termID}", programTermH.Delete)
 
 			// Applications
-			r.Get("/program-terms/{id}/applications", applicationH.ListByProgramTerm)
+			r.Get("/programs/{programID}/terms/{id}/applications", applicationH.ListByProgramTerm)
 			r.Get("/applications/{id}", applicationH.GetByID)
-			r.Post("/program-terms/{id}/applications", applicationH.Create)
+			r.Post("/programs/{programID}/terms/{id}/applications", applicationH.Create)
 			r.Patch("/applications/{id}", applicationH.Update)
+			r.Patch("/applications/{id}/status", applicationH.UpdateStatus)
+			r.Post("/applications/{id}/withdraw", applicationH.Withdraw)
+			r.Post("/applications/{id}/withdraw-for-mentee", applicationH.WithdrawForMentee)
+			r.Post("/applications/{id}/reapply", applicationH.Reapply)
 			r.Delete("/applications/{id}", applicationH.Delete)
-			r.Post("/program-terms/{id}/applications/bulk-decline", applicationH.BulkDeclineByTerm)
-			r.Get("/program-terms/{id}/applications/export", applicationH.ExportByTerm)
-			r.Get("/program-terms/{id}/past-mentees", applicationH.PastMenteesByTerm)
+			r.Post("/programs/{programID}/terms/{id}/applications/bulk-decline", applicationH.BulkDeclineByTerm)
+			r.Get("/programs/{programID}/terms/{id}/applications/export", applicationH.ExportByTerm)
+			r.Get("/programs/{programID}/terms/{id}/past-mentees", applicationH.PastMenteesByTerm)
+			r.Put("/applications/{id}/evaluation", applicationH.UpdateEvaluation)
+			r.Get("/applications/{id}/note", applicationH.GetNote)
+			r.Put("/applications/{id}/note", applicationH.UpdateNote)
 
 			// Tasks
 			r.Get("/applications/{id}/tasks", taskH.ListByApplication)
-			r.Get("/program-terms/{id}/tasks", taskH.ListByProgramTerm)
+			r.Get("/programs/{programID}/terms/{id}/tasks", taskH.ListByProgramTerm)
 			r.Get("/tasks/{id}", taskH.GetByID)
 			r.Post("/applications/{id}/tasks", taskH.Create)
 			r.Patch("/tasks/{id}", taskH.Update)
+			r.Patch("/tasks/{id}/submission", taskH.UpdateSubmission)
+			r.Patch("/tasks/{id}/review", taskH.UpdateReview)
 			r.Delete("/tasks/{id}", taskH.Delete)
+
+			// Platform-authorized authorization roster management.
+			r.Get("/admin/approver-team/members", rosterH.ListApprovers)
+			r.Post("/admin/approver-team/members", rosterH.AddApprover)
+			r.Delete("/admin/approver-team/members/{userID}", rosterH.RemoveApprover)
+			r.Get("/projects/{projectUID}/mentorship-program-admins", rosterH.ListProjectAdmins)
+			r.Post("/projects/{projectUID}/mentorship-program-admins", rosterH.AddProjectAdmin)
+			r.Delete("/projects/{projectUID}/mentorship-program-admins/{userID}", rosterH.RemoveProjectAdmin)
 		})
+	}
+	resolveGatewayPrincipal := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			principal := auth.PrincipalFromContext(req.Context())
+			if !auth.IsGatewayPrincipal(req.Context()) || principal == nil || principal.UserID == "_anonymous" {
+				next.ServeHTTP(w, req)
+				return
+			}
+			if req.Method == http.MethodPut && strings.HasSuffix(req.URL.Path, "/me") {
+				next.ServeHTTP(w, req)
+				return
+			}
+			// M2M principals are authorization identities, not local human users.
+			if strings.HasSuffix(principal.Username, "@clients") {
+				next.ServeHTTP(w, req)
+				return
+			}
+			lfid := principal.Username
+			if lfid == "" {
+				lfid = principal.UserID
+			}
+			user, err := userRepo.GetByLFID(req.Context(), lfid)
+			if err != nil {
+				handler.JSON(w, http.StatusUnauthorized, map[string]any{"error": "local user is not provisioned"})
+				return
+			}
+			if user.LFID == nil || *user.LFID == "" {
+				handler.JSON(w, http.StatusUnauthorized, map[string]any{"error": "local user has no LFID"})
+				return
+			}
+			resolved := *principal
+			resolved.UserID = user.ID
+			resolved.Username = *user.LFID
+			next.ServeHTTP(w, req.WithContext(auth.ContextWithPrincipal(req.Context(), &resolved)))
+		})
+	}
+	resolveInterimPrincipal = func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			principal := auth.PrincipalFromContext(req.Context())
+			if principal == nil || auth.IsGatewayPrincipal(req.Context()) || (req.Method == http.MethodPut && strings.HasSuffix(req.URL.Path, "/me")) {
+				next.ServeHTTP(w, req)
+				return
+			}
+			if principal.Username == "" {
+				handler.JSON(w, http.StatusUnauthorized, map[string]any{"error": "local user identity is missing"})
+				return
+			}
+			user, err := userRepo.GetByLFID(req.Context(), principal.Username)
+			if err != nil || user.LFID == nil || *user.LFID == "" {
+				handler.JSON(w, http.StatusUnauthorized, map[string]any{"error": "local user is not provisioned"})
+				return
+			}
+			resolved := *principal
+			resolved.UserID = user.ID
+			next.ServeHTTP(w, req.WithContext(auth.ContextWithPrincipal(req.Context(), &resolved)))
+		})
+	}
+
+	// Guide 07 §1.1: serve both the interim and gateway path prefixes on the
+	// same handlers until the interim host is retired. No StripPrefix/URLRewrite.
+	// Heimdall-only operations are intentionally unavailable on the interim
+	// Auth0 host because this service does not duplicate their FGA checks.
+	r.Route("/v1", func(r chi.Router) {
+		r.Use(denyInterimGatewayOperations)
+		routes(r)
 	})
+	if cfg.JWT.HeimdallIssuer != "" {
+		r.Route("/mentorship/v1", func(r chi.Router) {
+			r.Use(jwtAuth.GatewayMiddleware)
+			r.Use(resolveGatewayPrincipal)
+			r.Get("/internal/metrics", func(w http.ResponseWriter, req *http.Request) {
+				if !auth.HasScope(req.Context(), auth.ScopeReadMetrics()) {
+					http.Error(w, "forbidden", http.StatusForbidden)
+					return
+				}
+				expvar.Handler().ServeHTTP(w, req)
+			})
+			routes(r)
+		})
+	}
 
 	httpSrv := &http.Server{
 		Addr:           fmt.Sprintf(":%d", cfg.Server.Port),
@@ -220,12 +363,31 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	}
 
 	return &Server{
-		router:  r,
-		pool:    pool,
-		cfg:     cfg,
-		logger:  logger,
-		httpSrv: httpSrv,
+		router:      r,
+		pool:        pool,
+		cfg:         cfg,
+		logger:      logger,
+		httpSrv:     httpSrv,
+		natsConn:    natsConn,
+		relayCancel: relayCancel,
 	}, nil
+}
+
+func denyInterimGatewayOperations(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		protected := (r.Method != http.MethodGet && strings.HasPrefix(path, "/v1/programs/")) ||
+			(r.Method != http.MethodGet && (strings.Contains(path, "/applications/") || strings.Contains(path, "/tasks") || strings.Contains(path, "/mentor-invites/") || strings.Contains(path, "/program-terms/"))) ||
+			strings.Contains(path, "/decision") || strings.HasSuffix(path, "/submit") ||
+			(r.Method == http.MethodDelete && strings.Contains(path, "/applications/")) ||
+			strings.Contains(path, "/applications/") && (strings.HasSuffix(path, "/status") || strings.HasSuffix(path, "/note") || strings.HasSuffix(path, "/evaluation") || strings.HasSuffix(path, "/withdraw-for-mentee") || strings.HasSuffix(path, "/reapply")) ||
+			strings.Contains(path, "/tasks") || strings.HasSuffix(path, "/applications") && strings.Contains(path, "/terms/")
+		if protected {
+			http.NotFound(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // Start begins listening for HTTP requests.
@@ -237,6 +399,12 @@ func (s *Server) Start() error {
 // Shutdown gracefully stops the server and closes the database pool.
 func (s *Server) Shutdown(ctx context.Context) error {
 	err := s.httpSrv.Shutdown(ctx)
+	if s.relayCancel != nil {
+		s.relayCancel()
+	}
+	if s.natsConn != nil {
+		s.natsConn.Close()
+	}
 	s.pool.Close()
 	return err
 }
