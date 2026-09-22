@@ -23,6 +23,10 @@ outside the traffic cutover until their owners provide the required evidence.
 
 **Owner:** `linuxfoundation/lfx-v2-helm`
 
+The current synchronization target is the open
+[`lfx-v2-helm#177`](https://github.com/linuxfoundation/lfx-v2-helm/pull/177)
+pull request; its model is not deployed until that PR merges.
+
 ### What must exist
 
 The platform model must define the exact types and relations used by this

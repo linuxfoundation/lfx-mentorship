@@ -115,7 +115,7 @@ type mentorship_program
     # @fgadoc:jtbd Update & delete a mentorship program
     # @fgadoc:jtbd Create & manage program terms
     # @fgadoc:jtbd Invite mentors & manage program settings
-    define writer: [user] or writer from project or mentorship_program_admin from project
+    define writer: [user] or writer_guard from project or mentorship_program_admin from project
     # mentors are directly assigned only (via accepted invitation)
     define mentor: [user]
     # union helper (cf. meetings_creator, inviter): "may act on this program's
@@ -291,7 +291,7 @@ The table maps against the **post-review revision** of the standalone model, whi
 
 **Which statuses are public**: `published` alone emits `viewer@user:*`. `draft`, `submitted`, `rejected`, `archived` and `hidden` do not — so `public` is derived as `status == 'published'`, and every transition into or out of that one value must re-emit. Approvers reach a non-public program through the approver-team `global_mentorship_approver` userset stamped at creation, which feeds `auditor`, not through the wildcard (AQ-9).
 
-**`member_remove` must name the relation.** With an empty relations array fga-sync deletes *every* direct relation the user holds on that object; with a populated array it deletes only the named ones (verified in [fga-sync](https://github.com/linuxfoundation/lfx-v2-fga-sync) `handler_generic.go`). Because this model lets one user be both `mentor` and a direct `writer` on the same program, removing one role must not silently strip the other — so the emission always names the relation. Note also that this revokes only the *direct* tuple: a user who still holds `writer from project` remains authorized, correctly, so removal from a program is not the same as "access ends".
+**`member_remove` must name the relation.** With an empty relations array fga-sync deletes *every* direct relation the user holds on that object; with a populated array it deletes only the named ones (verified in [fga-sync](https://github.com/linuxfoundation/lfx-v2-fga-sync) `handler_generic.go`). Because this model lets one user be both `mentor` and a direct `writer` on the same program, removing one role must not silently strip the other — so the emission always names the relation. Note also that this revokes only the *direct* tuple: a user who still holds `writer_guard from project` remains authorized, correctly, so removal from a program is not the same as "access ends".
 
 **Deletion needs its own transition.** The sketch grants `writer` the ability to delete a program, and fga-sync exposes `delete_access` for exactly this. Without it a hard delete leaves the program's tuples — and every child application/task tuple — live in OpenFGA, pointing at rows that no longer exist. If deletion is implemented as a soft delete instead, the object must at minimum lose its `public` flag and its member relations, which is an `update_access` with the reduced state.
 
