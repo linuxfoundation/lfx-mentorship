@@ -307,7 +307,7 @@ func TestProgramService_ListCatalogMentees(t *testing.T) {
 	repo := &stubProgRepo{
 		listMentees: func(_ context.Context, id string) ([]*models.ProgramCatalogMentee, error) {
 			captured = id
-			return []*models.ProgramCatalogMentee{{UserID: "u1", Status: "active", TermID: "t1", TermName: "Spring 2026"}}, nil
+			return []*models.ProgramCatalogMentee{{UserID: "u1", Status: models.ApplicationStatusAccepted, TermID: "t1", TermName: "Spring 2026"}}, nil
 		},
 	}
 	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
