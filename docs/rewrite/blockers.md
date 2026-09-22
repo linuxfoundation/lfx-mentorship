@@ -23,6 +23,10 @@ outside the traffic cutover until their owners provide the required evidence.
 
 **Owner:** `linuxfoundation/lfx-v2-helm`
 
+The current synchronization target is the open
+[`lfx-v2-helm#177`](https://github.com/linuxfoundation/lfx-v2-helm/pull/177)
+pull request; its model is not deployed until that PR merges.
+
 ### What must exist
 
 The platform model must define the exact types and relations used by this
@@ -34,6 +38,14 @@ service:
 - `mentorship_task`
 - `project#mentorship_program_admin`
 - computed `project#mentorship_program_creator`
+
+The `mentorship_program` type must also define the named
+`global_mentorship_approver` relation as a userset of
+`mentorship_approver_team#member`. Mentorship emits that exact key in
+`references.global_mentorship_approver`; it is not interchangeable with the
+program's `auditor` relation. The `auditor` relation must include
+`global_mentorship_approver` so approvers can read submitted programs without
+receiving program-management permissions.
 
 The model must also include executable positive, negative, and inheritance
 fixtures. The guide calls for the reviewed 14-scenario suite with checks for
@@ -63,7 +75,12 @@ criterion.
 5. The deployed `AuthorizationModelRequest` has the expected model version and
    ID.
 6. The deployed model contains every type and relation referenced by the
-   Mentorship RuleSet and contract.
+   Mentorship RuleSet and contract, including
+   `mentorship_program#global_mentorship_approver` and
+   `project#auditor_guard`.
+7. `ProgramAccess` emits the userset under the separate payload key
+   `references.global_mentorship_approver`, and the FGA contract test verifies
+   that key independently from the deployed model relation check.
 
 ## 2. Project Admin Relation Preservation
 
