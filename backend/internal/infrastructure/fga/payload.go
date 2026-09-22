@@ -70,8 +70,8 @@ func ProgramAccess(program *models.Program, writers, mentors []string) (Message,
 				"mentor": mentors,
 			},
 			References: map[string][]string{
-				"project": {*program.ProjectUID},
-				"auditor": {"mentorship_approver_team:global#member"},
+				"project":                    {*program.ProjectUID},
+				"global_mentorship_approver": {"mentorship_approver_team:global#member"},
 			},
 		},
 	}, nil

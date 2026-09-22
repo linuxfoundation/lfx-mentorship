@@ -37,7 +37,7 @@ link, and effective memberships:
     },
     "references": {
       "project": ["<project-uid>"],
-      "auditor": ["mentorship_approver_team:global#member"]
+      "global_mentorship_approver": ["mentorship_approver_team:global#member"]
     },
     "exclude_relations": []
   }

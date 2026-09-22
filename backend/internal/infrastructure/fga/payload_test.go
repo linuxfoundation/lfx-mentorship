@@ -25,7 +25,7 @@ func TestProgramAccessIncludesProjectAndApproverReferences(t *testing.T) {
 	if !data.Public || data.References["project"][0] != projectUID {
 		t.Fatalf("unexpected program access data: %+v", data)
 	}
-	if data.References["auditor"][0] != "mentorship_approver_team:global#member" {
+	if data.References["global_mentorship_approver"][0] != "mentorship_approver_team:global#member" {
 		t.Fatalf("approver userset must be a reference: %+v", data.References)
 	}
 }
