@@ -3,7 +3,7 @@
 
 # Mentorship Rewrite — 07: Email Delivery
 
-Status: Proposal — for Architecture team review
+Status: Approved — reviewed 2026-09-22 (see Review outcome)
 Related: [02-target-architecture.md](./02-target-architecture.md) (Integrations table, records the same rail), [01-current-system.md](./01-current-system.md) (legacy Mandrill setup)
 Decision ticket: [linuxfoundation/lfx-self-serve#2188](https://github.com/linuxfoundation/lfx-self-serve/issues/2188)
 
@@ -28,13 +28,16 @@ The rewrite needs transactional email — mentor invitations, application decisi
 
 ## Contract
 
-`pkg/api.SendEmailRequest` — `to`, `subject`, `html`, `text` all required; optional `from`, `from_display_name`, `reply_to` (each domain-allowlisted), `group_id`. Success replies `SendEmailResponse{email_id, group_id}`; failure replies `SendEmailErrorResponse{error}`.
+`pkg/api.SendEmailRequest` — `to`, `subject`, `html`, `text` all required; optional `from` (domain-allowlisted), `from_display_name` (a free display-name string — **no domain check**), `reply_to` (domain-allowlisted), `group_id`. Success replies `SendEmailResponse{email_id, group_id}`; failure replies `SendEmailErrorResponse{error}`.
+
+**Sender identity.** Mentorship sends from the platform default, `noreply@lfx.linuxfoundation.org` — it does not set `from`. That is the prod `smtpFrom` and is already in `smtpAllowedFromDomains`, so this aligns with the rest of the platform and needs no allowlist change. Only `from_display_name` is set, to distinguish Mentorship mail in the inbox. Confirm the sending domain with Cloud Ops before the first non-dev send.
 
 Limits to design around:
 
 | Limit | Consequence for Mentorship |
 | --- | --- |
-| **No send retry** in the relay | A dropped send is lost. Acceptable for these notifications; revisit only with evidence. |
+| **No send retry** in the relay | A send the relay refuses is lost unless Mentorship re-publishes. Acceptable for these notifications; revisit only with evidence. |
+| **Acceptance is not delivery** | A `SendEmailResponse` means SES accepted the message, not that it arrived. Transient and hard bounces surface later. |
 | No attachments, no CC/BCC | None of the 4 notifications need them. The legacy `SpecialRecipients` hack (CC'ing contractor addresses on prod admin mail) is not carried forward. |
 | Non-prod recipient allowlist | Dev delivers only to `linuxfoundation.org` (`smtpAllowedRecipientDomains`) — test accounts must use that domain. |
 | No templating | This repo renders both bodies. |
@@ -54,10 +57,20 @@ Work required: add a NATS client to the backend (it has **no NATS dependency tod
 
 **Sends stay fire-and-forget.** The `Notifier` methods return no error by design; the implementation logs and continues on failure. A failed send must never fail the business operation — the opposite of legacy, where a Mandrill error could fail the parent HTTP request.
 
+### Post-acceptance failures are ours to handle
+
+A successful reply means SES *accepted* the message. It can still bounce afterwards — transiently, or hard. email-service does record this: its SES→SNS→SQS pipeline marks the recipient record `Failed` on `BOUNCE` and `COMPLAINT`. But **nothing pushes that back to the caller** — it is only readable by polling `get_email_status` (per `email_id`/`group_id`) or `get_email_engagement_analytics`. The relay's job ends at acceptance; reacting to a bounce is the sending service's responsibility.
+
+For the initial 4 notifications we **accept this gap knowingly** rather than build a poller: all 4 are internally triggered, low volume, and each has a UI path that shows current state, so a lost mail is recoverable by the user or an admin. The one to watch is `NotifyMentorInvited` — an invitation that silently bounces leaves a mentor waiting with no signal. If that proves to matter in practice, the smallest fix is to store the returned `email_id` against the invitation and surface delivery state to the program admin, not to add a background retry loop.
+
+Worth raising with the platform team if it recurs across services: a push notification on bounce (a NATS subject the sender can subscribe to) would be more useful to every consumer than each service polling.
+
 ## Out of scope
 
 Dropped with their features, not ported: the 6 employer/HR templates (employer portal is [explicitly out of scope](./02-target-architecture.md)), and the HMAC-signed email approval links — program submission becomes an authenticated approval in Self Serve, so its email is a notification only. Bulk and marketing mail is not in scope at all; unsubscribe handling therefore is not either.
 
-## Open question for the Architecture team
+## Review outcome
 
-Confirm that **email-service/SES remains the sanctioned rail for transactional mail from new services** — i.e. that COPS-433 does not signal an intent to move new consumers to SendGrid. Everything above follows from a yes. A no changes only the `Notifier` implementation, not the interface or the templates.
+Decision 1 is **confirmed**. Reviewed 2026-09-22 by the email-service author and the platform lead on [lfx-mentorship#166](https://github.com/linuxfoundation/lfx-mentorship/pull/166): email-service is the intended rail for transactional mail — "the point is to have a central service for this purpose" — and COPS-433 does not signal a move of new consumers to SendGrid. Gaps in the email-service API are to be raised with that team rather than worked around locally; retry may be added service-side later, and until then a failed send is re-published by the caller.
+
+Two follow-ups this review produced, both folded in above: post-acceptance bounces are the sending service's responsibility, and Mentorship uses the shared `lfx.linuxfoundation.org` sending domain for platform consistency (to be confirmed with Cloud Ops before the first non-dev send).
