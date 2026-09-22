@@ -76,9 +76,50 @@ JWT_ISSUER, so requiring them would block the documented local bypass flow
 (see make deploy-kind) for values the service never reads in that mode.
 */}}
 {{- if not $bypassSet }}
+{{- if le (int .Values.config.FGA_RELAY_MAX_ATTEMPTS) 0 }}
+{{- fail "values.yaml: config.FGA_RELAY_MAX_ATTEMPTS must be greater than 0." }}
+{{- end }}
 {{- range $key := list "JWKS_URL" "JWT_AUDIENCE" "JWT_ISSUER" }}
 {{- if not (get $.Values.config $key) }}
 {{- fail (printf "\n\nvalues.yaml: config.%s is required — the service fails to start without it.\nSet it per environment in the ArgoCD values file." $key) }}
+{{- end }}
+{{- end }}
+{{- $heimdallJWKS := $.Values.config.HEIMDALL_JWKS_URL | default "" }}
+{{- $heimdallAudience := $.Values.config.HEIMDALL_JWT_AUDIENCE | default "" }}
+{{- $heimdallIssuer := $.Values.config.HEIMDALL_JWT_ISSUER | default "" }}
+{{- $heimdallConfigured := or $heimdallJWKS $heimdallAudience $heimdallIssuer }}
+{{- if .Values.heimdall.enabled }}
+{{- if not (and $heimdallJWKS $heimdallAudience $heimdallIssuer) }}
+{{- fail "values.yaml: config.HEIMDALL_JWKS_URL, config.HEIMDALL_JWT_AUDIENCE, and config.HEIMDALL_JWT_ISSUER are required when heimdall.enabled=true." }}
+{{- end }}
+{{- if not $.Values.config.FGA_NATS_URL }}
+{{- fail "values.yaml: config.FGA_NATS_URL is required when heimdall.enabled=true so authorization changes reach FGA." }}
+{{- end }}
+{{- end }}
+{{- if $heimdallConfigured }}
+{{- range $key := list "HEIMDALL_JWKS_URL" "HEIMDALL_JWT_AUDIENCE" "HEIMDALL_JWT_ISSUER" }}
+{{- if not (get $.Values.config $key) }}
+{{- fail (printf "\n\nvalues.yaml: config.%s must be set when Heimdall authentication is enabled. Set all three HEIMDALL_* values together." $key) }}
+{{- end }}
+{{- end }}
+
+{{- if .Values.heimdall.enabled }}
+{{- if not .Values.heimdall.addMiddleware }}
+{{- fail "values.yaml: heimdall.enabled requires heimdall.addMiddleware=true" }}
+{{- end }}
+{{- if not .Values.openfga.enabled }}
+{{- fail "values.yaml: heimdall.enabled requires openfga.enabled=true" }}
+{{- end }}
+{{- end }}
+{{- if or .Values.heimdall.enabled .Values.heimdall.addMiddleware }}
+{{- range $value := list .Values.lfx.domain .Values.traefik.gateway.name .Values.traefik.gateway.namespace .Values.heimdall.url }}
+{{- if not $value }}
+{{- fail "values.yaml: enabled Heimdall resources require lfx.domain, gateway name/namespace, and heimdall.url" }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if eq $heimdallIssuer ($.Values.config.JWT_ISSUER | default "") }}
+{{- fail "\n\nvalues.yaml: config.HEIMDALL_JWT_ISSUER must differ from config.JWT_ISSUER." }}
 {{- end }}
 {{- end }}
 {{- end }}

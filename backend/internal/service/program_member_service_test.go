@@ -10,6 +10,7 @@ import (
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
+	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/auth"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/service"
 )
 
@@ -274,7 +275,7 @@ func TestProgramMemberService_Update_Decline_NotifiesMentor(t *testing.T) {
 
 func TestProgramMemberService_AcceptInvite_InvalidToken(t *testing.T) {
 	svc := newMemberSvc(&stubMemberRepo{}, &stubProgRepo{}, &stubNotifier{})
-	_, err := svc.AcceptInvite(context.Background(), "not-a-valid-token")
+	_, err := svc.AcceptInvite(context.Background(), "not-a-valid-token", "user-1")
 	if !errors.Is(err, domain.ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for bad token, got %v", err)
 	}
@@ -282,9 +283,24 @@ func TestProgramMemberService_AcceptInvite_InvalidToken(t *testing.T) {
 
 func TestProgramMemberService_DeclineInvite_InvalidToken(t *testing.T) {
 	svc := newMemberSvc(&stubMemberRepo{}, &stubProgRepo{}, &stubNotifier{})
-	err := svc.DeclineInvite(context.Background(), "not-a-valid-token")
+	err := svc.DeclineInvite(context.Background(), "not-a-valid-token", "user-1")
 	if !errors.Is(err, domain.ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for bad token, got %v", err)
+	}
+}
+
+func TestProgramMemberService_InviteRejectsMismatchedPrincipal(t *testing.T) {
+	token, err := auth.GenerateInviteToken("prog-1", "mentor-1", "test-secret")
+	if err != nil {
+		t.Fatalf("generate invite token: %v", err)
+	}
+	svc := newMemberSvc(&stubMemberRepo{}, &stubProgRepo{}, &stubNotifier{})
+
+	if _, err := svc.AcceptInvite(context.Background(), token, "different-user"); !errors.Is(err, domain.ErrForbidden) {
+		t.Errorf("accept should reject mismatched principal with ErrForbidden, got %v", err)
+	}
+	if err := svc.DeclineInvite(context.Background(), token, "different-user"); !errors.Is(err, domain.ErrForbidden) {
+		t.Errorf("decline should reject mismatched principal with ErrForbidden, got %v", err)
 	}
 }
 

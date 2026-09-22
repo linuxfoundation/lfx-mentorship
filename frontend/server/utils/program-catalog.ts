@@ -131,6 +131,14 @@ export function mapCatalogMentee(mentee: ProgramCatalogMentee): ProgramMentee {
   };
 }
 
+async function resolveProgramUID(id: string): Promise<string> {
+  const config = useRuntimeConfig();
+  const resolved = await $fetch<{ id: string }>(
+    `${config.apiBaseUrl}/v1/programs/resolve/${encodeURIComponent(id)}`,
+  );
+  return resolved.id;
+}
+
 function fetchErrorStatus(error: unknown): number {
   if (typeof error === 'object' && error !== null && 'statusCode' in error) {
     const statusCode = Number((error as { statusCode?: number }).statusCode);
@@ -191,7 +199,10 @@ export async function fetchProgramCatalog(query: {
 export async function fetchProgramCatalogItem(id: string): Promise<ProgramCatalogItem> {
   const config = useRuntimeConfig();
   try {
-    return await $fetch<ProgramCatalogItem>(`${config.apiBaseUrl}/v1/programs/${id}/catalog`);
+    const programUID = await resolveProgramUID(id);
+    return await $fetch<ProgramCatalogItem>(
+      `${config.apiBaseUrl}/v1/programs/${programUID}/catalog`,
+    );
   } catch (error) {
     throw createError({
       statusCode: fetchErrorStatus(error),
@@ -203,8 +214,9 @@ export async function fetchProgramCatalogItem(id: string): Promise<ProgramCatalo
 export async function fetchProgramMentees(id: string): Promise<ProgramCatalogMenteesResponse> {
   const config = useRuntimeConfig();
   try {
+    const programUID = await resolveProgramUID(id);
     return await $fetch<ProgramCatalogMenteesResponse>(
-      `${config.apiBaseUrl}/v1/programs/${id}/mentees`,
+      `${config.apiBaseUrl}/v1/programs/${programUID}/mentees`,
     );
   } catch (error) {
     throw createError({
@@ -217,8 +229,9 @@ export async function fetchProgramMentees(id: string): Promise<ProgramCatalogMen
 export async function fetchProgramSponsors(id: string): Promise<ProgramCatalogSponsorsResponse> {
   const config = useRuntimeConfig();
   try {
+    const programUID = await resolveProgramUID(id);
     return await $fetch<ProgramCatalogSponsorsResponse>(
-      `${config.apiBaseUrl}/v1/programs/${id}/sponsors`,
+      `${config.apiBaseUrl}/v1/programs/${programUID}/sponsors`,
       {
         query: {
           categoryType: 'mentorship',

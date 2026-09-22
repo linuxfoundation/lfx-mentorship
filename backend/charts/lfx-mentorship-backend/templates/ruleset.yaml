@@ -1,0 +1,610 @@
+# Copyright The Linux Foundation and each contributor to LFX.
+# SPDX-License-Identifier: MIT
+{{- if .Values.heimdall.enabled }}
+apiVersion: heimdall.dadrus.github.com/v1alpha4
+kind: RuleSet
+metadata:
+  name: {{ include "lfx-v2-mentorship-service.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lfx-v2-mentorship-service.labels" . | nindent 4 }}
+spec:
+  rules:
+    # Public collections and discovery routes have no single FGA object.
+    - id: rule:lfx:lfx-mentorship-backend:public-collections
+      allow_encoded_slashes: "off"
+      match:
+        methods: [GET]
+        routes:
+          - path: /mentorship/v1/programs
+          - path: /mentorship/v1/programs/catalog
+          - path: /mentorship/v1/programs/resolve/:id
+          - path: /mentorship/v1/mentees
+          - path: /mentorship/v1/mentees/summary
+          - path: /mentorship/v1/mentors
+          - path: /mentorship/v1/mentors/summary
+          - path: /mentorship/v1/summary
+          - path: /mentorship/v1/funding-stats/total
+          - path: /mentorship/v1/mentees/:id
+          - path: /mentorship/v1/mentors/:id
+      execute:
+        - authenticator: oidc
+        - authenticator: anonymous_authenticator
+        - authorizer: allow_all
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    - id: rule:lfx:lfx-mentorship-backend:internal-metrics
+      allow_encoded_slashes: "off"
+      match:
+        methods: [GET]
+        routes:
+          - path: /mentorship/v1/internal/metrics
+      execute:
+        - authenticator: oidc
+        - authorizer: allow_all
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    # Public program object reads.
+    - id: rule:lfx:lfx-mentorship-backend:programs-public
+      allow_encoded_slashes: "off"
+      match:
+        methods: [GET]
+        routes:
+          - path: /mentorship/v1/programs/:id
+          - path: /mentorship/v1/programs/:id/catalog
+          - path: /mentorship/v1/programs/:id/skills
+          - path: /mentorship/v1/programs/:id/mentees
+          - path: /mentorship/v1/programs/:id/members
+          - path: /mentorship/v1/programs/:id/funding-stats
+          - path: /mentorship/v1/programs/:id/terms
+          - path: /mentorship/v1/programs/:id/transactions
+          - path: /mentorship/v1/programs/:id/sponsors
+      execute:
+        - authenticator: oidc
+        - authenticator: anonymous_authenticator
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_program:{{ "{{- .Request.URL.Captures.id -}}" }}'
+              relation: viewer
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    - id: rule:lfx:lfx-mentorship-backend:nested-term-public
+      allow_encoded_slashes: "off"
+      match:
+        methods: [GET]
+        routes:
+          - path: /mentorship/v1/programs/:programID/terms/:termID
+      execute:
+        - authenticator: oidc
+        - authenticator: anonymous_authenticator
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_program:{{ "{{- .Request.URL.Captures.programID -}}" }}'
+              relation: viewer
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    # Invite actions are authenticated but retain their signed-token check in the service.
+    - id: rule:lfx:lfx-mentorship-backend:mentor-invites
+      allow_encoded_slashes: "off"
+      match:
+        methods: [POST]
+        routes:
+          - path: /mentorship/v1/mentor-invites/:token/accept
+          - path: /mentorship/v1/mentor-invites/:token/decline
+      execute:
+        - authenticator: oidc
+        - authorizer: allow_all
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    # Authenticated routes without an object in the path.
+    - id: rule:lfx:lfx-mentorship-backend:identity
+      allow_encoded_slashes: "off"
+      match:
+        methods: [GET, PUT, PATCH, DELETE, POST]
+        routes:
+          - path: /mentorship/v1/me
+          - path: /mentorship/v1/me/profiles
+          - path: /mentorship/v1/me/profiles/:profileType
+          - path: /mentorship/v1/me/profiles/by-id/:id
+          - path: /mentorship/v1/me/applications
+      execute:
+        - authenticator: oidc
+        - authorizer: allow_all
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    # Roster management is authenticated at the gateway; the service enforces
+    # platform-issued management scopes and self-escalation rules.
+    - id: rule:lfx:lfx-mentorship-backend:roster-management
+      allow_encoded_slashes: "off"
+      match:
+        methods: [GET, POST, DELETE]
+        routes:
+          - path: /mentorship/v1/admin/approver-team/members
+          - path: /mentorship/v1/admin/approver-team/members/:userID
+          - path: /mentorship/v1/projects/:projectUID/mentorship-program-admins
+          - path: /mentorship/v1/projects/:projectUID/mentorship-program-admins/:userID
+      execute:
+        - authenticator: oidc
+        - authorizer: allow_all
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    - id: rule:lfx:lfx-mentorship-backend:program-create
+      allow_encoded_slashes: "off"
+      match:
+        methods: [POST]
+        routes:
+          - path: /mentorship/v1/programs
+      execute:
+        - authenticator: oidc
+        - authorizer: allow_all
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    # Program metadata and deletion.
+    - id: rule:lfx:lfx-mentorship-backend:program-metadata
+      allow_encoded_slashes: "off"
+      match:
+        methods: [PATCH, DELETE]
+        routes:
+          - path: /mentorship/v1/programs/:id
+      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_program:{{ "{{- .Request.URL.Captures.id -}}" }}'
+              relation: writer
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    - id: rule:lfx:lfx-mentorship-backend:program-submit
+      allow_encoded_slashes: "off"
+      match:
+        methods: [POST]
+        routes:
+          - path: /mentorship/v1/programs/:id/submit
+      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_program:{{ "{{- .Request.URL.Captures.id -}}" }}'
+              relation: writer
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    - id: rule:lfx:lfx-mentorship-backend:program-skills-create
+      allow_encoded_slashes: "off"
+      match:
+        methods: [POST]
+        routes:
+          - path: /mentorship/v1/programs/:id/skills
+      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_program:{{ "{{- .Request.URL.Captures.id -}}" }}'
+              relation: writer
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    - id: rule:lfx:lfx-mentorship-backend:program-skill-delete
+      allow_encoded_slashes: "off"
+      match:
+        methods: [DELETE]
+        routes:
+          - path: /mentorship/v1/programs/:id/skills/:skillId
+      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_program:{{ "{{- .Request.URL.Captures.id -}}" }}'
+              relation: writer
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    - id: rule:lfx:lfx-mentorship-backend:program-members-create
+      allow_encoded_slashes: "off"
+      match:
+        methods: [POST]
+        routes:
+          - path: /mentorship/v1/programs/:id/members
+      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_program:{{ "{{- .Request.URL.Captures.id -}}" }}'
+              relation: writer
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    - id: rule:lfx:lfx-mentorship-backend:program-member-update
+      allow_encoded_slashes: "off"
+      match:
+        methods: [PATCH]
+        routes:
+          - path: /mentorship/v1/programs/:id/members/:memberId
+      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_program:{{ "{{- .Request.URL.Captures.id -}}" }}'
+              relation: writer
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    - id: rule:lfx:lfx-mentorship-backend:program-member-delete
+      allow_encoded_slashes: "off"
+      match:
+        methods: [DELETE]
+        routes:
+          - path: /mentorship/v1/programs/:id/members/:memberId
+      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_program:{{ "{{- .Request.URL.Captures.id -}}" }}'
+              relation: writer
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    - id: rule:lfx:lfx-mentorship-backend:program-terms-create
+      allow_encoded_slashes: "off"
+      match:
+        methods: [POST]
+        routes:
+          - path: /mentorship/v1/programs/:id/terms
+      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_program:{{ "{{- .Request.URL.Captures.id -}}" }}'
+              relation: writer
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    - id: rule:lfx:lfx-mentorship-backend:nested-term-writer
+      allow_encoded_slashes: "off"
+      match:
+        methods: [PATCH, DELETE]
+        routes:
+          - path: /mentorship/v1/programs/:programID/terms/:termID
+      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_program:{{ "{{- .Request.URL.Captures.programID -}}" }}'
+              relation: writer
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    - id: rule:lfx:lfx-mentorship-backend:program-decision
+      allow_encoded_slashes: "off"
+      match:
+        methods: [POST]
+        routes:
+          - path: /mentorship/v1/programs/:id/decision
+      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: mentorship_approver_team:global
+              relation: member
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    # Nested term collections authorize against the parent program UID.
+    - id: rule:lfx:lfx-mentorship-backend:term-manager-collections
+      allow_encoded_slashes: "off"
+      match:
+        methods: [GET]
+        routes:
+          - path: /mentorship/v1/programs/:programID/terms/:id/applications
+          - path: /mentorship/v1/programs/:programID/terms/:id/applications/export
+          - path: /mentorship/v1/programs/:programID/terms/:id/past-mentees
+          - path: /mentorship/v1/programs/:programID/terms/:id/tasks
+      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_program:{{ "{{- .Request.URL.Captures.programID -}}" }}'
+              relation: manager
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    - id: rule:lfx:lfx-mentorship-backend:term-application-create
+      allow_encoded_slashes: "off"
+      match:
+        methods: [POST]
+        routes:
+          - path: /mentorship/v1/programs/:programID/terms/:id/applications
+      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_program:{{ "{{- .Request.URL.Captures.programID -}}" }}'
+              relation: viewer
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    - id: rule:lfx:lfx-mentorship-backend:term-application-bulk-decline
+      allow_encoded_slashes: "off"
+      match:
+        methods: [POST]
+        routes:
+          - path: /mentorship/v1/programs/:programID/terms/:id/applications/bulk-decline
+      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_program:{{ "{{- .Request.URL.Captures.programID -}}" }}'
+              relation: writer
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    # Application routes.
+    - id: rule:lfx:lfx-mentorship-backend:applications-auditor
+      allow_encoded_slashes: "off"
+      match:
+        methods: [GET]
+        routes:
+          - path: /mentorship/v1/applications/:id
+          - path: /mentorship/v1/applications/:id/tasks
+      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_application:{{ "{{- .Request.URL.Captures.id -}}" }}'
+              relation: auditor
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    - id: rule:lfx:lfx-mentorship-backend:applications-writer
+      allow_encoded_slashes: "off"
+      match:
+        methods: [PATCH]
+        routes:
+          - path: /mentorship/v1/applications/:id
+      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_application:{{ "{{- .Request.URL.Captures.id -}}" }}'
+              relation: writer
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    - id: rule:lfx:lfx-mentorship-backend:applications-mentee
+      allow_encoded_slashes: "off"
+      match:
+        methods: [POST]
+        routes:
+          - path: /mentorship/v1/applications/:id/withdraw
+          - path: /mentorship/v1/applications/:id/reapply
+      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_application:{{ "{{- .Request.URL.Captures.id -}}" }}'
+              relation: mentee
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    - id: rule:lfx:lfx-mentorship-backend:application-withdraw-for-mentee
+      allow_encoded_slashes: "off"
+      match:
+        methods: [POST]
+        routes:
+          - path: /mentorship/v1/applications/:id/withdraw-for-mentee
+      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_application:{{ "{{- .Request.URL.Captures.id -}}" }}'
+              relation: manager
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    - id: rule:lfx:lfx-mentorship-backend:applications-reviewer
+      allow_encoded_slashes: "off"
+      match:
+        methods: [POST]
+        routes:
+          - path: /mentorship/v1/applications/:id/tasks
+      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_application:{{ "{{- .Request.URL.Captures.id -}}" }}'
+              relation: reviewer
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    - id: rule:lfx:lfx-mentorship-backend:application-reviewer-fields
+      allow_encoded_slashes: "off"
+      match:
+        methods: [GET, PUT]
+        routes:
+          - path: /mentorship/v1/applications/:id/note
+          - path: /mentorship/v1/applications/:id/evaluation
+      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_application:{{ "{{- .Request.URL.Captures.id -}}" }}'
+              relation: reviewer
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    - id: rule:lfx:lfx-mentorship-backend:application-manager
+      allow_encoded_slashes: "off"
+      match:
+        methods: [PATCH]
+        routes:
+          - path: /mentorship/v1/applications/:id/status
+      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_application:{{ "{{- .Request.URL.Captures.id -}}" }}'
+              relation: manager
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    - id: rule:lfx:lfx-mentorship-backend:application-delete
+      allow_encoded_slashes: "off"
+      match:
+        methods: [DELETE]
+        routes:
+          - path: /mentorship/v1/applications/:id
+      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_application:{{ "{{- .Request.URL.Captures.id -}}" }}'
+              relation: manager
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    # Task routes.
+    - id: rule:lfx:lfx-mentorship-backend:tasks-auditor
+      allow_encoded_slashes: "off"
+      match:
+        methods: [GET]
+        routes:
+          - path: /mentorship/v1/tasks/:id
+      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_task:{{ "{{- .Request.URL.Captures.id -}}" }}'
+              relation: auditor
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    - id: rule:lfx:lfx-mentorship-backend:tasks-manager
+      allow_encoded_slashes: "off"
+      match:
+        methods: [PATCH, DELETE]
+        routes:
+          - path: /mentorship/v1/tasks/:id
+          - path: /mentorship/v1/tasks/:id/review
+      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_task:{{ "{{- .Request.URL.Captures.id -}}" }}'
+              relation: manager
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    - id: rule:lfx:lfx-mentorship-backend:tasks-assignee
+      allow_encoded_slashes: "off"
+      match:
+        methods: [PATCH]
+        routes:
+          - path: /mentorship/v1/tasks/:id/submission
+      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_task:{{ "{{- .Request.URL.Captures.id -}}" }}'
+              relation: assignee
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+{{- end }}

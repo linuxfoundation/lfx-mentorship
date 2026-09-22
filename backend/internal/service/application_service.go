@@ -26,6 +26,7 @@ type ApplicationService struct {
 	termRepo    domain.ProgramTermRepository
 	programRepo domain.ProgramRepository
 	memberRepo  domain.ProgramMemberRepository
+	rosterRepo  domain.RosterRepository
 	notifier    domain.Notifier
 }
 
@@ -45,8 +46,13 @@ func NewApplicationService(
 	programRepo domain.ProgramRepository,
 	memberRepo domain.ProgramMemberRepository,
 	notifier domain.Notifier,
+	rosters ...domain.RosterRepository,
 ) *ApplicationService {
-	return &ApplicationService{repo: repo, taskRepo: taskRepo, termRepo: termRepo, programRepo: programRepo, memberRepo: memberRepo, notifier: notifier}
+	var rosterRepo domain.RosterRepository
+	if len(rosters) > 0 {
+		rosterRepo = rosters[0]
+	}
+	return &ApplicationService{repo: repo, taskRepo: taskRepo, termRepo: termRepo, programRepo: programRepo, memberRepo: memberRepo, rosterRepo: rosterRepo, notifier: notifier}
 }
 
 func (s *ApplicationService) isActiveReviewer(ctx context.Context, programID, actorID string) (bool, error) {
@@ -226,49 +232,63 @@ func (s *ApplicationService) Create(ctx context.Context, programTermID string, i
 		if existing.Status != models.ApplicationStatusWithdrawn {
 			return nil, fmt.Errorf("%w: an application for this term already exists (status: %s)", domain.ErrConflict, existing.Status)
 		}
-		// Remove the withdrawn record so the unique (term, user, role) constraint allows the new insert.
-		if err := s.repo.Delete(ctx, existing.ID); err != nil {
-			span.RecordError(err)
-			return nil, fmt.Errorf("remove withdrawn application: %w", err)
+		input.ID = uuid.New().String()
+		tasks, err := s.prerequisiteTasks(ctx, programTermID, input, term.ProgramID)
+		if err != nil {
+			return nil, fmt.Errorf("prepare reapplication prerequisite tasks: %w", err)
 		}
+		a, err := s.repo.ReapplyWithTasks(ctx, existing.ID, programTermID, input, tasks)
+		if err != nil {
+			return nil, fmt.Errorf("reapply application: %w", err)
+		}
+		return a, nil
 	}
 
 	input.ID = uuid.New().String()
-	a, err := s.repo.Create(ctx, programTermID, input)
+	tasks, err := s.prerequisiteTasks(ctx, programTermID, input, term.ProgramID)
+	if err != nil {
+		return nil, fmt.Errorf("prepare prerequisite tasks: %w", err)
+	}
+	a, err := s.repo.CreateWithTasks(ctx, programTermID, input, tasks)
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("create application: %w", err)
 	}
 
-	// Task template cloning (FR-032): clone prerequisite tasks from the program.
-	prog, progErr := s.programRepo.GetByID(ctx, term.ProgramID)
-	if progErr == nil && len(prog.TaskTemplates) > 0 {
-		var templates []taskTemplate
-		if jsonErr := json.Unmarshal(prog.TaskTemplates, &templates); jsonErr == nil {
-			for _, tmpl := range templates {
-				cat := models.TaskCategoryPrerequisite
-				status := models.TaskStatusIncomplete
-				custom := false
-				termIDCopy := programTermID
-				createdBy := input.UserID
-				nameCopy := tmpl.Name
-				_, _ = s.taskRepo.Create(ctx, a.ID, models.TaskCreateInput{
-					ID:            uuid.New().String(),
-					ProgramTermID: &termIDCopy,
-					AssigneeID:    input.UserID,
-					Name:          &nameCopy,
-					Description:   tmpl.Description,
-					SubmitFile:    tmpl.SubmitFile,
-					Category:      &cat,
-					Status:        status,
-					Custom:        custom,
-					CreatedBy:     &createdBy,
-				})
-			}
-		}
-	}
-
 	return a, nil
+}
+
+func (s *ApplicationService) prerequisiteTasks(ctx context.Context, programTermID string, input models.ApplicationCreateInput, programID string) ([]models.TaskCreateInput, error) {
+	prog, err := s.programRepo.GetByID(ctx, programID)
+	if err != nil {
+		return nil, fmt.Errorf("get program task templates: %w", err)
+	}
+	if len(prog.TaskTemplates) == 0 {
+		return nil, nil
+	}
+	var templates []taskTemplate
+	if err := json.Unmarshal(prog.TaskTemplates, &templates); err != nil {
+		return nil, fmt.Errorf("decode program task templates: %w", err)
+	}
+	tasks := make([]models.TaskCreateInput, 0, len(templates))
+	for _, tmpl := range templates {
+		category := models.TaskCategoryPrerequisite
+		termID := programTermID
+		createdBy := input.UserID
+		name := tmpl.Name
+		tasks = append(tasks, models.TaskCreateInput{
+			ID:            uuid.New().String(),
+			ProgramTermID: &termID,
+			AssigneeID:    input.UserID,
+			Name:          &name,
+			Description:   tmpl.Description,
+			SubmitFile:    tmpl.SubmitFile,
+			Category:      &category,
+			Status:        models.TaskStatusIncomplete,
+			CreatedBy:     &createdBy,
+		})
+	}
+	return tasks, nil
 }
 
 // Update applies status changes to an application.
@@ -337,15 +357,82 @@ func (s *ApplicationService) Update(ctx context.Context, id string, input models
 	if input.Status != nil {
 		switch *input.Status {
 		case models.ApplicationStatusAccepted:
-			attType := ""
-			if a.AttendanceType != nil {
-				attType = string(*a.AttendanceType)
+			if a.Role == models.ApplicationRoleMentee {
+				attType := ""
+				if a.AttendanceType != nil {
+					attType = string(*a.AttendanceType)
+				}
+				s.notifier.NotifyMenteeAccepted(ctx, id, attType)
 			}
-			s.notifier.NotifyMenteeAccepted(ctx, id, attType)
 		}
 	}
 
 	return a, nil
+}
+
+// Delete removes an application and its authorization descendants.
+func (s *ApplicationService) Delete(ctx context.Context, id string) error {
+	if err := s.repo.Delete(ctx, id); err != nil {
+		return fmt.Errorf("delete application: %w", err)
+	}
+	return nil
+}
+
+// WithdrawForMentee performs a staff-assisted withdrawal authorized by the
+// active program admin of the application's parent program.
+func (s *ApplicationService) WithdrawForMentee(ctx context.Context, id, actorID string) (*models.Application, error) {
+	if actorID == "" {
+		return nil, fmt.Errorf("%w: actor identity is required", domain.ErrForbidden)
+	}
+	application, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("get application for assisted withdrawal: %w", err)
+	}
+	term, err := s.termRepo.GetByID(ctx, application.ProgramTermID)
+	if err != nil {
+		return nil, fmt.Errorf("get application term: %w", err)
+	}
+	_, memberErr := s.memberRepo.FindActiveProgramAdminByProgramAndUser(ctx, term.ProgramID, actorID)
+	if memberErr != nil && s.rosterRepo != nil {
+		program, rosterErr := s.programRepo.GetByID(ctx, term.ProgramID)
+		if rosterErr == nil && program.ProjectUID != nil {
+			admins, listErr := s.rosterRepo.ListProjectAdmins(ctx, *program.ProjectUID)
+			if listErr == nil {
+				for _, admin := range admins {
+					if admin.UserID == actorID {
+						memberErr = nil
+						break
+					}
+				}
+			}
+		}
+	}
+	if memberErr != nil {
+		if errors.Is(memberErr, domain.ErrProgramMemberNotFound) {
+			return nil, fmt.Errorf("%w: actor must be an active program_admin", domain.ErrForbidden)
+		}
+		return nil, fmt.Errorf("verify program admin: %w", memberErr)
+	}
+	status := models.ApplicationStatusWithdrawn
+	updated, err := s.repo.Update(ctx, id, models.ApplicationUpdateInput{Status: &status})
+	if err != nil {
+		return nil, fmt.Errorf("assisted withdrawal: %w", err)
+	}
+	return updated, nil
+}
+
+// WithdrawForMenteeAfterGatewayAuthorization applies the state transition after
+// Heimdall has verified the caller's manager relation on the application.
+func (s *ApplicationService) WithdrawForMenteeAfterGatewayAuthorization(ctx context.Context, id string) (*models.Application, error) {
+	if _, err := s.repo.GetByID(ctx, id); err != nil {
+		return nil, fmt.Errorf("get application for assisted withdrawal: %w", err)
+	}
+	status := models.ApplicationStatusWithdrawn
+	updated, err := s.repo.Update(ctx, id, models.ApplicationUpdateInput{Status: &status})
+	if err != nil {
+		return nil, fmt.Errorf("assisted withdrawal: %w", err)
+	}
+	return updated, nil
 }
 
 // BulkDeclineByTerm moves all pending/submitted applications in a term to declined.

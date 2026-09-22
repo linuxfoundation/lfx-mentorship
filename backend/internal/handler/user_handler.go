@@ -19,6 +19,7 @@ type userService interface {
 	Create(ctx context.Context, input models.UserCreateInput) (*models.User, error)
 	Update(ctx context.Context, id string, input models.UserUpdateInput) (*models.User, error)
 	Delete(ctx context.Context, id, actorID string) error
+	Bootstrap(ctx context.Context, lfid string, input models.UserUpdateInput) (*models.User, error)
 }
 
 // UserHandler holds Chi handlers for the users resource.
@@ -61,6 +62,47 @@ func (h *UserHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, user)
 }
 
+// GetMe handles GET /v1/me — requires JWT.
+func (h *UserHandler) GetMe(w http.ResponseWriter, r *http.Request) {
+	principal := auth.PrincipalFromContext(r.Context())
+	if principal == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	user, err := h.svc.GetByID(r.Context(), principal.UserID)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, user)
+}
+
+// BootstrapMe handles PUT /v1/me and creates or refreshes the local user from the principal.
+func (h *UserHandler) BootstrapMe(w http.ResponseWriter, r *http.Request) {
+	principal := auth.PrincipalFromContext(r.Context())
+	if principal == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	var input models.UserUpdateInput
+	if !decodeBody(w, r, &input) {
+		return
+	}
+	if input.Email == nil && principal.Email != "" {
+		input.Email = &principal.Email
+	}
+	if input.Name == nil && principal.Name != "" {
+		input.Name = &principal.Name
+	}
+	input.LFID = &principal.Username
+	user, err := h.svc.Bootstrap(r.Context(), principal.Username, input)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, user)
+}
+
 // Create handles POST /v1/users — requires JWT.
 func (h *UserHandler) Create(w http.ResponseWriter, r *http.Request) {
 	principal := auth.PrincipalFromContext(r.Context())
@@ -91,12 +133,41 @@ func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := chi.URLParam(r, "id")
+	if id != principal.UserID {
+		Error(w, domain.ErrForbidden)
+		return
+	}
 	var input models.UserUpdateInput
 	if !decodeBody(w, r, &input) {
 		return
 	}
+	// LFID is identity-bound and must not be mutable through update routes.
+	input.LFID = nil
 
 	user, err := h.svc.Update(r.Context(), id, input)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, user)
+}
+
+// UpdateMe handles PATCH /v1/me — requires JWT.
+func (h *UserHandler) UpdateMe(w http.ResponseWriter, r *http.Request) {
+	principal := auth.PrincipalFromContext(r.Context())
+	if principal == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+
+	var input models.UserUpdateInput
+	if !decodeBody(w, r, &input) {
+		return
+	}
+	// LFID is identity-bound and must not be mutable through update routes.
+	input.LFID = nil
+
+	user, err := h.svc.Update(r.Context(), principal.UserID, input)
 	if err != nil {
 		Error(w, err)
 		return
@@ -114,6 +185,21 @@ func (h *UserHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	id := chi.URLParam(r, "id")
 	if err := h.svc.Delete(r.Context(), id, principal.UserID); err != nil {
+		Error(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// DeleteMe handles DELETE /v1/me — requires JWT.
+func (h *UserHandler) DeleteMe(w http.ResponseWriter, r *http.Request) {
+	principal := auth.PrincipalFromContext(r.Context())
+	if principal == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+
+	if err := h.svc.Delete(r.Context(), principal.UserID, principal.UserID); err != nil {
 		Error(w, err)
 		return
 	}
