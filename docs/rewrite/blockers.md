@@ -35,6 +35,14 @@ service:
 - `project#mentorship_program_admin`
 - computed `project#mentorship_program_creator`
 
+The `mentorship_program` type must also define the named
+`global_mentorship_approver` relation as a userset of
+`mentorship_approver_team#member`. Mentorship emits that exact key in
+`references.global_mentorship_approver`; it is not interchangeable with the
+program's `auditor` relation. The `auditor` relation must include
+`global_mentorship_approver` so approvers can read submitted programs without
+receiving program-management permissions.
+
 The model must also include executable positive, negative, and inheritance
 fixtures. The guide calls for the reviewed 14-scenario suite with checks for
 program writers, inherited project writers, mentors, applicants, assignees,
@@ -63,7 +71,9 @@ criterion.
 5. The deployed `AuthorizationModelRequest` has the expected model version and
    ID.
 6. The deployed model contains every type and relation referenced by the
-   Mentorship RuleSet and contract.
+   Mentorship RuleSet and contract, including
+   `mentorship_program#global_mentorship_approver` and the
+   `references.global_mentorship_approver` key emitted by `ProgramAccess`.
 
 ## 2. Project Admin Relation Preservation
 
