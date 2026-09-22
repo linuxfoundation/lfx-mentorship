@@ -126,7 +126,7 @@ type mentorship_program
     # it. The grant is stamped per-program at creation (AQ-9).
     define global_mentorship_approver: [mentorship_approver_team#member]
     # @fgadoc:jtbd View program settings & member lists
-    define auditor: [user] or global_mentorship_approver or manager or auditor from project
+    define auditor: [user] or global_mentorship_approver or writer or auditor from project
     # @fgadoc:jtbd View & discover a mentorship program
     define viewer: [user:*] or auditor
 
