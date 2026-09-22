@@ -464,12 +464,22 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
     funding_rows = []
     program_ids: set = set()
     seen_slugs: set = set()
+    unresolved_project_uids = []
 
     for p in projects:
         pid = _as_uuid(p.get("projectId"))
         if not pid:
             continue
         program_ids.add(pid)
+
+        # project_uid is the LF project parent used by the authorization
+        # inheritance chain. Do not substitute the program ID when the legacy
+        # source does not provide an explicit project identifier.
+        project_uid = _as_uuid(
+            p.get("projectUid") or p.get("lfProjectId") or p.get("lfProjectUID")
+        )
+        if not project_uid:
+            unresolved_project_uids.append(pid)
 
         amount = _as_float(p.get("amountRaised")) / 100  # DynamoDB stores cents; convert to dollars
 
@@ -488,6 +498,7 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
         prog_rows.append(
             (
                 pid,
+                project_uid,
                 (p.get("name") or "").strip() or None,
                 slug,
                 _normalize_program_status(p.get("status")),
@@ -533,17 +544,25 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
             )
         )
 
+    if unresolved_project_uids:
+        sample = ", ".join(unresolved_project_uids[:10])
+        raise ValueError(
+            f"{len(unresolved_project_uids)} programs are missing an explicit "
+            f"project UID; repair the source mapping before migration (sample: {sample})"
+        )
+
     psycopg2.extras.execute_batch(
         cur,
         """
         INSERT INTO programs
-          (id, name, slug, status, is_paid, description, logo_url, website_url,
+                    (id, project_uid, name, slug, status, is_paid, description, logo_url, website_url,
            repo_link, code_of_conduct, industry, color, lfid, cii_project_id,
            accept_applications, terms_and_conditions, program_term_status,
            discover_sort_rank, amount_raised, mentee_needs, task_templates,
            created_on, updated_on)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         ON CONFLICT (id) DO UPDATE SET
+                    project_uid         = EXCLUDED.project_uid,
           name                = EXCLUDED.name,
           slug                = EXCLUDED.slug,
           status              = EXCLUDED.status,
@@ -943,6 +962,12 @@ def migrate_tasks(
                 _parse_ts(t.get("createdOn")),
                 _parse_ts(t.get("updatedOn")),
             )
+        )
+
+    if unresolved:
+        raise ValueError(
+            f"{unresolved} tasks could not be linked to an application; "
+            "repair term/user application mappings before migration"
         )
 
     psycopg2.extras.execute_batch(

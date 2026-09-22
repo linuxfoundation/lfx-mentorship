@@ -168,18 +168,31 @@ func (r *ProgramMemberRepository) ListByProgram(ctx context.Context, programID s
 func (r *ProgramMemberRepository) Create(ctx context.Context, programID string, input models.ProgramMemberCreateInput) (*models.ProgramMember, error) {
 	ctx, span := programMemberTracer.Start(ctx, "db.program_members.Create")
 	defer span.End()
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin create program member transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const q = `
 		INSERT INTO program_members (id, program_id, user_id, member_type, status, email)
 		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING ` + programMemberCols
 
-	m, err := scanProgramMember(r.pool.QueryRow(ctx, q,
+	m, err := scanProgramMember(tx.QueryRow(ctx, q,
 		input.ID, programID, input.UserID, input.MemberType, input.Status, input.Email,
 	))
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("create program member: %w", err)
+	}
+	if isActiveMember(m) {
+		if err := enqueueMemberMarker(ctx, tx, m, "put"); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit create program member transaction: %w", err)
 	}
 	return m, nil
 }
@@ -189,6 +202,19 @@ func (r *ProgramMemberRepository) Update(ctx context.Context, id string, input m
 	ctx, span := programMemberTracer.Start(ctx, "db.program_members.Update")
 	defer span.End()
 	span.SetAttributes(attribute.String("db.member_id", id))
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin update program member transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	current, err := scanProgramMember(tx.QueryRow(ctx, `SELECT `+programMemberCols+` FROM program_members WHERE id = $1`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrProgramMemberNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load program member before update: %w", err)
+	}
 
 	const q = `
 		UPDATE program_members SET
@@ -197,13 +223,25 @@ func (r *ProgramMemberRepository) Update(ctx context.Context, id string, input m
 		WHERE id = $1
 		RETURNING ` + programMemberCols
 
-	m, err := scanProgramMember(r.pool.QueryRow(ctx, q, id, input.Status, input.Email))
+	m, err := scanProgramMember(tx.QueryRow(ctx, q, id, input.Status, input.Email))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrProgramMemberNotFound
 	}
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("update program member: %w", err)
+	}
+	if isActiveMember(current) || isActiveMember(m) {
+		op := "remove"
+		if isActiveMember(m) {
+			op = "put"
+		}
+		if err := enqueueMemberMarker(ctx, tx, m, op); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit update program member transaction: %w", err)
 	}
 	return m, nil
 }
@@ -212,14 +250,83 @@ func (r *ProgramMemberRepository) Update(ctx context.Context, id string, input m
 func (r *ProgramMemberRepository) Delete(ctx context.Context, id string) error {
 	ctx, span := programMemberTracer.Start(ctx, "db.program_members.Delete")
 	defer span.End()
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin delete program member transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	current, err := scanProgramMember(tx.QueryRow(ctx, `SELECT `+programMemberCols+` FROM program_members WHERE id = $1`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrProgramMemberNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("load program member before delete: %w", err)
+	}
 
-	cmd, err := r.pool.Exec(ctx, `DELETE FROM program_members WHERE id = $1`, id)
+	cmd, err := tx.Exec(ctx, `DELETE FROM program_members WHERE id = $1`, id)
 	if err != nil {
 		span.RecordError(err)
 		return fmt.Errorf("delete program member: %w", err)
 	}
 	if cmd.RowsAffected() == 0 {
 		return domain.ErrProgramMemberNotFound
+	}
+	if isActiveMember(current) {
+		if err := enqueueMemberMarker(ctx, tx, current, "remove"); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit delete program member transaction: %w", err)
+	}
+	return nil
+}
+
+func isActiveMember(member *models.ProgramMember) bool {
+	return member != nil && member.Status != nil && *member.Status == models.ProgramMemberStatusActive
+}
+
+func enqueueMemberMarker(ctx context.Context, tx pgx.Tx, member *models.ProgramMember, operation string) error {
+	var lfid *string
+	if err := tx.QueryRow(ctx, `SELECT lfid FROM users WHERE id = $1`, member.UserID).Scan(&lfid); err != nil {
+		return fmt.Errorf("resolve program member LFID: %w", err)
+	}
+	if lfid == nil || *lfid == "" {
+		return fmt.Errorf("program member user %s has no LFID", member.UserID)
+	}
+	relation := "mentor"
+	if member.MemberType == models.MemberTypeProgramAdmin {
+		relation = "writer"
+	}
+	if operation == "remove" {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO fga_membership_tombstones (object_type, object_uid, relation, username)
+			VALUES ('mentorship_program', $1, $2, $3)
+			ON CONFLICT (object_type, object_uid, relation, username)
+			DO UPDATE SET deleted_on = NOW(), last_reconciled_on = NULL`,
+			member.ProgramID, relation, *lfid); err != nil {
+			return fmt.Errorf("record program member FGA tombstone: %w", err)
+		}
+	}
+	if operation == "put" {
+		if _, err := tx.Exec(ctx, `DELETE FROM fga_membership_tombstones WHERE object_type = 'mentorship_program' AND object_uid = $1 AND relation = $2 AND username = $3`, member.ProgramID, relation, *lfid); err != nil {
+			return fmt.Errorf("clear program member FGA tombstone: %w", err)
+		}
+	}
+	markerOperation := "sync"
+	if operation == "remove" {
+		markerOperation = "remove"
+	}
+	const q = `
+		INSERT INTO fga_outbox (marker_kind, object_type, object_uid, relation, username, desired_operation)
+		VALUES ('membership', 'mentorship_program', $1, $2, $3, $4)
+		ON CONFLICT (object_type, object_uid, relation, username) WHERE marker_kind = 'membership'
+		DO UPDATE SET desired_operation = EXCLUDED.desired_operation, generation = fga_outbox.generation + 1,
+		              state = CASE WHEN fga_outbox.state = 'in_flight' THEN 'in_flight' ELSE 'pending' END, claimed_generation = CASE WHEN fga_outbox.state = 'in_flight' THEN fga_outbox.claimed_generation ELSE NULL END, claimed_at = CASE WHEN fga_outbox.state = 'in_flight' THEN fga_outbox.claimed_at ELSE NULL END,
+		              attempts = 0, next_attempt_at = NOW(), last_error = NULL,
+		              updated_on = NOW()`
+	if _, err := tx.Exec(ctx, q, member.ProgramID, relation, *lfid, markerOperation); err != nil {
+		return fmt.Errorf("enqueue program member FGA marker: %w", err)
 	}
 	return nil
 }

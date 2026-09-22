@@ -479,6 +479,49 @@ func TestTaskService_Delete_MissingActorForbidden(t *testing.T) {
 	}
 }
 
+func TestTaskService_Delete_OrphanedApplication_UsesTaskProgramTermFallback(t *testing.T) {
+	appID := "app-1"
+	termID := "term-1"
+	activeStatus := models.ProgramMemberStatusActive
+	deleteCalled := false
+
+	taskRepo := &stubTaskRepo{
+		getByID: func(_ context.Context, id string) (*models.Task, error) {
+			return &models.Task{ID: id, AssigneeID: "mentee-1", ApplicationID: &appID, ProgramTermID: &termID}, nil
+		},
+		delete: func(_ context.Context, _ string) error {
+			deleteCalled = true
+			return nil
+		},
+	}
+	appRepo := &stubAppRepo{
+		getByID: func(_ context.Context, _ string) (*models.Application, error) {
+			return nil, domain.ErrApplicationNotFound
+		},
+	}
+	termRepo := &stubTermRepo{
+		getByID: func(_ context.Context, gotTermID string) (*models.ProgramTerm, error) {
+			if gotTermID != termID {
+				t.Fatalf("term ID = %q; want %q", gotTermID, termID)
+			}
+			return &models.ProgramTerm{ID: termID, ProgramID: "prog-1"}, nil
+		},
+	}
+	memberRepo := &stubMemberRepo{
+		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
+			return &models.ProgramMember{MemberType: models.MemberTypeMentor, Status: &activeStatus}, nil
+		},
+	}
+
+	svc := newTaskSvc(taskRepo, appRepo, termRepo, memberRepo)
+	if err := svc.Delete(context.Background(), "task-1", "mentor-1"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if !deleteCalled {
+		t.Fatal("expected repository delete to be called")
+	}
+}
+
 func TestTaskService_GetByIDForActor_AssigneeAllowed(t *testing.T) {
 	appID := "app-1"
 	svc := newTaskSvc(&stubTaskRepo{

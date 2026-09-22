@@ -64,6 +64,24 @@ func (r *ProgramTermRepository) GetByID(ctx context.Context, id string) (*models
 	return t, nil
 }
 
+// GetByProgramAndID returns the term for the given program + id, or ErrProgramTermNotFound when the term does not belong to the parent program.
+func (r *ProgramTermRepository) GetByProgramAndID(ctx context.Context, programID, id string) (*models.ProgramTerm, error) {
+	ctx, span := programTermTracer.Start(ctx, "db.program_terms.GetByProgramAndID")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.program_id", programID), attribute.String("db.term_id", id))
+
+	q := `SELECT` + programTermCols + ` FROM program_terms WHERE program_id = $1 AND id = $2`
+	t, err := scanProgramTerm(r.pool.QueryRow(ctx, q, programID, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrProgramTermNotFound
+	}
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("get program term by program and id: %w", err)
+	}
+	return t, nil
+}
+
 // ListByProgram returns all terms for a program, paginated and optionally filtered by status.
 func (r *ProgramTermRepository) ListByProgram(ctx context.Context, programID string, filter models.ProgramTermFilter) ([]*models.ProgramTerm, *models.PaginationMeta, error) {
 	ctx, span := programTermTracer.Start(ctx, "db.program_terms.ListByProgram")

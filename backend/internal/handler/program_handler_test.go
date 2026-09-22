@@ -410,6 +410,23 @@ func TestProgramHandler_ResolveID_HiddenReturns404(t *testing.T) {
 	}
 }
 
+func TestProgramHandler_ResolveID_DraftReturns404ToAnonymous(t *testing.T) {
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		getBySlug: func(_ context.Context, id string) (*models.Program, error) {
+			return &models.Program{ID: id, Slug: id, Status: models.ProgramStatusDraft}, nil
+		},
+	})
+
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/resolve/p1", nil)
+	r = requestWithChiParam(r, "id", "p1")
+	w := httptest.NewRecorder()
+	h.ResolveID(w, r)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("got %d; want 404", w.Code)
+	}
+}
+
 func TestProgramHandler_GetProgramSponsors_OK(t *testing.T) {
 	h := handler.NewProgramHandler(&stubProgramSvc{
 		getByID: func(_ context.Context, id string) (*models.Program, error) {

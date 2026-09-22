@@ -144,6 +144,13 @@ func (s *TaskService) Create(ctx context.Context, applicationID string, input mo
 	if input.AssigneeID == "" {
 		return nil, fmt.Errorf("%w: assignee_id is required", domain.ErrInvalidInput)
 	}
+	application, err := s.appRepo.GetByID(ctx, applicationID)
+	if err != nil {
+		return nil, fmt.Errorf("get application for task creation: %w", err)
+	}
+	if application.Status != models.ApplicationStatusAccepted || application.Role != models.ApplicationRoleMentee || application.UserID != input.AssigneeID {
+		return nil, fmt.Errorf("%w: task assignee must be the accepted application's mentee", domain.ErrInvalidInput)
+	}
 	if input.Status == "" {
 		input.Status = models.TaskStatusIncomplete
 	}
@@ -194,6 +201,13 @@ func (s *TaskService) Update(ctx context.Context, id string, input models.TaskUp
 		}
 		isAssignee := current.AssigneeID == input.ActorID
 		next := *input.Status
+		effectiveFile := current.File
+		if input.File != nil {
+			effectiveFile = input.File
+		}
+		if next == models.TaskStatusSubmitted && current.SubmitFile != nil && *current.SubmitFile != "" && (effectiveFile == nil || *effectiveFile == "") {
+			return nil, fmt.Errorf("%w: submitted tasks requiring a file must include file", domain.ErrInvalidInput)
+		}
 
 		// State transition guard: only incomplete (reset) is unrestricted direction-wise.
 		if next != models.TaskStatusIncomplete {
@@ -255,10 +269,16 @@ func (s *TaskService) assertReviewer(ctx context.Context, task *models.Task, act
 	programTermID := ""
 	if task.ApplicationID != nil {
 		app, err := s.appRepo.GetByID(ctx, *task.ApplicationID)
-		if err != nil {
-			return fmt.Errorf("get application for reviewer check: %w", err)
+		if err == nil {
+			programTermID = app.ProgramTermID
+		} else {
+			// Permit cleanup of orphaned tasks by falling back to the task's own term linkage.
+			if errors.Is(err, domain.ErrApplicationNotFound) && task.ProgramTermID != nil && *task.ProgramTermID != "" {
+				programTermID = *task.ProgramTermID
+			} else {
+				return fmt.Errorf("get application for reviewer check: %w", err)
+			}
 		}
-		programTermID = app.ProgramTermID
 	} else if task.ProgramTermID != nil {
 		programTermID = *task.ProgramTermID
 	} else {

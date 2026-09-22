@@ -16,7 +16,7 @@ CHART_DIR        ?= charts/lfx-mentorship-backend
 DEPLOYMENT_NAME  ?= $(RELEASE_NAME)-lfx-mentorship-backend
 DEPLOY_TAG       ?= dev-$(shell date +%Y%m%d%H%M%S)
 
-.PHONY: all clean deps build run test fmt lint license-check \
+.PHONY: all clean deps build run test test-integration fmt lint license-check \
         docker-build docker-run helm-install deploy-kind db-migrate
 
 all: build
@@ -39,6 +39,13 @@ run:
 ## test: run all unit tests
 test:
 	go test -race -count=1 ./...
+
+## test-integration: apply migrations and run PostgreSQL-backed integration tests
+##   Requires: TEST_DATABASE_DSN, e.g. postgres://mentorship:mentorship@localhost:5433/mentorship_test?sslmode=disable
+test-integration:
+	@test -n "$(TEST_DATABASE_DSN)" || { echo "ERROR: TEST_DATABASE_DSN is required"; exit 1; }
+	env -u DB_HOST -u DB_PORT -u DB_USER -u DB_PASSWORD -u DB_NAME -u DB_SSLMODE DATABASE_DSN="$(TEST_DATABASE_DSN)" go run ./cmd/migrate
+	TEST_DATABASE_DSN="$(TEST_DATABASE_DSN)" go test -race -count=1 -tags=integration ./internal/infrastructure/db
 
 ## fmt: format all Go source files
 fmt:

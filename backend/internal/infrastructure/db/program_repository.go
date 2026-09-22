@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
@@ -29,7 +30,7 @@ func NewProgramRepository(pool *pgxpool.Pool) *ProgramRepository {
 }
 
 const programSelectCols = `
-	programs.id, programs.name, programs.slug, programs.status, programs.is_paid,
+	programs.id, programs.project_uid, programs.name, programs.slug, programs.status, programs.is_paid,
 	programs.description, programs.logo_url, programs.website_url, programs.repo_link,
 	programs.code_of_conduct, programs.industry, programs.color, programs.lfid,
 	programs.cii_project_id, programs.accept_applications,
@@ -38,7 +39,7 @@ const programSelectCols = `
 	programs.mentee_needs, programs.task_templates, programs.created_on, programs.updated_on`
 
 const programReturningCols = `
-	id, name, slug, status, is_paid, description, logo_url, website_url, repo_link,
+	id, project_uid, name, slug, status, is_paid, description, logo_url, website_url, repo_link,
 	code_of_conduct, industry, color, lfid, cii_project_id, accept_applications,
 	terms_and_conditions, program_term_status, discover_sort_rank, amount_raised,
 	mentee_needs, task_templates, created_on, updated_on`
@@ -50,7 +51,7 @@ const programsWithFundingFrom = `
 func scanProgram(row pgx.Row) (*models.Program, error) {
 	var p models.Program
 	err := row.Scan(
-		&p.ID, &p.Name, &p.Slug, &p.Status, &p.IsPaid, &p.Description, &p.LogoURL,
+		&p.ID, &p.ProjectUID, &p.Name, &p.Slug, &p.Status, &p.IsPaid, &p.Description, &p.LogoURL,
 		&p.WebsiteURL, &p.RepoLink, &p.CodeOfConduct, &p.Industry, &p.Color, &p.LFID,
 		&p.CIIProjectID, &p.AcceptApplications, &p.TermsAndConditions, &p.ProgramTermStatus,
 		&p.DiscoverSortRank, &p.AmountRaised, &p.MenteeNeeds, &p.TaskTemplates,
@@ -502,17 +503,22 @@ func (r *ProgramRepository) loadCatalogMentors(ctx context.Context, ids []string
 func (r *ProgramRepository) Create(ctx context.Context, input models.ProgramCreateInput) (*models.Program, error) {
 	ctx, span := programTracer.Start(ctx, "db.programs.Create")
 	defer span.End()
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin create program transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const q = `
 		INSERT INTO programs (
-			id, name, slug, status, is_paid, description, logo_url, website_url, repo_link,
+			id, project_uid, name, slug, status, is_paid, description, logo_url, website_url, repo_link,
 			code_of_conduct, industry, color, lfid, cii_project_id, accept_applications,
 			terms_and_conditions, mentee_needs, task_templates
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
 		RETURNING` + programReturningCols
 
-	p, err := scanProgram(r.pool.QueryRow(ctx, q,
-		input.ID, input.Name, input.Slug, input.Status, input.IsPaid,
+	p, err := scanProgram(tx.QueryRow(ctx, q,
+		input.ID, input.ProjectUID, input.Name, input.Slug, input.Status, input.IsPaid,
 		input.Description, input.LogoURL, input.WebsiteURL, input.RepoLink,
 		input.CodeOfConduct, input.Industry, input.Color, input.LFID, input.CIIProjectID,
 		input.AcceptApplications, input.TermsAndConditions,
@@ -522,6 +528,37 @@ func (r *ProgramRepository) Create(ctx context.Context, input models.ProgramCrea
 		span.RecordError(err)
 		return nil, fmt.Errorf("create program: %w", err)
 	}
+	if input.CreatorUserID == "" {
+		return nil, fmt.Errorf("create program: creator user is required")
+	}
+	creatorMemberID := uuid.NewString()
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO program_members (id, program_id, user_id, member_type, status)
+		VALUES ($1, $2, $3, 'program_admin', 'active')`, creatorMemberID, p.ID, input.CreatorUserID); err != nil {
+		return nil, fmt.Errorf("create program creator membership: %w", err)
+	}
+	var creatorLFID string
+	if err := tx.QueryRow(ctx, `SELECT lfid FROM users WHERE id = $1`, input.CreatorUserID).Scan(&creatorLFID); err != nil || creatorLFID == "" {
+		if err == nil {
+			err = errors.New("creator has no LFID")
+		}
+		return nil, fmt.Errorf("resolve program creator LFID: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO fga_outbox (marker_kind, object_type, object_uid, relation, username, desired_operation)
+		VALUES ('membership', 'mentorship_program', $1, 'writer', $2, 'sync')
+		ON CONFLICT (object_type, object_uid, relation, username) WHERE marker_kind = 'membership'
+			DO UPDATE SET generation = fga_outbox.generation + 1, state = CASE WHEN fga_outbox.state = 'in_flight' THEN 'in_flight' ELSE 'pending' END,
+			              claimed_generation = CASE WHEN fga_outbox.state = 'in_flight' THEN fga_outbox.claimed_generation ELSE NULL END, claimed_at = CASE WHEN fga_outbox.state = 'in_flight' THEN fga_outbox.claimed_at ELSE NULL END, attempts = 0,
+		              next_attempt_at = NOW(), last_error = NULL, updated_on = NOW()`, p.ID, creatorLFID); err != nil {
+		return nil, fmt.Errorf("enqueue program creator membership: %w", err)
+	}
+	if err := enqueueObjectMarker(ctx, tx, "mentorship_program", p.ID, updateAccessOperation); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit create program transaction: %w", err)
+	}
 	return p, nil
 }
 
@@ -530,6 +567,11 @@ func (r *ProgramRepository) Update(ctx context.Context, id string, input models.
 	ctx, span := programTracer.Start(ctx, "db.programs.Update")
 	defer span.End()
 	span.SetAttributes(attribute.String("db.program_id", id))
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin update program transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const q = `
 		UPDATE programs SET
@@ -562,7 +604,7 @@ func (r *ProgramRepository) Update(ctx context.Context, id string, input models.
 	}
 
 	var updatedID string
-	err := r.pool.QueryRow(ctx, q,
+	err = tx.QueryRow(ctx, q,
 		id, input.Name, input.Slug, statusVal, input.IsPaid,
 		input.Description, input.LogoURL, input.WebsiteURL, input.RepoLink,
 		input.CodeOfConduct, input.Industry, input.Color, input.LFID, input.CIIProjectID,
@@ -577,10 +619,16 @@ func (r *ProgramRepository) Update(ctx context.Context, id string, input models.
 		return nil, fmt.Errorf("update program: %w", err)
 	}
 
-	p, err := r.GetByID(ctx, updatedID)
+	p, err := scanProgram(tx.QueryRow(ctx, `SELECT`+programSelectCols+programsWithFundingFrom+` WHERE programs.id = $1`, updatedID))
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("reload updated program: %w", err)
+	}
+	if err := enqueueObjectMarker(ctx, tx, "mentorship_program", updatedID, updateAccessOperation); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit update program transaction: %w", err)
 	}
 	return p, nil
 }
@@ -589,8 +637,17 @@ func (r *ProgramRepository) Update(ctx context.Context, id string, input models.
 func (r *ProgramRepository) Delete(ctx context.Context, id string) error {
 	ctx, span := programTracer.Start(ctx, "db.programs.Delete")
 	defer span.End()
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin delete program transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	applicationIDs, taskIDs, err := descendantIDsForProgram(ctx, tx, id)
+	if err != nil {
+		return err
+	}
 
-	cmd, err := r.pool.Exec(ctx, `DELETE FROM programs WHERE id = $1`, id)
+	cmd, err := tx.Exec(ctx, `DELETE FROM programs WHERE id = $1`, id)
 	if err != nil {
 		span.RecordError(err)
 		return fmt.Errorf("delete program: %w", err)
@@ -598,7 +655,80 @@ func (r *ProgramRepository) Delete(ctx context.Context, id string) error {
 	if cmd.RowsAffected() == 0 {
 		return domain.ErrProgramNotFound
 	}
+	for _, taskID := range taskIDs {
+		if err := enqueueObjectMarker(ctx, tx, "mentorship_task", taskID, deleteAccessOperation); err != nil {
+			return err
+		}
+	}
+	for _, applicationID := range applicationIDs {
+		if err := enqueueObjectMarker(ctx, tx, "mentorship_application", applicationID, deleteAccessOperation); err != nil {
+			return err
+		}
+	}
+	if err := enqueueObjectMarker(ctx, tx, "mentorship_program", id, deleteAccessOperation); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit delete program transaction: %w", err)
+	}
 	return nil
+}
+
+const (
+	updateAccessOperation = "update_access"
+	deleteAccessOperation = "delete_access"
+)
+
+func enqueueObjectMarker(ctx context.Context, tx pgx.Tx, objectType, objectID, operation string) error {
+	const q = `
+		INSERT INTO fga_outbox (marker_kind, object_type, object_uid, desired_operation)
+		VALUES ('object', $1, $2, $3)
+		ON CONFLICT (object_type, object_uid) WHERE marker_kind = 'object'
+		DO UPDATE SET desired_operation = EXCLUDED.desired_operation,
+		              generation = fga_outbox.generation + 1,
+		              state = CASE WHEN fga_outbox.state = 'in_flight' THEN 'in_flight' ELSE 'pending' END, claimed_generation = CASE WHEN fga_outbox.state = 'in_flight' THEN fga_outbox.claimed_generation ELSE NULL END, claimed_at = CASE WHEN fga_outbox.state = 'in_flight' THEN fga_outbox.claimed_at ELSE NULL END,
+		              attempts = 0, next_attempt_at = NOW(), last_error = NULL,
+		              updated_on = NOW()`
+	if _, err := tx.Exec(ctx, q, objectType, objectID, operation); err != nil {
+		return fmt.Errorf("enqueue %s FGA marker: %w", objectType, err)
+	}
+	return nil
+}
+
+func descendantIDsForProgram(ctx context.Context, tx pgx.Tx, programID string) (applications, tasks []string, err error) {
+	rows, err := tx.Query(ctx, `
+		SELECT a.id, t.id
+		FROM program_terms pt
+		LEFT JOIN applications a ON a.program_term_id = pt.id
+		LEFT JOIN tasks t ON t.application_id = a.id
+		WHERE pt.program_id = $1
+		UNION
+		SELECT NULL, t.id
+		FROM program_terms pt
+		JOIN tasks t ON t.program_term_id = pt.id
+		WHERE pt.program_id = $1`, programID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("list program descendants: %w", err)
+	}
+	defer rows.Close()
+	seenApps := map[string]bool{}
+	seenTasks := map[string]bool{}
+	for rows.Next() {
+		var applicationID *string
+		var taskID *string
+		if err := rows.Scan(&applicationID, &taskID); err != nil {
+			return nil, nil, fmt.Errorf("scan program descendant: %w", err)
+		}
+		if applicationID != nil && !seenApps[*applicationID] {
+			applications = append(applications, *applicationID)
+			seenApps[*applicationID] = true
+		}
+		if taskID != nil && !seenTasks[*taskID] {
+			tasks = append(tasks, *taskID)
+			seenTasks[*taskID] = true
+		}
+	}
+	return applications, tasks, rows.Err()
 }
 
 // ListSkills returns all skills for a program.

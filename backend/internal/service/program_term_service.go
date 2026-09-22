@@ -46,6 +46,20 @@ func (s *ProgramTermService) GetByID(ctx context.Context, id string) (*models.Pr
 	return t, nil
 }
 
+// GetByProgramAndID returns the program term only when it belongs to the given parent program.
+func (s *ProgramTermService) GetByProgramAndID(ctx context.Context, programID, id string) (*models.ProgramTerm, error) {
+	ctx, span := programTermSvcTracer.Start(ctx, "ProgramTermService.GetByProgramAndID")
+	defer span.End()
+	span.SetAttributes(attribute.String("program.id", programID), attribute.String("term.id", id))
+
+	t, err := s.repo.GetByProgramAndID(ctx, programID, id)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("get program term for program: %w", err)
+	}
+	return t, nil
+}
+
 // ListByProgram returns paginated terms for a program.
 func (s *ProgramTermService) ListByProgram(ctx context.Context, programID string, filter models.ProgramTermFilter) ([]*models.ProgramTerm, *models.PaginationMeta, error) {
 	ctx, span := programTermSvcTracer.Start(ctx, "ProgramTermService.ListByProgram")

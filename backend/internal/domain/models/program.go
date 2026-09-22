@@ -33,6 +33,7 @@ func (s ProgramStatus) IsValid() bool {
 // Program maps to the public.programs table.
 type Program struct {
 	ID                 string             `json:"id"`
+	ProjectUID         *string            `json:"project_uid,omitempty"`
 	Name               string             `json:"name"`
 	Slug               string             `json:"slug"`
 	Status             ProgramStatus      `json:"status"`
@@ -59,7 +60,9 @@ type Program struct {
 
 // ProgramCreateInput is the request body for creating a program.
 type ProgramCreateInput struct {
+	CreatorUserID      string          `json:"-"`
 	ID                 string          `json:"id"`
+	ProjectUID         *string         `json:"project_uid,omitempty"`
 	Name               string          `json:"name"`
 	Slug               string          `json:"slug"`
 	Status             ProgramStatus   `json:"status"`

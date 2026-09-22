@@ -45,6 +45,28 @@ service:
   port: 80
   targetPort: 8080
 
+# ── Shared gateway integration ──────────────────────────────────────────────
+# These remain disabled until the platform model, RuleSet, and environment
+# values are approved together.
+app:
+  audience: lfx-mentorship-backend
+
+lfx:
+  domain: ""
+
+traefik:
+  gateway:
+    name: ""
+    namespace: ""
+
+heimdall:
+  enabled: false
+  addMiddleware: false
+  url: ""
+
+openfga:
+  enabled: false
+
 ingress:
   enabled: false
   className: ""
@@ -107,6 +129,14 @@ config:
   JWKS_URL: ""
   JWT_AUDIENCE: ""
   JWT_ISSUER: ""
+  HEIMDALL_JWKS_URL: ""
+  HEIMDALL_JWT_AUDIENCE: ""
+  HEIMDALL_JWT_ISSUER: ""
+  FGA_NATS_URL: ""
+  FGA_RELAY_BATCH_SIZE: "50"
+  FGA_RELAY_INTERVAL: "1s"
+  FGA_RELAY_RETRY_DELAY: "1m"
+  FGA_RELAY_MAX_ATTEMPTS: "10"
   LEDGER_BASE_URL: ""
   CROWDFUNDING_BASE_URL: ""
   CROWDFUNDING_TOKEN_URL: ""
@@ -180,3 +210,23 @@ fundingStatsSyncCronJob:
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 1
   concurrencyPolicy: Forbid
+
+# ── CronJob: fga-reconcile ───────────────────────────────────────────────────
+# Re-dirties current PostgreSQL authorization state for the outbox relay.
+# Keep disabled until the FGA model, roster authority, and gateway rollout are
+# approved in the target environment.
+fgaReconcileCronJob:
+  enabled: false
+  schedule: "17 2 * * *"
+  activeDeadlineSeconds: 1800
+  backoffLimit: 2
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi

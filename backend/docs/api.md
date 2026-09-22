@@ -1,8 +1,54 @@
 # LFX Mentorship API — Developer Reference
 
-**Base URL**: `http(s)://<host>/v1`  
+**Base URL**: `http(s)://<host>/v1` for the interim Auth0 deployment, or
+`https://lfx-api.<environment>/mentorship/v1` through the Heimdall gateway.
 **Content-Type**: `application/json` for all request and response bodies  
 **Module**: `github.com/linuxfoundation/lfx-v2-mentorship-service`
+
+The bare `/v1` mount is retained only during the pre-cutover deployment. It
+accepts Auth0 tokens and must be retired when the shared gateway is enabled.
+Gateway traffic uses Heimdall-signed JWTs and receives object authorization
+from the gateway RuleSet/OpenFGA model.
+
+### Gateway route changes
+
+The gateway-authorized API uses canonical resource paths:
+
+- Self-service user and profile mutations use `/me` and `/me/profiles`.
+- User application reads use `/me/applications`.
+- Term-scoped routes use `/programs/{programUID}/terms/{termID}`.
+- Profile records with duplicate profile types use `/me/profiles/by-id/{id}`.
+- Application lifecycle operations are split into dedicated status, withdrawal,
+  reapply, note, and evaluation routes.
+- Task submission and reviewer operations use dedicated `/submission` and
+  `/review` routes.
+
+The legacy ID-addressed identity writes and un-nested term paths are not part of
+the gateway contract. Program slugs must first be resolved through
+`GET /programs/resolve/{id}` before calling an FGA-checked UID route.
+
+### Authorization roster management
+
+These platform-management routes require the corresponding OAuth scope:
+
+- `GET/POST /admin/approver-team/members` requires
+  `manage:mentorship:approvers`.
+- `DELETE /admin/approver-team/members/{userID}` requires the same scope.
+- `GET/POST /projects/{projectUID}/mentorship-program-admins` requires
+  `manage:mentorship:project-admins`.
+- `DELETE /projects/{projectUID}/mentorship-program-admins/{userID}` requires
+  the same scope.
+
+The service rejects self-escalation. Changes are persisted with their FGA
+membership marker transactionally, and removals are retained as tombstones for
+reconciliation.
+
+For local PostgreSQL-backed outbox tests, start `docker compose up -d`, create
+an isolated `mentorship_test` database, and run:
+
+```bash
+TEST_DATABASE_DSN='postgres://mentorship:mentorship@localhost:5433/mentorship_test?sslmode=disable' make test-integration
+```
 
 ---
 

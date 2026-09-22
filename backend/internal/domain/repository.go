@@ -12,10 +12,27 @@ import (
 // UserRepository defines persistence operations for users.
 type UserRepository interface {
 	GetByID(ctx context.Context, id string) (*models.User, error)
+	GetByLFID(ctx context.Context, lfid string) (*models.User, error)
 	List(ctx context.Context, filter models.UserFilter) ([]*models.User, *models.PaginationMeta, error)
 	Create(ctx context.Context, input models.UserCreateInput) (*models.User, error)
+	UpsertByLFID(ctx context.Context, input models.UserCreateInput) (*models.User, error)
 	Update(ctx context.Context, id string, input models.UserUpdateInput) (*models.User, error)
 	Delete(ctx context.Context, id string) error
+}
+
+// ApproverRepository returns the LFIDs in the global mentorship approver team.
+type ApproverRepository interface {
+	ListLFIDs(ctx context.Context) ([]string, error)
+}
+
+// RosterRepository manages platform-authorized FGA rosters.
+type RosterRepository interface {
+	ListApprovers(ctx context.Context) ([]*models.RosterMember, error)
+	AddApprover(ctx context.Context, userID string) (*models.RosterMember, error)
+	RemoveApprover(ctx context.Context, userID string) error
+	ListProjectAdmins(ctx context.Context, projectUID string) ([]*models.RosterMember, error)
+	AddProjectAdmin(ctx context.Context, projectUID, userID string) (*models.RosterMember, error)
+	RemoveProjectAdmin(ctx context.Context, projectUID, userID string) error
 }
 
 // UserProfileRepository defines persistence operations for user profiles.
@@ -80,6 +97,7 @@ type FundingStatsRepository interface {
 // ProgramTermRepository defines persistence operations for program terms.
 type ProgramTermRepository interface {
 	GetByID(ctx context.Context, id string) (*models.ProgramTerm, error)
+	GetByProgramAndID(ctx context.Context, programID, id string) (*models.ProgramTerm, error)
 	ListByProgram(ctx context.Context, programID string, filter models.ProgramTermFilter) ([]*models.ProgramTerm, *models.PaginationMeta, error)
 	Create(ctx context.Context, input models.ProgramTermCreateInput) (*models.ProgramTerm, error)
 	Update(ctx context.Context, id string, input models.ProgramTermUpdateInput) (*models.ProgramTerm, error)
@@ -107,6 +125,9 @@ type ApplicationRepository interface {
 	ListByProgramTerm(ctx context.Context, programTermID string, filter models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error)
 	ListByUser(ctx context.Context, userID string, filter models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error)
 	Create(ctx context.Context, programTermID string, input models.ApplicationCreateInput) (*models.Application, error)
+	CreateWithTasks(ctx context.Context, programTermID string, input models.ApplicationCreateInput, tasks []models.TaskCreateInput) (*models.Application, error)
+	Reapply(ctx context.Context, oldID, programTermID string, input models.ApplicationCreateInput) (*models.Application, error)
+	ReapplyWithTasks(ctx context.Context, oldID, programTermID string, input models.ApplicationCreateInput, tasks []models.TaskCreateInput) (*models.Application, error)
 	Update(ctx context.Context, id string, input models.ApplicationUpdateInput) (*models.Application, error)
 	Delete(ctx context.Context, id string) error
 

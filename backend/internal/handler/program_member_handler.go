@@ -56,10 +56,14 @@ func (h *ProgramMemberHandler) List(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if program.Status != models.ProgramStatusPublished {
+		Error(w, domain.ErrProgramNotFound)
+		return
+	}
 	members, meta, err := h.svc.ListByProgram(r.Context(), program.ID, models.ProgramMemberFilter{
 		Limit:      limit,
 		Offset:     offset,
-		MemberType: r.URL.Query().Get("member_type"),
+		MemberType: string(models.MemberTypeMentor),
 		Status:     string(models.ProgramMemberStatusActive),
 	})
 	if err != nil {

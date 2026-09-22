@@ -146,6 +146,11 @@ func (r *TaskRepository) listWithFilter(ctx context.Context, span trace.Span, ba
 func (r *TaskRepository) Create(ctx context.Context, applicationID string, input models.TaskCreateInput) (*models.Task, error) {
 	ctx, span := taskTracer.Start(ctx, "db.tasks.Create")
 	defer span.End()
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin create task transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const q = `
 		INSERT INTO tasks (
@@ -155,7 +160,7 @@ func (r *TaskRepository) Create(ctx context.Context, applicationID string, input
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 		RETURNING ` + taskCols
 
-	t, err := scanTask(r.pool.QueryRow(ctx, q,
+	t, err := scanTask(tx.QueryRow(ctx, q,
 		input.ID, applicationID, input.ProgramTermID, input.AssigneeID, input.OwnerID,
 		input.Name, input.Description, input.Category, input.Status, input.Custom,
 		input.SubmitFile, input.DueDate, input.CreatedBy,
@@ -163,6 +168,12 @@ func (r *TaskRepository) Create(ctx context.Context, applicationID string, input
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("create task: %w", err)
+	}
+	if err := enqueueTaskMarker(ctx, tx, t, "update_access"); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit create task transaction: %w", err)
 	}
 	return t, nil
 }
@@ -172,6 +183,11 @@ func (r *TaskRepository) Update(ctx context.Context, id string, input models.Tas
 	ctx, span := taskTracer.Start(ctx, "db.tasks.Update")
 	defer span.End()
 	span.SetAttributes(attribute.String("db.task_id", id))
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin update task transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const q = `
 		UPDATE tasks SET
@@ -188,7 +204,7 @@ func (r *TaskRepository) Update(ctx context.Context, id string, input models.Tas
 		WHERE id = $1
 		RETURNING ` + taskCols
 
-	t, err := scanTask(r.pool.QueryRow(ctx, q,
+	t, err := scanTask(tx.QueryRow(ctx, q,
 		id, input.Name, input.Description, input.Category, input.Status,
 		input.ApplicationStatus, input.ProgramTermStatus, input.Custom,
 		input.SubmitFile, input.File, input.DueDate,
@@ -200,6 +216,12 @@ func (r *TaskRepository) Update(ctx context.Context, id string, input models.Tas
 		span.RecordError(err)
 		return nil, fmt.Errorf("update task: %w", err)
 	}
+	if err := enqueueTaskMarker(ctx, tx, t, "update_access"); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit update task transaction: %w", err)
+	}
 	return t, nil
 }
 
@@ -207,14 +229,69 @@ func (r *TaskRepository) Update(ctx context.Context, id string, input models.Tas
 func (r *TaskRepository) Delete(ctx context.Context, id string) error {
 	ctx, span := taskTracer.Start(ctx, "db.tasks.Delete")
 	defer span.End()
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin delete task transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	current, err := scanTask(tx.QueryRow(ctx, `SELECT `+taskCols+` FROM tasks WHERE id = $1`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrTaskNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("load task before delete: %w", err)
+	}
 
-	cmd, err := r.pool.Exec(ctx, `DELETE FROM tasks WHERE id = $1`, id)
+	cmd, err := tx.Exec(ctx, `DELETE FROM tasks WHERE id = $1`, id)
 	if err != nil {
 		span.RecordError(err)
 		return fmt.Errorf("delete task: %w", err)
 	}
 	if cmd.RowsAffected() == 0 {
 		return domain.ErrTaskNotFound
+	}
+	if err := enqueueTaskMarker(ctx, tx, current, "delete_access"); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit delete task transaction: %w", err)
+	}
+	return nil
+}
+
+func enqueueTaskMarker(ctx context.Context, tx pgx.Tx, task *models.Task, operation string) error {
+	const q = `
+		INSERT INTO fga_outbox (marker_kind, object_type, object_uid, desired_operation)
+		VALUES ('object', 'mentorship_task', $1, $2)
+		ON CONFLICT (object_type, object_uid) WHERE marker_kind = 'object'
+		DO UPDATE SET desired_operation = EXCLUDED.desired_operation,
+		              generation = fga_outbox.generation + 1,
+		              state = CASE WHEN fga_outbox.state = 'in_flight' THEN 'in_flight' ELSE 'pending' END, claimed_generation = CASE WHEN fga_outbox.state = 'in_flight' THEN fga_outbox.claimed_generation ELSE NULL END, claimed_at = CASE WHEN fga_outbox.state = 'in_flight' THEN fga_outbox.claimed_at ELSE NULL END,
+		              attempts = 0, next_attempt_at = NOW(), last_error = NULL,
+		              updated_on = NOW()`
+	if operation == "delete_access" {
+		if _, err := tx.Exec(ctx, q, task.ID, operation); err != nil {
+			return fmt.Errorf("enqueue task FGA marker: %w", err)
+		}
+		return nil
+	}
+	if task.ApplicationID == nil || *task.ApplicationID == "" {
+		return fmt.Errorf("task %s has no application parent", task.ID)
+	}
+	var lfid string
+	const lookup = `
+		SELECT u.lfid
+		FROM applications a
+		JOIN users u ON u.id = $2
+		WHERE a.id = $1`
+	if err := tx.QueryRow(ctx, lookup, *task.ApplicationID, task.AssigneeID).Scan(&lfid); err != nil {
+		return fmt.Errorf("resolve task FGA parent and assignee: %w", err)
+	}
+	if lfid == "" {
+		return fmt.Errorf("task assignee %s has no LFID", task.AssigneeID)
+	}
+	if _, err := tx.Exec(ctx, q, task.ID, operation); err != nil {
+		return fmt.Errorf("enqueue task FGA marker: %w", err)
 	}
 	return nil
 }
