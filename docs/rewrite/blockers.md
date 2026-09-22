@@ -35,6 +35,15 @@ service:
 - `project#mentorship_program_admin`
 - computed `project#mentorship_program_creator`
 
+[lfx-v2-helm#177](https://github.com/linuxfoundation/lfx-v2-helm/pull/177)
+introduces `mentorship_program#global_mentorship_approver` (userset-only) and
+the computed `mentorship_program#approver`. The approver-team userset is
+stamped on `global_mentorship_approver`, not on `auditor`, which now accepts
+only `[user]` directly. `backend/internal/infrastructure/fga/payload.go`
+currently emits `references.auditor` and must be changed before tuple emission
+is enabled, or OpenFGA rejects the tuple as invalid and approvers cannot read
+submitted programs.
+
 The model must also include executable positive, negative, and inheritance
 fixtures. The guide calls for the reviewed 14-scenario suite with checks for
 program writers, inherited project writers, mentors, applicants, assignees,
