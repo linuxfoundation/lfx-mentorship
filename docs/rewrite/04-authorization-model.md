@@ -125,7 +125,10 @@ type mentorship_program
     # submitted, non-public program in order to review it — but not manage
     # it. The grant is stamped per-program at creation (AQ-9).
     define global_mentorship_approver: [mentorship_approver_team#member]
-    # @fgadoc:jtbd View program settings & member lists
+    # @fgadoc:jtbd View program settings & member lists for program writers,
+    # global approvers, and project auditors. Mentors are intentionally not
+    # program-level auditors; they reach applications and tasks through the
+    # program manager/reviewer relations instead.
     define auditor: [user] or global_mentorship_approver or writer or auditor from project
     # @fgadoc:jtbd View & discover a mentorship program
     define viewer: [user:*] or auditor
@@ -208,7 +211,7 @@ The table maps against the **post-review revision** of the standalone model, whi
 | program `admin`; `can_edit`, `can_submit`, `can_invite_mentor` | `writer` | |
 | program `can_create_term` (`admin`) | `writer` | **settled — same set.** Two corrections landed here in sequence. The earliest draft granted term creation to mentors (asserted in `tests.yaml`); this doc raised it as a product mismatch and the revision dropped it — corroborated by the legacy baseline, where [00](./00-current-authz-relations.md) records term management enforced at "any membership" (mentor included) against an admin-only product intent, the same backend-looser-than-intent pattern as mentee-application approval (divergence 2). The revision then briefly over-narrowed it to the project-wide `mentorship_program_admin` pool, which would have stopped a directly-assigned per-program admin from opening a term for the program they run; this doc raised that too, and it is now a plain `admin`-gated permission. `admin` (direct `program_admin`, `project_admin`, or `writer`) and this sketch's `writer` (direct, project writer, or cross-program admin) resolve to the identical set |
 | program `can_add_task` / `can_add_prerequisite_task` (admin or mentor) | `manager` (`writer or mentor`) | same set — mentors do assign tasks |
-| program `can_view` | `auditor` / `viewer` | |
+| program `can_view` | `auditor` / `viewer` | **Program-level visibility excludes mentors**: mentors use `manager`/`reviewer` on application and task routes, while `auditor` covers writers, approvers, project auditors, and direct users |
 | program `can_view_applications` (admin or mentor) | `manager` (`writer or mentor`) | **not `auditor`**: `auditor` also admits `auditor from project` and the approver team (AQ-9), which would expose every applicant's submission to project-wide auditors and LF approvers. Applicant data is admin-and-mentor-only, so the nested list route checks the narrower relation |
 | application `mentee` | `mentee` | **adopted from the standalone model.** An earlier draft of this doc renamed it to a role-neutral `applicant`, on the grounds that mentors apply too. That reasoning still holds descriptively — a mentor's application carries the same tuple — but the name does not need to carry it: the relation behaves identically either way, and `mentee` matches the reviewed model and the product's vocabulary. Kept as `mentee` |
 | application `can_decide` | `manager` | admins only, mentors excluded — identical in both models |
