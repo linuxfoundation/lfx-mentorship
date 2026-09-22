@@ -72,8 +72,11 @@ criterion.
    ID.
 6. The deployed model contains every type and relation referenced by the
    Mentorship RuleSet and contract, including
-   `mentorship_program#global_mentorship_approver` and the
-   `references.global_mentorship_approver` key emitted by `ProgramAccess`.
+   `mentorship_program#global_mentorship_approver` and
+   `project#auditor_guard`.
+7. `ProgramAccess` emits the userset under the separate payload key
+   `references.global_mentorship_approver`, and the FGA contract test verifies
+   that key independently from the deployed model relation check.
 
 ## 2. Project Admin Relation Preservation
 
