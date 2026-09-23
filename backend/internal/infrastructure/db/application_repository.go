@@ -99,7 +99,7 @@ func (r *ApplicationRepository) ListByProgramTerm(ctx context.Context, programTe
 	}
 
 	var total int
-	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM applications`+where, args...).Scan(&total); err != nil {
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM applications a`+where, args...).Scan(&total); err != nil {
 		span.RecordError(err)
 		return nil, nil, fmt.Errorf("count applications: %w", err)
 	}

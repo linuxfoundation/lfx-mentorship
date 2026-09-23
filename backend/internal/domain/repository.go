@@ -38,6 +38,7 @@ type UserProfileRepository interface {
 	GetBySlug(ctx context.Context, slug string) (*models.UserProfile, error)
 	List(ctx context.Context, filter models.UserProfileFilter) ([]*models.UserProfile, *models.PaginationMeta, error)
 	Create(ctx context.Context, input models.UserProfileCreateInput) (*models.UserProfile, error)
+	UpsertByUserAndType(ctx context.Context, input models.UserProfileCreateInput) (*models.UserProfile, bool, error)
 	Update(ctx context.Context, id string, input models.UserProfileUpdateInput) (*models.UserProfile, error)
 	Delete(ctx context.Context, id string) error
 

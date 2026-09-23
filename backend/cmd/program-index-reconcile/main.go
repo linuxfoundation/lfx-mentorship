@@ -10,18 +10,21 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/db"
 )
 
 type programSnapshot struct {
-	ID         string  `json:"id"`
-	ProjectUID *string `json:"project_uid,omitempty"`
-	Name       string  `json:"name"`
-	Slug       string  `json:"slug"`
-	Status     string  `json:"status"`
-	LogoURL    *string `json:"logo_url,omitempty"`
+	ID         string    `json:"id"`
+	ProjectUID *string   `json:"project_uid,omitempty"`
+	Name       string    `json:"name"`
+	Slug       string    `json:"slug"`
+	Status     string    `json:"status"`
+	LogoURL    *string   `json:"logo_url,omitempty"`
+	CreatedOn  time.Time `json:"created_on"`
+	UpdatedOn  time.Time `json:"updated_on"`
 }
 
 func main() {
@@ -41,7 +44,7 @@ func run(ctx context.Context, authorization string) error {
 		return fmt.Errorf("database pool: %w", err)
 	}
 	defer pool.Close()
-	rows, err := pool.Query(ctx, `SELECT id, project_uid, name, slug, status, logo_url FROM programs`)
+	rows, err := pool.Query(ctx, `SELECT id, project_uid, name, slug, status, logo_url, created_on, updated_on FROM programs`)
 	if err != nil {
 		return fmt.Errorf("list programs: %w", err)
 	}
@@ -49,7 +52,7 @@ func run(ctx context.Context, authorization string) error {
 	outbox := db.NewIndexOutboxRepository(pool)
 	for rows.Next() {
 		var program programSnapshot
-		if err := rows.Scan(&program.ID, &program.ProjectUID, &program.Name, &program.Slug, &program.Status, &program.LogoURL); err != nil {
+		if err := rows.Scan(&program.ID, &program.ProjectUID, &program.Name, &program.Slug, &program.Status, &program.LogoURL, &program.CreatedOn, &program.UpdatedOn); err != nil {
 			return fmt.Errorf("scan program: %w", err)
 		}
 		data, err := json.Marshal(program)

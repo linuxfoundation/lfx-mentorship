@@ -104,6 +104,8 @@ CREATE TABLE IF NOT EXISTS index_outbox (
   data            JSONB,
   indexing_config JSONB,
   state           TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'in_flight', 'sent', 'dead_letter')),
+  generation      BIGINT NOT NULL DEFAULT 1,
+  claimed_generation BIGINT,
   attempts        INTEGER NOT NULL DEFAULT 0,
   created_on      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   sent_on         TIMESTAMPTZ
@@ -111,5 +113,14 @@ CREATE TABLE IF NOT EXISTS index_outbox (
 
 CREATE INDEX IF NOT EXISTS idx_index_outbox_pending
   ON index_outbox(created_on) WHERE state = 'pending';
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_index_outbox_object
+  ON index_outbox(object_type, object_uid);
+
+ALTER TABLE index_outbox
+  ADD COLUMN claimed_at TIMESTAMPTZ;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_user_profiles_user_type
+  ON user_profiles(user_id, profile_type);
 
 COMMIT;

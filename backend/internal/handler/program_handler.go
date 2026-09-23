@@ -303,6 +303,7 @@ func (h *ProgramHandler) Submit(w http.ResponseWriter, r *http.Request) {
 		Error(w, domain.ErrUnauthorized)
 		return
 	}
+	r = withIndexMetadata(r)
 	status := models.ProgramStatusSubmitted
 	program, err := h.svc.Update(r.Context(), chi.URLParam(r, "id"), models.ProgramUpdateInput{Status: &status})
 	if err != nil {
@@ -318,6 +319,7 @@ func (h *ProgramHandler) Decision(w http.ResponseWriter, r *http.Request) {
 		Error(w, domain.ErrUnauthorized)
 		return
 	}
+	r = withIndexMetadata(r)
 	var input models.ProgramUpdateInput
 	if !decodeBody(w, r, &input) {
 		return

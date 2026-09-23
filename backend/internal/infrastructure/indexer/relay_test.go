@@ -21,8 +21,14 @@ func (s *outboxStub) Enqueue(context.Context, domain.IndexOutboxRecord) error { 
 func (s *outboxStub) Claim(context.Context, int) ([]domain.IndexOutboxRecord, error) {
 	return s.records, nil
 }
-func (s *outboxStub) MarkSent(_ context.Context, id string) error  { s.sent = id; return nil }
-func (s *outboxStub) MarkRetry(_ context.Context, id string) error { s.retried = id; return nil }
+func (s *outboxStub) MarkSent(_ context.Context, record domain.IndexOutboxRecord) (bool, error) {
+	s.sent = record.ID
+	return true, nil
+}
+func (s *outboxStub) MarkRetry(_ context.Context, record domain.IndexOutboxRecord) (bool, error) {
+	s.retried = record.ID
+	return true, nil
+}
 
 type publisherStub struct {
 	subject string

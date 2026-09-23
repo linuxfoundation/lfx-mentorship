@@ -135,39 +135,7 @@ func (s *ProgramTermService) Update(ctx context.Context, id string, input models
 	}
 
 	if input.Status != nil {
-		if !input.Status.IsValid() {
-			return nil, fmt.Errorf("%w: status must be open, closed, or deleted", domain.ErrInvalidInput)
-		}
-
-		if *input.Status == models.ProgramTermStatusOpen {
-			// Reopen guard (FR-014): cannot reopen if end date has passed.
-			if current.EndDateTime != nil && time.Now().After(*current.EndDateTime) {
-				return nil, fmt.Errorf("%w: term end date has passed and cannot be reopened", domain.ErrStateLocked)
-			}
-			// Reopen guard: cannot reopen if max open terms already reached.
-			if current.Status != models.ProgramTermStatusOpen {
-				count, err := s.repo.CountOpenTermsByProgram(ctx, current.ProgramID)
-				if err != nil {
-					span.RecordError(err)
-					return nil, fmt.Errorf("check open terms for reopen: %w", err)
-				}
-				if count >= maxOpenTermsPerProgram {
-					return nil, fmt.Errorf("%w: program already has %d open term(s) (max %d)", domain.ErrStateLocked, count, maxOpenTermsPerProgram)
-				}
-			}
-		}
-
-		if *input.Status == models.ProgramTermStatusClosed {
-			// Close guard: cannot close a term that has accepted applications.
-			count, err := s.appRepo.CountAcceptedByTerm(ctx, id)
-			if err != nil {
-				span.RecordError(err)
-				return nil, fmt.Errorf("check accepted applications for close: %w", err)
-			}
-			if count > 0 {
-				return nil, fmt.Errorf("%w: term has %d accepted application(s)", domain.ErrStateLocked, count)
-			}
-		}
+		return nil, fmt.Errorf("%w: use dedicated close or reopen routes for term lifecycle changes", domain.ErrInvalidInput)
 	}
 
 	t, err := s.repo.Update(ctx, id, input)
