@@ -9,6 +9,10 @@ No Kubernetes resource is rendered; this file only produces errors.
 {{- fail "\n\nvalues.yaml: image.tag is required.\nSet it to the image tag to deploy, e.g.:\n  image:\n    tag: \"abc1234\"" }}
 {{- end }}
 
+{{- if .Values.ingress.enabled }}
+{{- fail "values.yaml: ingress.enabled is unsupported; Mentorship is served only through the shared Heimdall gateway." }}
+{{- end }}
+
 {{- if .Values.fundingStatsSyncCronJob.enabled }}
 {{- if not .Values.config.LEDGER_BASE_URL }}
 {{- fail "\n\nvalues.yaml: config.LEDGER_BASE_URL is required when fundingStatsSyncCronJob.enabled=true." }}
@@ -117,9 +121,6 @@ requiring them would block the documented local bypass flow
 {{- fail "values.yaml: enabled Heimdall resources require lfx.domain, gateway name/namespace, and heimdall.url" }}
 {{- end }}
 {{- end }}
-{{- end }}
-{{- if .Values.ingress.enabled }}
-{{- fail "values.yaml: ingress.enabled is unsupported; Mentorship is served only through the shared Heimdall gateway." }}
 {{- end }}
 {{- end }}
 {{- end }}
