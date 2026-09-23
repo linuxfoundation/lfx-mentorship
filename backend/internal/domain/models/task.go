@@ -9,9 +9,7 @@ import "time"
 type TaskStatus string
 
 const (
-	TaskStatusPending    TaskStatus = "pending"
 	TaskStatusInProgress TaskStatus = "in_progress"
-	TaskStatusCompleted  TaskStatus = "completed"
 	TaskStatusSubmitted  TaskStatus = "submitted"
 
 	TaskStatusIncomplete TaskStatus = "incomplete"
@@ -21,8 +19,7 @@ const (
 // IsValid reports whether the status value is one of the allowed enum members.
 func (s TaskStatus) IsValid() bool {
 	switch s {
-	case TaskStatusPending, TaskStatusInProgress, TaskStatusCompleted, TaskStatusSubmitted,
-		TaskStatusIncomplete, TaskStatusComplete:
+	case TaskStatusIncomplete, TaskStatusInProgress, TaskStatusSubmitted, TaskStatusComplete:
 		return true
 	}
 	return false

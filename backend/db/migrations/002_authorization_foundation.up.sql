@@ -127,6 +127,6 @@ ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_status_check;
 
 ALTER TABLE tasks
   ADD CONSTRAINT tasks_status_check
-  CHECK (status IN ('incomplete', 'pending', 'in_progress', 'submitted', 'complete', 'completed'));
+  CHECK (status IN ('incomplete', 'in_progress', 'submitted', 'complete'));
 
 COMMIT;

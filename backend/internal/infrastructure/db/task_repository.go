@@ -319,7 +319,7 @@ func (r *TaskRepository) CountPrerequisiteTasksByApplication(ctx context.Context
 			return 0, 0, fmt.Errorf("scan task status: %w", scanErr)
 		}
 		total++
-		if status == models.TaskStatusCompleted || status == models.TaskStatusComplete || status == models.TaskStatusSubmitted {
+		if status == models.TaskStatusComplete || status == models.TaskStatusSubmitted {
 			complete++
 		}
 	}

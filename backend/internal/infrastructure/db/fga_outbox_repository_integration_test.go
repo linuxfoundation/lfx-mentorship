@@ -201,7 +201,7 @@ func TestProgramApplicationsIntegration_ReturnsTaskCounts(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ('00000000-0000-0000-0000-000000000050', $1, $2, 'mentee', 'accepted')`, fixture.OpenTerm, fixture.UserID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO tasks (id, application_id, program_term_id, assignee_id, status) VALUES ('00000000-0000-0000-0000-000000000051', '00000000-0000-0000-0000-000000000050', $1, $2, 'submitted'), ('00000000-0000-0000-0000-000000000052', '00000000-0000-0000-0000-000000000050', $1, $2, 'pending')`, fixture.OpenTerm, fixture.UserID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO tasks (id, application_id, program_term_id, assignee_id, status) VALUES ('00000000-0000-0000-0000-000000000051', '00000000-0000-0000-0000-000000000050', $1, $2, 'submitted'), ('00000000-0000-0000-0000-000000000052', '00000000-0000-0000-0000-000000000050', $1, $2, 'incomplete')`, fixture.OpenTerm, fixture.UserID); err != nil {
 		t.Fatal(err)
 	}
 	rows, _, err := NewApplicationRepository(pool).ListByProgram(ctx, fixture.ProgramID, models.ProgramApplicationFilter{Type: models.ProgramApplicationTypeAll, Limit: 10})

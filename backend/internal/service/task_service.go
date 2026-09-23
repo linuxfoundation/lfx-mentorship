@@ -214,15 +214,15 @@ func (s *TaskService) Update(ctx context.Context, id string, input models.TaskUp
 		}
 
 		// State transition guard: only incomplete (reset) is unrestricted direction-wise.
-		if next != models.TaskStatusPending && next != models.TaskStatusIncomplete {
+		if next != models.TaskStatusIncomplete {
 			var validTransition bool
 			switch current.Status {
-			case models.TaskStatusPending, models.TaskStatus("incomplete"):
+			case models.TaskStatusIncomplete:
 				validTransition = next == models.TaskStatusInProgress
 			case models.TaskStatusInProgress:
 				validTransition = next == models.TaskStatusSubmitted
 			case models.TaskStatusSubmitted:
-				validTransition = next == models.TaskStatusCompleted || next == models.TaskStatusComplete
+				validTransition = next == models.TaskStatusComplete
 			}
 			if !validTransition {
 				return nil, fmt.Errorf("%w: cannot transition task from %q to %q", domain.ErrInvalidStateTransition, current.Status, next)
@@ -235,7 +235,7 @@ func (s *TaskService) Update(ctx context.Context, id string, input models.TaskUp
 			if !isAssignee {
 				return nil, fmt.Errorf("%w: only the task assignee may mark it %s", domain.ErrForbidden, next)
 			}
-		case models.TaskStatusCompleted, models.TaskStatusComplete, models.TaskStatusPending, models.TaskStatusIncomplete:
+		case models.TaskStatusComplete, models.TaskStatusIncomplete:
 			if isAssignee {
 				return nil, fmt.Errorf("%w: only a reviewer may mark a task %s", domain.ErrForbidden, next)
 			}
@@ -255,7 +255,7 @@ func (s *TaskService) Update(ctx context.Context, id string, input models.TaskUp
 
 	// tasks_submitted side-effect (FR-034): if all prerequisite tasks are now
 	// submitted or complete, mark the application and notify the admin.
-	if input.Status != nil && (*input.Status == models.TaskStatusCompleted || *input.Status == models.TaskStatusSubmitted) && t.ApplicationID != nil {
+	if input.Status != nil && (*input.Status == models.TaskStatusComplete || *input.Status == models.TaskStatusSubmitted) && t.ApplicationID != nil {
 		total, complete, countErr := s.repo.CountPrerequisiteTasksByApplication(ctx, *t.ApplicationID)
 		if countErr == nil && total > 0 && total == complete {
 			trueBool := true

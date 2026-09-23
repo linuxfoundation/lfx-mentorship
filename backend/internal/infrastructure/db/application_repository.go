@@ -169,7 +169,7 @@ func (r *ApplicationRepository) ListByProgram(ctx context.Context, programID str
 	args = append(args, limit, offset)
 	q := `SELECT a.user_id, a.id, u.name, u.email, u.avatar_url, a.status, pt.id, pt.name, pt.status, pt.start_date_time, pt.end_date_time, pt.application_start_date, pt.application_end_date,
 		(SELECT COUNT(*) FROM tasks t WHERE t.application_id = a.id),
-		(SELECT COUNT(*) FROM tasks t WHERE t.application_id = a.id AND t.status IN ('submitted', 'complete', 'completed')),
+		(SELECT COUNT(*) FROM tasks t WHERE t.application_id = a.id AND t.status IN ('submitted', 'complete')),
 		a.reviewer_note, a.created_on, a.updated_on,
 		COALESCE((SELECT jsonb_agg(jsonb_build_object('program_id', op.id, 'program_name', op.name, 'status', oa.status))
 			FROM applications oa JOIN program_terms ot ON ot.id = oa.program_term_id JOIN programs op ON op.id = ot.program_id

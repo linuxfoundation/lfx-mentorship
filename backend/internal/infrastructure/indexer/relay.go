@@ -55,7 +55,16 @@ func (r *Relay) RunOnce(ctx context.Context) error {
 	for _, record := range records {
 		headers := record.Headers
 		if r.authorization != "" {
-			headers, err = json.Marshal(map[string]string{"authorization": r.authorization})
+			var headerValues map[string]string
+			if len(headers) > 0 {
+				if err := json.Unmarshal(headers, &headerValues); err != nil {
+					return fmt.Errorf("decode index headers for record %s: %w", record.ID, err)
+				}
+			} else {
+				headerValues = map[string]string{}
+			}
+			headerValues["authorization"] = r.authorization
+			headers, err = json.Marshal(headerValues)
 			if err != nil {
 				return fmt.Errorf("marshal index authorization for record %s: %w", record.ID, err)
 			}

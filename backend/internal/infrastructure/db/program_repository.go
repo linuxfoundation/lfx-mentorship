@@ -251,11 +251,10 @@ func (r *ProgramRepository) List(ctx context.Context, filter models.ProgramFilte
 	return programs, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, nil
 }
 
-// GetEnrollmentTemplate returns enrollment fields only for an active program admin.
-func (r *ProgramRepository) GetEnrollmentTemplate(ctx context.Context, userID, programID string) (*models.ProgramEnrollmentTemplate, error) {
-	q := `SELECT ` + programSelectCols + ` FROM programs JOIN program_members pm ON pm.program_id = programs.id
-		WHERE programs.id = $1 AND pm.user_id = $2 AND pm.member_type = 'program_admin' AND pm.status = 'active'`
-	program, err := scanProgram(r.pool.QueryRow(ctx, q, programID, userID))
+// GetEnrollmentTemplate returns enrollment fields for a gateway-authorized program.
+func (r *ProgramRepository) GetEnrollmentTemplate(ctx context.Context, _ string, programID string) (*models.ProgramEnrollmentTemplate, error) {
+	q := `SELECT ` + programSelectCols + ` FROM programs WHERE programs.id = $1`
+	program, err := scanProgram(r.pool.QueryRow(ctx, q, programID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrProgramNotFound
 	}
