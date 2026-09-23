@@ -296,9 +296,24 @@ func TestProgramService_GetCatalog_NotFound(t *testing.T) {
 	}
 }
 
+func TestProgramService_GetCatalog_DraftReturnsOK(t *testing.T) {
+	repo := &stubProgRepo{
+		getCatalog: func(_ context.Context, id string) (*models.ProgramCatalogItem, error) {
+			return &models.ProgramCatalogItem{Program: models.Program{ID: id, Status: models.ProgramStatusDraft}}, nil
+		},
+	}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	item, err := svc.GetCatalog(context.Background(), "p1")
+	if err != nil {
+		t.Fatalf("expected nil error for draft, got %v", err)
+	}
+	if item.ID != "p1" {
+		t.Errorf("id = %q; want p1", item.ID)
+	}
+}
+
 func TestProgramService_GetCatalog_Unpublished(t *testing.T) {
 	for _, status := range []models.ProgramStatus{
-		models.ProgramStatusDraft,
 		models.ProgramStatusRejected,
 		models.ProgramStatusHidden,
 		models.ProgramStatusArchived,
