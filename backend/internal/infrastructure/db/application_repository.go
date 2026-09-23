@@ -170,7 +170,10 @@ func (r *ApplicationRepository) ListByProgram(ctx context.Context, programID str
 	q := `SELECT a.user_id, a.id, u.name, u.email, u.avatar_url, a.status, pt.id, pt.name, pt.status,
 		(SELECT COUNT(*) FROM tasks t WHERE t.application_id = a.id),
 		(SELECT COUNT(*) FROM tasks t WHERE t.application_id = a.id AND t.status IN ('submitted', 'complete')),
-		a.reviewer_note, a.created_on, a.updated_on
+		a.reviewer_note, a.created_on, a.updated_on,
+		COALESCE((SELECT jsonb_agg(jsonb_build_object('program_id', op.id, 'program_name', op.name, 'status', oa.status))
+			FROM applications oa JOIN program_terms ot ON ot.id = oa.program_term_id JOIN programs op ON op.id = ot.program_id
+			WHERE oa.user_id = a.user_id AND op.id <> pt.program_id AND oa.role = 'mentee' AND oa.status IN ('pending', 'accepted', 'graduated')), '[]'::jsonb)
 		FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id JOIN users u ON u.id = a.user_id` + where + fmt.Sprintf(` ORDER BY a.created_on DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
 	rows, err := r.pool.Query(ctx, q, args...)
 	if err != nil {
@@ -180,7 +183,7 @@ func (r *ApplicationRepository) ListByProgram(ctx context.Context, programID str
 	result := make([]*models.ProgramApplicationRow, 0)
 	for rows.Next() {
 		var row models.ProgramApplicationRow
-		if err := rows.Scan(&row.UserID, &row.ApplicationID, &row.Name, &row.Email, &row.AvatarURL, &row.Status, &row.Term.ID, &row.Term.Name, &row.Term.Status, &row.TasksTotal, &row.TasksSubmitted, &row.Note, &row.CreatedOn, &row.UpdatedOn); err != nil {
+		if err := rows.Scan(&row.UserID, &row.ApplicationID, &row.Name, &row.Email, &row.AvatarURL, &row.Status, &row.Term.ID, &row.Term.Name, &row.Term.Status, &row.TasksTotal, &row.TasksSubmitted, &row.Note, &row.CreatedOn, &row.UpdatedOn, &row.OtherApplications); err != nil {
 			return nil, nil, fmt.Errorf("scan program application: %w", err)
 		}
 		result = append(result, &row)

@@ -3,7 +3,10 @@
 
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type ProgramApplicationType string
 
@@ -24,18 +27,19 @@ type ProgramApplicationTerm struct {
 }
 
 type ProgramApplicationRow struct {
-	UserID         string                 `json:"user_id"`
-	ApplicationID  string                 `json:"application_id"`
-	Name           *string                `json:"name,omitempty"`
-	Email          *string                `json:"email,omitempty"`
-	AvatarURL      *string                `json:"avatar_url,omitempty"`
-	Status         ApplicationStatus      `json:"status"`
-	Term           ProgramApplicationTerm `json:"term"`
-	TasksSubmitted int                    `json:"tasks_submitted"`
-	TasksTotal     int                    `json:"tasks_total"`
-	Note           *string                `json:"note,omitempty"`
-	CreatedOn      time.Time              `json:"created_on"`
-	UpdatedOn      time.Time              `json:"updated_on"`
+	UserID            string                 `json:"user_id"`
+	ApplicationID     string                 `json:"application_id"`
+	Name              *string                `json:"name,omitempty"`
+	Email             *string                `json:"email,omitempty"`
+	AvatarURL         *string                `json:"avatar_url,omitempty"`
+	Status            ApplicationStatus      `json:"status"`
+	Term              ProgramApplicationTerm `json:"term"`
+	TasksSubmitted    int                    `json:"tasks_submitted"`
+	TasksTotal        int                    `json:"tasks_total"`
+	Note              *string                `json:"note,omitempty"`
+	CreatedOn         time.Time              `json:"created_on"`
+	UpdatedOn         time.Time              `json:"updated_on"`
+	OtherApplications json.RawMessage        `json:"other_applications,omitempty"`
 }
 
 // ApplicationStatus enumerates valid values for applications.status.
