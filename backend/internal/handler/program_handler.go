@@ -392,14 +392,15 @@ func (h *ProgramHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	enrollment := models.ProgramEnrollmentInput{
 		Program: models.ProgramCreateInput{
-			ProjectUID:    &request.ProjectID,
-			Name:          request.Name,
-			Slug:          enrollmentSlug(request.Name),
-			Description:   request.Description,
-			RepoLink:      request.RepositoryURL,
-			WebsiteURL:    request.WebsiteURL,
-			CodeOfConduct: request.CodeOfConductURL,
-			CIIProjectID:  request.CIIProjectID,
+			ProjectUID:         &request.ProjectID,
+			Name:               request.Name,
+			Slug:               enrollmentSlug(request.Name),
+			Description:        request.Description,
+			RepoLink:           request.RepositoryURL,
+			WebsiteURL:         request.WebsiteURL,
+			CodeOfConduct:      request.CodeOfConductURL,
+			CIIProjectID:       request.CIIProjectID,
+			TermsAndConditions: request.TermsAccepted,
 		},
 		Terms:         terms,
 		Skills:        request.Skills,
@@ -484,6 +485,7 @@ func (h *ProgramHandler) AddSkill(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &input) {
 		return
 	}
+	r = withIndexMetadata(r)
 
 	skill, err := h.svc.AddSkill(r.Context(), programID, input)
 	if err != nil {
@@ -503,6 +505,7 @@ func (h *ProgramHandler) DeleteSkill(w http.ResponseWriter, r *http.Request) {
 
 	programID := chi.URLParam(r, "id")
 	skillID := chi.URLParam(r, "skillId")
+	r = withIndexMetadata(r)
 	if err := h.svc.DeleteSkill(r.Context(), programID, skillID, principal.UserID); err != nil {
 		Error(w, err)
 		return

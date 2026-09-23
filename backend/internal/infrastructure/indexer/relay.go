@@ -51,11 +51,19 @@ func (r *Relay) RunOnce(ctx context.Context) error {
 			marshalErr = r.conn.Publish("lfx.index."+record.ObjectType, payload)
 		}
 		if marshalErr != nil {
-			_, _ = r.outbox.MarkRetry(ctx, record)
+			if acknowledged, retryErr := r.outbox.MarkRetry(ctx, record); retryErr != nil {
+				return fmt.Errorf("mark retry for index record %s: %w", record.ID, retryErr)
+			} else if !acknowledged {
+				return fmt.Errorf("mark retry for index record %s was not acknowledged", record.ID)
+			}
 			return fmt.Errorf("publish index record %s: %w", record.ID, marshalErr)
 		}
-		if _, err := r.outbox.MarkSent(ctx, record); err != nil {
+		acknowledged, err := r.outbox.MarkSent(ctx, record)
+		if err != nil {
 			return err
+		}
+		if !acknowledged {
+			return fmt.Errorf("mark sent for index record %s was not acknowledged", record.ID)
 		}
 	}
 	return nil

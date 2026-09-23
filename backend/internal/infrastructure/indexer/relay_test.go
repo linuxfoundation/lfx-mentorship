@@ -13,8 +13,10 @@ import (
 )
 
 type outboxStub struct {
-	records       []domain.IndexOutboxRecord
-	sent, retried string
+	records               []domain.IndexOutboxRecord
+	sent, retried         string
+	markSentAcknowledged  bool
+	markRetryAcknowledged bool
 }
 
 func (s *outboxStub) Enqueue(context.Context, domain.IndexOutboxRecord) error { return nil }
@@ -23,10 +25,16 @@ func (s *outboxStub) Claim(context.Context, int) ([]domain.IndexOutboxRecord, er
 }
 func (s *outboxStub) MarkSent(_ context.Context, record domain.IndexOutboxRecord) (bool, error) {
 	s.sent = record.ID
+	if !s.markSentAcknowledged {
+		return false, nil
+	}
 	return true, nil
 }
 func (s *outboxStub) MarkRetry(_ context.Context, record domain.IndexOutboxRecord) (bool, error) {
 	s.retried = record.ID
+	if !s.markRetryAcknowledged {
+		return false, nil
+	}
 	return true, nil
 }
 
@@ -42,7 +50,7 @@ func (s *publisherStub) Publish(subject string, data []byte) error {
 }
 
 func TestRelayRunOncePublishesDelete(t *testing.T) {
-	outbox := &outboxStub{records: []domain.IndexOutboxRecord{{ID: "1", ObjectType: "mentorship_program", ObjectUID: "p1", Action: "deleted", Headers: json.RawMessage(`{"authorization":"Bearer x"}`)}}}
+	outbox := &outboxStub{records: []domain.IndexOutboxRecord{{ID: "1", ObjectType: "mentorship_program", ObjectUID: "p1", Action: "deleted", Headers: json.RawMessage(`{"authorization":"Bearer x"}`)}}, markSentAcknowledged: true, markRetryAcknowledged: true}
 	publisher := &publisherStub{}
 	if err := NewRelay(outbox, publisher, 1).RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
@@ -60,8 +68,24 @@ func TestRelayRunOncePublishesDelete(t *testing.T) {
 }
 
 func TestRelayRunOnceRetriesPublishFailure(t *testing.T) {
-	outbox := &outboxStub{records: []domain.IndexOutboxRecord{{ID: "1", ObjectType: "mentorship_program", Action: "updated"}}}
+	outbox := &outboxStub{records: []domain.IndexOutboxRecord{{ID: "1", ObjectType: "mentorship_program", Action: "updated"}}, markSentAcknowledged: true, markRetryAcknowledged: true}
 	if err := NewRelay(outbox, &publisherStub{err: errors.New("down")}, 1).RunOnce(context.Background()); err == nil || outbox.retried != "1" {
 		t.Fatalf("err=%v retried=%q", err, outbox.retried)
+	}
+}
+
+func TestRelayRunOnceFailsWhenMarkSentIsNotAcknowledged(t *testing.T) {
+	outbox := &outboxStub{records: []domain.IndexOutboxRecord{{ID: "1", ObjectType: "mentorship_program", Action: "updated"}}, markRetryAcknowledged: true}
+	err := NewRelay(outbox, &publisherStub{}, 1).RunOnce(context.Background())
+	if err == nil {
+		t.Fatal("expected acknowledgement error")
+	}
+}
+
+func TestRelayRunOnceFailsWhenMarkRetryIsNotAcknowledged(t *testing.T) {
+	outbox := &outboxStub{records: []domain.IndexOutboxRecord{{ID: "1", ObjectType: "mentorship_program", Action: "updated"}}, markSentAcknowledged: true}
+	err := NewRelay(outbox, &publisherStub{err: errors.New("down")}, 1).RunOnce(context.Background())
+	if err == nil {
+		t.Fatal("expected retry acknowledgement error")
 	}
 }

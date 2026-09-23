@@ -65,7 +65,7 @@ func scanProgram(row pgx.Row) (*models.Program, error) {
 }
 
 func enqueueProgramIndex(ctx context.Context, tx pgx.Tx, program *models.Program, action string) error {
-	headers := domain.IndexHeadersFromContext(ctx)
+	headers := domain.SanitizedIndexHeaders(domain.IndexHeadersFromContext(ctx))
 	if headers["authorization"] == "" {
 		return fmt.Errorf("index program: authorization metadata is required")
 	}
@@ -78,20 +78,35 @@ func enqueueProgramIndex(ctx context.Context, tx pgx.Tx, program *models.Program
 		return err
 	}
 	config := map[string]any{"object_id": program.ID, "access_check_object": "mentorship_program:" + program.ID, "access_check_relation": "writer", "history_check_object": "mentorship_program:" + program.ID, "history_check_relation": "auditor", "sort_name": program.Name, "name_and_aliases": []string{program.Name, program.Slug}, "public": program.Status == models.ProgramStatusPublished}
+	tags := []string{"status:" + string(program.Status)}
 	if program.ProjectUID != nil {
 		config["parent_refs"] = []string{"project:" + *program.ProjectUID}
-		config["tags"] = []string{"project_uid:" + *program.ProjectUID, "status:" + string(program.Status)}
+		tags = append(tags, "project_uid:"+*program.ProjectUID)
 	}
+	config["tags"] = tags
 	configData, err := json.Marshal(config)
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO index_outbox (object_type, object_uid, action, headers, data, indexing_config) VALUES ('mentorship_program', $1, $2, $3, $4, $5)`, program.ID, action, headerData, data, configData)
+	_, err = tx.Exec(ctx, `
+		INSERT INTO index_outbox (object_type, object_uid, action, headers, data, indexing_config)
+		VALUES ('mentorship_program', $1, $2, $3, $4, $5)
+		ON CONFLICT (object_type, object_uid) DO UPDATE SET
+			action = EXCLUDED.action,
+			headers = EXCLUDED.headers,
+			data = EXCLUDED.data,
+			indexing_config = EXCLUDED.indexing_config,
+			generation = index_outbox.generation + 1,
+			state = CASE WHEN index_outbox.state = 'in_flight' THEN 'in_flight' ELSE 'pending' END,
+			claimed_generation = CASE WHEN index_outbox.state = 'in_flight' THEN index_outbox.claimed_generation ELSE NULL END,
+			claimed_at = CASE WHEN index_outbox.state = 'in_flight' THEN index_outbox.claimed_at ELSE NULL END,
+			attempts = 0,
+			sent_on = NULL`, program.ID, action, headerData, data, configData)
 	return err
 }
 
 func enqueueProgramIndexDelete(ctx context.Context, tx pgx.Tx, id string) error {
-	headers := domain.IndexHeadersFromContext(ctx)
+	headers := domain.SanitizedIndexHeaders(domain.IndexHeadersFromContext(ctx))
 	if headers["authorization"] == "" {
 		return fmt.Errorf("index program delete: authorization metadata is required")
 	}
@@ -99,7 +114,20 @@ func enqueueProgramIndexDelete(ctx context.Context, tx pgx.Tx, id string) error 
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO index_outbox (object_type, object_uid, action, headers) VALUES ('mentorship_program', $1, 'deleted', $2)`, id, headerData)
+	_, err = tx.Exec(ctx, `
+		INSERT INTO index_outbox (object_type, object_uid, action, headers)
+		VALUES ('mentorship_program', $1, 'deleted', $2)
+		ON CONFLICT (object_type, object_uid) DO UPDATE SET
+			action = 'deleted',
+			headers = EXCLUDED.headers,
+			data = NULL,
+			indexing_config = NULL,
+			generation = index_outbox.generation + 1,
+			state = CASE WHEN index_outbox.state = 'in_flight' THEN 'in_flight' ELSE 'pending' END,
+			claimed_generation = CASE WHEN index_outbox.state = 'in_flight' THEN index_outbox.claimed_generation ELSE NULL END,
+			claimed_at = CASE WHEN index_outbox.state = 'in_flight' THEN index_outbox.claimed_at ELSE NULL END,
+			attempts = 0,
+			sent_on = NULL`, id, headerData)
 	return err
 }
 
@@ -914,7 +942,12 @@ func (r *ProgramRepository) AddSkill(ctx context.Context, programID string, inpu
 	defer span.End()
 
 	var s models.ProgramSkill
-	err := r.pool.QueryRow(ctx,
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin add skill transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	err = tx.QueryRow(ctx,
 		`INSERT INTO program_skills (program_id, skill) VALUES ($1, $2)
 		 ON CONFLICT (program_id, skill) DO UPDATE SET skill = EXCLUDED.skill
 		 RETURNING id, program_id, skill, created_on, updated_on`,
@@ -924,6 +957,19 @@ func (r *ProgramRepository) AddSkill(ctx context.Context, programID string, inpu
 		span.RecordError(err)
 		return nil, fmt.Errorf("add skill: %w", err)
 	}
+	program, err := scanProgram(tx.QueryRow(ctx, `SELECT`+programSelectCols+programsWithFundingFrom+` WHERE programs.id = $1`, programID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrProgramNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reload program for index update: %w", err)
+	}
+	if err := enqueueProgramIndex(ctx, tx, program, "updated"); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit add skill transaction: %w", err)
+	}
 	return &s, nil
 }
 
@@ -932,13 +978,32 @@ func (r *ProgramRepository) DeleteSkill(ctx context.Context, programID, skillID 
 	ctx, span := programTracer.Start(ctx, "db.programs.DeleteSkill")
 	defer span.End()
 
-	cmd, err := r.pool.Exec(ctx, `DELETE FROM program_skills WHERE id = $1 AND program_id = $2`, skillID, programID)
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin delete skill transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	cmd, err := tx.Exec(ctx, `DELETE FROM program_skills WHERE id = $1 AND program_id = $2`, skillID, programID)
 	if err != nil {
 		span.RecordError(err)
 		return fmt.Errorf("delete skill: %w", err)
 	}
 	if cmd.RowsAffected() == 0 {
 		return domain.ErrProgramNotFound
+	}
+	program, err := scanProgram(tx.QueryRow(ctx, `SELECT`+programSelectCols+programsWithFundingFrom+` WHERE programs.id = $1`, programID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrProgramNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("reload program for index update: %w", err)
+	}
+	if err := enqueueProgramIndex(ctx, tx, program, "updated"); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit delete skill transaction: %w", err)
 	}
 	return nil
 }

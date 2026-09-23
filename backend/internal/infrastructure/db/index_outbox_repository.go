@@ -5,6 +5,7 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -18,7 +19,17 @@ func NewIndexOutboxRepository(pool *pgxpool.Pool) *IndexOutboxRepository {
 }
 
 func (r *IndexOutboxRepository) Enqueue(ctx context.Context, record domain.IndexOutboxRecord) error {
-	_, err := r.pool.Exec(ctx, `INSERT INTO index_outbox (object_type, object_uid, action, headers, data, indexing_config) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (object_type, object_uid) DO UPDATE SET action = EXCLUDED.action, headers = EXCLUDED.headers, data = EXCLUDED.data, indexing_config = EXCLUDED.indexing_config, generation = index_outbox.generation + 1, state = CASE WHEN index_outbox.state = 'in_flight' THEN 'in_flight' ELSE 'pending' END, attempts = 0`, record.ObjectType, record.ObjectUID, record.Action, record.Headers, record.Data, record.IndexingConfig)
+	headers := map[string]string{}
+	if len(record.Headers) > 0 {
+		if err := json.Unmarshal(record.Headers, &headers); err != nil {
+			return fmt.Errorf("enqueue index outbox: decode headers: %w", err)
+		}
+	}
+	sanitizedHeaders, err := json.Marshal(domain.SanitizedIndexHeaders(headers))
+	if err != nil {
+		return fmt.Errorf("enqueue index outbox: encode sanitized headers: %w", err)
+	}
+	_, err = r.pool.Exec(ctx, `INSERT INTO index_outbox (object_type, object_uid, action, headers, data, indexing_config) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (object_type, object_uid) DO UPDATE SET action = EXCLUDED.action, headers = EXCLUDED.headers, data = EXCLUDED.data, indexing_config = EXCLUDED.indexing_config, generation = index_outbox.generation + 1, state = CASE WHEN index_outbox.state = 'in_flight' THEN 'in_flight' ELSE 'pending' END, attempts = 0`, record.ObjectType, record.ObjectUID, record.Action, sanitizedHeaders, record.Data, record.IndexingConfig)
 	if err != nil {
 		return fmt.Errorf("enqueue index outbox: %w", err)
 	}
@@ -57,11 +68,11 @@ func (r *IndexOutboxRepository) Claim(ctx context.Context, limit int) ([]domain.
 }
 
 func (r *IndexOutboxRepository) MarkSent(ctx context.Context, record domain.IndexOutboxRecord) (bool, error) {
-	command, err := r.pool.Exec(ctx, `UPDATE index_outbox SET state = 'sent', sent_on = NOW() WHERE id = $1 AND state = 'in_flight' AND generation = $2 AND claimed_generation = $2`, record.ID, record.Generation)
+	command, err := r.pool.Exec(ctx, `UPDATE index_outbox SET state = 'sent', sent_on = NOW() WHERE id = $1 AND state = 'in_flight' AND generation = $2 AND claimed_generation = $2 AND claimed_at IS NOT DISTINCT FROM $3`, record.ID, record.Generation, record.ClaimedAt)
 	return command.RowsAffected() == 1, err
 }
 func (r *IndexOutboxRepository) MarkRetry(ctx context.Context, record domain.IndexOutboxRecord) (bool, error) {
-	command, err := r.pool.Exec(ctx, `UPDATE index_outbox SET state = 'pending', claimed_generation = NULL, claimed_at = NULL WHERE id = $1 AND state = 'in_flight' AND generation = $2 AND claimed_generation = $2`, record.ID, record.Generation)
+	command, err := r.pool.Exec(ctx, `UPDATE index_outbox SET state = 'pending', claimed_generation = NULL, claimed_at = NULL WHERE id = $1 AND state = 'in_flight' AND generation = $2 AND claimed_generation = $2 AND claimed_at IS NOT DISTINCT FROM $3`, record.ID, record.Generation, record.ClaimedAt)
 	return command.RowsAffected() == 1, err
 }
 

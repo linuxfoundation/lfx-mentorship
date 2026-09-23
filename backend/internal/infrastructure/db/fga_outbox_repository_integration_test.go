@@ -116,15 +116,19 @@ func TestIndexOutboxIntegration_ClaimRetryAndSent(t *testing.T) {
 	if err != nil || len(claimed) != 1 {
 		t.Fatalf("claim records=%d err=%v", len(claimed), err)
 	}
-	if err := repo.MarkRetry(ctx, claimed[0].ID); err != nil {
+	if acknowledged, err := repo.MarkRetry(ctx, claimed[0]); err != nil {
 		t.Fatalf("retry: %v", err)
+	} else if !acknowledged {
+		t.Fatal("retry acknowledgement missing")
 	}
 	claimed, err = repo.Claim(ctx, 1)
 	if err != nil || len(claimed) != 1 {
 		t.Fatalf("reclaim records=%d err=%v", len(claimed), err)
 	}
-	if err := repo.MarkSent(ctx, claimed[0].ID); err != nil {
+	if acknowledged, err := repo.MarkSent(ctx, claimed[0]); err != nil {
 		t.Fatalf("mark sent: %v", err)
+	} else if !acknowledged {
+		t.Fatal("sent acknowledgement missing")
 	}
 	var state string
 	if err := pool.QueryRow(ctx, `SELECT state FROM index_outbox WHERE id = $1`, claimed[0].ID).Scan(&state); err != nil {
@@ -132,6 +136,13 @@ func TestIndexOutboxIntegration_ClaimRetryAndSent(t *testing.T) {
 	}
 	if state != "sent" {
 		t.Fatalf("state=%q; want sent", state)
+	}
+	var headerAuth string
+	if err := pool.QueryRow(ctx, `SELECT headers->>'authorization' FROM index_outbox WHERE id = $1`, claimed[0].ID).Scan(&headerAuth); err != nil {
+		t.Fatal(err)
+	}
+	if headerAuth != "present" {
+		t.Fatalf("authorization header=%q; want present", headerAuth)
 	}
 }
 

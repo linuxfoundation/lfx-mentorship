@@ -322,7 +322,11 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 			continue
 		}
 		parsed, err := url.ParseRequestURI(*value)
-		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		if err != nil || parsed.Host == "" {
+			return nil, fmt.Errorf("%w: invalid URL", domain.ErrInvalidInput)
+		}
+		scheme := strings.ToLower(parsed.Scheme)
+		if scheme != "http" && scheme != "https" {
 			return nil, fmt.Errorf("%w: invalid URL", domain.ErrInvalidInput)
 		}
 	}
