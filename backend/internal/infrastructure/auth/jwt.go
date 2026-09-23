@@ -28,8 +28,7 @@ const DefaultClockSkew = 5 * time.Second
 const ScopeMe = "access:me"
 
 const (
-	scopeManageApprovers     = "manage:mentorship:approvers"
-	scopeManageProjectAdmins = "manage:mentorship:project-admins"
+	scopeManageApprovers = "manage:mentorship:approvers"
 )
 
 // contextKey is an unexported type for context keys to avoid collisions.
@@ -423,15 +422,8 @@ func isGatewayPrincipal(ctx context.Context) bool {
 // Heimdall platform middleware rather than the interim Auth0 path.
 func IsGatewayPrincipal(ctx context.Context) bool { return isGatewayPrincipal(ctx) }
 
-func ScopeManageApprovers() string     { return scopeManageApprovers }
-func ScopeManageProjectAdmins() string { return scopeManageProjectAdmins }
-func ScopeReadMetrics() string         { return "read:mentorship:metrics" }
-
-// HasProjectManagementScope accepts the global platform scope or a scope
-// restricted to the requested project UID.
-func HasProjectManagementScope(ctx context.Context, projectUID string) bool {
-	return HasScope(ctx, scopeManageProjectAdmins) || HasScope(ctx, scopeManageProjectAdmins+":"+projectUID)
-}
+func ScopeManageApprovers() string { return scopeManageApprovers }
+func ScopeReadMetrics() string     { return "read:mentorship:metrics" }
 
 // HasScope reports whether the principal in ctx has the given OAuth2 scope.
 func HasScope(ctx context.Context, scope string) bool {

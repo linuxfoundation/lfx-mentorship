@@ -34,14 +34,9 @@ These platform-management routes require the corresponding OAuth scope:
 - `GET/POST /admin/approver-team/members` requires
   `manage:mentorship:approvers`.
 - `DELETE /admin/approver-team/members/{userID}` requires the same scope.
-- `GET/POST /projects/{projectUID}/mentorship-program-admins` requires
-  `manage:mentorship:project-admins`.
-- `DELETE /projects/{projectUID}/mentorship-program-admins/{userID}` requires
-  the same scope.
 
-The service rejects self-escalation. Changes are persisted with their FGA
-membership marker transactionally, and removals are retained as tombstones for
-reconciliation.
+Global approver changes are persisted with their FGA membership marker
+transactionally, and removals are retained as tombstones for reconciliation.
 
 For local PostgreSQL-backed outbox tests, start `docker compose up -d`, create
 an isolated `mentorship_test` database, and run:
