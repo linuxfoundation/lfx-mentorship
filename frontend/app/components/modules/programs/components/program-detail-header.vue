@@ -54,6 +54,30 @@ SPDX-License-Identifier: MIT
               {{ skill }}
             </lfx-tag>
           </div>
+          <div class="flex flex-wrap gap-2">
+            <a
+              v-if="program.ciiProjectId"
+              :href="`https://bestpractices.coreinfrastructure.org/projects/${program.ciiProjectId}`"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="inline-flex"
+            >
+              <img
+                :src="`https://bestpractices.coreinfrastructure.org/projects/${program.ciiProjectId}/badge`"
+                :alt="`CII Best Practices badge for project ${program.ciiProjectId}`"
+                class="h-5"
+              />
+            </a>
+            <a
+              v-if="program.codeOfConduct"
+              :href="program.codeOfConduct"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="inline-flex"
+            >
+              <span class="ml-1 text-xs text-brand-500 :hover:underline">Code of Conduct</span>
+            </a>
+          </div>
 
           <div class="flex flex-wrap items-center gap-3 pt-1">
             <lfx-button

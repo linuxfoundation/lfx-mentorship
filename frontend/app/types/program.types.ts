@@ -87,6 +87,9 @@ export interface Program {
   activeTerms: ProgramTerm[];
   updatedAt: string;
   repositoryUrl?: string;
+  /** CII Best Practices project ID used to render the OpenSSF badge. */
+  ciiProjectId?: string;
+  codeOfConduct?: string;
   mentees: ProgramMentee[];
   mentors: ProgramMember[];
   sponsors: ProgramSponsor[];

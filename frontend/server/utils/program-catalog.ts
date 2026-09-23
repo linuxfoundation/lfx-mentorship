@@ -40,6 +40,8 @@ export interface ProgramCatalogItem {
   description?: string;
   logo_url?: string;
   repo_link?: string;
+  cii_project_id?: string;
+  code_of_conduct?: string;
   updated_on: string;
   skills?: string[];
   terms?: ProgramCatalogTerm[];
@@ -161,6 +163,8 @@ export function mapCatalogItemToProgram(item: ProgramCatalogItem): Program {
     terms,
     updatedAt: item.updated_on,
     repositoryUrl: item.repo_link,
+    ciiProjectId: item.cii_project_id || undefined,
+    codeOfConduct: item.code_of_conduct || undefined,
     mentees: [],
     mentors: (item.mentors ?? []).map(mapMentor),
     sponsors: [],
