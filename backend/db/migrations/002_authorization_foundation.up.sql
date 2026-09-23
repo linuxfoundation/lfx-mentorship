@@ -123,4 +123,13 @@ ALTER TABLE index_outbox
 CREATE UNIQUE INDEX IF NOT EXISTS uq_user_profiles_user_type
   ON user_profiles(user_id, profile_type);
 
+ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_status_check;
+
+UPDATE tasks SET status = 'pending' WHERE status = 'incomplete';
+UPDATE tasks SET status = 'completed' WHERE status = 'complete';
+
+ALTER TABLE tasks
+  ADD CONSTRAINT tasks_status_check
+  CHECK (status IN ('pending', 'in_progress', 'submitted', 'completed'));
+
 COMMIT;

@@ -204,6 +204,9 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		r.Group(func(r chi.Router) {
 			r.Use(requireGatewayPrincipal)
 
+			r.Get("/me/managed-programs", programH.ListManaged)
+			r.Get("/programs/{id}/enroll-template", programH.GetEnrollmentTemplate)
+
 			// Mentor invite — both the invite token and signed principal are required.
 			r.Post("/mentor-invites/{token}/accept", mentorInviteH.AcceptInvite)
 			r.Post("/mentor-invites/{token}/decline", mentorInviteH.DeclineInvite)

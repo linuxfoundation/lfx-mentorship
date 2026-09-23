@@ -3,6 +3,8 @@
 
 package models
 
+import "encoding/json"
+
 // PaginationMeta carries total count and current page parameters for list responses.
 type PaginationMeta struct {
 	Total  int `json:"total"`
@@ -51,6 +53,13 @@ type ProgramFilter struct {
 	Skill           string // catalog only: case-insensitive exact match on a program skill
 	DiscoveryStatus string // catalog only: acceptance | in-progress | completed
 	SortBy          string // catalog only: accepting_first | completed_first | name_asc | name_desc | updated_oldest | updated_newest
+}
+
+// ProgramEnrollmentTemplate contains the fields needed to prefill enrollment.
+type ProgramEnrollmentTemplate struct {
+	Program       Program         `json:"program"`
+	Skills        []string        `json:"skills"`
+	Prerequisites json.RawMessage `json:"prerequisites,omitempty"`
 }
 
 // ProgramTermFilter constrains list queries for program terms.

@@ -24,6 +24,8 @@ type programService interface {
 	GetByID(ctx context.Context, id string) (*models.Program, error)
 	GetBySlug(ctx context.Context, slug string) (*models.Program, error)
 	List(ctx context.Context, filter models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error)
+	ListManaged(ctx context.Context, userID string, filter models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error)
+	GetEnrollmentTemplate(ctx context.Context, userID, programID string) (*models.ProgramEnrollmentTemplate, error)
 	GetManagementSummary(ctx context.Context, programID string) (*models.ProgramManagementSummary, error)
 	GetHeaderProjection(ctx context.Context, programID string) (*models.ProgramHeaderProjection, error)
 	NameAvailable(ctx context.Context, name, excludeProgramID string) (bool, error)
@@ -197,6 +199,42 @@ func (h *ProgramHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	JSON(w, http.StatusOK, map[string]any{"data": programs, "meta": meta})
+}
+
+// ListManaged handles GET /v1/me/managed-programs.
+func (h *ProgramHandler) ListManaged(w http.ResponseWriter, r *http.Request) {
+	principal := auth.PrincipalFromContext(r.Context())
+	if principal == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	limit, offset, ok := parsePaginationParams(w, r)
+	if !ok {
+		return
+	}
+	programs, meta, err := h.svc.ListManaged(r.Context(), principal.UserID, models.ProgramFilter{
+		Limit: limit, Offset: offset, Status: r.URL.Query().Get("status"), Search: r.URL.Query().Get("search"),
+	})
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]any{"data": programs, "meta": meta})
+}
+
+// GetEnrollmentTemplate handles GET /v1/programs/{id}/enroll-template.
+func (h *ProgramHandler) GetEnrollmentTemplate(w http.ResponseWriter, r *http.Request) {
+	principal := auth.PrincipalFromContext(r.Context())
+	if principal == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	template, err := h.svc.GetEnrollmentTemplate(r.Context(), principal.UserID, chi.URLParam(r, "id"))
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, template)
 }
 
 func catalogSortParam(r *http.Request) string {

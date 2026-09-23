@@ -71,6 +71,8 @@ type ProgramRepository interface {
 	GetByID(ctx context.Context, id string) (*models.Program, error)
 	GetBySlug(ctx context.Context, slug string) (*models.Program, error)
 	List(ctx context.Context, filter models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error)
+	ListManaged(ctx context.Context, userID string, filter models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error)
+	GetEnrollmentTemplate(ctx context.Context, userID, programID string) (*models.ProgramEnrollmentTemplate, error)
 	GetManagementSummary(ctx context.Context, programID string) (*models.ProgramManagementSummary, error)
 	GetHeaderProjection(ctx context.Context, programID string) (*models.ProgramHeaderProjection, error)
 	NameAvailable(ctx context.Context, name, excludeProgramID string) (bool, error)

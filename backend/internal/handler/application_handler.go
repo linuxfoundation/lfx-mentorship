@@ -231,6 +231,7 @@ func (h *ApplicationHandler) UpdateEvaluation(w http.ResponseWriter, r *http.Req
 	}
 	app, err := h.svc.Update(r.Context(), chi.URLParam(r, "id"), models.ApplicationUpdateInput{
 		Evaluation: input.Evaluation,
+		ActorID:    auth.PrincipalFromContext(r.Context()).UserID,
 	})
 	if err != nil {
 		Error(w, err)
@@ -269,6 +270,7 @@ func (h *ApplicationHandler) UpdateNote(w http.ResponseWriter, r *http.Request) 
 	}
 	app, err := h.svc.Update(r.Context(), chi.URLParam(r, "id"), models.ApplicationUpdateInput{
 		ReviewerNote: input.ReviewerNote,
+		ActorID:      auth.PrincipalFromContext(r.Context()).UserID,
 	})
 	if err != nil {
 		Error(w, err)

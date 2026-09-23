@@ -106,6 +106,27 @@ func (s *ProgramService) List(ctx context.Context, filter models.ProgramFilter) 
 	return programs, meta, nil
 }
 
+func (s *ProgramService) ListManaged(ctx context.Context, userID string, filter models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error) {
+	if strings.TrimSpace(userID) == "" {
+		return nil, nil, fmt.Errorf("%w: user identity is required", domain.ErrUnauthorized)
+	}
+	if filter.Status != "" && !models.ProgramStatus(filter.Status).IsValid() {
+		return nil, nil, fmt.Errorf("%w: invalid program status", domain.ErrInvalidInput)
+	}
+	return s.repo.ListManaged(ctx, userID, filter)
+}
+
+func (s *ProgramService) GetEnrollmentTemplate(ctx context.Context, userID, programID string) (*models.ProgramEnrollmentTemplate, error) {
+	if strings.TrimSpace(userID) == "" {
+		return nil, fmt.Errorf("%w: user identity is required", domain.ErrUnauthorized)
+	}
+	template, err := s.repo.GetEnrollmentTemplate(ctx, userID, programID)
+	if err != nil {
+		return nil, fmt.Errorf("get enrollment template: %w", err)
+	}
+	return template, nil
+}
+
 // GetManagementSummary returns administrative tab counts for one program.
 func (s *ProgramService) GetManagementSummary(ctx context.Context, programID string) (*models.ProgramManagementSummary, error) {
 	program, err := s.repo.GetByID(ctx, programID)
@@ -276,7 +297,7 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 		if term.StartDateTime == nil || term.EndDateTime == nil || !term.EndDateTime.After(*term.StartDateTime) {
 			return nil, fmt.Errorf("%w: term end date must be after start date", domain.ErrInvalidInput)
 		}
-		if term.ApplicationStartDate == nil || term.ApplicationEndDate == nil || !term.ApplicationEndDate.After(*term.ApplicationStartDate) || term.ApplicationEndDate.After(*term.StartDateTime) {
+		if term.ApplicationStartDate == nil || term.ApplicationEndDate == nil || !term.ApplicationEndDate.After(*term.ApplicationStartDate) || !term.ApplicationEndDate.Before(*term.StartDateTime) {
 			return nil, fmt.Errorf("%w: application window must end after it starts and before the term", domain.ErrInvalidInput)
 		}
 	}

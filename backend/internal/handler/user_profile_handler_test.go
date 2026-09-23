@@ -22,6 +22,7 @@ type stubUserProfileSvc struct {
 	list    func(context.Context, models.UserProfileFilter) ([]*models.UserProfile, *models.PaginationMeta, error)
 	getByID func(context.Context, string) (*models.UserProfile, error)
 	create  func(context.Context, models.UserProfileCreateInput) (*models.UserProfile, error)
+	upsert  func(context.Context, models.UserProfileCreateInput) (*models.UserProfile, bool, error)
 	update  func(context.Context, string, models.UserProfileUpdateInput) (*models.UserProfile, error)
 	delete  func(context.Context, string) error
 }
@@ -49,6 +50,13 @@ func (s *stubUserProfileSvc) Create(ctx context.Context, input models.UserProfil
 		return s.create(ctx, input)
 	}
 	return &models.UserProfile{ID: input.ID, UserID: input.UserID, ProfileType: input.ProfileType}, nil
+}
+
+func (s *stubUserProfileSvc) Upsert(ctx context.Context, input models.UserProfileCreateInput) (*models.UserProfile, bool, error) {
+	if s.upsert != nil {
+		return s.upsert(ctx, input)
+	}
+	return &models.UserProfile{ID: input.ID, UserID: input.UserID, ProfileType: input.ProfileType}, true, nil
 }
 
 func (s *stubUserProfileSvc) Update(ctx context.Context, id string, input models.UserProfileUpdateInput) (*models.UserProfile, error) {
@@ -182,9 +190,9 @@ func TestUserProfileHandler_PutMeByType_CreatesForPrincipal(t *testing.T) {
 		list: func(context.Context, models.UserProfileFilter) ([]*models.UserProfile, *models.PaginationMeta, error) {
 			return []*models.UserProfile{}, &models.PaginationMeta{}, nil
 		},
-		create: func(_ context.Context, input models.UserProfileCreateInput) (*models.UserProfile, error) {
+		upsert: func(_ context.Context, input models.UserProfileCreateInput) (*models.UserProfile, bool, error) {
 			got = input
-			return &models.UserProfile{ID: "p1", UserID: input.UserID, ProfileType: input.ProfileType}, nil
+			return &models.UserProfile{ID: "p1", UserID: input.UserID, ProfileType: input.ProfileType}, true, nil
 		},
 	})
 	r := httptest.NewRequest(http.MethodPut, "/v1/me/profiles/mentee", bytes.NewBufferString(`{"user_id":"victim","profile_type":"mentor","age_eligible":true,"work_eligible":true}`))

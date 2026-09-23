@@ -158,8 +158,8 @@ func (r *ProgramTermRepository) ListManagementByProgram(ctx context.Context, pro
 	q := `SELECT pt.id, pt.program_id, pt.name, pt.status, pt.active_users,
 		pt.start_date_time, pt.end_date_time, pt.application_start_date, pt.application_end_date,
 		pt.created_on, pt.updated_on,
-		COUNT(a.id) FILTER (WHERE a.status = 'pending'), COUNT(a.id) FILTER (WHERE a.status = 'declined'),
-		COUNT(a.id) FILTER (WHERE a.status = 'accepted'), COUNT(a.id) FILTER (WHERE a.status = 'graduated')
+		COUNT(a.id) FILTER (WHERE a.role = 'mentee' AND a.status = 'pending'), COUNT(a.id) FILTER (WHERE a.role = 'mentee' AND a.status = 'declined'),
+		COUNT(a.id) FILTER (WHERE a.role = 'mentee' AND a.status = 'accepted'), COUNT(a.id) FILTER (WHERE a.role = 'mentee' AND a.status = 'graduated')
 		FROM program_terms pt LEFT JOIN applications a ON a.program_term_id = pt.id` + where + ` GROUP BY pt.id ORDER BY pt.start_date_time DESC NULLS LAST` + fmt.Sprintf(` LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
 	rows, err := r.pool.Query(ctx, q, args...)
 	if err != nil {

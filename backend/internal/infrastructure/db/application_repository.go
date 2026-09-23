@@ -143,7 +143,7 @@ func (r *ApplicationRepository) ListByProgram(ctx context.Context, programID str
 		offset = 0
 	}
 	args := []any{programID}
-	where := ` WHERE pt.program_id = $1 AND a.role = 'mentee'`
+	where := ` WHERE pt.program_id = $1 AND a.role = 'mentee' AND p.status NOT IN ('draft', 'submitted')`
 	switch filter.Type {
 	case models.ProgramApplicationTypeCurrent:
 		where += ` AND pt.status = 'open'`
@@ -163,7 +163,7 @@ func (r *ApplicationRepository) ListByProgram(ctx context.Context, programID str
 		where += fmt.Sprintf(` AND (u.name ILIKE $%d OR u.email ILIKE $%d)`, len(args), len(args))
 	}
 	var total int
-	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id JOIN users u ON u.id = a.user_id`+where, args...).Scan(&total); err != nil {
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id JOIN programs p ON p.id = pt.program_id JOIN users u ON u.id = a.user_id`+where, args...).Scan(&total); err != nil {
 		return nil, nil, fmt.Errorf("count program applications: %w", err)
 	}
 	args = append(args, limit, offset)
@@ -174,7 +174,7 @@ func (r *ApplicationRepository) ListByProgram(ctx context.Context, programID str
 		COALESCE((SELECT jsonb_agg(jsonb_build_object('program_id', op.id, 'program_name', op.name, 'status', oa.status))
 			FROM applications oa JOIN program_terms ot ON ot.id = oa.program_term_id JOIN programs op ON op.id = ot.program_id
 			WHERE oa.user_id = a.user_id AND op.id <> pt.program_id AND oa.role = 'mentee' AND oa.status IN ('pending', 'accepted', 'graduated')), '[]'::jsonb)
-		FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id JOIN users u ON u.id = a.user_id` + where + fmt.Sprintf(` ORDER BY a.created_on DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
+		FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id JOIN programs p ON p.id = pt.program_id JOIN users u ON u.id = a.user_id` + where + fmt.Sprintf(` ORDER BY a.created_on DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
 	rows, err := r.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("list program applications: %w", err)

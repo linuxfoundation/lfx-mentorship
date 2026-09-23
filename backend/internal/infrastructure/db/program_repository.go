@@ -177,6 +177,9 @@ func (r *ProgramRepository) GetHeaderProjection(ctx context.Context, programID s
 		return nil, fmt.Errorf("get program header stats: %w", err)
 	}
 	term, err := scanProgramTerm(r.pool.QueryRow(ctx, `SELECT`+programTermCols+` FROM program_terms WHERE program_id = $1 AND status = 'open' ORDER BY start_date_time DESC NULLS LAST LIMIT 1`, programID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		term, err = scanProgramTerm(r.pool.QueryRow(ctx, `SELECT`+programTermCols+` FROM program_terms WHERE program_id = $1 AND status = 'closed' ORDER BY end_date_time DESC NULLS LAST LIMIT 1`, programID))
+	}
 	if err == nil {
 		projection.ActiveTerm = term
 	} else if !errors.Is(err, pgx.ErrNoRows) {
@@ -248,6 +251,75 @@ func (r *ProgramRepository) List(ctx context.Context, filter models.ProgramFilte
 	return programs, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, nil
 }
 
+// ListManaged returns programs where the user is an active program admin.
+func (r *ProgramRepository) ListManaged(ctx context.Context, userID string, filter models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error) {
+	limit := filter.Limit
+	if limit <= 0 || limit > 50 {
+		limit = 50
+	}
+	offset := filter.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	args := []any{userID}
+	where := ` WHERE pm.user_id = $1 AND pm.member_type = 'program_admin' AND pm.status = 'active'`
+	if filter.Status != "" {
+		args = append(args, filter.Status)
+		where += fmt.Sprintf(` AND programs.status = $%d`, len(args))
+	}
+	if filter.Search != "" {
+		args = append(args, "%"+filter.Search+"%")
+		where += fmt.Sprintf(` AND programs.name ILIKE $%d`, len(args))
+	}
+	countQ := `SELECT COUNT(*) FROM programs JOIN program_members pm ON pm.program_id = programs.id` + where
+	var total int
+	if err := r.pool.QueryRow(ctx, countQ, args...).Scan(&total); err != nil {
+		return nil, nil, fmt.Errorf("count managed programs: %w", err)
+	}
+	args = append(args, limit, offset)
+	listQ := `SELECT` + programSelectCols + programsWithFundingFrom + ` JOIN program_members pm ON pm.program_id = programs.id` + where +
+		fmt.Sprintf(` ORDER BY programs.updated_on DESC, programs.id ASC LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
+	rows, err := r.pool.Query(ctx, listQ, args...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("list managed programs: %w", err)
+	}
+	defer rows.Close()
+	programs := make([]*models.Program, 0)
+	for rows.Next() {
+		program, scanErr := scanProgram(rows)
+		if scanErr != nil {
+			return nil, nil, fmt.Errorf("scan managed program: %w", scanErr)
+		}
+		programs = append(programs, program)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, fmt.Errorf("managed program rows: %w", err)
+	}
+	return programs, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, nil
+}
+
+// GetEnrollmentTemplate returns enrollment fields only for an active program admin.
+func (r *ProgramRepository) GetEnrollmentTemplate(ctx context.Context, userID, programID string) (*models.ProgramEnrollmentTemplate, error) {
+	q := `SELECT ` + programSelectCols + ` FROM programs JOIN program_members pm ON pm.program_id = programs.id
+		WHERE programs.id = $1 AND pm.user_id = $2 AND pm.member_type = 'program_admin' AND pm.status = 'active'`
+	program, err := scanProgram(r.pool.QueryRow(ctx, q, programID, userID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrProgramNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get enrollment template program: %w", err)
+	}
+	skills, err := r.ListSkills(ctx, programID)
+	if err != nil {
+		return nil, fmt.Errorf("get enrollment template skills: %w", err)
+	}
+	skillNames := make([]string, 0, len(skills))
+	for _, skill := range skills {
+		skillNames = append(skillNames, skill.Skill)
+	}
+	return &models.ProgramEnrollmentTemplate{Program: *program, Skills: skillNames, Prerequisites: program.TaskTemplates}, nil
+}
+
 // GetManagementSummary returns the object-scoped counts shown on the program
 // administration header without loading the tab rows themselves.
 func (r *ProgramRepository) GetManagementSummary(ctx context.Context, programID string) (*models.ProgramManagementSummary, error) {
@@ -258,12 +330,13 @@ func (r *ProgramRepository) GetManagementSummary(ctx context.Context, programID 
 		SELECT
 			EXISTS (SELECT 1 FROM program_terms WHERE program_id = $1 AND status = 'open'),
 			EXISTS (SELECT 1 FROM program_terms WHERE program_id = $1 AND status = 'closed'),
-			COUNT(a.id) FILTER (WHERE pt.status = 'open' AND a.role = 'mentee' AND a.status IN ('accepted', 'graduated')),
-			COUNT(a.id) FILTER (WHERE pt.status = 'closed' AND a.role = 'mentee'),
-			COUNT(a.id) FILTER (WHERE a.role = 'mentee'),
+			COUNT(a.id) FILTER (WHERE pt.status = 'open' AND p.status NOT IN ('draft', 'submitted') AND a.role = 'mentee' AND a.status IN ('accepted', 'graduated')),
+			COUNT(a.id) FILTER (WHERE pt.status = 'closed' AND p.status NOT IN ('draft', 'submitted') AND a.role = 'mentee'),
+			COUNT(a.id) FILTER (WHERE p.status NOT IN ('draft', 'submitted') AND a.role = 'mentee'),
 			(SELECT COUNT(*) FROM program_members pm WHERE pm.program_id = $1 AND pm.member_type = 'mentor' AND pm.status = 'active'),
 			(SELECT COUNT(*) FROM program_terms WHERE program_id = $1 AND status <> 'deleted')
 		FROM program_terms pt
+		JOIN programs p ON p.id = pt.program_id
 		LEFT JOIN applications a ON a.program_term_id = pt.id
 		WHERE pt.program_id = $1`
 	var summary models.ProgramManagementSummary

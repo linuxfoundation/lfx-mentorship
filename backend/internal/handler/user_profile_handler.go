@@ -19,6 +19,7 @@ type userProfileService interface {
 	GetBySlug(ctx context.Context, slug string) (*models.UserProfile, error)
 	List(ctx context.Context, filter models.UserProfileFilter) ([]*models.UserProfile, *models.PaginationMeta, error)
 	Create(ctx context.Context, input models.UserProfileCreateInput) (*models.UserProfile, error)
+	Upsert(ctx context.Context, input models.UserProfileCreateInput) (*models.UserProfile, bool, error)
 	Update(ctx context.Context, id string, input models.UserProfileUpdateInput) (*models.UserProfile, error)
 	Delete(ctx context.Context, id string) error
 }
@@ -151,49 +152,16 @@ func (h *UserProfileHandler) PutMeByType(w http.ResponseWriter, r *http.Request)
 	}
 	input.UserID = principal.UserID
 	input.ProfileType = profileType
-	profiles, _, err := h.svc.List(r.Context(), models.UserProfileFilter{
-		Limit:       2,
-		UserID:      principal.UserID,
-		ProfileType: profileType,
-	})
+	profile, inserted, err := h.svc.Upsert(r.Context(), input)
 	if err != nil {
 		Error(w, err)
 		return
 	}
-	if len(profiles) > 1 {
-		Error(w, fmt.Errorf("%w: multiple %s profiles exist for user", domain.ErrConflict, profileType))
-		return
+	status := http.StatusOK
+	if inserted {
+		status = http.StatusCreated
 	}
-	if len(profiles) == 0 {
-		profile, err := h.svc.Create(r.Context(), input)
-		if err != nil {
-			Error(w, err)
-			return
-		}
-		JSON(w, http.StatusCreated, profile)
-		return
-	}
-	updated, err := h.svc.Update(r.Context(), profiles[0].ID, models.UserProfileUpdateInput{
-		Slug:               input.Slug,
-		FirstName:          input.FirstName,
-		LastName:           input.LastName,
-		Email:              input.Email,
-		Phone:              input.Phone,
-		LogoURL:            input.LogoURL,
-		Introduction:       input.Introduction,
-		TermsAndConditions: &input.TermsAndConditions,
-		NumberOfProjects:   &input.NumberOfProjects,
-		Address:            input.Address,
-		Demographics:       input.Demographics,
-		Socioeconomics:     input.Socioeconomics,
-		SkillSet:           input.SkillSet,
-		ProfileLinks:       input.ProfileLinks,
-	})
-	if err != nil {
-		Error(w, err)
-		return
-	}
-	JSON(w, http.StatusOK, updated)
+	JSON(w, status, profile)
 }
 
 func (h *UserProfileHandler) profileForPrincipal(w http.ResponseWriter, r *http.Request) (*models.UserProfile, bool) {

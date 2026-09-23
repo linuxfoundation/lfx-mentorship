@@ -292,7 +292,7 @@ func (s *ApplicationService) prerequisiteTasks(ctx context.Context, programTermI
 			Description:   tmpl.Description,
 			SubmitFile:    tmpl.SubmitFile,
 			Category:      &category,
-			Status:        models.TaskStatusIncomplete,
+			Status:        models.TaskStatusPending,
 			CreatedBy:     &createdBy,
 		})
 	}
@@ -318,39 +318,52 @@ func (s *ApplicationService) Update(ctx context.Context, id string, input models
 		return nil, fmt.Errorf("%w: invalid program term status %q", domain.ErrInvalidInput, *input.ProgramTermStatus)
 	}
 
-	if input.Status != nil {
+	if input.Status != nil || input.ReviewerNote != nil || input.Evaluation != nil {
 		current, err := s.repo.GetByID(ctx, id)
 		if err != nil {
 			span.RecordError(err)
 			return nil, fmt.Errorf("get application for update: %w", err)
 		}
 
-		next := *input.Status
-		allowed := applicationTransitions[current.Status]
-		ok := false
-		for _, candidate := range allowed {
-			if candidate == next {
-				ok = true
-				break
+		if input.Status == nil {
+			if input.ActorID != "" {
+				if err := s.requireReviewer(ctx, current, input.ActorID); err != nil {
+					return nil, err
+				}
 			}
-		}
-		if !ok {
-			return nil, fmt.Errorf("%w: cannot transition application from %q to %q", domain.ErrInvalidStateTransition, current.Status, next)
-		}
-
-		// Withdrawal guard: only the applicant may self-withdraw.
-		if next == models.ApplicationStatusWithdrawn && input.ActorID != "" && current.UserID != input.ActorID {
-			return nil, fmt.Errorf("%w: only the applicant may withdraw their application", domain.ErrForbidden)
-		}
-
-		// Accept guard: attendance_type is required when accepting.
-		if next == models.ApplicationStatusAccepted {
-			attType := input.AttendanceType
-			if attType == nil {
-				attType = current.AttendanceType
+		} else {
+			next := *input.Status
+			if input.ActorID != "" && (next != models.ApplicationStatusWithdrawn || input.ActorID != current.UserID) {
+				if err := s.requireReviewer(ctx, current, input.ActorID); err != nil {
+					return nil, err
+				}
 			}
-			if attType == nil || *attType == "" {
-				return nil, fmt.Errorf("%w: attendance_type is required when accepting an application", domain.ErrInvalidInput)
+			allowed := applicationTransitions[current.Status]
+			ok := false
+			for _, candidate := range allowed {
+				if candidate == next {
+					ok = true
+					break
+				}
+			}
+			if !ok {
+				return nil, fmt.Errorf("%w: cannot transition application from %q to %q", domain.ErrInvalidStateTransition, current.Status, next)
+			}
+
+			// Withdrawal guard: only the applicant may self-withdraw.
+			if next == models.ApplicationStatusWithdrawn && input.ActorID != "" && current.UserID != input.ActorID {
+				return nil, fmt.Errorf("%w: only the applicant may withdraw their application", domain.ErrForbidden)
+			}
+
+			// Accept guard: attendance_type is required when accepting.
+			if next == models.ApplicationStatusAccepted {
+				attType := input.AttendanceType
+				if attType == nil {
+					attType = current.AttendanceType
+				}
+				if attType == nil || *attType == "" {
+					return nil, fmt.Errorf("%w: attendance_type is required when accepting an application", domain.ErrInvalidInput)
+				}
 			}
 		}
 	}
@@ -376,6 +389,24 @@ func (s *ApplicationService) Update(ctx context.Context, id string, input models
 	}
 
 	return a, nil
+}
+
+func (s *ApplicationService) requireReviewer(ctx context.Context, application *models.Application, actorID string) error {
+	if actorID == "" {
+		return fmt.Errorf("%w: reviewer identity is required", domain.ErrForbidden)
+	}
+	term, err := s.termRepo.GetByID(ctx, application.ProgramTermID)
+	if err != nil {
+		return fmt.Errorf("get program term for reviewer check: %w", err)
+	}
+	allowed, err := s.isActiveReviewer(ctx, term.ProgramID, actorID)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return fmt.Errorf("%w: actor is not an active program reviewer", domain.ErrForbidden)
+	}
+	return nil
 }
 
 // Delete removes an application and its authorization descendants.
