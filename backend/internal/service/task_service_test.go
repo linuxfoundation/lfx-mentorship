@@ -25,6 +25,10 @@ type stubMemberRepo struct {
 	delete             func(context.Context, string) error
 }
 
+func (m *stubMemberRepo) ListMentorManagement(context.Context, string, models.ProgramMemberFilter) ([]*models.ProgramMentorManagementRow, *models.PaginationMeta, error) {
+	return []*models.ProgramMentorManagementRow{}, &models.PaginationMeta{}, nil
+}
+
 func (m *stubMemberRepo) GetByID(ctx context.Context, id string) (*models.ProgramMember, error) {
 	if m.getByID != nil {
 		return m.getByID(ctx, id)

@@ -322,6 +322,24 @@ spec:
             values:
               aud: {{ .Values.app.audience | quote }}
 
+    - id: rule:lfx:lfx-mentorship-backend:program-member-management
+      allow_encoded_slashes: "off"
+      match:
+        methods: [GET]
+        routes:
+          - path: /mentorship/v1/programs/:id/member-management
+      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_program:{{ "{{- .Request.URL.Captures.id -}}" }}'
+              relation: writer
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
     - id: rule:lfx:lfx-mentorship-backend:program-member-delete
       allow_encoded_slashes: "off"
       match:

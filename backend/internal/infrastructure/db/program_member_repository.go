@@ -164,6 +164,49 @@ func (r *ProgramMemberRepository) ListByProgram(ctx context.Context, programID s
 	return members, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, nil
 }
 
+func (r *ProgramMemberRepository) ListMentorManagement(ctx context.Context, programID string, filter models.ProgramMemberFilter) ([]*models.ProgramMentorManagementRow, *models.PaginationMeta, error) {
+	limit, offset := filter.Limit, filter.Offset
+	if limit <= 0 || limit > 50 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	args := []any{programID}
+	where := ` WHERE pm.program_id = $1 AND pm.member_type = 'mentor'`
+	if filter.Status != "" {
+		args = append(args, filter.Status)
+		where += fmt.Sprintf(` AND pm.status = $%d`, len(args))
+	}
+	if filter.Search != "" {
+		args = append(args, "%"+filter.Search+"%")
+		where += fmt.Sprintf(` AND (u.name ILIKE $%d OR u.email ILIKE $%d OR u.lfid ILIKE $%d)`, len(args), len(args), len(args))
+	}
+	var total int
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM program_members pm JOIN users u ON u.id = pm.user_id`+where, args...).Scan(&total); err != nil {
+		return nil, nil, fmt.Errorf("count mentor management: %w", err)
+	}
+	args = append(args, limit, offset)
+	q := `SELECT pm.id, pm.user_id, u.name, COALESCE(pm.email, u.email), u.lfid, u.avatar_url, pm.status, pm.created_on, pm.updated_on, EXISTS(SELECT 1 FROM user_profiles up WHERE up.user_id = pm.user_id)` + ` FROM program_members pm JOIN users u ON u.id = pm.user_id` + where + fmt.Sprintf(` ORDER BY pm.created_on DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
+	rows, err := r.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("list mentor management: %w", err)
+	}
+	defer rows.Close()
+	result := make([]*models.ProgramMentorManagementRow, 0)
+	for rows.Next() {
+		var row models.ProgramMentorManagementRow
+		if err := rows.Scan(&row.ID, &row.UserID, &row.Name, &row.Email, &row.Username, &row.AvatarURL, &row.Status, &row.CreatedOn, &row.UpdatedOn, &row.ProfileCreated); err != nil {
+			return nil, nil, fmt.Errorf("scan mentor management: %w", err)
+		}
+		result = append(result, &row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	return result, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, nil
+}
+
 // Create adds a member to a program.
 func (r *ProgramMemberRepository) Create(ctx context.Context, programID string, input models.ProgramMemberCreateInput) (*models.ProgramMember, error) {
 	ctx, span := programMemberTracer.Start(ctx, "db.program_members.Create")

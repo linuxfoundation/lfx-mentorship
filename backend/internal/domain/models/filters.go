@@ -67,6 +67,7 @@ type ProgramMemberFilter struct {
 	Offset     int
 	MemberType string // program_admin | mentor
 	Status     string
+	Search     string
 }
 
 // ApplicationFilter constrains list queries for applications.

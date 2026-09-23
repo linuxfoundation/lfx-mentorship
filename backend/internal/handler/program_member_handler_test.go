@@ -17,9 +17,10 @@ import (
 )
 
 type stubProgramMemberSvc struct {
-	getByID       func(context.Context, string) (*models.ProgramMember, error)
-	listByProgram func(context.Context, string, models.ProgramMemberFilter) ([]*models.ProgramMember, *models.PaginationMeta, error)
-	update        func(context.Context, string, string, models.ProgramMemberUpdateInput, string) (*models.ProgramMember, error)
+	getByID        func(context.Context, string) (*models.ProgramMember, error)
+	listByProgram  func(context.Context, string, models.ProgramMemberFilter) ([]*models.ProgramMember, *models.PaginationMeta, error)
+	listManagement func(context.Context, string, models.ProgramMemberFilter) ([]*models.ProgramMentorManagementRow, *models.PaginationMeta, error)
+	update         func(context.Context, string, string, models.ProgramMemberUpdateInput, string) (*models.ProgramMember, error)
 }
 
 func (s *stubProgramMemberSvc) GetByID(ctx context.Context, id string) (*models.ProgramMember, error) {
@@ -33,6 +34,12 @@ func (s *stubProgramMemberSvc) ListByProgram(ctx context.Context, programID stri
 		return s.listByProgram(ctx, programID, f)
 	}
 	return []*models.ProgramMember{}, &models.PaginationMeta{}, nil
+}
+func (s *stubProgramMemberSvc) ListMentorManagement(ctx context.Context, programID string, f models.ProgramMemberFilter) ([]*models.ProgramMentorManagementRow, *models.PaginationMeta, error) {
+	if s.listManagement != nil {
+		return s.listManagement(ctx, programID, f)
+	}
+	return []*models.ProgramMentorManagementRow{}, &models.PaginationMeta{}, nil
 }
 func (s *stubProgramMemberSvc) Create(context.Context, string, models.ProgramMemberCreateInput) (*models.ProgramMember, error) {
 	return &models.ProgramMember{}, nil
