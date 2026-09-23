@@ -104,6 +104,7 @@ func (m *stubAppRepo) CountAcceptedByTerm(ctx context.Context, id string) (int, 
 	}
 	return 0, nil
 }
+func (m *stubAppRepo) CountByTerm(context.Context, string) (int, error) { return 0, nil }
 func (m *stubAppRepo) FindByTermAndUser(ctx context.Context, termID, userID string) (*models.Application, error) {
 	if m.findByTermAndUser != nil {
 		return m.findByTermAndUser(ctx, termID, userID)

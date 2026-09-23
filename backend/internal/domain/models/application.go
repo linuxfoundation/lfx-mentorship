@@ -21,9 +21,13 @@ func (t ProgramApplicationType) IsValid() bool {
 }
 
 type ProgramApplicationTerm struct {
-	ID     string            `json:"id"`
-	Name   string            `json:"name"`
-	Status ProgramTermStatus `json:"status"`
+	ID                   string            `json:"id"`
+	Name                 string            `json:"name"`
+	Status               ProgramTermStatus `json:"status"`
+	StartDate            *time.Time        `json:"start_date,omitempty"`
+	EndDate              *time.Time        `json:"end_date,omitempty"`
+	ApplicationStartDate *time.Time        `json:"application_start_date,omitempty"`
+	ApplicationEndDate   *time.Time        `json:"application_end_date,omitempty"`
 }
 
 type ProgramApplicationRow struct {

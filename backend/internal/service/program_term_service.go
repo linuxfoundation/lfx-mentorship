@@ -126,6 +126,13 @@ func (s *ProgramTermService) Update(ctx context.Context, id string, input models
 	ctx, span := programTermSvcTracer.Start(ctx, "ProgramTermService.Update")
 	defer span.End()
 	span.SetAttributes(attribute.String("term.id", id))
+	current, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("get term for update: %w", err)
+	}
+	if current.Status == models.ProgramTermStatusClosed && current.EndDateTime != nil && time.Now().After(*current.EndDateTime) {
+		return nil, fmt.Errorf("%w: historical closed terms cannot be edited", domain.ErrStateLocked)
+	}
 
 	if input.Status != nil {
 		if !input.Status.IsValid() {
@@ -133,11 +140,6 @@ func (s *ProgramTermService) Update(ctx context.Context, id string, input models
 		}
 
 		if *input.Status == models.ProgramTermStatusOpen {
-			current, err := s.repo.GetByID(ctx, id)
-			if err != nil {
-				span.RecordError(err)
-				return nil, fmt.Errorf("get term for reopen guard: %w", err)
-			}
 			// Reopen guard (FR-014): cannot reopen if end date has passed.
 			if current.EndDateTime != nil && time.Now().After(*current.EndDateTime) {
 				return nil, fmt.Errorf("%w: term end date has passed and cannot be reopened", domain.ErrStateLocked)
@@ -211,6 +213,13 @@ func (s *ProgramTermService) Delete(ctx context.Context, id string) error {
 	ctx, span := programTermSvcTracer.Start(ctx, "ProgramTermService.Delete")
 	defer span.End()
 	span.SetAttributes(attribute.String("term.id", id))
+	count, err := s.appRepo.CountByTerm(ctx, id)
+	if err != nil {
+		return fmt.Errorf("count applications for term deletion: %w", err)
+	}
+	if count > 0 {
+		return fmt.Errorf("%w: term has %d application(s)", domain.ErrStateLocked, count)
+	}
 
 	if err := s.repo.Delete(ctx, id); err != nil {
 		span.RecordError(err)

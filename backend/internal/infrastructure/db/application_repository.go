@@ -167,7 +167,7 @@ func (r *ApplicationRepository) ListByProgram(ctx context.Context, programID str
 		return nil, nil, fmt.Errorf("count program applications: %w", err)
 	}
 	args = append(args, limit, offset)
-	q := `SELECT a.user_id, a.id, u.name, u.email, u.avatar_url, a.status, pt.id, pt.name, pt.status,
+	q := `SELECT a.user_id, a.id, u.name, u.email, u.avatar_url, a.status, pt.id, pt.name, pt.status, pt.start_date_time, pt.end_date_time, pt.application_start_date, pt.application_end_date,
 		(SELECT COUNT(*) FROM tasks t WHERE t.application_id = a.id),
 		(SELECT COUNT(*) FROM tasks t WHERE t.application_id = a.id AND t.status IN ('submitted', 'complete')),
 		a.reviewer_note, a.created_on, a.updated_on,
@@ -183,7 +183,7 @@ func (r *ApplicationRepository) ListByProgram(ctx context.Context, programID str
 	result := make([]*models.ProgramApplicationRow, 0)
 	for rows.Next() {
 		var row models.ProgramApplicationRow
-		if err := rows.Scan(&row.UserID, &row.ApplicationID, &row.Name, &row.Email, &row.AvatarURL, &row.Status, &row.Term.ID, &row.Term.Name, &row.Term.Status, &row.TasksTotal, &row.TasksSubmitted, &row.Note, &row.CreatedOn, &row.UpdatedOn, &row.OtherApplications); err != nil {
+		if err := rows.Scan(&row.UserID, &row.ApplicationID, &row.Name, &row.Email, &row.AvatarURL, &row.Status, &row.Term.ID, &row.Term.Name, &row.Term.Status, &row.Term.StartDate, &row.Term.EndDate, &row.Term.ApplicationStartDate, &row.Term.ApplicationEndDate, &row.TasksTotal, &row.TasksSubmitted, &row.Note, &row.CreatedOn, &row.UpdatedOn, &row.OtherApplications); err != nil {
 			return nil, nil, fmt.Errorf("scan program application: %w", err)
 		}
 		result = append(result, &row)
@@ -590,6 +590,14 @@ func (r *ApplicationRepository) CountAcceptedByTerm(ctx context.Context, termID 
 	if err := r.pool.QueryRow(ctx, q, termID).Scan(&count); err != nil {
 		span.RecordError(err)
 		return 0, fmt.Errorf("count accepted applications: %w", err)
+	}
+	return count, nil
+}
+
+func (r *ApplicationRepository) CountByTerm(ctx context.Context, termID string) (int, error) {
+	var count int
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM applications WHERE program_term_id = $1`, termID).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count applications by term: %w", err)
 	}
 	return count, nil
 }

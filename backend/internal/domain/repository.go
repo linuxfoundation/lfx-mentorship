@@ -137,6 +137,8 @@ type ApplicationRepository interface {
 	CountBlockingAppsForProgram(ctx context.Context, programID string) (int, error)
 	// CountAcceptedByTerm returns the count of accepted applications for a term.
 	CountAcceptedByTerm(ctx context.Context, termID string) (int, error)
+	// CountByTerm returns every application count for a term.
+	CountByTerm(ctx context.Context, termID string) (int, error)
 	// FindByTermAndUser returns an application for a specific term and user, or nil.
 	FindByTermAndUser(ctx context.Context, termID, userID string) (*models.Application, error)
 	// BulkDeclineByTerm moves all pending/submitted applications in a term to declined.
