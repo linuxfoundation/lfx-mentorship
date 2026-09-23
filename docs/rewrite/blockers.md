@@ -13,7 +13,7 @@ outside the traffic cutover until their owners provide the required evidence.
 | Blocker | Owner | Why it blocks | Current state |
 |---|---|---|---|
 | Shared OpenFGA model and executable fixtures | `lfx-v2-helm` | RuleSets and emitted tuples reference types and relations that do not exist until the model is deployed | Required before RuleSet activation |
-| Project admin relation preservation | `lfx-v2-project-service` | Project full-state sync can delete Mentorship's direct admin tuples | Design is settled; external publisher change required |
+| Project admin relation ownership | `lfx-v2-project-service` plus Mentorship/platform owners | Project full-state sync must not delete a relation owned by the project service; the project-wide mentorship admin role must be authoritative and live-verified before cutover | Partially addressed: project-service PR #127 implements the target ownership model for the project-scoped mentorship admin role, but rollout, downstream verification, and cutover remain |
 | Project and approver roster authority | Mentorship/platform authority decision | FGA cannot distinguish an authoritative roster change from self-granting access | Storage shape exists for approvers; project-wide admin authority still requires ownership/API agreement |
 | Complete PostgreSQL data invariants | Mentorship/data migration | Missing parents or project IDs produce incomplete inheritance chains | Migration foundation exists; backfill and enforcement remain |
 | Heimdall/ArgoCD environment rollout | `lfx-v2-argocd`, platform owners | A correct chart is inert or unusable without real gateway, JWKS, audience, and model values | Local chart gates and first RuleSet pass exist; environment values are not landed |
@@ -86,18 +86,28 @@ criterion.
 
 **Owner:** `linuxfoundation/lfx-v2-project-service`
 
-### Required change
+### Temporary bridge and target ownership
 
-Project-service must include `mentorship_program_admin` in the
-`exclude_relations` field of its full-state `project` `update_access` payload.
-Mentorship owns the direct tuple:
+Project-service PR #127 implements the target ownership model for the
+project-scoped mentorship admin role: project-service owns the project-wide
+`mentorship_program_admin` roster and its FGA emission rather than Mentorship
+maintaining a separate competing project-role tuple.
+
+The remaining work is not the ownership decision itself, but the rollout and
+verification of that implementation in the shared environment. The target
+architecture is now a single authority model: the project service owns the
+project-wide mentorship admin role and emits its `member_put` / `member_remove`
+updates through the normal project FGA flow.
+
+The target architecture remains:
 
 ```text
 project:{project_uid}#mentorship_program_admin@user:{program_admin_lfid}
 ```
 
-Project-service preserves that relation but does not derive, store, or manage
-it.
+but the authoritative roster, assignment flow, and writes are owned by the
+project service, while Mentorship consumes the inherited relation for
+cross-program access checks.
 
 ### Why this blocks
 
@@ -121,13 +131,14 @@ relation.
 
 ### Required resolution evidence
 
-1. Project-service ships the `exclude_relations` change.
-2. A project update containing unrelated changes is exercised in an
+1. The project-service ownership of the project-wide mentorship admin role is
+   explicitly adopted and implemented in the live deployment.
+2. The project-service deployment version containing the project-scoped mentorship
+   admin role and its FGA emission is recorded in the environment rollout checklist.
+3. A project update containing unrelated changes is exercised in an
    integration environment.
-3. The Mentorship admin tuple remains after that update.
-4. A cross-program `writer` check succeeds before and after the project update.
-5. The project-service deployment version containing the change is recorded in
-   the environment rollout checklist.
+4. The Mentorship admin tuple remains after that update.
+5. A cross-program `writer` check succeeds before and after the project update.
 
 ## 3. Roster Authority and Separation of Duties
 
@@ -263,6 +274,21 @@ across releases.
 5. The frontend/BFF points at the shared gateway URL and requests the gateway
    audience.
 6. Direct interim-host access is disabled or otherwise prevented at cutover.
+
+### Dual-gateway topology decision
+
+Before enabling the shared gateway, document and verify the interim topology:
+
+- whether both gateways route to one Mentorship deployment or to separate
+   deployments;
+- which gateway-to-Service path is used in each environment;
+- whether the deployments share the same PostgreSQL instance and schema;
+- how cross-account traffic reaches the gateway, Service, and database; and
+- how the interim hostname is disabled so it cannot bypass Heimdall.
+
+The current code supports two URL prefixes on one backend deployment. That is a
+temporary migration shape, not evidence that cross-account routing or database
+ownership has been solved.
 
 ## 6. Seed, Reconciliation, and Verification
 

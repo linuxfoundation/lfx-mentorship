@@ -55,9 +55,6 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	if err := reconcileApprovers(ctx, pool, outbox, &counts); err != nil {
 		return err
 	}
-	if err := reconcileProjectAdmins(ctx, pool, outbox, &counts); err != nil {
-		return err
-	}
 
 	logger.Info("FGA reconciliation markers queued", "counts", counts)
 	return nil
@@ -88,13 +85,6 @@ func validateAuthorizationData(ctx context.Context, pool Queryer) error {
 			query: `SELECT COUNT(*)
 				FROM mentorship_approver_team_members tm
 				JOIN users u ON u.id = tm.user_id
-				WHERE u.lfid IS NULL OR BTRIM(u.lfid) = ''`,
-		},
-		{
-			name: "project admins missing LFID",
-			query: `SELECT COUNT(*)
-				FROM mentorship_program_admins pa
-				JOIN users u ON u.id = pa.user_id
 				WHERE u.lfid IS NULL OR BTRIM(u.lfid) = ''`,
 		},
 		{
@@ -215,32 +205,6 @@ func reconcileApprovers(ctx context.Context, pool Queryer, outbox *db.FGAOutboxR
 			return err
 		}
 		(*counts)["mentorship_approver_team"]++
-	}
-	return rows.Err()
-}
-
-func reconcileProjectAdmins(ctx context.Context, pool Queryer, outbox *db.FGAOutboxRepository, counts *map[string]int) error {
-	rows, err := pool.Query(ctx, `
-		SELECT pa.project_uid, u.lfid
-		FROM mentorship_program_admins pa
-		JOIN users u ON u.id = pa.user_id
-		WHERE u.lfid IS NOT NULL AND BTRIM(u.lfid) <> ''`)
-	if err != nil {
-		return fmt.Errorf("list project admins: %w", err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var projectUID, lfid string
-		if err := rows.Scan(&projectUID, &lfid); err != nil {
-			return fmt.Errorf("scan project admin: %w", err)
-		}
-		if err := outbox.ReconcileMembership(ctx, "project", projectUID, "mentorship_program_admin", lfid); err != nil {
-			return err
-		}
-		if _, err := pool.Exec(ctx, `DELETE FROM fga_membership_tombstones WHERE object_type = 'project' AND object_uid = $1 AND relation = 'mentorship_program_admin' AND username = $2`, projectUID, lfid); err != nil {
-			return fmt.Errorf("clear project admin tombstone: %w", err)
-		}
-		(*counts)["project_membership"]++
 	}
 	return rows.Err()
 }

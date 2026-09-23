@@ -83,7 +83,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	}
 	programTermSvc := service.NewProgramTermService(programTermRepo, applicationRepo)
 	programMemberSvc := service.NewProgramMemberService(programMemberRepo, programRepo, notifier, cfg.Local.InviteSecret)
-	applicationSvc := service.NewApplicationService(applicationRepo, taskRepo, programTermRepo, programRepo, programMemberRepo, notifier, rosterRepo)
+	applicationSvc := service.NewApplicationService(applicationRepo, taskRepo, programTermRepo, programRepo, programMemberRepo, notifier)
 	taskSvc := service.NewTaskService(taskRepo, applicationRepo, programTermRepo, programMemberRepo, notifier)
 	menteeSvc := service.NewMenteeService(menteeRepo)
 	mentorSvc := service.NewMentorService(mentorRepo)
@@ -107,8 +107,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		}
 		outbox := db.NewFGAOutboxRepository(pool)
 		approverRepo := db.NewApproverRepository(pool)
-		rosterRepo := db.NewRosterRepository(pool)
-		builder := fga.NewDatabaseBuilder(programRepo, programMemberRepo, userRepo, programTermRepo, applicationRepo, taskRepo, approverRepo, rosterRepo)
+		builder := fga.NewDatabaseBuilder(programRepo, programMemberRepo, userRepo, programTermRepo, applicationRepo, taskRepo, approverRepo)
 		publisher := fga.NewJetStreamPublisher(js)
 		relay := fga.NewRelay(outbox, builder, publisher, cfg.FGA.RelayBatch, cfg.FGA.RelayRetryDelay)
 		relay.SetLogger(logger)
@@ -268,9 +267,6 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			r.Get("/admin/approver-team/members", rosterH.ListApprovers)
 			r.Post("/admin/approver-team/members", rosterH.AddApprover)
 			r.Delete("/admin/approver-team/members/{userID}", rosterH.RemoveApprover)
-			r.Get("/projects/{projectUID}/mentorship-program-admins", rosterH.ListProjectAdmins)
-			r.Post("/projects/{projectUID}/mentorship-program-admins", rosterH.AddProjectAdmin)
-			r.Delete("/projects/{projectUID}/mentorship-program-admins/{userID}", rosterH.RemoveProjectAdmin)
 		})
 	}
 	resolveGatewayPrincipal := func(next http.Handler) http.Handler {

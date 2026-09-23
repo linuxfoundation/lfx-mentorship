@@ -16,14 +16,13 @@ type DatabaseBuilder struct {
 	members      domain.ProgramMemberRepository
 	users        domain.UserRepository
 	approvers    domain.ApproverRepository
-	rosters      domain.RosterRepository
 	terms        domain.ProgramTermRepository
 	applications domain.ApplicationRepository
 	tasks        domain.TaskRepository
 }
 
-func NewDatabaseBuilder(programs domain.ProgramRepository, members domain.ProgramMemberRepository, users domain.UserRepository, terms domain.ProgramTermRepository, applications domain.ApplicationRepository, tasks domain.TaskRepository, approvers domain.ApproverRepository, rosters domain.RosterRepository) *DatabaseBuilder {
-	return &DatabaseBuilder{programs: programs, members: members, users: users, approvers: approvers, rosters: rosters, terms: terms, applications: applications, tasks: tasks}
+func NewDatabaseBuilder(programs domain.ProgramRepository, members domain.ProgramMemberRepository, users domain.UserRepository, terms domain.ProgramTermRepository, applications domain.ApplicationRepository, tasks domain.TaskRepository, approvers domain.ApproverRepository) *DatabaseBuilder {
+	return &DatabaseBuilder{programs: programs, members: members, users: users, approvers: approvers, terms: terms, applications: applications, tasks: tasks}
 }
 
 func (b *DatabaseBuilder) Build(ctx context.Context, marker domain.FGAOutboxMarker) (Message, error) {
@@ -128,16 +127,7 @@ func (b *DatabaseBuilder) buildTask(ctx context.Context, id string) (Message, er
 
 func (b *DatabaseBuilder) buildMembership(ctx context.Context, marker domain.FGAOutboxMarker) (Message, error) {
 	if marker.ObjectType == "project" {
-		members, err := b.rosters.ListProjectAdmins(ctx, marker.ObjectUID)
-		if err != nil {
-			return Message{}, err
-		}
-		for _, member := range members {
-			if member.LFID == *marker.Username {
-				return MemberPut("project", marker.ObjectUID, *marker.Username, []string{*marker.Relation})
-			}
-		}
-		return MemberRemove("project", marker.ObjectUID, *marker.Username, *marker.Relation)
+		return Message{}, fmt.Errorf("project membership markers are owned by project-service")
 	}
 	members, err := b.listAllMembers(ctx, marker.ObjectUID)
 	if err != nil {

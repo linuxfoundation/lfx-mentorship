@@ -26,7 +26,6 @@ type ApplicationService struct {
 	termRepo    domain.ProgramTermRepository
 	programRepo domain.ProgramRepository
 	memberRepo  domain.ProgramMemberRepository
-	rosterRepo  domain.RosterRepository
 	notifier    domain.Notifier
 }
 
@@ -46,13 +45,8 @@ func NewApplicationService(
 	programRepo domain.ProgramRepository,
 	memberRepo domain.ProgramMemberRepository,
 	notifier domain.Notifier,
-	rosters ...domain.RosterRepository,
 ) *ApplicationService {
-	var rosterRepo domain.RosterRepository
-	if len(rosters) > 0 {
-		rosterRepo = rosters[0]
-	}
-	return &ApplicationService{repo: repo, taskRepo: taskRepo, termRepo: termRepo, programRepo: programRepo, memberRepo: memberRepo, rosterRepo: rosterRepo, notifier: notifier}
+	return &ApplicationService{repo: repo, taskRepo: taskRepo, termRepo: termRepo, programRepo: programRepo, memberRepo: memberRepo, notifier: notifier}
 }
 
 func (s *ApplicationService) isActiveReviewer(ctx context.Context, programID, actorID string) (bool, error) {
@@ -393,20 +387,6 @@ func (s *ApplicationService) WithdrawForMentee(ctx context.Context, id, actorID 
 		return nil, fmt.Errorf("get application term: %w", err)
 	}
 	_, memberErr := s.memberRepo.FindActiveProgramAdminByProgramAndUser(ctx, term.ProgramID, actorID)
-	if memberErr != nil && s.rosterRepo != nil {
-		program, rosterErr := s.programRepo.GetByID(ctx, term.ProgramID)
-		if rosterErr == nil && program.ProjectUID != nil {
-			admins, listErr := s.rosterRepo.ListProjectAdmins(ctx, *program.ProjectUID)
-			if listErr == nil {
-				for _, admin := range admins {
-					if admin.UserID == actorID {
-						memberErr = nil
-						break
-					}
-				}
-			}
-		}
-	}
 	if memberErr != nil {
 		if errors.Is(memberErr, domain.ErrProgramMemberNotFound) {
 			return nil, fmt.Errorf("%w: actor must be an active program_admin", domain.ErrForbidden)

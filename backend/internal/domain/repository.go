@@ -30,9 +30,6 @@ type RosterRepository interface {
 	ListApprovers(ctx context.Context) ([]*models.RosterMember, error)
 	AddApprover(ctx context.Context, userID string) (*models.RosterMember, error)
 	RemoveApprover(ctx context.Context, userID string) error
-	ListProjectAdmins(ctx context.Context, projectUID string) ([]*models.RosterMember, error)
-	AddProjectAdmin(ctx context.Context, projectUID, userID string) (*models.RosterMember, error)
-	RemoveProjectAdmin(ctx context.Context, projectUID, userID string) error
 }
 
 // UserProfileRepository defines persistence operations for user profiles.
