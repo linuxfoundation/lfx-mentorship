@@ -33,7 +33,7 @@ func (r *IndexOutboxRepository) Claim(ctx context.Context, limit int) ([]domain.
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	rows, err := tx.Query(ctx, `WITH claimed AS (SELECT id FROM index_outbox WHERE state = 'pending' ORDER BY created_on FOR UPDATE SKIP LOCKED LIMIT $1) UPDATE index_outbox o SET state = 'in_flight', attempts = attempts + 1 FROM claimed WHERE o.id = claimed.id RETURNING o.id, o.object_type, o.object_uid, o.action, o.headers, o.data, o.indexing_config, o.attempts, o.created_on`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("claim index outbox: %w", err)

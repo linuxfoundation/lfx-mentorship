@@ -132,9 +132,13 @@ type ApplicationProgram struct {
 	LogoURL        *string `json:"logo_url,omitempty"`
 }
 type ApplicationTerm struct {
-	ID, Name           string
-	Status             ProgramTermStatus `json:"status"`
-	StartDate, EndDate *time.Time        `json:"start_date,omitempty" json:"end_date,omitempty"`
+	ID                   string            `json:"id"`
+	Name                 string            `json:"name"`
+	Status               ProgramTermStatus `json:"status"`
+	StartDate            *time.Time        `json:"start_date,omitempty"`
+	EndDate              *time.Time        `json:"end_date,omitempty"`
+	ApplicationStartDate *time.Time        `json:"application_start_date,omitempty"`
+	ApplicationEndDate   *time.Time        `json:"application_end_date,omitempty"`
 }
 
 // ApplicationCreateInput is the request body for submitting an application.
