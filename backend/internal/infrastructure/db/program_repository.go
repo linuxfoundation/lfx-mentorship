@@ -162,6 +162,35 @@ func (r *ProgramRepository) List(ctx context.Context, filter models.ProgramFilte
 	return programs, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, nil
 }
 
+// GetManagementSummary returns the object-scoped counts shown on the program
+// administration header without loading the tab rows themselves.
+func (r *ProgramRepository) GetManagementSummary(ctx context.Context, programID string) (*models.ProgramManagementSummary, error) {
+	ctx, span := programTracer.Start(ctx, "db.programs.GetManagementSummary")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.program_id", programID))
+	const q = `
+		SELECT
+			EXISTS (SELECT 1 FROM program_terms WHERE program_id = $1 AND status = 'open'),
+			EXISTS (SELECT 1 FROM program_terms WHERE program_id = $1 AND status = 'closed'),
+			COUNT(a.id) FILTER (WHERE pt.status = 'open' AND a.role = 'mentee' AND a.status IN ('accepted', 'graduated')),
+			COUNT(a.id) FILTER (WHERE pt.status = 'closed' AND a.role = 'mentee'),
+			COUNT(a.id) FILTER (WHERE a.role = 'mentee'),
+			(SELECT COUNT(*) FROM program_members pm WHERE pm.program_id = $1 AND pm.member_type = 'mentor' AND pm.status = 'active'),
+			(SELECT COUNT(*) FROM program_terms WHERE program_id = $1 AND status <> 'deleted')
+		FROM program_terms pt
+		LEFT JOIN applications a ON a.program_term_id = pt.id
+		WHERE pt.program_id = $1`
+	var summary models.ProgramManagementSummary
+	if err := r.pool.QueryRow(ctx, q, programID).Scan(
+		&summary.HasOpenTerm, &summary.HasClosedTerm, &summary.Mentees,
+		&summary.PastMentees, &summary.Applicants, &summary.Mentors, &summary.Terms,
+	); err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("get program management summary: %w", err)
+	}
+	return &summary, nil
+}
+
 func catalogLimitOffset(filter models.ProgramFilter) (limit, offset int) {
 	limit = filter.Limit
 	if limit <= 0 || limit > 100 {

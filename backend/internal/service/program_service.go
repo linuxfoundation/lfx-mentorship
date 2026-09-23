@@ -94,6 +94,24 @@ func (s *ProgramService) List(ctx context.Context, filter models.ProgramFilter) 
 	return programs, meta, nil
 }
 
+// GetManagementSummary returns administrative tab counts for one program.
+func (s *ProgramService) GetManagementSummary(ctx context.Context, programID string) (*models.ProgramManagementSummary, error) {
+	program, err := s.repo.GetByID(ctx, programID)
+	if err != nil {
+		return nil, fmt.Errorf("get program for management summary: %w", err)
+	}
+	summary, err := s.repo.GetManagementSummary(ctx, programID)
+	if err != nil {
+		return nil, fmt.Errorf("get program management summary: %w", err)
+	}
+	if program.Status != models.ProgramStatusPublished {
+		summary.Mentees = 0
+		summary.PastMentees = 0
+		summary.Applicants = 0
+	}
+	return summary, nil
+}
+
 func applyCatalogLabels(items []*models.ProgramCatalogItem, now time.Time) {
 	for _, item := range items {
 		if item.Skills == nil {

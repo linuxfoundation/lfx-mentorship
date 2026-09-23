@@ -170,19 +170,20 @@ func (m *stubTermRepo) CountOpenTermsByProgram(ctx context.Context, id string) (
 }
 
 type stubProgRepo struct {
-	getByID         func(context.Context, string) (*models.Program, error)
-	getBySlug       func(context.Context, string) (*models.Program, error)
-	list            func(context.Context, models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error)
-	listCatalog     func(context.Context, models.ProgramFilter) ([]*models.ProgramCatalogItem, *models.PaginationMeta, error)
-	getCatalog      func(context.Context, string) (*models.ProgramCatalogItem, error)
-	listMentees     func(context.Context, string) ([]*models.ProgramCatalogMentee, error)
-	create          func(context.Context, models.ProgramCreateInput) (*models.Program, error)
-	update          func(context.Context, string, models.ProgramUpdateInput) (*models.Program, error)
-	delete          func(context.Context, string) error
-	listSkills      func(context.Context, string) ([]*models.ProgramSkill, error)
-	addSkill        func(context.Context, string, models.ProgramSkillCreateInput) (*models.ProgramSkill, error)
-	deleteSkill     func(context.Context, string, string) error
-	getFundingStats func(context.Context, string) (*models.ProgramFundingStats, error)
+	getByID           func(context.Context, string) (*models.Program, error)
+	getBySlug         func(context.Context, string) (*models.Program, error)
+	list              func(context.Context, models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error)
+	managementSummary func(context.Context, string) (*models.ProgramManagementSummary, error)
+	listCatalog       func(context.Context, models.ProgramFilter) ([]*models.ProgramCatalogItem, *models.PaginationMeta, error)
+	getCatalog        func(context.Context, string) (*models.ProgramCatalogItem, error)
+	listMentees       func(context.Context, string) ([]*models.ProgramCatalogMentee, error)
+	create            func(context.Context, models.ProgramCreateInput) (*models.Program, error)
+	update            func(context.Context, string, models.ProgramUpdateInput) (*models.Program, error)
+	delete            func(context.Context, string) error
+	listSkills        func(context.Context, string) ([]*models.ProgramSkill, error)
+	addSkill          func(context.Context, string, models.ProgramSkillCreateInput) (*models.ProgramSkill, error)
+	deleteSkill       func(context.Context, string, string) error
+	getFundingStats   func(context.Context, string) (*models.ProgramFundingStats, error)
 }
 
 func (m *stubProgRepo) GetByID(ctx context.Context, id string) (*models.Program, error) {
@@ -202,6 +203,12 @@ func (m *stubProgRepo) List(ctx context.Context, f models.ProgramFilter) ([]*mod
 		return m.list(ctx, f)
 	}
 	return nil, &models.PaginationMeta{}, nil
+}
+func (m *stubProgRepo) GetManagementSummary(ctx context.Context, id string) (*models.ProgramManagementSummary, error) {
+	if m.managementSummary != nil {
+		return m.managementSummary(ctx, id)
+	}
+	return &models.ProgramManagementSummary{}, nil
 }
 func (m *stubProgRepo) ListCatalog(ctx context.Context, f models.ProgramFilter) ([]*models.ProgramCatalogItem, *models.PaginationMeta, error) {
 	if m.listCatalog != nil {

@@ -172,6 +172,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		r.Get("/programs/catalog", programH.ListCatalog)
 		r.With(optionalJWT).Get("/programs/resolve/{id}", programH.ResolveID)
 		r.With(optionalJWT).Get("/programs/{id}", programH.GetByID)
+		r.Get("/programs/{id}/management-summary", programH.GetManagementSummary)
 		r.Get("/programs/{id}/catalog", programH.GetCatalog)
 		r.With(optionalJWT).Get("/programs/{id}/mentees", programH.ListCatalogMentees)
 		r.Get("/programs/{id}/skills", programH.ListSkills)

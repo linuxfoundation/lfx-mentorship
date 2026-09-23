@@ -21,6 +21,7 @@ type programService interface {
 	GetByID(ctx context.Context, id string) (*models.Program, error)
 	GetBySlug(ctx context.Context, slug string) (*models.Program, error)
 	List(ctx context.Context, filter models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error)
+	GetManagementSummary(ctx context.Context, programID string) (*models.ProgramManagementSummary, error)
 	ListCatalog(ctx context.Context, filter models.ProgramFilter) ([]*models.ProgramCatalogItem, *models.PaginationMeta, error)
 	GetCatalog(ctx context.Context, id string) (*models.ProgramCatalogItem, error)
 	ListCatalogMentees(ctx context.Context, programID string) ([]*models.ProgramCatalogMentee, error)
@@ -194,6 +195,20 @@ func (h *ProgramHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	JSON(w, http.StatusOK, program)
+}
+
+// GetManagementSummary handles GET /v1/programs/{id}/management-summary.
+func (h *ProgramHandler) GetManagementSummary(w http.ResponseWriter, r *http.Request) {
+	if auth.PrincipalFromContext(r.Context()) == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	summary, err := h.svc.GetManagementSummary(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, summary)
 }
 
 // Submit transitions a program from draft or rejected to submitted.

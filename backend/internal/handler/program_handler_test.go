@@ -21,6 +21,7 @@ type stubProgramSvc struct {
 	getCatalog                 func(context.Context, string) (*models.ProgramCatalogItem, error)
 	getByID                    func(context.Context, string) (*models.Program, error)
 	getBySlug                  func(context.Context, string) (*models.Program, error)
+	getManagementSummary       func(context.Context, string) (*models.ProgramManagementSummary, error)
 	listMentees                func(context.Context, string) ([]*models.ProgramCatalogMentee, error)
 	listSkills                 func(context.Context, string) ([]*models.ProgramSkill, error)
 	deleteSkill                func(context.Context, string, string, string) error
@@ -42,6 +43,12 @@ func (s *stubProgramSvc) GetBySlug(ctx context.Context, id string) (*models.Prog
 }
 func (s *stubProgramSvc) List(context.Context, models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error) {
 	return []*models.Program{}, &models.PaginationMeta{}, nil
+}
+func (s *stubProgramSvc) GetManagementSummary(ctx context.Context, id string) (*models.ProgramManagementSummary, error) {
+	if s.getManagementSummary != nil {
+		return s.getManagementSummary(ctx, id)
+	}
+	return &models.ProgramManagementSummary{}, nil
 }
 func (s *stubProgramSvc) ListCatalog(ctx context.Context, f models.ProgramFilter) ([]*models.ProgramCatalogItem, *models.PaginationMeta, error) {
 	if s.listCatalog != nil {
