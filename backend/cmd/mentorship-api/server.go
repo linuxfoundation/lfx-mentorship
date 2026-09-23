@@ -211,6 +211,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			r.Get("/me/profiles", userProfileH.ListMe)
 			r.Get("/me/profiles/{profileType}", userProfileH.GetMeByType)
 			r.Post("/me/profiles", userProfileH.Create)
+			r.Put("/me/profiles/{profileType}", userProfileH.PutMeByType)
 			r.Patch("/me/profiles/{profileType}", userProfileH.UpdateMeByType)
 			r.Delete("/me/profiles/{profileType}", userProfileH.DeleteMeByType)
 			r.Patch("/me/profiles/by-id/{id}", userProfileH.UpdateMeByID)
@@ -233,6 +234,8 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			// Program terms
 			r.Post("/programs/{id}/terms", programTermH.Create)
 			r.Patch("/programs/{programID}/terms/{termID}", programTermH.Update)
+			r.Post("/programs/{programID}/terms/{termID}/close", programTermH.Close)
+			r.Post("/programs/{programID}/terms/{termID}/reopen", programTermH.Reopen)
 			r.Delete("/programs/{programID}/terms/{termID}", programTermH.Delete)
 
 			// Applications

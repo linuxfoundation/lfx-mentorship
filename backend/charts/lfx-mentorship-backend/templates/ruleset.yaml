@@ -311,9 +311,11 @@ spec:
     - id: rule:lfx:lfx-mentorship-backend:nested-term-writer
       allow_encoded_slashes: "off"
       match:
-        methods: [PATCH, DELETE]
+        methods: [PATCH, DELETE, POST]
         routes:
           - path: /mentorship/v1/programs/:programID/terms/:termID
+          - path: /mentorship/v1/programs/:programID/terms/:termID/close
+          - path: /mentorship/v1/programs/:programID/terms/:termID/reopen
       execute:
         - authenticator: oidc
         - authorizer: openfga_check

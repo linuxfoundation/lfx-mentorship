@@ -21,6 +21,8 @@ type programTermService interface {
 	Create(ctx context.Context, input models.ProgramTermCreateInput) (*models.ProgramTerm, error)
 	Update(ctx context.Context, id string, input models.ProgramTermUpdateInput) (*models.ProgramTerm, error)
 	Delete(ctx context.Context, id string) error
+	Close(ctx context.Context, id string) (*models.ProgramTerm, int, error)
+	Reopen(ctx context.Context, id string) (*models.ProgramTerm, error)
 }
 
 // ProgramTermHandler holds Chi handlers for the program terms resource.
@@ -180,4 +182,42 @@ func (h *ProgramTermHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// Close handles POST /v1/programs/{programID}/terms/{termID}/close.
+func (h *ProgramTermHandler) Close(w http.ResponseWriter, r *http.Request) {
+	if auth.PrincipalFromContext(r.Context()) == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	programID, termID := chi.URLParam(r, "programID"), chi.URLParam(r, "termID")
+	if _, err := h.svc.GetByProgramAndID(r.Context(), programID, termID); err != nil {
+		Error(w, err)
+		return
+	}
+	term, _, err := h.svc.Close(r.Context(), termID)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, term)
+}
+
+// Reopen handles POST /v1/programs/{programID}/terms/{termID}/reopen.
+func (h *ProgramTermHandler) Reopen(w http.ResponseWriter, r *http.Request) {
+	if auth.PrincipalFromContext(r.Context()) == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	programID, termID := chi.URLParam(r, "programID"), chi.URLParam(r, "termID")
+	if _, err := h.svc.GetByProgramAndID(r.Context(), programID, termID); err != nil {
+		Error(w, err)
+		return
+	}
+	term, err := h.svc.Reopen(r.Context(), termID)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, term)
 }

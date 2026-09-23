@@ -136,8 +136,8 @@ func TestUserProfileHandler_GetMeByType_UsesPrincipalAndType(t *testing.T) {
 	if got.ProfileType != "mentee" {
 		t.Fatalf("got.ProfileType = %q; want mentee", got.ProfileType)
 	}
-	if got.Limit != 0 {
-		t.Fatalf("got.Limit = %d; want 0 when no limit param is provided", got.Limit)
+	if got.Limit != 100 {
+		t.Fatalf("got.Limit = %d; want 100 to detect duplicate profiles", got.Limit)
 	}
 	if got.Offset != 0 {
 		t.Fatalf("got.Offset = %d; want 0", got.Offset)
@@ -147,8 +147,8 @@ func TestUserProfileHandler_GetMeByType_UsesPrincipalAndType(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp["data"] == nil {
-		t.Fatal("expected data payload")
+	if resp["id"] != "p1" {
+		t.Fatalf("got id %#v; want p1", resp["id"])
 	}
 }
 
@@ -173,6 +173,34 @@ func TestUserProfileHandler_Create_BindsUserToPrincipal(t *testing.T) {
 	}
 	if gotUserID != "caller-user" {
 		t.Fatalf("gotUserID = %q; want caller-user", gotUserID)
+	}
+}
+
+func TestUserProfileHandler_PutMeByType_CreatesForPrincipal(t *testing.T) {
+	var got models.UserProfileCreateInput
+	h := handler.NewUserProfileHandler(&stubUserProfileSvc{
+		list: func(context.Context, models.UserProfileFilter) ([]*models.UserProfile, *models.PaginationMeta, error) {
+			return []*models.UserProfile{}, &models.PaginationMeta{}, nil
+		},
+		create: func(_ context.Context, input models.UserProfileCreateInput) (*models.UserProfile, error) {
+			got = input
+			return &models.UserProfile{ID: "p1", UserID: input.UserID, ProfileType: input.ProfileType}, nil
+		},
+	})
+	r := httptest.NewRequest(http.MethodPut, "/v1/me/profiles/mentee", bytes.NewBufferString(`{"user_id":"victim","profile_type":"mentor","age_eligible":true,"work_eligible":true}`))
+	r.Header.Set("Content-Type", "application/json")
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("profileType", "mentee")
+	r = r.WithContext(context.WithValue(auth.ContextWithPrincipal(r.Context(), &models.Principal{UserID: "caller-user"}), chi.RouteCtxKey, rctx))
+	w := httptest.NewRecorder()
+
+	h.PutMeByType(w, r)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("got %d; want 201", w.Code)
+	}
+	if got.UserID != "caller-user" || got.ProfileType != "mentee" {
+		t.Fatalf("got owner/type %q/%q; want caller-user/mentee", got.UserID, got.ProfileType)
 	}
 }
 

@@ -102,27 +102,11 @@ func (h *UserProfileHandler) ListMe(w http.ResponseWriter, r *http.Request) {
 
 // GetMeByType handles GET /v1/me/profiles/{profileType} — requires JWT.
 func (h *UserProfileHandler) GetMeByType(w http.ResponseWriter, r *http.Request) {
-	principal := auth.PrincipalFromContext(r.Context())
-	if principal == nil {
-		Error(w, domain.ErrUnauthorized)
-		return
-	}
-	profileType := chi.URLParam(r, "profileType")
-	limit, offset, ok := parsePaginationParams(w, r)
+	profile, ok := h.profileForPrincipal(w, r)
 	if !ok {
 		return
 	}
-	profiles, meta, err := h.svc.List(r.Context(), models.UserProfileFilter{
-		Limit:       limit,
-		Offset:      offset,
-		UserID:      principal.UserID,
-		ProfileType: profileType,
-	})
-	if err != nil {
-		Error(w, err)
-		return
-	}
-	JSON(w, http.StatusOK, map[string]any{"data": profiles, "meta": meta})
+	JSON(w, http.StatusOK, profile)
 }
 
 // Create handles POST /v1/user-profiles — requires JWT.
@@ -146,6 +130,70 @@ func (h *UserProfileHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	JSON(w, http.StatusCreated, profile)
+}
+
+// PutMeByType creates or replaces the signed-in user's profile of the type in
+// the path. It is the canonical registration endpoint for mentee profiles.
+func (h *UserProfileHandler) PutMeByType(w http.ResponseWriter, r *http.Request) {
+	principal := auth.PrincipalFromContext(r.Context())
+	if principal == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	profileType := chi.URLParam(r, "profileType")
+	if profileType != "mentor" && profileType != "mentee" {
+		Error(w, fmt.Errorf("%w: profile_type must be mentor or mentee", domain.ErrInvalidInput))
+		return
+	}
+	var input models.UserProfileCreateInput
+	if !decodeBody(w, r, &input) {
+		return
+	}
+	input.UserID = principal.UserID
+	input.ProfileType = profileType
+	profiles, _, err := h.svc.List(r.Context(), models.UserProfileFilter{
+		Limit:       2,
+		UserID:      principal.UserID,
+		ProfileType: profileType,
+	})
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	if len(profiles) > 1 {
+		Error(w, fmt.Errorf("%w: multiple %s profiles exist for user", domain.ErrConflict, profileType))
+		return
+	}
+	if len(profiles) == 0 {
+		profile, err := h.svc.Create(r.Context(), input)
+		if err != nil {
+			Error(w, err)
+			return
+		}
+		JSON(w, http.StatusCreated, profile)
+		return
+	}
+	updated, err := h.svc.Update(r.Context(), profiles[0].ID, models.UserProfileUpdateInput{
+		Slug:               input.Slug,
+		FirstName:          input.FirstName,
+		LastName:           input.LastName,
+		Email:              input.Email,
+		Phone:              input.Phone,
+		LogoURL:            input.LogoURL,
+		Introduction:       input.Introduction,
+		TermsAndConditions: &input.TermsAndConditions,
+		NumberOfProjects:   &input.NumberOfProjects,
+		Address:            input.Address,
+		Demographics:       input.Demographics,
+		Socioeconomics:     input.Socioeconomics,
+		SkillSet:           input.SkillSet,
+		ProfileLinks:       input.ProfileLinks,
+	})
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, updated)
 }
 
 func (h *UserProfileHandler) profileForPrincipal(w http.ResponseWriter, r *http.Request) (*models.UserProfile, bool) {

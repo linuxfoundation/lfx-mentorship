@@ -24,6 +24,10 @@ type ProgramTermService struct {
 	appRepo domain.ApplicationRepository
 }
 
+type termCloseRepository interface {
+	CloseWithBulkDecline(ctx context.Context, id string) (*models.ProgramTerm, int, error)
+}
+
 // maxOpenTermsPerProgram is the maximum number of concurrently open terms allowed (FR-003).
 const maxOpenTermsPerProgram = 4
 
@@ -166,6 +170,36 @@ func (s *ProgramTermService) Update(ctx context.Context, id string, input models
 		return nil, fmt.Errorf("update program term: %w", err)
 	}
 	return t, nil
+}
+
+// Close declines pending applications and closes an open term atomically.
+func (s *ProgramTermService) Close(ctx context.Context, id string) (*models.ProgramTerm, int, error) {
+	ctx, span := programTermSvcTracer.Start(ctx, "ProgramTermService.Close")
+	defer span.End()
+	closer, ok := s.repo.(termCloseRepository)
+	if !ok {
+		return nil, 0, fmt.Errorf("close program term: repository does not support atomic close")
+	}
+	term, declined, err := closer.CloseWithBulkDecline(ctx, id)
+	if err != nil {
+		span.RecordError(err)
+		return nil, 0, fmt.Errorf("close program term: %w", err)
+	}
+	return term, declined, nil
+}
+
+// Reopen returns a closed term to open status while applying the existing
+// end-date and open-term-cap guards.
+func (s *ProgramTermService) Reopen(ctx context.Context, id string) (*models.ProgramTerm, error) {
+	current, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("get term for reopen: %w", err)
+	}
+	if current.Status != models.ProgramTermStatusClosed {
+		return nil, fmt.Errorf("%w: only closed terms can be reopened", domain.ErrInvalidStateTransition)
+	}
+	status := models.ProgramTermStatusOpen
+	return s.Update(ctx, id, models.ProgramTermUpdateInput{Status: &status})
 }
 
 // Delete removes the program term with the given ID.

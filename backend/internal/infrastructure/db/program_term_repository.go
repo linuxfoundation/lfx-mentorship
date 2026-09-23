@@ -211,6 +211,72 @@ func (r *ProgramTermRepository) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+// CloseWithBulkDecline declines pending applications, emits their FGA updates,
+// and closes the term in one transaction.
+func (r *ProgramTermRepository) CloseWithBulkDecline(ctx context.Context, id string) (*models.ProgramTerm, int, error) {
+	ctx, span := programTermTracer.Start(ctx, "db.program_terms.CloseWithBulkDecline")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.term_id", id))
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("begin close term transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	term, err := scanProgramTerm(tx.QueryRow(ctx, `SELECT`+programTermCols+` FROM program_terms WHERE id = $1 FOR UPDATE`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, 0, domain.ErrProgramTermNotFound
+	}
+	if err != nil {
+		return nil, 0, fmt.Errorf("load term for close: %w", err)
+	}
+	if term.Status != models.ProgramTermStatusOpen {
+		return nil, 0, fmt.Errorf("%w: only open terms can be closed", domain.ErrInvalidStateTransition)
+	}
+
+	var accepted int
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM applications WHERE program_term_id = $1 AND status = 'accepted'`, id).Scan(&accepted); err != nil {
+		return nil, 0, fmt.Errorf("count accepted applications for close: %w", err)
+	}
+	if accepted > 0 {
+		return nil, 0, fmt.Errorf("%w: term has %d accepted application(s)", domain.ErrStateLocked, accepted)
+	}
+
+	rows, err := tx.Query(ctx, `UPDATE applications SET status = 'declined' WHERE program_term_id = $1 AND status = 'pending' RETURNING `+applicationCols, id)
+	if err != nil {
+		return nil, 0, fmt.Errorf("decline pending applications for close: %w", err)
+	}
+	applications := make([]*models.Application, 0)
+	for rows.Next() {
+		application, scanErr := scanApplication(rows)
+		if scanErr != nil {
+			rows.Close()
+			return nil, 0, fmt.Errorf("scan declined application for close: %w", scanErr)
+		}
+		applications = append(applications, application)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, 0, fmt.Errorf("decline pending applications rows: %w", err)
+	}
+	rows.Close()
+	for _, application := range applications {
+		if err := enqueueApplicationMarker(ctx, tx, application, "update_access"); err != nil {
+			return nil, 0, err
+		}
+	}
+
+	closed := models.ProgramTermStatusClosed
+	updated, err := scanProgramTerm(tx.QueryRow(ctx, `UPDATE program_terms SET status = $2 WHERE id = $1 RETURNING`+programTermCols, id, closed))
+	if err != nil {
+		return nil, 0, fmt.Errorf("close term: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, 0, fmt.Errorf("commit close term transaction: %w", err)
+	}
+	return updated, len(applications), nil
+}
+
 // CountOpenTermsByProgram returns the count of terms with status='open' for a program.
 func (r *ProgramTermRepository) CountOpenTermsByProgram(ctx context.Context, programID string) (int, error) {
 	ctx, span := programTermTracer.Start(ctx, "db.program_terms.CountOpenTermsByProgram")

@@ -44,6 +44,14 @@ func (s *stubProgramTermSvc) Update(ctx context.Context, id string, input models
 
 func (s *stubProgramTermSvc) Delete(ctx context.Context, id string) error { return nil }
 
+func (s *stubProgramTermSvc) Close(ctx context.Context, id string) (*models.ProgramTerm, int, error) {
+	return &models.ProgramTerm{ID: id}, 0, nil
+}
+
+func (s *stubProgramTermSvc) Reopen(ctx context.Context, id string) (*models.ProgramTerm, error) {
+	return &models.ProgramTerm{ID: id}, nil
+}
+
 func TestProgramTermHandler_GetByID_UsesProgramScope(t *testing.T) {
 	var gotProgramID, gotTermID string
 	h := handler.NewProgramTermHandler(&stubProgramTermSvc{
