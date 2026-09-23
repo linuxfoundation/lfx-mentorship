@@ -33,6 +33,9 @@ func (b *DatabaseBuilder) Build(ctx context.Context, marker domain.FGAOutboxMark
 		if marker.Relation == nil || marker.Username == nil {
 			return Message{}, fmt.Errorf("membership marker %d is missing relation or username", marker.ID)
 		}
+		if marker.ObjectType == "project" {
+			return Message{}, fmt.Errorf("project membership markers are owned by project-service")
+		}
 		if marker.DesiredOperation == "remove" {
 			return MemberRemove(marker.ObjectType, marker.ObjectUID, *marker.Username, *marker.Relation)
 		}
@@ -126,9 +129,6 @@ func (b *DatabaseBuilder) buildTask(ctx context.Context, id string) (Message, er
 }
 
 func (b *DatabaseBuilder) buildMembership(ctx context.Context, marker domain.FGAOutboxMarker) (Message, error) {
-	if marker.ObjectType == "project" {
-		return Message{}, fmt.Errorf("project membership markers are owned by project-service")
-	}
 	members, err := b.listAllMembers(ctx, marker.ObjectUID)
 	if err != nil {
 		return Message{}, err

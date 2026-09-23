@@ -140,24 +140,9 @@ relation.
 4. The Mentorship admin tuple remains after that update.
 5. A cross-program `writer` check succeeds before and after the project update.
 
-## 3. Roster Authority and Separation of Duties
+## 3. Global Approver Roster Authority and Separation of Duties
 
 **Owners:** Mentorship plus the platform authority designated by AQ-8
-
-### Project-wide program admins
-
-The existing `program_members` table is program-scoped and cannot represent a
-user who administers every program under one LF project. The design requires a
-Mentorship-owned roster keyed by `(project_uid, user_id)`.
-
-That roster needs:
-
-- a Postgres source-of-truth table;
-- an LF-staff-authorized management API;
-- removal history or durable outbox tombstones;
-- `member_put`/`member_remove` emission for
-  `project#mentorship_program_admin`;
-- seed and reconciliation support.
 
 ### Global approvers
 
@@ -181,12 +166,10 @@ stale access.
 ### Required resolution evidence
 
 1. The authority allowed to administer the global approver roster is named.
-2. The project-wide admin roster owner and API authorization are named.
-3. Both rosters have relational source-of-truth storage.
-4. Insert and removal transactions create generation-guarded outbox markers.
-5. Seed and reconciliation cover both `member_put` and precise
-   `member_remove` operations.
-6. Self-add and cross-authority escalation tests are denied.
+2. The approver roster has relational source-of-truth storage.
+3. Insert and removal transactions create generation-guarded outbox markers.
+4. Seed and reconciliation cover `member_put` and precise `member_remove`.
+5. Self-add and cross-authority escalation tests are denied.
 
 ## 4. PostgreSQL Data Invariants and Backfill
 

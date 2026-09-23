@@ -110,9 +110,9 @@ Accepted mentor and program-admin changes use precise membership messages:
 ```
 
 Removal names the exact relation and never relies on an empty relation list for
-these flows. Project-wide `mentorship_program_admin` and global approver-team
-membership use the same subjects with their respective object IDs and
-relations.
+Mentorship-owned flows. Global approver-team membership uses the
+`mentorship_approver_team:global` object and `member` relation. Project-wide
+`mentorship_program_admin` membership is owned and emitted by Project Service.
 
 Global approver roster management is restricted to the platform-issued
 `manage:mentorship:approvers` scope. Project-wide program-admin storage and

@@ -213,7 +213,8 @@ func reconcileMembershipTombstones(ctx context.Context, pool Queryer, outbox *db
 	rows, err := pool.Query(ctx, `
 		SELECT object_type, object_uid, relation, username
 		FROM fga_membership_tombstones
-		WHERE last_reconciled_on IS NULL OR last_reconciled_on < NOW() - INTERVAL '5 minutes'
+		WHERE object_type <> 'project'
+		  AND (last_reconciled_on IS NULL OR last_reconciled_on < NOW() - INTERVAL '5 minutes')
 		ORDER BY deleted_on`)
 	if err != nil {
 		return fmt.Errorf("list membership tombstones: %w", err)
