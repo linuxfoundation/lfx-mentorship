@@ -210,14 +210,14 @@ func (r *ApplicationRepository) ListByUser(ctx context.Context, userID string, f
 	}
 
 	args := []any{userID}
-	where := ` WHERE user_id = $1`
+	where := ` WHERE a.user_id = $1`
 	if filter.Status != "" {
 		args = append(args, filter.Status)
-		where += fmt.Sprintf(` AND status = $%d`, len(args))
+		where += fmt.Sprintf(` AND a.status = $%d`, len(args))
 	}
 	if filter.Role != "" {
 		args = append(args, filter.Role)
-		where += fmt.Sprintf(` AND role = $%d`, len(args))
+		where += fmt.Sprintf(` AND a.role = $%d`, len(args))
 	}
 
 	var total int
@@ -227,8 +227,12 @@ func (r *ApplicationRepository) ListByUser(ctx context.Context, userID string, f
 	}
 
 	args = append(args, limit, offset)
-	listQ := `SELECT ` + applicationCols + ` FROM applications` + where +
-		fmt.Sprintf(` ORDER BY created_on DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
+	listQ := `SELECT a.id, a.program_term_id, a.user_id, a.role, a.status, a.program_term_status,
+		a.start_date_time, a.end_date_time, a.tasks_submitted, a.admin_notified, a.attendance_type,
+		a.evaluation, a.reviewer_note, a.created_on, a.updated_on,
+		p.id, p.name, p.slug, p.logo_url, pt.id, pt.name, pt.status, pt.start_date_time, pt.end_date_time
+		FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id JOIN programs p ON p.id = pt.program_id` + where +
+		fmt.Sprintf(` ORDER BY a.created_on DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
 
 	rows, err := r.pool.Query(ctx, listQ, args...)
 	if err != nil {
@@ -239,12 +243,20 @@ func (r *ApplicationRepository) ListByUser(ctx context.Context, userID string, f
 
 	var apps []*models.Application
 	for rows.Next() {
-		a, err := scanApplication(rows)
+		var a models.Application
+		var program models.ApplicationProgram
+		var term models.ApplicationTerm
+		err := rows.Scan(&a.ID, &a.ProgramTermID, &a.UserID, &a.Role, &a.Status, &a.ProgramTermStatus,
+			&a.StartDateTime, &a.EndDateTime, &a.TasksSubmitted, &a.AdminNotified, &a.AttendanceType,
+			&a.Evaluation, &a.ReviewerNote, &a.CreatedOn, &a.UpdatedOn,
+			&program.ID, &program.Name, &program.Slug, &program.LogoURL,
+			&term.ID, &term.Name, &term.Status, &term.StartDate, &term.EndDate)
 		if err != nil {
 			span.RecordError(err)
 			return nil, nil, fmt.Errorf("scan application: %w", err)
 		}
-		apps = append(apps, a)
+		a.Program, a.Term = &program, &term
+		apps = append(apps, &a)
 	}
 	if err := rows.Err(); err != nil {
 		span.RecordError(err)

@@ -104,21 +104,33 @@ func (a AttendanceType) IsValid() bool {
 
 // Application maps to the public.applications table.
 type Application struct {
-	ID                string             `json:"id"`
-	ProgramTermID     string             `json:"program_term_id"`
-	UserID            string             `json:"user_id"`
-	Role              ApplicationRole    `json:"role"`
-	Status            ApplicationStatus  `json:"status"`
-	ProgramTermStatus *ProgramTermStatus `json:"program_term_status,omitempty"`
-	StartDateTime     *time.Time         `json:"start_date_time,omitempty"`
-	EndDateTime       *time.Time         `json:"end_date_time,omitempty"`
-	AttendanceType    *AttendanceType    `json:"attendance_type,omitempty"` // set on accept
-	TasksSubmitted    bool               `json:"tasks_submitted"`
-	AdminNotified     bool               `json:"admin_notified"`
-	Evaluation        *string            `json:"-"`
-	ReviewerNote      *string            `json:"-"`
-	CreatedOn         time.Time          `json:"created_on"`
-	UpdatedOn         time.Time          `json:"updated_on"`
+	ID                string              `json:"id"`
+	ProgramTermID     string              `json:"program_term_id"`
+	UserID            string              `json:"user_id"`
+	Role              ApplicationRole     `json:"role"`
+	Status            ApplicationStatus   `json:"status"`
+	ProgramTermStatus *ProgramTermStatus  `json:"program_term_status,omitempty"`
+	StartDateTime     *time.Time          `json:"start_date_time,omitempty"`
+	EndDateTime       *time.Time          `json:"end_date_time,omitempty"`
+	AttendanceType    *AttendanceType     `json:"attendance_type,omitempty"` // set on accept
+	TasksSubmitted    bool                `json:"tasks_submitted"`
+	AdminNotified     bool                `json:"admin_notified"`
+	Evaluation        *string             `json:"-"`
+	ReviewerNote      *string             `json:"-"`
+	CreatedOn         time.Time           `json:"created_on"`
+	UpdatedOn         time.Time           `json:"updated_on"`
+	Program           *ApplicationProgram `json:"program,omitempty"`
+	Term              *ApplicationTerm    `json:"term,omitempty"`
+}
+
+type ApplicationProgram struct {
+	ID, Name, Slug string
+	LogoURL        *string `json:"logo_url,omitempty"`
+}
+type ApplicationTerm struct {
+	ID, Name           string
+	Status             ProgramTermStatus `json:"status"`
+	StartDate, EndDate *time.Time        `json:"start_date,omitempty" json:"end_date,omitempty"`
 }
 
 // ApplicationCreateInput is the request body for submitting an application.
