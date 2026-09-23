@@ -103,8 +103,9 @@ tasks                          (also created directly by program admins:
 
 ### JWT Bearer Token
 
-Protected endpoints require an `Authorization: Bearer <token>` header.
-Heimdall issues tokens after gateway authorization.
+Clients send their identity-provider bearer token to the shared gateway. After
+authorizing the request, Heimdall forwards a service-audience JWT to this
+backend. Backend consumers do not obtain or submit the Heimdall JWT directly.
 
 | Env var | Description |
 |---|---|
@@ -117,7 +118,9 @@ principals to its local user record where workflow behavior needs a local ID.
 
 #### Local Development Bypass
 
-Set `ALLOW_MOCK_PRINCIPAL_BYPASS=true` and `MOCK_LOCAL_PRINCIPAL=<user-id>` to inject a static principal without a real JWT. **Never set these in production.**
+Set `ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS=true` and
+`DISABLED_MOCK_LOCAL_PRINCIPAL=<user-id>` to inject a static principal without a
+real JWT. **Never set these in production.**
 
 ### Public vs. Authenticated Endpoints
 
@@ -1890,7 +1893,7 @@ incomplete ──► in_progress ──► submitted ──► complete
 ### Authentication Flow
 
 1. Send API requests through the shared gateway.
-2. Include the gateway-issued `Authorization: Bearer <token>` on protected requests.
+2. Include the identity-provider `Authorization: Bearer <token>` on protected requests; Heimdall replaces it before forwarding to the backend.
 3. On `401` response, refresh the session or redirect to login.
 
 ### Suggested Page Flows
@@ -2147,5 +2150,5 @@ class ApiError extends Error {
 | `HEIMDALL_JWT_ISSUER` | Yes | — | Expected JWT `iss` claim |
 | `INVITE_SECRET` | Yes | — | HMAC secret for mentor invite tokens |
 | `OTEL_ENDPOINT` | No | — | OpenTelemetry collector endpoint |
-| `ALLOW_MOCK_PRINCIPAL_BYPASS` | No | `false` | Enable local dev JWT bypass |
-| `MOCK_LOCAL_PRINCIPAL` | No | — | Static user ID for bypass mode |
+| `ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS` | No | `false` | Enable local dev JWT bypass |
+| `DISABLED_MOCK_LOCAL_PRINCIPAL` | No | — | Static user ID for bypass mode |
