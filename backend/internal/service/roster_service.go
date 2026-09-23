@@ -31,18 +31,3 @@ func (s *RosterService) RemoveApprover(ctx context.Context, actorID, userID stri
 	}
 	return s.repo.RemoveApprover(ctx, userID)
 }
-func (s *RosterService) ListProjectAdmins(ctx context.Context, projectUID string) ([]*models.RosterMember, error) {
-	return s.repo.ListProjectAdmins(ctx, projectUID)
-}
-func (s *RosterService) AddProjectAdmin(ctx context.Context, actorID, projectUID, userID string) (*models.RosterMember, error) {
-	if actorID == "" || actorID == userID {
-		return nil, fmt.Errorf("%w: project-admin self-escalation is forbidden", domain.ErrForbidden)
-	}
-	return s.repo.AddProjectAdmin(ctx, projectUID, userID)
-}
-func (s *RosterService) RemoveProjectAdmin(ctx context.Context, actorID, projectUID, userID string) error {
-	if actorID == "" || actorID == userID {
-		return fmt.Errorf("%w: project-admin self-escalation is forbidden", domain.ErrForbidden)
-	}
-	return s.repo.RemoveProjectAdmin(ctx, projectUID, userID)
-}

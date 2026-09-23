@@ -12,14 +12,6 @@ CREATE INDEX IF NOT EXISTS idx_programs_project_uid
   ON programs(project_uid)
   WHERE project_uid IS NOT NULL;
 
-CREATE TABLE IF NOT EXISTS mentorship_program_admins (
-  project_uid TEXT NOT NULL,
-  user_id     UUID NOT NULL REFERENCES users(id),
-  created_on  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_on  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (project_uid, user_id)
-);
-
 CREATE TABLE IF NOT EXISTS mentorship_approver_team_members (
   user_id    UUID PRIMARY KEY REFERENCES users(id),
   created_on TIMESTAMPTZ NOT NULL DEFAULT NOW(),

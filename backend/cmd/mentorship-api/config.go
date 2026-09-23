@@ -42,11 +42,8 @@ type DatabaseConfig struct {
 	ConnMaxLifetime time.Duration
 }
 
-// JWTConfig holds Auth0 / JWKS settings.
+// JWTConfig holds Heimdall JWKS settings.
 type JWTConfig struct {
-	JWKSURL          string
-	Audience         string
-	Issuer           string
 	ClockSkew        time.Duration
 	HeimdallJWKSURL  string
 	HeimdallAudience string
@@ -104,10 +101,9 @@ func loadConfig() (*Config, error) {
 	if heimdallConfigured && (heimdallJWKSURL == "" || heimdallAudience == "" || heimdallIssuer == "") {
 		return nil, fmt.Errorf("HEIMDALL_JWKS_URL, HEIMDALL_JWT_AUDIENCE, and HEIMDALL_JWT_ISSUER must be set together")
 	}
-	if heimdallConfigured && heimdallIssuer == os.Getenv("JWT_ISSUER") {
-		return nil, fmt.Errorf("HEIMDALL_JWT_ISSUER must differ from JWT_ISSUER")
+	if !heimdallConfigured && os.Getenv("DISABLED_MOCK_LOCAL_PRINCIPAL") == "" {
+		return nil, fmt.Errorf("HEIMDALL_JWKS_URL, HEIMDALL_JWT_AUDIENCE, and HEIMDALL_JWT_ISSUER are required")
 	}
-
 	serverPort, err := parseInt(getEnv("PORT", "8080"))
 	if err != nil {
 		return nil, fmt.Errorf("PORT: %w", err)
@@ -179,9 +175,6 @@ func loadConfig() (*Config, error) {
 			ConnMaxLifetime: 30 * time.Minute,
 		},
 		JWT: JWTConfig{
-			JWKSURL:          os.Getenv("JWKS_URL"),
-			Audience:         os.Getenv("JWT_AUDIENCE"),
-			Issuer:           os.Getenv("JWT_ISSUER"),
 			ClockSkew:        clockSkew,
 			HeimdallJWKSURL:  heimdallJWKSURL,
 			HeimdallAudience: heimdallAudience,
@@ -219,9 +212,6 @@ func loadConfig() (*Config, error) {
 // jwtAuthConfig converts JWTConfig into an auth.JWTAuthConfig.
 func (c *Config) jwtAuthConfig() auth.JWTAuthConfig {
 	return auth.JWTAuthConfig{
-		JWKSURL:                    c.JWT.JWKSURL,
-		Audience:                   c.JWT.Audience,
-		Issuer:                     c.JWT.Issuer,
 		ClockSkew:                  c.JWT.ClockSkew,
 		HeimdallJWKSURL:            c.JWT.HeimdallJWKSURL,
 		HeimdallAudience:           c.JWT.HeimdallAudience,

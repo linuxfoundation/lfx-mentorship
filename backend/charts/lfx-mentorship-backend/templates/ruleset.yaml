@@ -141,8 +141,6 @@ spec:
         routes:
           - path: /mentorship/v1/admin/approver-team/members
           - path: /mentorship/v1/admin/approver-team/members/:userID
-          - path: /mentorship/v1/projects/:projectUID/mentorship-program-admins
-          - path: /mentorship/v1/projects/:projectUID/mentorship-program-admins/:userID
       execute:
         - authenticator: oidc
         - authorizer: allow_all
