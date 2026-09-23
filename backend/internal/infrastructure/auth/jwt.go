@@ -121,7 +121,13 @@ func NewJWTAuthenticator(ctx context.Context, cfg JWTAuthConfig, logger *slog.Lo
 func (a *JWTAuthenticator) GatewayMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var principal *models.Principal
-		if r.Header.Get("Authorization") == "" {
+		if a.cfg.DisabledMockLocalPrincipal != "" {
+			principal = &models.Principal{
+				UserID:   a.cfg.DisabledMockLocalPrincipal,
+				Username: a.cfg.DisabledMockLocalPrincipal,
+				Scope:    ScopeMe,
+			}
+		} else if r.Header.Get("Authorization") == "" {
 			principal = &models.Principal{UserID: "_anonymous", Username: "_anonymous"}
 		} else {
 			var err error

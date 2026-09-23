@@ -275,6 +275,10 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 				handler.JSON(w, http.StatusUnauthorized, map[string]any{"error": "authenticated gateway principal is required"})
 				return
 			}
+			if req.Method == http.MethodPut && req.URL.Path == "/mentorship/v1/me" {
+				next.ServeHTTP(w, req)
+				return
+			}
 			// M2M principals are authorization identities, not local human users.
 			if strings.HasSuffix(principal.Username, "@clients") {
 				next.ServeHTTP(w, req)
