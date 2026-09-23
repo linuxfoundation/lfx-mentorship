@@ -1,12 +1,9 @@
 # LFX Mentorship API — Developer Reference
 
-**Base URL**: `http(s)://<host>/v1` for the interim Auth0 deployment, or
-`https://lfx-api.<environment>/mentorship/v1` through the Heimdall gateway.
+**Base URL**: `https://lfx-api.<environment>/mentorship/v1` through the Heimdall gateway.
 **Content-Type**: `application/json` for all request and response bodies  
 **Module**: `github.com/linuxfoundation/lfx-v2-mentorship-service`
 
-The bare `/v1` mount is retained only during the pre-cutover deployment. It
-accepts Auth0 tokens and must be retired when the shared gateway is enabled.
 Gateway traffic uses Heimdall-signed JWTs and receives object authorization
 from the gateway RuleSet/OpenFGA model.
 
@@ -106,20 +103,17 @@ tasks                          (also created directly by program admins:
 
 ### JWT Bearer Token
 
-Protected endpoints require an `Authorization: Bearer <token>` header.  
-Tokens are Auth0-issued JWTs validated against the JWKS URL configured via environment variables.
+Protected endpoints require an `Authorization: Bearer <token>` header.
+Heimdall issues tokens after gateway authorization.
 
 | Env var | Description |
 |---|---|
-| `JWT_JWKS_URL` | Auth0 JWKS endpoint |
-| `JWT_AUDIENCE` | Expected `aud` claim |
-| `JWT_ISSUER` | Expected `iss` claim |
+| `HEIMDALL_JWKS_URL` | Heimdall JWKS endpoint |
+| `HEIMDALL_JWT_AUDIENCE` | Expected `aud` claim |
+| `HEIMDALL_JWT_ISSUER` | Expected `iss` claim |
 
-The JWT must contain the LFX SSO custom claims:
-
-- `https://sso.linuxfoundation.org/claims/username` → `principal.Username` (the LF ID)
-- `https://sso.linuxfoundation.org/claims/email` → `principal.Email`
-- Standard `sub` claim → `principal.UserID`
+The JWT must contain the `principal` claim. The service resolves human
+principals to its local user record where workflow behavior needs a local ID.
 
 #### Local Development Bypass
 
@@ -1895,10 +1889,9 @@ incomplete ──► in_progress ──► submitted ──► complete
 
 ### Authentication Flow
 
-1. Obtain an Auth0 JWT via the LFX SSO login flow.
-2. Store the token securely (memory or secure cookie).
-3. Include `Authorization: Bearer <token>` on all 🔒 requests.
-4. On `401` response, refresh the token or redirect to login.
+1. Send API requests through the shared gateway.
+2. Include the gateway-issued `Authorization: Bearer <token>` on protected requests.
+3. On `401` response, refresh the session or redirect to login.
 
 ### Suggested Page Flows
 
@@ -2149,9 +2142,9 @@ class ApiError extends Error {
 | `PG_DSN` | Yes | — | PostgreSQL connection string |
 | `DB_MAX_CONNS` | No | `10` | pgxpool max connections |
 | `DB_MIN_CONNS` | No | `2` | pgxpool min connections |
-| `JWT_JWKS_URL` | Yes | — | Auth0 JWKS endpoint |
-| `JWT_AUDIENCE` | Yes | — | Expected JWT `aud` claim |
-| `JWT_ISSUER` | Yes | — | Expected JWT `iss` claim |
+| `HEIMDALL_JWKS_URL` | Yes | — | Heimdall JWKS endpoint |
+| `HEIMDALL_JWT_AUDIENCE` | Yes | — | Expected JWT `aud` claim |
+| `HEIMDALL_JWT_ISSUER` | Yes | — | Expected JWT `iss` claim |
 | `INVITE_SECRET` | Yes | — | HMAC secret for mentor invite tokens |
 | `OTEL_ENDPOINT` | No | — | OpenTelemetry collector endpoint |
 | `ALLOW_MOCK_PRINCIPAL_BYPASS` | No | `false` | Enable local dev JWT bypass |
