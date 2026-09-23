@@ -3,7 +3,7 @@
 
 import type { MenteeStatus } from './mentee.types';
 
-export const PROGRAM_STATUSES = ['open-soon', 'acceptance', 'in-progress', 'completed'] as const;
+export const PROGRAM_STATUSES = ['open-soon', 'acceptance', 'in-progress', 'completed', 'pending'] as const;
 
 export type ProgramStatus = (typeof PROGRAM_STATUSES)[number];
 
