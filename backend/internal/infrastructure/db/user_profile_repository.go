@@ -171,6 +171,66 @@ func (r *UserProfileRepository) Create(ctx context.Context, input models.UserPro
 	return p, nil
 }
 
+// UpsertByUserAndType creates or updates a user profile identified by user_id/profile_type.
+// It returns the profile and a flag indicating whether a new row was inserted.
+func (r *UserProfileRepository) UpsertByUserAndType(ctx context.Context, input models.UserProfileCreateInput) (*models.UserProfile, bool, error) {
+	ctx, span := userProfileTracer.Start(ctx, "db.user_profiles.UpsertByUserAndType")
+	defer span.End()
+
+	const q = `
+		INSERT INTO user_profiles (
+			id, user_id, profile_type, slug, first_name, last_name, email, phone,
+			logo_url, introduction, terms_and_conditions, number_of_projects,
+			address, demographics, socioeconomics, skill_set, profile_links
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+		ON CONFLICT (user_id, profile_type) DO UPDATE SET
+			slug = EXCLUDED.slug,
+			first_name = EXCLUDED.first_name,
+			last_name = EXCLUDED.last_name,
+			email = EXCLUDED.email,
+			phone = EXCLUDED.phone,
+			logo_url = EXCLUDED.logo_url,
+			introduction = EXCLUDED.introduction,
+			terms_and_conditions = EXCLUDED.terms_and_conditions,
+			number_of_projects = EXCLUDED.number_of_projects,
+			address = EXCLUDED.address,
+			demographics = EXCLUDED.demographics,
+			socioeconomics = EXCLUDED.socioeconomics,
+			skill_set = EXCLUDED.skill_set,
+			profile_links = EXCLUDED.profile_links,
+			updated_on = NOW()
+		RETURNING` + userProfileCols + `, (xmax = 0) AS inserted`
+
+	var inserted bool
+	row := r.pool.QueryRow(ctx, q,
+		input.ID, input.UserID, input.ProfileType, input.Slug, input.FirstName, input.LastName,
+		input.Email, input.Phone, input.LogoURL, input.Introduction, input.TermsAndConditions,
+		input.NumberOfProjects, input.Address, input.Demographics, input.Socioeconomics,
+		input.SkillSet, input.ProfileLinks,
+	)
+
+	p, err := scanUserProfileWithInserted(row, &inserted)
+	if err != nil {
+		span.RecordError(err)
+		return nil, false, fmt.Errorf("upsert user profile by user/type: %w", err)
+	}
+	return p, inserted, nil
+}
+
+func scanUserProfileWithInserted(row pgx.Row, inserted *bool) (*models.UserProfile, error) {
+	var p models.UserProfile
+	err := row.Scan(
+		&p.ID, &p.UserID, &p.ProfileType, &p.Slug, &p.FirstName, &p.LastName,
+		&p.Email, &p.Phone, &p.LogoURL, &p.Introduction, &p.TermsAndConditions,
+		&p.NumberOfProjects, &p.Address, &p.Demographics, &p.Socioeconomics,
+		&p.SkillSet, &p.ProfileLinks, &p.CreatedOn, &p.UpdatedOn, inserted,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
 // Update patches the user profile fields that are set in input.
 func (r *UserProfileRepository) Update(ctx context.Context, id string, input models.UserProfileUpdateInput) (*models.UserProfile, error) {
 	ctx, span := userProfileTracer.Start(ctx, "db.user_profiles.Update")
