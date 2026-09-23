@@ -21,6 +21,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/clients"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/db"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/fga"
+	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/indexer"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/service"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
@@ -115,6 +116,8 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		var relayCtx context.Context
 		relayCtx, relayCancel = context.WithCancel(ctx)
 		go relay.Run(relayCtx, cfg.FGA.RelayInterval)
+		indexRelay := indexer.NewRelay(db.NewIndexOutboxRepository(pool), natsConn, cfg.FGA.RelayBatch)
+		go indexRelay.Run(relayCtx, cfg.FGA.RelayInterval)
 	}
 
 	// Handlers

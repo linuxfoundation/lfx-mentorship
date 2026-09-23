@@ -57,6 +57,17 @@ type ProgramHandler struct {
 	svc programService
 }
 
+func withIndexMetadata(r *http.Request) *http.Request {
+	headers := map[string]string{}
+	if value := r.Header.Get("Authorization"); value != "" {
+		headers["authorization"] = value
+	}
+	if value := r.Header.Get("X-On-Behalf-Of"); value != "" {
+		headers["x-on-behalf-of"] = value
+	}
+	return r.WithContext(domain.ContextWithIndexHeaders(r.Context(), headers))
+}
+
 // NewProgramHandler creates a ProgramHandler.
 func NewProgramHandler(svc programService) *ProgramHandler {
 	return &ProgramHandler{svc: svc}
@@ -289,6 +300,7 @@ func (h *ProgramHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	input.CreatorUserID = principal.UserID
+	r = withIndexMetadata(r)
 
 	program, err := h.svc.Create(r.Context(), input)
 	if err != nil {
@@ -315,6 +327,7 @@ func (h *ProgramHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Error(w, fmt.Errorf("%w: status transitions are handled by dedicated submit/decision routes", domain.ErrInvalidInput))
 		return
 	}
+	r = withIndexMetadata(r)
 
 	program, err := h.svc.Update(r.Context(), id, input)
 	if err != nil {
@@ -333,6 +346,7 @@ func (h *ProgramHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := chi.URLParam(r, "id")
+	r = withIndexMetadata(r)
 	if err := h.svc.Delete(r.Context(), id); err != nil {
 		Error(w, err)
 		return

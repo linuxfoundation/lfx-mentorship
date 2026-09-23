@@ -5,6 +5,7 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -61,6 +62,45 @@ func scanProgram(row pgx.Row) (*models.Program, error) {
 		return nil, err
 	}
 	return &p, nil
+}
+
+func enqueueProgramIndex(ctx context.Context, tx pgx.Tx, program *models.Program, action string) error {
+	headers := domain.IndexHeadersFromContext(ctx)
+	if headers["authorization"] == "" {
+		return fmt.Errorf("index program: authorization metadata is required")
+	}
+	headerData, err := json.Marshal(headers)
+	if err != nil {
+		return err
+	}
+	data, err := json.Marshal(program)
+	if err != nil {
+		return err
+	}
+	config := map[string]any{"object_id": program.ID, "access_check_object": "mentorship_program:" + program.ID, "access_check_relation": "writer", "history_check_object": "mentorship_program:" + program.ID, "history_check_relation": "auditor", "sort_name": program.Name, "name_and_aliases": []string{program.Name, program.Slug}, "public": program.Status == models.ProgramStatusPublished}
+	if program.ProjectUID != nil {
+		config["parent_refs"] = []string{"project:" + *program.ProjectUID}
+		config["tags"] = []string{"project_uid:" + *program.ProjectUID, "status:" + string(program.Status)}
+	}
+	configData, err := json.Marshal(config)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO index_outbox (object_type, object_uid, action, headers, data, indexing_config) VALUES ('mentorship_program', $1, $2, $3, $4, $5)`, program.ID, action, headerData, data, configData)
+	return err
+}
+
+func enqueueProgramIndexDelete(ctx context.Context, tx pgx.Tx, id string) error {
+	headers := domain.IndexHeadersFromContext(ctx)
+	if headers["authorization"] == "" {
+		return fmt.Errorf("index program delete: authorization metadata is required")
+	}
+	headerData, err := json.Marshal(headers)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO index_outbox (object_type, object_uid, action, headers) VALUES ('mentorship_program', $1, 'deleted', $2)`, id, headerData)
+	return err
 }
 
 // GetByID returns the program with the given UUID or ErrProgramNotFound.
@@ -593,6 +633,9 @@ func (r *ProgramRepository) Create(ctx context.Context, input models.ProgramCrea
 	if err := enqueueObjectMarker(ctx, tx, "mentorship_program", p.ID, updateAccessOperation); err != nil {
 		return nil, err
 	}
+	if err := enqueueProgramIndex(ctx, tx, p, "created"); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create program transaction: %w", err)
 	}
@@ -664,6 +707,9 @@ func (r *ProgramRepository) Update(ctx context.Context, id string, input models.
 	if err := enqueueObjectMarker(ctx, tx, "mentorship_program", updatedID, updateAccessOperation); err != nil {
 		return nil, err
 	}
+	if err := enqueueProgramIndex(ctx, tx, p, "updated"); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit update program transaction: %w", err)
 	}
@@ -703,6 +749,9 @@ func (r *ProgramRepository) Delete(ctx context.Context, id string) error {
 		}
 	}
 	if err := enqueueObjectMarker(ctx, tx, "mentorship_program", id, deleteAccessOperation); err != nil {
+		return err
+	}
+	if err := enqueueProgramIndexDelete(ctx, tx, id); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
