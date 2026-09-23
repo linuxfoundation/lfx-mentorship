@@ -30,6 +30,7 @@ const maxEnrollmentTerms = 4
 type enrollmentPrerequisite struct {
 	Name        string  `json:"name"`
 	Description *string `json:"description"`
+	Required    bool    `json:"required"`
 	RequireFile bool    `json:"requireFile"`
 	DueDate     *string `json:"dueDate"`
 }
@@ -285,12 +286,18 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 			return nil, fmt.Errorf("%w: prerequisites must be valid JSON", domain.ErrInvalidInput)
 		}
 		for _, prerequisite := range prerequisites {
+			if !prerequisite.Required {
+				continue
+			}
 			if strings.TrimSpace(prerequisite.Name) == "" || prerequisite.Description == nil || strings.TrimSpace(*prerequisite.Description) == "" {
 				return nil, fmt.Errorf("%w: prerequisite name and description are required", domain.ErrInvalidInput)
 			}
 		}
 		templates := make([]taskTemplate, 0, len(prerequisites))
 		for _, prerequisite := range prerequisites {
+			if !prerequisite.Required {
+				continue
+			}
 			var submitFile *string
 			if prerequisite.RequireFile {
 				value := "required"
@@ -302,6 +309,13 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 	}
 	if strings.TrimSpace(input.Program.Name) == "" {
 		return nil, fmt.Errorf("%w: name is required", domain.ErrInvalidInput)
+	}
+	available, err := s.repo.NameAvailable(ctx, input.Program.Name, "")
+	if err != nil {
+		return nil, fmt.Errorf("check program name availability: %w", err)
+	}
+	if !available {
+		return nil, fmt.Errorf("%w: program name is already in use", domain.ErrConflict)
 	}
 	for _, value := range []*string{input.Program.RepoLink, input.Program.WebsiteURL, input.Program.CodeOfConduct} {
 		if value == nil || strings.TrimSpace(*value) == "" {
@@ -320,7 +334,7 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 	}
 	projectUID, err := uuid.Parse(strings.TrimSpace(*input.Program.ProjectUID))
 	if err != nil {
-		return nil, fmt.Errorf("%w: project_uid must be a UUID", domain.ErrInvalidInput)
+		return nil, fmt.Errorf("%w: projectId must be the canonical Project Service UUID", domain.ErrInvalidInput)
 	}
 	canonicalProjectUID := projectUID.String()
 	input.Program.ProjectUID = &canonicalProjectUID

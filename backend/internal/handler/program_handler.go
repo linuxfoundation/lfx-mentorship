@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
+	"unicode"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -61,16 +63,50 @@ type ProgramHandler struct {
 }
 
 type enrollmentRequest struct {
-	ProjectID        string                          `json:"projectId"`
-	Name             string                          `json:"name"`
-	Description      *string                         `json:"description,omitempty"`
-	RepositoryURL    *string                         `json:"repositoryUrl,omitempty"`
-	WebsiteURL       *string                         `json:"websiteUrl,omitempty"`
-	CodeOfConductURL *string                         `json:"codeOfConductUrl,omitempty"`
-	Skills           []string                        `json:"skills"`
-	Terms            []models.ProgramTermCreateInput `json:"terms"`
-	Prerequisites    json.RawMessage                 `json:"prerequisites,omitempty"`
-	TermsAccepted    bool                            `json:"termsAccepted"`
+	ProjectID        string                  `json:"projectId"`
+	Name             string                  `json:"name"`
+	Description      *string                 `json:"description,omitempty"`
+	RepositoryURL    *string                 `json:"repositoryUrl,omitempty"`
+	WebsiteURL       *string                 `json:"websiteUrl,omitempty"`
+	CodeOfConductURL *string                 `json:"codeOfConductUrl,omitempty"`
+	Skills           []string                `json:"skills"`
+	CIIProjectID     *string                 `json:"ciiProjectId,omitempty"`
+	LogoFileName     *string                 `json:"logoFileName,omitempty"`
+	Terms            []enrollmentTermRequest `json:"terms"`
+	Prerequisites    json.RawMessage         `json:"prerequisites,omitempty"`
+	TermsAccepted    bool                    `json:"termsAccepted"`
+}
+
+type enrollmentTermRequest struct {
+	ID                   string `json:"id"`
+	Name                 string `json:"name"`
+	StartDate            string `json:"startDate"`
+	EndDate              string `json:"endDate"`
+	ApplicationStartDate string `json:"applicationStartDate"`
+	ApplicationEndDate   string `json:"applicationEndDate"`
+}
+
+func enrollmentDate(value string) (*time.Time, error) {
+	parsed, err := time.Parse("2006-01-02", value)
+	if err != nil {
+		return nil, err
+	}
+	return &parsed, nil
+}
+
+func enrollmentSlug(name string) string {
+	var builder strings.Builder
+	separator := false
+	for _, value := range strings.ToLower(strings.TrimSpace(name)) {
+		if unicode.IsLetter(value) || unicode.IsDigit(value) {
+			builder.WriteRune(value)
+			separator = false
+		} else if !separator && builder.Len() > 0 {
+			builder.WriteByte('-')
+			separator = true
+		}
+	}
+	return strings.Trim(builder.String(), "-")
 }
 
 func withIndexMetadata(r *http.Request) *http.Request {
@@ -328,16 +364,42 @@ func (h *ProgramHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Error(w, fmt.Errorf("%w: terms_accepted must be true", domain.ErrInvalidInput))
 		return
 	}
+	terms := make([]models.ProgramTermCreateInput, 0, len(request.Terms))
+	for _, term := range request.Terms {
+		start, err := enrollmentDate(term.StartDate)
+		if err != nil {
+			Error(w, fmt.Errorf("%w: invalid term startDate", domain.ErrInvalidInput))
+			return
+		}
+		end, err := enrollmentDate(term.EndDate)
+		if err != nil {
+			Error(w, fmt.Errorf("%w: invalid term endDate", domain.ErrInvalidInput))
+			return
+		}
+		applicationStart, err := enrollmentDate(term.ApplicationStartDate)
+		if err != nil {
+			Error(w, fmt.Errorf("%w: invalid applicationStartDate", domain.ErrInvalidInput))
+			return
+		}
+		applicationEnd, err := enrollmentDate(term.ApplicationEndDate)
+		if err != nil {
+			Error(w, fmt.Errorf("%w: invalid applicationEndDate", domain.ErrInvalidInput))
+			return
+		}
+		terms = append(terms, models.ProgramTermCreateInput{ID: term.ID, Name: term.Name, Status: models.ProgramTermStatusOpen, StartDateTime: start, EndDateTime: end, ApplicationStartDate: applicationStart, ApplicationEndDate: applicationEnd})
+	}
 	enrollment := models.ProgramEnrollmentInput{
 		Program: models.ProgramCreateInput{
 			ProjectUID:    &request.ProjectID,
 			Name:          request.Name,
+			Slug:          enrollmentSlug(request.Name),
 			Description:   request.Description,
 			RepoLink:      request.RepositoryURL,
 			WebsiteURL:    request.WebsiteURL,
 			CodeOfConduct: request.CodeOfConductURL,
+			CIIProjectID:  request.CIIProjectID,
 		},
-		Terms:         request.Terms,
+		Terms:         terms,
 		Skills:        request.Skills,
 		Prerequisites: request.Prerequisites,
 	}

@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
 )
 
 func integrationPool(t *testing.T) *pgxpool.Pool {
@@ -34,10 +35,36 @@ func integrationPool(t *testing.T) *pgxpool.Pool {
 	if err := pool.Ping(context.Background()); err != nil {
 		t.Fatalf("ping test database: %v", err)
 	}
-	if _, err := pool.Exec(context.Background(), "TRUNCATE fga_outbox RESTART IDENTITY"); err != nil {
-		t.Fatalf("reset fga_outbox: %v", err)
+	if _, err := pool.Exec(context.Background(), "TRUNCATE tasks, applications, program_members, program_skills, program_terms, programs, users, fga_outbox, index_outbox RESTART IDENTITY CASCADE"); err != nil {
+		t.Fatalf("reset integration tables: %v", err)
 	}
 	return pool
+}
+
+type integrationFixture struct {
+	UserID     string
+	ProgramID  string
+	OpenTerm   string
+	ClosedTerm string
+}
+
+func seedIntegrationFixture(t *testing.T, pool *pgxpool.Pool) integrationFixture {
+	t.Helper()
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+	fixture := integrationFixture{UserID: "00000000-0000-0000-0000-000000000001", ProgramID: "00000000-0000-0000-0000-000000000010", OpenTerm: "00000000-0000-0000-0000-000000000011", ClosedTerm: "00000000-0000-0000-0000-000000000012"}
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name) VALUES ($1, 'fixture-user', 'Fixture User')`, fixture.UserID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO programs (id, project_uid, name, slug, status) VALUES ($1, '00000000-0000-0000-0000-000000000099', 'Fixture Program', 'fixture-program', 'published')`, fixture.ProgramID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES ('00000000-0000-0000-0000-000000000020', $1, $2, 'program_admin', 'active')`, fixture.ProgramID, fixture.UserID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO program_terms (id, program_id, name, status) VALUES ($1, $3, 'Open', 'open'), ($2, $3, 'Closed', 'closed')`, fixture.OpenTerm, fixture.ClosedTerm, fixture.ProgramID); err != nil {
+		t.Fatal(err)
+	}
+	return fixture
 }
 
 func TestFGAOutboxIntegration_ClaimSerializesSameObject(t *testing.T) {
@@ -74,6 +101,125 @@ func TestFGAOutboxIntegration_ClaimSerializesSameObject(t *testing.T) {
 	}
 	if claimed != 1 {
 		t.Fatalf("claimed %d markers; want exactly one", claimed)
+	}
+}
+
+func TestIndexOutboxIntegration_ClaimRetryAndSent(t *testing.T) {
+	pool := integrationPool(t)
+	seedIntegrationFixture(t, pool)
+	repo := NewIndexOutboxRepository(pool)
+	ctx := context.Background()
+	if err := repo.Enqueue(ctx, domain.IndexOutboxRecord{ObjectType: "mentorship_program", ObjectUID: "00000000-0000-0000-0000-000000000010", Action: "updated", Headers: []byte(`{"authorization":"Bearer fixture"}`), Data: []byte(`{"id":"00000000-0000-0000-0000-000000000010"}`), IndexingConfig: []byte(`{"object_id":"00000000-0000-0000-0000-000000000010"}`)}); err != nil {
+		t.Fatalf("enqueue index record: %v", err)
+	}
+	claimed, err := repo.Claim(ctx, 1)
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim records=%d err=%v", len(claimed), err)
+	}
+	if err := repo.MarkRetry(ctx, claimed[0].ID); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	claimed, err = repo.Claim(ctx, 1)
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("reclaim records=%d err=%v", len(claimed), err)
+	}
+	if err := repo.MarkSent(ctx, claimed[0].ID); err != nil {
+		t.Fatalf("mark sent: %v", err)
+	}
+	var state string
+	if err := pool.QueryRow(ctx, `SELECT state FROM index_outbox WHERE id = $1`, claimed[0].ID).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != "sent" {
+		t.Fatalf("state=%q; want sent", state)
+	}
+}
+
+func TestProgramHeaderProjectionIntegration_CountsProgramState(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES ('00000000-0000-0000-0000-000000000021', $1, $2, 'mentor', 'active')`, fixture.ProgramID, fixture.UserID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ('00000000-0000-0000-0000-000000000030', $1, $2, 'mentee', 'accepted'), ('00000000-0000-0000-0000-000000000031', $1, $2, 'mentee', 'graduated')`, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatal(err)
+	}
+	projection, err := NewProgramRepository(pool).GetHeaderProjection(ctx, fixture.ProgramID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projection.ActiveTerm == nil || projection.ActiveTerm.ID != fixture.OpenTerm {
+		t.Fatalf("active term=%#v", projection.ActiveTerm)
+	}
+	if projection.Stats.Mentors != 1 || projection.Stats.Mentees != 1 || projection.Stats.Graduated != 1 {
+		t.Fatalf("stats=%+v", projection.Stats)
+	}
+}
+
+func TestTermManagementIntegration_CountsApplicationStatuses(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ('00000000-0000-0000-0000-000000000040', $1, $2, 'mentee', 'pending'), ('00000000-0000-0000-0000-000000000041', $1, $2, 'mentee', 'declined'), ('00000000-0000-0000-0000-000000000042', $1, $2, 'mentee', 'accepted'), ('00000000-0000-0000-0000-000000000043', $1, $2, 'mentee', 'graduated')`, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatal(err)
+	}
+	rows, _, err := NewProgramTermRepository(pool).ListManagementByProgram(ctx, fixture.ProgramID, models.ProgramTermFilter{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var open *models.ProgramTermManagementRow
+	for _, row := range rows {
+		if row.ID == fixture.OpenTerm {
+			open = row
+			break
+		}
+	}
+	if open == nil {
+		t.Fatal("open term missing")
+	}
+	if open.Pending != 1 || open.Declined != 1 || open.Accepted != 1 || open.Graduated != 1 {
+		t.Fatalf("counts=%+v", open)
+	}
+}
+
+func TestProgramApplicationsIntegration_ReturnsTaskCounts(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ('00000000-0000-0000-0000-000000000050', $1, $2, 'mentee', 'accepted')`, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO tasks (id, application_id, program_term_id, assignee_id, status) VALUES ('00000000-0000-0000-0000-000000000051', '00000000-0000-0000-0000-000000000050', $1, $2, 'submitted'), ('00000000-0000-0000-0000-000000000052', '00000000-0000-0000-0000-000000000050', $1, $2, 'incomplete')`, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatal(err)
+	}
+	rows, _, err := NewApplicationRepository(pool).ListByProgram(ctx, fixture.ProgramID, models.ProgramApplicationFilter{Type: models.ProgramApplicationTypeAll, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].TasksTotal != 2 || rows[0].TasksSubmitted != 1 {
+		t.Fatalf("rows=%+v", rows)
+	}
+}
+
+func TestEnrollmentIntegration_RollsBackWhenSkillInsertFails(t *testing.T) {
+	pool := integrationPool(t)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name) VALUES ('00000000-0000-0000-0000-000000000060', 'enroll-admin', 'Enroll Admin')`); err != nil {
+		t.Fatal(err)
+	}
+	repo := NewProgramRepository(pool)
+	projectUID := "00000000-0000-0000-0000-000000000099"
+	_, err := repo.CreateEnrollment(ctx, models.ProgramEnrollmentInput{Program: models.ProgramCreateInput{ID: "00000000-0000-0000-0000-000000000061", CreatorUserID: "00000000-0000-0000-0000-000000000060", ProjectUID: &projectUID, Name: "Rollback", Slug: "rollback", Status: models.ProgramStatusDraft}, Skills: []string{"Go", "Go"}})
+	if err == nil {
+		t.Fatal("expected duplicate skill failure")
+	}
+	var count int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM programs WHERE id = '00000000-0000-0000-0000-000000000061'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("program persisted after rollback: %d", count)
 	}
 }
 
