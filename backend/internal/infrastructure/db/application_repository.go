@@ -134,6 +134,63 @@ func (r *ApplicationRepository) ListByProgramTerm(ctx context.Context, programTe
 	return apps, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, nil
 }
 
+func (r *ApplicationRepository) ListByProgram(ctx context.Context, programID string, filter models.ProgramApplicationFilter) ([]*models.ProgramApplicationRow, *models.PaginationMeta, error) {
+	limit, offset := filter.Limit, filter.Offset
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	args := []any{programID}
+	where := ` WHERE pt.program_id = $1 AND a.role = 'mentee'`
+	switch filter.Type {
+	case models.ProgramApplicationTypeCurrent:
+		where += ` AND pt.status = 'open'`
+	case models.ProgramApplicationTypePast:
+		where += ` AND pt.status = 'closed'`
+	}
+	if filter.Status != "" {
+		args = append(args, filter.Status)
+		where += fmt.Sprintf(` AND a.status = $%d`, len(args))
+	}
+	if filter.TermID != "" {
+		args = append(args, filter.TermID)
+		where += fmt.Sprintf(` AND pt.id = $%d`, len(args))
+	}
+	if filter.Search != "" {
+		args = append(args, "%"+filter.Search+"%")
+		where += fmt.Sprintf(` AND (u.name ILIKE $%d OR u.email ILIKE $%d)`, len(args), len(args))
+	}
+	var total int
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id JOIN users u ON u.id = a.user_id`+where, args...).Scan(&total); err != nil {
+		return nil, nil, fmt.Errorf("count program applications: %w", err)
+	}
+	args = append(args, limit, offset)
+	q := `SELECT a.user_id, a.id, u.name, u.email, u.avatar_url, a.status, pt.id, pt.name, pt.status,
+		(SELECT COUNT(*) FROM tasks t WHERE t.application_id = a.id),
+		(SELECT COUNT(*) FROM tasks t WHERE t.application_id = a.id AND t.status IN ('submitted', 'complete')),
+		a.reviewer_note, a.created_on, a.updated_on
+		FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id JOIN users u ON u.id = a.user_id` + where + fmt.Sprintf(` ORDER BY a.created_on DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
+	rows, err := r.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("list program applications: %w", err)
+	}
+	defer rows.Close()
+	result := make([]*models.ProgramApplicationRow, 0)
+	for rows.Next() {
+		var row models.ProgramApplicationRow
+		if err := rows.Scan(&row.UserID, &row.ApplicationID, &row.Name, &row.Email, &row.AvatarURL, &row.Status, &row.Term.ID, &row.Term.Name, &row.Term.Status, &row.TasksTotal, &row.TasksSubmitted, &row.Note, &row.CreatedOn, &row.UpdatedOn); err != nil {
+			return nil, nil, fmt.Errorf("scan program application: %w", err)
+		}
+		result = append(result, &row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, fmt.Errorf("program application rows: %w", err)
+	}
+	return result, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, nil
+}
+
 // ListByUser returns paginated applications for a specific user.
 func (r *ApplicationRepository) ListByUser(ctx context.Context, userID string, filter models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error) {
 	ctx, span := applicationTracer.Start(ctx, "db.applications.ListByUser")

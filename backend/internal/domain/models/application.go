@@ -5,6 +5,39 @@ package models
 
 import "time"
 
+type ProgramApplicationType string
+
+const (
+	ProgramApplicationTypeCurrent ProgramApplicationType = "current"
+	ProgramApplicationTypePast    ProgramApplicationType = "past"
+	ProgramApplicationTypeAll     ProgramApplicationType = "all"
+)
+
+func (t ProgramApplicationType) IsValid() bool {
+	return t == ProgramApplicationTypeCurrent || t == ProgramApplicationTypePast || t == ProgramApplicationTypeAll
+}
+
+type ProgramApplicationTerm struct {
+	ID     string            `json:"id"`
+	Name   string            `json:"name"`
+	Status ProgramTermStatus `json:"status"`
+}
+
+type ProgramApplicationRow struct {
+	UserID         string                 `json:"user_id"`
+	ApplicationID  string                 `json:"application_id"`
+	Name           *string                `json:"name,omitempty"`
+	Email          *string                `json:"email,omitempty"`
+	AvatarURL      *string                `json:"avatar_url,omitempty"`
+	Status         ApplicationStatus      `json:"status"`
+	Term           ProgramApplicationTerm `json:"term"`
+	TasksSubmitted int                    `json:"tasks_submitted"`
+	TasksTotal     int                    `json:"tasks_total"`
+	Note           *string                `json:"note,omitempty"`
+	CreatedOn      time.Time              `json:"created_on"`
+	UpdatedOn      time.Time              `json:"updated_on"`
+}
+
 // ApplicationStatus enumerates valid values for applications.status.
 // "declined" is the shared vocabulary for a turned-down application of either
 // role — "rejected" belongs to ProgramStatus (program moderation) and must not

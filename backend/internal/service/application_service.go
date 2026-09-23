@@ -144,6 +144,16 @@ func (s *ApplicationService) ListByProgramTerm(ctx context.Context, programTermI
 	return apps, meta, nil
 }
 
+func (s *ApplicationService) ListByProgram(ctx context.Context, programID string, filter models.ProgramApplicationFilter) ([]*models.ProgramApplicationRow, *models.PaginationMeta, error) {
+	if !filter.Type.IsValid() {
+		return nil, nil, fmt.Errorf("%w: type must be current, past, or all", domain.ErrInvalidInput)
+	}
+	if filter.Status != "" && !models.ApplicationStatus(filter.Status).IsValid() {
+		return nil, nil, fmt.Errorf("%w: invalid application status", domain.ErrInvalidInput)
+	}
+	return s.repo.ListByProgram(ctx, programID, filter)
+}
+
 // ListByProgramTermForActor returns term applications constrained by actor privileges.
 func (s *ApplicationService) ListByProgramTermForActor(ctx context.Context, programTermID string, filter models.ApplicationFilter, actorID string) ([]*models.Application, *models.PaginationMeta, error) {
 	if actorID == "" {

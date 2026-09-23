@@ -20,6 +20,7 @@ type applicationService interface {
 	GetByID(ctx context.Context, id string) (*models.Application, error)
 	GetByIDForActor(ctx context.Context, id, actorID string) (*models.Application, error)
 	ListByProgramTerm(ctx context.Context, programTermID string, filter models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error)
+	ListByProgram(ctx context.Context, programID string, filter models.ProgramApplicationFilter) ([]*models.ProgramApplicationRow, *models.PaginationMeta, error)
 	ListByProgramTermForActor(ctx context.Context, programTermID string, filter models.ApplicationFilter, actorID string) ([]*models.Application, *models.PaginationMeta, error)
 	ListByUser(ctx context.Context, userID string, filter models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error)
 	Create(ctx context.Context, programTermID string, input models.ApplicationCreateInput) (*models.Application, error)
@@ -29,6 +30,23 @@ type applicationService interface {
 	WithdrawForMenteeAfterGatewayAuthorization(ctx context.Context, id string) (*models.Application, error)
 	BulkDeclineByTerm(ctx context.Context, termID string) (int, error)
 	ListPastMenteesByTerm(ctx context.Context, termID string) ([]*models.Application, error)
+}
+
+func (h *ApplicationHandler) ListByProgram(w http.ResponseWriter, r *http.Request) {
+	if auth.PrincipalFromContext(r.Context()) == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	limit, offset, ok := parsePaginationParams(w, r)
+	if !ok {
+		return
+	}
+	rows, meta, err := h.svc.ListByProgram(r.Context(), chi.URLParam(r, "id"), models.ProgramApplicationFilter{Limit: limit, Offset: offset, Type: models.ProgramApplicationType(r.URL.Query().Get("type")), Search: r.URL.Query().Get("search"), Status: r.URL.Query().Get("status"), TermID: r.URL.Query().Get("term")})
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]any{"data": rows, "meta": meta})
 }
 
 type applicationTermScopeService interface {

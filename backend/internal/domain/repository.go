@@ -121,6 +121,7 @@ type ProgramMemberRepository interface {
 type ApplicationRepository interface {
 	GetByID(ctx context.Context, id string) (*models.Application, error)
 	ListByProgramTerm(ctx context.Context, programTermID string, filter models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error)
+	ListByProgram(ctx context.Context, programID string, filter models.ProgramApplicationFilter) ([]*models.ProgramApplicationRow, *models.PaginationMeta, error)
 	ListByUser(ctx context.Context, userID string, filter models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error)
 	Create(ctx context.Context, programTermID string, input models.ApplicationCreateInput) (*models.Application, error)
 	CreateWithTasks(ctx context.Context, programTermID string, input models.ApplicationCreateInput, tasks []models.TaskCreateInput) (*models.Application, error)

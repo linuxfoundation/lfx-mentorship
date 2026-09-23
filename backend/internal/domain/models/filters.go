@@ -79,6 +79,15 @@ type ApplicationFilter struct {
 	TasksSubmitted *bool  // nil = no filter
 }
 
+type ProgramApplicationFilter struct {
+	Limit  int
+	Offset int
+	Type   ProgramApplicationType
+	Search string
+	Status string
+	TermID string
+}
+
 // TaskFilter constrains list queries for tasks.
 type TaskFilter struct {
 	Limit      int

@@ -241,6 +241,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 
 			// Applications
 			r.Get("/programs/{programID}/terms/{id}/applications", applicationH.ListByProgramTerm)
+			r.Get("/programs/{id}/applications", applicationH.ListByProgram)
 			r.Get("/applications/{id}", applicationH.GetByID)
 			r.Post("/programs/{programID}/terms/{id}/applications", applicationH.Create)
 			r.Patch("/applications/{id}", applicationH.Update)

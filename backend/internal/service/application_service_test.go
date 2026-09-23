@@ -21,6 +21,7 @@ import (
 type stubAppRepo struct {
 	getByID           func(context.Context, string) (*models.Application, error)
 	listByProgramTerm func(context.Context, string, models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error)
+	listByProgram     func(context.Context, string, models.ProgramApplicationFilter) ([]*models.ProgramApplicationRow, *models.PaginationMeta, error)
 	listByUser        func(context.Context, string, models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error)
 	create            func(context.Context, string, models.ApplicationCreateInput) (*models.Application, error)
 	reapply           func(context.Context, string, string, models.ApplicationCreateInput) (*models.Application, error)
@@ -45,6 +46,12 @@ func (m *stubAppRepo) ListByProgramTerm(ctx context.Context, id string, f models
 		return m.listByProgramTerm(ctx, id, f)
 	}
 	return nil, &models.PaginationMeta{}, nil
+}
+func (m *stubAppRepo) ListByProgram(ctx context.Context, id string, f models.ProgramApplicationFilter) ([]*models.ProgramApplicationRow, *models.PaginationMeta, error) {
+	if m.listByProgram != nil {
+		return m.listByProgram(ctx, id, f)
+	}
+	return []*models.ProgramApplicationRow{}, &models.PaginationMeta{}, nil
 }
 func (m *stubAppRepo) ListByUser(ctx context.Context, id string, f models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error) {
 	if m.listByUser != nil {
