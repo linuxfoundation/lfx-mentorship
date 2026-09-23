@@ -19,27 +19,19 @@ type RosterRepository struct{ pool *pgxpool.Pool }
 func NewRosterRepository(pool *pgxpool.Pool) *RosterRepository { return &RosterRepository{pool: pool} }
 
 func (r *RosterRepository) ListApprovers(ctx context.Context) ([]*models.RosterMember, error) {
-	return r.list(ctx, `SELECT tm.user_id, u.lfid, tm.created_on, tm.updated_on FROM mentorship_approver_team_members tm JOIN users u ON u.id = tm.user_id ORDER BY u.lfid`, "")
+	members, err := r.list(ctx, `SELECT tm.user_id, u.lfid, tm.created_on, tm.updated_on FROM mentorship_approver_team_members tm JOIN users u ON u.id = tm.user_id ORDER BY u.lfid`, "")
+	for _, member := range members {
+		member.ObjectUID = "global"
+	}
+	return members, err
 }
 
 func (r *RosterRepository) AddApprover(ctx context.Context, userID string) (*models.RosterMember, error) {
-	return r.add(ctx, "", userID, "member")
+	return r.add(ctx, userID)
 }
 
 func (r *RosterRepository) RemoveApprover(ctx context.Context, userID string) error {
-	return r.remove(ctx, `DELETE FROM mentorship_approver_team_members WHERE user_id = $1`, "mentorship_approver_team", "global", userID, "member")
-}
-
-func (r *RosterRepository) ListProjectAdmins(ctx context.Context, projectUID string) ([]*models.RosterMember, error) {
-	return r.list(ctx, `SELECT pa.user_id, u.lfid, pa.created_on, pa.updated_on FROM mentorship_program_admins pa JOIN users u ON u.id = pa.user_id WHERE pa.project_uid = $1 ORDER BY u.lfid`, projectUID)
-}
-
-func (r *RosterRepository) AddProjectAdmin(ctx context.Context, projectUID, userID string) (*models.RosterMember, error) {
-	return r.add(ctx, projectUID, userID, "mentorship_program_admin")
-}
-
-func (r *RosterRepository) RemoveProjectAdmin(ctx context.Context, projectUID, userID string) error {
-	return r.remove(ctx, `DELETE FROM mentorship_program_admins WHERE project_uid = $1 AND user_id = $2`, "project", projectUID, userID, "mentorship_program_admin")
+	return r.remove(ctx, `DELETE FROM mentorship_approver_team_members WHERE user_id = $1`, userID)
 }
 
 func (r *RosterRepository) list(ctx context.Context, query, uid string) ([]*models.RosterMember, error) {
@@ -65,17 +57,13 @@ func (r *RosterRepository) list(ctx context.Context, query, uid string) ([]*mode
 	return members, rows.Err()
 }
 
-func (r *RosterRepository) add(ctx context.Context, objectUID, userID, relation string) (*models.RosterMember, error) {
+func (r *RosterRepository) add(ctx context.Context, userID string) (*models.RosterMember, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin roster transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if objectUID == "" {
-		_, err = tx.Exec(ctx, `INSERT INTO mentorship_approver_team_members (user_id) VALUES ($1) ON CONFLICT (user_id) DO UPDATE SET updated_on = NOW()`, userID)
-	} else {
-		_, err = tx.Exec(ctx, `INSERT INTO mentorship_program_admins (project_uid, user_id) VALUES ($1, $2) ON CONFLICT (project_uid, user_id) DO UPDATE SET updated_on = NOW()`, objectUID, userID)
-	}
+	_, err = tx.Exec(ctx, `INSERT INTO mentorship_approver_team_members (user_id) VALUES ($1) ON CONFLICT (user_id) DO UPDATE SET updated_on = NOW()`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("add roster member: %w", err)
 	}
@@ -83,24 +71,13 @@ func (r *RosterRepository) add(ctx context.Context, objectUID, userID, relation 
 	if err := tx.QueryRow(ctx, `SELECT id, lfid FROM users WHERE id = $1`, userID).Scan(&m.UserID, &m.LFID); err != nil {
 		return nil, domain.ErrUserNotFound
 	}
-	m.ObjectUID = objectUID
-	if objectUID == "" {
-		m.ObjectUID = "global"
-	}
+	m.ObjectUID = "global"
 	if _, err := tx.Exec(ctx, `DELETE FROM fga_membership_tombstones WHERE object_type = $1 AND object_uid = $2 AND relation = $3 AND username = $4`, func() string {
-		if objectUID == "" {
-			return "mentorship_approver_team"
-		}
-		return "project"
-	}(), m.ObjectUID, relation, m.LFID); err != nil {
+		return "mentorship_approver_team"
+	}(), m.ObjectUID, "member", m.LFID); err != nil {
 		return nil, fmt.Errorf("clear roster tombstone: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO fga_outbox (marker_kind, object_type, object_uid, relation, username, desired_operation) VALUES ('membership', $1, $2, $3, $4, 'sync') ON CONFLICT (object_type, object_uid, relation, username) WHERE marker_kind = 'membership' DO UPDATE SET desired_operation = 'sync', generation = fga_outbox.generation + 1, state = CASE WHEN fga_outbox.state = 'in_flight' THEN 'in_flight' ELSE 'pending' END, claimed_generation = CASE WHEN fga_outbox.state = 'in_flight' THEN fga_outbox.claimed_generation ELSE NULL END, claimed_at = CASE WHEN fga_outbox.state = 'in_flight' THEN fga_outbox.claimed_at ELSE NULL END, attempts = 0, next_attempt_at = NOW(), last_error = NULL, updated_on = NOW()`, func() string {
-		if objectUID == "" {
-			return "mentorship_approver_team"
-		}
-		return "project"
-	}(), m.ObjectUID, relation, m.LFID); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO fga_outbox (marker_kind, object_type, object_uid, relation, username, desired_operation) VALUES ('membership', 'mentorship_approver_team', 'global', 'member', $1, 'sync') ON CONFLICT (object_type, object_uid, relation, username) WHERE marker_kind = 'membership' DO UPDATE SET desired_operation = 'sync', generation = fga_outbox.generation + 1, state = CASE WHEN fga_outbox.state = 'in_flight' THEN 'in_flight' ELSE 'pending' END, claimed_generation = CASE WHEN fga_outbox.state = 'in_flight' THEN fga_outbox.claimed_generation ELSE NULL END, claimed_at = CASE WHEN fga_outbox.state = 'in_flight' THEN fga_outbox.claimed_at ELSE NULL END, attempts = 0, next_attempt_at = NOW(), last_error = NULL, updated_on = NOW()`, m.LFID); err != nil {
 		return nil, fmt.Errorf("enqueue roster marker: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -109,17 +86,13 @@ func (r *RosterRepository) add(ctx context.Context, objectUID, userID, relation 
 	return &m, nil
 }
 
-func (r *RosterRepository) remove(ctx context.Context, query, objectType, objectUID, userID, relation string) error {
+func (r *RosterRepository) remove(ctx context.Context, query, userID string) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	args := []any{userID}
-	if objectType == "project" {
-		args = []any{objectUID, userID}
-	}
-	result, err := tx.Exec(ctx, query, args...)
+	result, err := tx.Exec(ctx, query, userID)
 	if err != nil {
 		return fmt.Errorf("remove roster member: %w", err)
 	}
@@ -130,14 +103,10 @@ func (r *RosterRepository) remove(ctx context.Context, query, objectType, object
 	if err := tx.QueryRow(ctx, `SELECT lfid FROM users WHERE id = $1`, userID).Scan(&lfid); err != nil {
 		return fmt.Errorf("resolve roster LFID: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO fga_membership_tombstones (object_type, object_uid, relation, username) VALUES ($1,$2,$3,$4) ON CONFLICT (object_type, object_uid, relation, username) DO UPDATE SET deleted_on = NOW(), last_reconciled_on = NULL`, objectType, objectUID, relation, lfid); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO fga_membership_tombstones (object_type, object_uid, relation, username) VALUES ('mentorship_approver_team','global','member',$1) ON CONFLICT (object_type, object_uid, relation, username) DO UPDATE SET deleted_on = NOW(), last_reconciled_on = NULL`, lfid); err != nil {
 		return err
 	}
-	markerObjectType := objectType
-	if objectType == "project" {
-		markerObjectType = "project"
-	}
-	if _, err := tx.Exec(ctx, `INSERT INTO fga_outbox (marker_kind, object_type, object_uid, relation, username, desired_operation) VALUES ('membership', $1, $2, $3, $4, 'remove') ON CONFLICT (object_type, object_uid, relation, username) WHERE marker_kind = 'membership' DO UPDATE SET desired_operation = 'remove', generation = fga_outbox.generation + 1, state = CASE WHEN fga_outbox.state = 'in_flight' THEN 'in_flight' ELSE 'pending' END, claimed_generation = CASE WHEN fga_outbox.state = 'in_flight' THEN fga_outbox.claimed_generation ELSE NULL END, claimed_at = CASE WHEN fga_outbox.state = 'in_flight' THEN fga_outbox.claimed_at ELSE NULL END, attempts = 0, next_attempt_at = NOW(), last_error = NULL, updated_on = NOW()`, markerObjectType, objectUID, relation, lfid); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO fga_outbox (marker_kind, object_type, object_uid, relation, username, desired_operation) VALUES ('membership', 'mentorship_approver_team', 'global', 'member', $1, 'remove') ON CONFLICT (object_type, object_uid, relation, username) WHERE marker_kind = 'membership' DO UPDATE SET desired_operation = 'remove', generation = fga_outbox.generation + 1, state = CASE WHEN fga_outbox.state = 'in_flight' THEN 'in_flight' ELSE 'pending' END, claimed_generation = CASE WHEN fga_outbox.state = 'in_flight' THEN fga_outbox.claimed_generation ELSE NULL END, claimed_at = CASE WHEN fga_outbox.state = 'in_flight' THEN fga_outbox.claimed_at ELSE NULL END, attempts = 0, next_attempt_at = NOW(), last_error = NULL, updated_on = NOW()`, lfid); err != nil {
 		return fmt.Errorf("enqueue roster removal marker: %w", err)
 	}
 	return tx.Commit(ctx)

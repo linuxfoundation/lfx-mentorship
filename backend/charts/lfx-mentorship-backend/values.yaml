@@ -126,9 +126,6 @@ migrationJob:
 # ── Non-secret environment variables ────────────────────────────────────────
 # These are rendered into a ConfigMap and mounted via envFrom.
 config:
-  JWKS_URL: ""
-  JWT_AUDIENCE: ""
-  JWT_ISSUER: ""
   HEIMDALL_JWKS_URL: ""
   HEIMDALL_JWT_AUDIENCE: ""
   HEIMDALL_JWT_ISSUER: ""

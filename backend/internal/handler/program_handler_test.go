@@ -410,10 +410,34 @@ func TestProgramHandler_ResolveID_HiddenReturns404(t *testing.T) {
 	}
 }
 
-func TestProgramHandler_ResolveID_DraftReturns404ToAnonymous(t *testing.T) {
+func TestProgramHandler_ResolveID_DraftResolvesLikePublished(t *testing.T) {
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		getBySlug: func(_ context.Context, slug string) (*models.Program, error) {
+			return &models.Program{ID: "draft-uuid", Slug: slug, Status: models.ProgramStatusDraft}, nil
+		},
+	})
+
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/resolve/my-draft", nil)
+	r = requestWithChiParam(r, "id", "my-draft")
+	w := httptest.NewRecorder()
+	h.ResolveID(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d; want 200", w.Code)
+	}
+	var body map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["id"] != "draft-uuid" {
+		t.Fatalf("id = %q; want draft-uuid", body["id"])
+	}
+}
+
+func TestProgramHandler_ResolveID_SubmittedReturns404ToAnonymous(t *testing.T) {
 	h := handler.NewProgramHandler(&stubProgramSvc{
 		getBySlug: func(_ context.Context, id string) (*models.Program, error) {
-			return &models.Program{ID: id, Slug: id, Status: models.ProgramStatusDraft}, nil
+			return &models.Program{ID: id, Slug: id, Status: models.ProgramStatusSubmitted}, nil
 		},
 	})
 
@@ -424,6 +448,26 @@ func TestProgramHandler_ResolveID_DraftReturns404ToAnonymous(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("got %d; want 404", w.Code)
+	}
+}
+
+func TestProgramHandler_GetCatalog_DraftReturnsOK(t *testing.T) {
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		getCatalog: func(_ context.Context, id string) (*models.ProgramCatalogItem, error) {
+			return &models.ProgramCatalogItem{
+				Program: models.Program{ID: id, Name: "Draft Program", Status: models.ProgramStatusDraft},
+				Skills:  []string{},
+				Terms:   []models.ProgramCatalogTerm{},
+				Mentors: []models.ProgramCatalogMentor{},
+			}, nil
+		},
+	})
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/draft-1/catalog", nil)
+	r = requestWithChiParam(r, "id", "draft-1")
+	w := httptest.NewRecorder()
+	h.GetCatalog(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d; want 200", w.Code)
 	}
 }
 
