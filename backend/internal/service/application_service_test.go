@@ -222,6 +222,9 @@ func (m *stubProgRepo) GetManagementSummary(ctx context.Context, id string) (*mo
 	}
 	return &models.ProgramManagementSummary{}, nil
 }
+func (m *stubProgRepo) GetHeaderProjection(ctx context.Context, id string) (*models.ProgramHeaderProjection, error) {
+	return &models.ProgramHeaderProjection{Program: &models.Program{ID: id}}, nil
+}
 func (m *stubProgRepo) NameAvailable(ctx context.Context, name, excludeProgramID string) (bool, error) {
 	if m.nameAvailable != nil {
 		return m.nameAvailable(ctx, name, excludeProgramID)

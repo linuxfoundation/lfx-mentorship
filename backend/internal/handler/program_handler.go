@@ -23,6 +23,7 @@ type programService interface {
 	GetBySlug(ctx context.Context, slug string) (*models.Program, error)
 	List(ctx context.Context, filter models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error)
 	GetManagementSummary(ctx context.Context, programID string) (*models.ProgramManagementSummary, error)
+	GetHeaderProjection(ctx context.Context, programID string) (*models.ProgramHeaderProjection, error)
 	NameAvailable(ctx context.Context, name, excludeProgramID string) (bool, error)
 	ListCatalog(ctx context.Context, filter models.ProgramFilter) ([]*models.ProgramCatalogItem, *models.PaginationMeta, error)
 	GetCatalog(ctx context.Context, id string) (*models.ProgramCatalogItem, error)
@@ -236,6 +237,15 @@ func (h *ProgramHandler) GetManagementSummary(w http.ResponseWriter, r *http.Req
 		return
 	}
 	JSON(w, http.StatusOK, summary)
+}
+
+func (h *ProgramHandler) GetHeaderProjection(w http.ResponseWriter, r *http.Request) {
+	projection, err := h.svc.GetHeaderProjection(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, projection)
 }
 
 func (h *ProgramHandler) NameAvailable(w http.ResponseWriter, r *http.Request) {

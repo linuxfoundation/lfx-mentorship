@@ -123,6 +123,10 @@ func (s *ProgramService) GetManagementSummary(ctx context.Context, programID str
 	return summary, nil
 }
 
+func (s *ProgramService) GetHeaderProjection(ctx context.Context, programID string) (*models.ProgramHeaderProjection, error) {
+	return s.repo.GetHeaderProjection(ctx, programID)
+}
+
 func (s *ProgramService) NameAvailable(ctx context.Context, name, excludeProgramID string) (bool, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {

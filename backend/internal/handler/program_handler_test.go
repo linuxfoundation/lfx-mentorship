@@ -51,6 +51,9 @@ func (s *stubProgramSvc) GetManagementSummary(ctx context.Context, id string) (*
 	}
 	return &models.ProgramManagementSummary{}, nil
 }
+func (s *stubProgramSvc) GetHeaderProjection(ctx context.Context, id string) (*models.ProgramHeaderProjection, error) {
+	return &models.ProgramHeaderProjection{Program: &models.Program{ID: id}}, nil
+}
 func (s *stubProgramSvc) NameAvailable(ctx context.Context, name, excludeProgramID string) (bool, error) {
 	if s.nameAvailable != nil {
 		return s.nameAvailable(ctx, name, excludeProgramID)

@@ -65,6 +65,7 @@ spec:
           - path: /mentorship/v1/programs/:id/terms
           - path: /mentorship/v1/programs/:id/transactions
           - path: /mentorship/v1/programs/:id/sponsors
+          - path: /mentorship/v1/programs/:id/header
       execute:
         - authenticator: oidc
         - authenticator: anonymous_authenticator
