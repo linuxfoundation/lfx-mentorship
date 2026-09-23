@@ -191,6 +191,14 @@ func (r *ProgramRepository) GetManagementSummary(ctx context.Context, programID 
 	return &summary, nil
 }
 
+func (r *ProgramRepository) NameAvailable(ctx context.Context, name, excludeProgramID string) (bool, error) {
+	var exists bool
+	if err := r.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM programs WHERE LOWER(name) = LOWER($1) AND ($2 = '' OR id::text <> $2))`, name, excludeProgramID).Scan(&exists); err != nil {
+		return false, fmt.Errorf("check program name availability: %w", err)
+	}
+	return !exists, nil
+}
+
 func catalogLimitOffset(filter models.ProgramFilter) (limit, offset int) {
 	limit = filter.Limit
 	if limit <= 0 || limit > 100 {

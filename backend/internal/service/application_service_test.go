@@ -181,6 +181,7 @@ type stubProgRepo struct {
 	getBySlug         func(context.Context, string) (*models.Program, error)
 	list              func(context.Context, models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error)
 	managementSummary func(context.Context, string) (*models.ProgramManagementSummary, error)
+	nameAvailable     func(context.Context, string, string) (bool, error)
 	listCatalog       func(context.Context, models.ProgramFilter) ([]*models.ProgramCatalogItem, *models.PaginationMeta, error)
 	getCatalog        func(context.Context, string) (*models.ProgramCatalogItem, error)
 	listMentees       func(context.Context, string) ([]*models.ProgramCatalogMentee, error)
@@ -216,6 +217,12 @@ func (m *stubProgRepo) GetManagementSummary(ctx context.Context, id string) (*mo
 		return m.managementSummary(ctx, id)
 	}
 	return &models.ProgramManagementSummary{}, nil
+}
+func (m *stubProgRepo) NameAvailable(ctx context.Context, name, excludeProgramID string) (bool, error) {
+	if m.nameAvailable != nil {
+		return m.nameAvailable(ctx, name, excludeProgramID)
+	}
+	return true, nil
 }
 func (m *stubProgRepo) ListCatalog(ctx context.Context, f models.ProgramFilter) ([]*models.ProgramCatalogItem, *models.PaginationMeta, error) {
 	if m.listCatalog != nil {

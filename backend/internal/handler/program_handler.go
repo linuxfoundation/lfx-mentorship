@@ -22,6 +22,7 @@ type programService interface {
 	GetBySlug(ctx context.Context, slug string) (*models.Program, error)
 	List(ctx context.Context, filter models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error)
 	GetManagementSummary(ctx context.Context, programID string) (*models.ProgramManagementSummary, error)
+	NameAvailable(ctx context.Context, name, excludeProgramID string) (bool, error)
 	ListCatalog(ctx context.Context, filter models.ProgramFilter) ([]*models.ProgramCatalogItem, *models.PaginationMeta, error)
 	GetCatalog(ctx context.Context, id string) (*models.ProgramCatalogItem, error)
 	ListCatalogMentees(ctx context.Context, programID string) ([]*models.ProgramCatalogMentee, error)
@@ -209,6 +210,19 @@ func (h *ProgramHandler) GetManagementSummary(w http.ResponseWriter, r *http.Req
 		return
 	}
 	JSON(w, http.StatusOK, summary)
+}
+
+func (h *ProgramHandler) NameAvailable(w http.ResponseWriter, r *http.Request) {
+	if auth.PrincipalFromContext(r.Context()) == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	available, err := h.svc.NameAvailable(r.Context(), r.URL.Query().Get("name"), r.URL.Query().Get("exclude_program_id"))
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]bool{"available": available})
 }
 
 // Submit transitions a program from draft or rejected to submitted.

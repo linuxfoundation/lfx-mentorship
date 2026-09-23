@@ -112,6 +112,14 @@ func (s *ProgramService) GetManagementSummary(ctx context.Context, programID str
 	return summary, nil
 }
 
+func (s *ProgramService) NameAvailable(ctx context.Context, name, excludeProgramID string) (bool, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false, fmt.Errorf("%w: name is required", domain.ErrInvalidInput)
+	}
+	return s.repo.NameAvailable(ctx, name, excludeProgramID)
+}
+
 func applyCatalogLabels(items []*models.ProgramCatalogItem, now time.Time) {
 	for _, item := range items {
 		if item.Skills == nil {

@@ -168,6 +168,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	routes := func(r chi.Router) {
 		optionalJWT := func(next http.Handler) http.Handler { return next }
 		// ── Public endpoints ─────────────────────────────────────────────────
+		r.With(requireGatewayPrincipal).Get("/programs/name-availability", programH.NameAvailable)
 		r.Get("/programs", programH.List)
 		r.Get("/programs/catalog", programH.ListCatalog)
 		r.With(optionalJWT).Get("/programs/resolve/{id}", programH.ResolveID)
