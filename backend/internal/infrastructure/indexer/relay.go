@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
-	"github.com/nats-io/nats.go"
 )
 
 type Envelope struct {
@@ -22,11 +21,15 @@ type Envelope struct {
 
 type Relay struct {
 	outbox domain.IndexOutboxRepository
-	conn   *nats.Conn
+	conn   publisher
 	batch  int
 }
 
-func NewRelay(outbox domain.IndexOutboxRepository, conn *nats.Conn, batch int) *Relay {
+type publisher interface {
+	Publish(subject string, data []byte) error
+}
+
+func NewRelay(outbox domain.IndexOutboxRepository, conn publisher, batch int) *Relay {
 	if batch <= 0 {
 		batch = 50
 	}
