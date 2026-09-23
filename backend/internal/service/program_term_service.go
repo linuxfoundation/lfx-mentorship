@@ -78,6 +78,10 @@ func (s *ProgramTermService) ListByProgram(ctx context.Context, programID string
 	return terms, meta, nil
 }
 
+func (s *ProgramTermService) ListManagementByProgram(ctx context.Context, programID string, filter models.ProgramTermFilter) ([]*models.ProgramTermManagementRow, *models.PaginationMeta, error) {
+	return s.repo.ListManagementByProgram(ctx, programID, filter)
+}
+
 // Create validates input and creates a program term.
 func (s *ProgramTermService) Create(ctx context.Context, input models.ProgramTermCreateInput) (*models.ProgramTerm, error) {
 	ctx, span := programTermSvcTracer.Start(ctx, "ProgramTermService.Create")

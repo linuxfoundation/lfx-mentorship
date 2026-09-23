@@ -33,6 +33,9 @@ func (s *stubProgramTermSvc) GetByProgramAndID(ctx context.Context, programID, i
 func (s *stubProgramTermSvc) ListByProgram(ctx context.Context, programID string, filter models.ProgramTermFilter) ([]*models.ProgramTerm, *models.PaginationMeta, error) {
 	return []*models.ProgramTerm{{ID: "term-1", ProgramID: programID}}, &models.PaginationMeta{Total: 1}, nil
 }
+func (s *stubProgramTermSvc) ListManagementByProgram(ctx context.Context, programID string, filter models.ProgramTermFilter) ([]*models.ProgramTermManagementRow, *models.PaginationMeta, error) {
+	return []*models.ProgramTermManagementRow{}, &models.PaginationMeta{}, nil
+}
 
 func (s *stubProgramTermSvc) Create(ctx context.Context, input models.ProgramTermCreateInput) (*models.ProgramTerm, error) {
 	return &models.ProgramTerm{ID: input.ID, ProgramID: input.ProgramID}, nil

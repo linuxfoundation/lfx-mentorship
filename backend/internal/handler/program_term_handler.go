@@ -18,6 +18,7 @@ type programTermService interface {
 	GetByID(ctx context.Context, id string) (*models.ProgramTerm, error)
 	GetByProgramAndID(ctx context.Context, programID, id string) (*models.ProgramTerm, error)
 	ListByProgram(ctx context.Context, programID string, filter models.ProgramTermFilter) ([]*models.ProgramTerm, *models.PaginationMeta, error)
+	ListManagementByProgram(ctx context.Context, programID string, filter models.ProgramTermFilter) ([]*models.ProgramTermManagementRow, *models.PaginationMeta, error)
 	Create(ctx context.Context, input models.ProgramTermCreateInput) (*models.ProgramTerm, error)
 	Update(ctx context.Context, id string, input models.ProgramTermUpdateInput) (*models.ProgramTerm, error)
 	Delete(ctx context.Context, id string) error
@@ -67,6 +68,23 @@ func (h *ProgramTermHandler) ListByProgram(w http.ResponseWriter, r *http.Reques
 		labeled[i] = withLabel(t)
 	}
 	JSON(w, http.StatusOK, map[string]any{"data": labeled, "meta": meta})
+}
+
+func (h *ProgramTermHandler) ListManagementByProgram(w http.ResponseWriter, r *http.Request) {
+	if auth.PrincipalFromContext(r.Context()) == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	limit, offset, ok := parsePaginationParams(w, r)
+	if !ok {
+		return
+	}
+	rows, meta, err := h.svc.ListManagementByProgram(r.Context(), chi.URLParam(r, "id"), models.ProgramTermFilter{Limit: limit, Offset: offset})
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]any{"data": rows, "meta": meta})
 }
 
 // GetByID handles GET /v1/programs/{programID}/terms/{termID} and legacy /v1/program-terms/{id}.

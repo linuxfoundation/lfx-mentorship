@@ -98,6 +98,7 @@ type ProgramTermRepository interface {
 	GetByID(ctx context.Context, id string) (*models.ProgramTerm, error)
 	GetByProgramAndID(ctx context.Context, programID, id string) (*models.ProgramTerm, error)
 	ListByProgram(ctx context.Context, programID string, filter models.ProgramTermFilter) ([]*models.ProgramTerm, *models.PaginationMeta, error)
+	ListManagementByProgram(ctx context.Context, programID string, filter models.ProgramTermFilter) ([]*models.ProgramTermManagementRow, *models.PaginationMeta, error)
 	Create(ctx context.Context, input models.ProgramTermCreateInput) (*models.ProgramTerm, error)
 	Update(ctx context.Context, id string, input models.ProgramTermUpdateInput) (*models.ProgramTerm, error)
 	Delete(ctx context.Context, id string) error

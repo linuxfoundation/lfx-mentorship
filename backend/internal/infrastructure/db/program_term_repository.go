@@ -140,6 +140,43 @@ func (r *ProgramTermRepository) ListByProgram(ctx context.Context, programID str
 	return terms, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, nil
 }
 
+func (r *ProgramTermRepository) ListManagementByProgram(ctx context.Context, programID string, filter models.ProgramTermFilter) ([]*models.ProgramTermManagementRow, *models.PaginationMeta, error) {
+	limit, offset := filter.Limit, filter.Offset
+	if limit <= 0 || limit > 50 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	args := []any{programID}
+	where := ` WHERE pt.program_id = $1 AND pt.status <> 'deleted'`
+	var total int
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM program_terms pt`+where, args...).Scan(&total); err != nil {
+		return nil, nil, err
+	}
+	args = append(args, limit, offset)
+	q := `SELECT pt.id, pt.program_id, pt.name, pt.status, pt.active_users,
+		pt.start_date_time, pt.end_date_time, pt.application_start_date, pt.application_end_date,
+		pt.created_on, pt.updated_on,
+		COUNT(a.id) FILTER (WHERE a.status = 'pending'), COUNT(a.id) FILTER (WHERE a.status = 'declined'),
+		COUNT(a.id) FILTER (WHERE a.status = 'accepted'), COUNT(a.id) FILTER (WHERE a.status = 'graduated')
+		FROM program_terms pt LEFT JOIN applications a ON a.program_term_id = pt.id` + where + ` GROUP BY pt.id ORDER BY pt.start_date_time DESC NULLS LAST` + fmt.Sprintf(` LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
+	rows, err := r.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	result := make([]*models.ProgramTermManagementRow, 0)
+	for rows.Next() {
+		var row models.ProgramTermManagementRow
+		if err := rows.Scan(&row.ID, &row.ProgramID, &row.Name, &row.Status, &row.ActiveUsers, &row.StartDateTime, &row.EndDateTime, &row.ApplicationStartDate, &row.ApplicationEndDate, &row.CreatedOn, &row.UpdatedOn, &row.Pending, &row.Declined, &row.Accepted, &row.Graduated); err != nil {
+			return nil, nil, err
+		}
+		result = append(result, &row)
+	}
+	return result, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, rows.Err()
+}
+
 // Create inserts a new program term and returns the persisted record.
 func (r *ProgramTermRepository) Create(ctx context.Context, input models.ProgramTermCreateInput) (*models.ProgramTerm, error) {
 	ctx, span := programTermTracer.Start(ctx, "db.program_terms.Create")

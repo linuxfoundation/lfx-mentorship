@@ -151,6 +151,9 @@ func (m *stubTermRepo) ListByProgram(ctx context.Context, id string, f models.Pr
 	}
 	return nil, &models.PaginationMeta{}, nil
 }
+func (m *stubTermRepo) ListManagementByProgram(context.Context, string, models.ProgramTermFilter) ([]*models.ProgramTermManagementRow, *models.PaginationMeta, error) {
+	return []*models.ProgramTermManagementRow{}, &models.PaginationMeta{}, nil
+}
 func (m *stubTermRepo) Create(ctx context.Context, in models.ProgramTermCreateInput) (*models.ProgramTerm, error) {
 	if m.create != nil {
 		return m.create(ctx, in)

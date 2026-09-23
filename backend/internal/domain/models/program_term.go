@@ -5,6 +5,14 @@ package models
 
 import "time"
 
+type ProgramTermManagementRow struct {
+	ProgramTerm
+	Pending   int `json:"pending"`
+	Declined  int `json:"declined"`
+	Accepted  int `json:"accepted"`
+	Graduated int `json:"graduated"`
+}
+
 // ProgramTermStatus enumerates valid values for program_terms.status.
 type ProgramTermStatus string
 

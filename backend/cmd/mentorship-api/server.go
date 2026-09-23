@@ -190,6 +190,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		r.With(optionalJWT).Get("/programs/{id}/transactions", programH.GetCategorizedTransactions)
 		r.With(optionalJWT).Get("/programs/{id}/sponsors", programH.GetProgramSponsors)
 		r.Get("/programs/{id}/terms", programTermH.ListByProgram)
+		r.Get("/programs/{id}/term-management", programTermH.ListManagementByProgram)
 		r.Get("/programs/{id}/members", programMemberH.List)
 		r.Get("/programs/{id}/member-management", programMemberH.ListMentorManagement)
 
