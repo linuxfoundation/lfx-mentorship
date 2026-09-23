@@ -204,7 +204,7 @@ func (s *ProgramService) GetCatalog(ctx context.Context, id string) (*models.Pro
 		span.RecordError(err)
 		return nil, fmt.Errorf("get program catalog: %w", err)
 	}
-	if item.Status != models.ProgramStatusPublished {
+	if item.Status != models.ProgramStatusPublished && item.Status != models.ProgramStatusDraft {
 		return nil, fmt.Errorf("get program catalog: %w", domain.ErrProgramNotFound)
 	}
 	applyCatalogLabels([]*models.ProgramCatalogItem{item}, time.Now())
