@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
+	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/auth"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -123,6 +124,9 @@ func (s *TaskService) ListByProgramTermForActor(ctx context.Context, programTerm
 	term, err := s.termRepo.GetByID(ctx, programTermID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("get term for task list access check: %w", err)
+	}
+	if auth.IsGatewayPrincipal(ctx) {
+		return s.ListByProgramTerm(ctx, programTermID, filter)
 	}
 	_, err = s.memberRepo.FindActiveReviewerByProgramAndUser(ctx, term.ProgramID, actorID)
 	if err != nil {
@@ -266,6 +270,9 @@ func (s *TaskService) Update(ctx context.Context, id string, input models.TaskUp
 // assertReviewer verifies that actorID holds an active mentor or program_admin role
 // on the program that owns the given task.
 func (s *TaskService) assertReviewer(ctx context.Context, task *models.Task, actorID string) error {
+	if auth.IsGatewayPrincipal(ctx) {
+		return nil
+	}
 	programTermID := ""
 	if task.ApplicationID != nil {
 		app, err := s.appRepo.GetByID(ctx, *task.ApplicationID)

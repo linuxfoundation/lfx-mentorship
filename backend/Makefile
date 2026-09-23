@@ -125,6 +125,7 @@ deploy-kind:
 		--set autoscaling.enabled=false \
 		--set createPlaceholderSecret=false \
 		--set allowLocalAuthBypass=true \
+		--set-string config.ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS=true \
 		--set-string config.DISABLED_MOCK_LOCAL_PRINCIPAL=local-dev-user
 	@echo "==> Waiting for rollout..."
 	@kubectl -n $(NAMESPACE) rollout status deploy/$(DEPLOYMENT_NAME) --timeout=180s

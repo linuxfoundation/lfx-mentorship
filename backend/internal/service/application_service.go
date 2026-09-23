@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
+	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/auth"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -50,6 +51,9 @@ func NewApplicationService(
 }
 
 func (s *ApplicationService) isActiveReviewer(ctx context.Context, programID, actorID string) (bool, error) {
+	if auth.IsGatewayPrincipal(ctx) {
+		return true, nil
+	}
 	_, err := s.memberRepo.FindActiveReviewerByProgramAndUser(ctx, programID, actorID)
 	if err != nil {
 		if errors.Is(err, domain.ErrProgramMemberNotFound) {
@@ -386,7 +390,10 @@ func (s *ApplicationService) WithdrawForMentee(ctx context.Context, id, actorID 
 	if err != nil {
 		return nil, fmt.Errorf("get application term: %w", err)
 	}
-	_, memberErr := s.memberRepo.FindActiveProgramAdminByProgramAndUser(ctx, term.ProgramID, actorID)
+	var memberErr error
+	if !auth.IsGatewayPrincipal(ctx) {
+		_, memberErr = s.memberRepo.FindActiveProgramAdminByProgramAndUser(ctx, term.ProgramID, actorID)
+	}
 	if memberErr != nil {
 		if errors.Is(memberErr, domain.ErrProgramMemberNotFound) {
 			return nil, fmt.Errorf("%w: actor must be an active program_admin", domain.ErrForbidden)

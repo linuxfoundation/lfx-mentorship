@@ -9,6 +9,10 @@ No Kubernetes resource is rendered; this file only produces errors.
 {{- fail "\n\nvalues.yaml: image.tag is required.\nSet it to the image tag to deploy, e.g.:\n  image:\n    tag: \"abc1234\"" }}
 {{- end }}
 
+{{- if .Values.ingress.enabled }}
+{{- fail "values.yaml: ingress.enabled is unsupported; Mentorship is served only through the shared Heimdall gateway." }}
+{{- end }}
+
 {{- if .Values.fundingStatsSyncCronJob.enabled }}
 {{- if not .Values.config.LEDGER_BASE_URL }}
 {{- fail "\n\nvalues.yaml: config.LEDGER_BASE_URL is required when fundingStatsSyncCronJob.enabled=true." }}
@@ -71,22 +75,22 @@ the JWT settings fail when the authenticator is constructed), so catch it at
 render time rather than in a crash-looping pod.
 
 Skipped when the auth bypass is active: internal/infrastructure/auth/jwt.go
-returns a mock-principal authenticator before parsing JWKS_URL / JWT_AUDIENCE /
-JWT_ISSUER, so requiring them would block the documented local bypass flow
+returns a mock-principal authenticator before parsing the Heimdall settings, so
+requiring them would block the documented local bypass flow
 (see make deploy-kind) for values the service never reads in that mode.
 */}}
 {{- if not $bypassSet }}
 {{- if le (int .Values.config.FGA_RELAY_MAX_ATTEMPTS) 0 }}
 {{- fail "values.yaml: config.FGA_RELAY_MAX_ATTEMPTS must be greater than 0." }}
 {{- end }}
-{{- range $key := list "JWKS_URL" "JWT_AUDIENCE" "JWT_ISSUER" }}
+{{- $heimdallJWKS := $.Values.config.HEIMDALL_JWKS_URL | default "" }}
+{{- $heimdallAudience := $.Values.config.HEIMDALL_JWT_AUDIENCE | default "" }}
+{{- $heimdallIssuer := $.Values.config.HEIMDALL_JWT_ISSUER | default "" }}
+{{- range $key := list "HEIMDALL_JWKS_URL" "HEIMDALL_JWT_AUDIENCE" "HEIMDALL_JWT_ISSUER" }}
 {{- if not (get $.Values.config $key) }}
 {{- fail (printf "\n\nvalues.yaml: config.%s is required — the service fails to start without it.\nSet it per environment in the ArgoCD values file." $key) }}
 {{- end }}
 {{- end }}
-{{- $heimdallJWKS := $.Values.config.HEIMDALL_JWKS_URL | default "" }}
-{{- $heimdallAudience := $.Values.config.HEIMDALL_JWT_AUDIENCE | default "" }}
-{{- $heimdallIssuer := $.Values.config.HEIMDALL_JWT_ISSUER | default "" }}
 {{- $heimdallConfigured := or $heimdallJWKS $heimdallAudience $heimdallIssuer }}
 {{- if .Values.heimdall.enabled }}
 {{- if not (and $heimdallJWKS $heimdallAudience $heimdallIssuer) }}
@@ -117,9 +121,6 @@ JWT_ISSUER, so requiring them would block the documented local bypass flow
 {{- fail "values.yaml: enabled Heimdall resources require lfx.domain, gateway name/namespace, and heimdall.url" }}
 {{- end }}
 {{- end }}
-{{- end }}
-{{- if eq $heimdallIssuer ($.Values.config.JWT_ISSUER | default "") }}
-{{- fail "\n\nvalues.yaml: config.HEIMDALL_JWT_ISSUER must differ from config.JWT_ISSUER." }}
 {{- end }}
 {{- end }}
 {{- end }}

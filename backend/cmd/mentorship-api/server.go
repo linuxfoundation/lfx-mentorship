@@ -164,9 +164,9 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		w.WriteHeader(http.StatusOK)
 	})
 
-	var resolveInterimPrincipal func(http.Handler) http.Handler
+	var requireGatewayPrincipal func(http.Handler) http.Handler
 	routes := func(r chi.Router) {
-		optionalJWT := jwtAuth.OptionalMiddleware
+		optionalJWT := func(next http.Handler) http.Handler { return next }
 		// ── Public endpoints ─────────────────────────────────────────────────
 		r.Get("/programs", programH.List)
 		r.Get("/programs/catalog", programH.ListCatalog)
@@ -194,8 +194,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 
 		// ── Authenticated endpoints ────────────────────────────────────────
 		r.Group(func(r chi.Router) {
-			r.Use(jwtAuth.Middleware)
-			r.Use(resolveInterimPrincipal)
+			r.Use(requireGatewayPrincipal)
 
 			// Mentor invite — both the invite token and signed principal are required.
 			r.Post("/mentor-invites/{token}/accept", mentorInviteH.AcceptInvite)
@@ -269,14 +268,14 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			r.Delete("/admin/approver-team/members/{userID}", rosterH.RemoveApprover)
 		})
 	}
-	resolveGatewayPrincipal := func(next http.Handler) http.Handler {
+	requireGatewayPrincipal = func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			principal := auth.PrincipalFromContext(req.Context())
-			if !auth.IsGatewayPrincipal(req.Context()) || principal == nil || principal.UserID == "_anonymous" {
-				next.ServeHTTP(w, req)
+			if principal == nil || principal.UserID == "_anonymous" {
+				handler.JSON(w, http.StatusUnauthorized, map[string]any{"error": "authenticated gateway principal is required"})
 				return
 			}
-			if req.Method == http.MethodPut && strings.HasSuffix(req.URL.Path, "/me") {
+			if req.Method == http.MethodPut && req.URL.Path == "/mentorship/v1/me" {
 				next.ServeHTTP(w, req)
 				return
 			}
@@ -304,50 +303,17 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			next.ServeHTTP(w, req.WithContext(auth.ContextWithPrincipal(req.Context(), &resolved)))
 		})
 	}
-	resolveInterimPrincipal = func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			principal := auth.PrincipalFromContext(req.Context())
-			if principal == nil || auth.IsGatewayPrincipal(req.Context()) || (req.Method == http.MethodPut && strings.HasSuffix(req.URL.Path, "/me")) {
-				next.ServeHTTP(w, req)
+	r.Route("/mentorship/v1", func(r chi.Router) {
+		r.Use(jwtAuth.GatewayMiddleware)
+		r.Get("/internal/metrics", func(w http.ResponseWriter, req *http.Request) {
+			if !auth.HasScope(req.Context(), auth.ScopeReadMetrics()) {
+				http.Error(w, "forbidden", http.StatusForbidden)
 				return
 			}
-			if principal.Username == "" {
-				handler.JSON(w, http.StatusUnauthorized, map[string]any{"error": "local user identity is missing"})
-				return
-			}
-			user, err := userRepo.GetByLFID(req.Context(), principal.Username)
-			if err != nil || user.LFID == nil || *user.LFID == "" {
-				handler.JSON(w, http.StatusUnauthorized, map[string]any{"error": "local user is not provisioned"})
-				return
-			}
-			resolved := *principal
-			resolved.UserID = user.ID
-			next.ServeHTTP(w, req.WithContext(auth.ContextWithPrincipal(req.Context(), &resolved)))
+			expvar.Handler().ServeHTTP(w, req)
 		})
-	}
-
-	// Guide 07 §1.1: serve both the interim and gateway path prefixes on the
-	// same handlers until the interim host is retired. No StripPrefix/URLRewrite.
-	// Heimdall-only operations are intentionally unavailable on the interim
-	// Auth0 host because this service does not duplicate their FGA checks.
-	r.Route("/v1", func(r chi.Router) {
-		r.Use(denyInterimGatewayOperations)
 		routes(r)
 	})
-	if cfg.JWT.HeimdallIssuer != "" {
-		r.Route("/mentorship/v1", func(r chi.Router) {
-			r.Use(jwtAuth.GatewayMiddleware)
-			r.Use(resolveGatewayPrincipal)
-			r.Get("/internal/metrics", func(w http.ResponseWriter, req *http.Request) {
-				if !auth.HasScope(req.Context(), auth.ScopeReadMetrics()) {
-					http.Error(w, "forbidden", http.StatusForbidden)
-					return
-				}
-				expvar.Handler().ServeHTTP(w, req)
-			})
-			routes(r)
-		})
-	}
 
 	httpSrv := &http.Server{
 		Addr:           fmt.Sprintf(":%d", cfg.Server.Port),
@@ -367,23 +333,6 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		natsConn:    natsConn,
 		relayCancel: relayCancel,
 	}, nil
-}
-
-func denyInterimGatewayOperations(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		path := r.URL.Path
-		protected := (r.Method != http.MethodGet && strings.HasPrefix(path, "/v1/programs/")) ||
-			(r.Method != http.MethodGet && (strings.Contains(path, "/applications/") || strings.Contains(path, "/tasks") || strings.Contains(path, "/mentor-invites/") || strings.Contains(path, "/program-terms/"))) ||
-			strings.Contains(path, "/decision") || strings.HasSuffix(path, "/submit") ||
-			(r.Method == http.MethodDelete && strings.Contains(path, "/applications/")) ||
-			strings.Contains(path, "/applications/") && (strings.HasSuffix(path, "/status") || strings.HasSuffix(path, "/note") || strings.HasSuffix(path, "/evaluation") || strings.HasSuffix(path, "/withdraw-for-mentee") || strings.HasSuffix(path, "/reapply")) ||
-			strings.Contains(path, "/tasks") || strings.HasSuffix(path, "/applications") && strings.Contains(path, "/terms/")
-		if protected {
-			http.NotFound(w, r)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 // Start begins listening for HTTP requests.

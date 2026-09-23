@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
+	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/auth"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/clients"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -352,6 +353,9 @@ func (s *ProgramService) DeleteSkill(ctx context.Context, programID, skillID, ac
 		return fmt.Errorf("%w: actor identity is required", domain.ErrForbidden)
 	}
 
+	if auth.IsGatewayPrincipal(ctx) {
+		return s.repo.DeleteSkill(ctx, programID, skillID)
+	}
 	_, err := s.memberRepo.FindActiveProgramAdminByProgramAndUser(ctx, programID, actorID)
 	if err != nil {
 		if !errors.Is(err, domain.ErrProgramMemberNotFound) {

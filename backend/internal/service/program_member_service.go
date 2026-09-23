@@ -35,6 +35,9 @@ func (s *ProgramMemberService) assertActiveProgramAdmin(ctx context.Context, pro
 	if actorID == "" {
 		return fmt.Errorf("%w: actor identity is required", domain.ErrForbidden)
 	}
+	if auth.IsGatewayPrincipal(ctx) {
+		return nil
+	}
 	_, err := s.repo.FindActiveProgramAdminByProgramAndUser(ctx, programID, actorID)
 	if err != nil {
 		if !errors.Is(err, domain.ErrProgramMemberNotFound) {
