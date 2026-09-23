@@ -69,13 +69,13 @@ SPDX-License-Identifier: MIT
               />
             </a>
             <a
-              v-if="program.codeOfConduct"
-              :href="program.codeOfConduct"
+              v-if="safeCodeOfConductUrl"
+              :href="safeCodeOfConductUrl"
               target="_blank"
               rel="noopener noreferrer"
               class="inline-flex"
             >
-              <span class="ml-1 text-xs text-brand-500 :hover:underline">Code of Conduct</span>
+              <span class="ml-1 text-xs text-brand-500 hover:underline">Code of Conduct</span>
             </a>
           </div>
 
@@ -171,6 +171,18 @@ defineEmits<{
 }>();
 
 const statusConfig = computed(() => PROGRAM_STATUS_CONFIG[props.program.status]);
+
+const safeCodeOfConductUrl = computed(() => {
+  const url = props.program.codeOfConduct;
+  if (!url) return '';
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? url : '';
+  } catch {
+    return '';
+  }
+});
+
 const activeTerms = computed(() => props.program.activeTerms);
 const isAccepting = computed(() => activeTerms.value.length > 0);
 const displayTerms = computed(() => {
