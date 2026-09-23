@@ -585,6 +585,17 @@ func (r *ProgramRepository) Create(ctx context.Context, input models.ProgramCrea
 		return nil, fmt.Errorf("begin create program transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	p, err := r.createInTx(ctx, tx, input)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit create program transaction: %w", err)
+	}
+	return p, nil
+}
+
+func (r *ProgramRepository) createInTx(ctx context.Context, tx pgx.Tx, input models.ProgramCreateInput) (*models.Program, error) {
 
 	const q = `
 		INSERT INTO programs (
@@ -602,7 +613,6 @@ func (r *ProgramRepository) Create(ctx context.Context, input models.ProgramCrea
 		nilIfEmpty(input.MenteeNeeds), nilIfEmpty(input.TaskTemplates),
 	))
 	if err != nil {
-		span.RecordError(err)
 		return nil, fmt.Errorf("create program: %w", err)
 	}
 	if input.CreatorUserID == "" {
@@ -636,10 +646,43 @@ func (r *ProgramRepository) Create(ctx context.Context, input models.ProgramCrea
 	if err := enqueueProgramIndex(ctx, tx, p, "created"); err != nil {
 		return nil, err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit create program transaction: %w", err)
-	}
 	return p, nil
+}
+
+func (r *ProgramRepository) CreateEnrollment(ctx context.Context, input models.ProgramEnrollmentInput) (*models.Program, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin create enrollment transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	input.Program.TaskTemplates = input.Prerequisites
+	program, err := r.createInTx(ctx, tx, input.Program)
+	if err != nil {
+		return nil, err
+	}
+	for _, term := range input.Terms {
+		if term.ID == "" {
+			term.ID = uuid.NewString()
+		}
+		if term.Status == "" {
+			term.Status = models.ProgramTermStatusOpen
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO program_terms (id, program_id, name, status, active_users, start_date_time, end_date_time, application_start_date, application_end_date) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, term.ID, program.ID, term.Name, term.Status, term.ActiveUsers, term.StartDateTime, term.EndDateTime, term.ApplicationStartDate, term.ApplicationEndDate); err != nil {
+			return nil, fmt.Errorf("create enrollment term: %w", err)
+		}
+	}
+	for _, skill := range input.Skills {
+		if skill == "" {
+			continue
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO program_skills (id, program_id, skill) VALUES ($1,$2,$3)`, uuid.NewString(), program.ID, skill); err != nil {
+			return nil, fmt.Errorf("create enrollment skill: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit create enrollment transaction: %w", err)
+	}
+	return program, nil
 }
 
 // Update patches the program and returns the updated record.

@@ -5,8 +5,10 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -22,6 +24,15 @@ import (
 )
 
 var programSvcTracer = otel.Tracer("programs-service")
+
+const maxEnrollmentTerms = 4
+
+type enrollmentPrerequisite struct {
+	Name        string  `json:"name"`
+	Description *string `json:"description"`
+	RequireFile bool    `json:"requireFile"`
+	DueDate     *string `json:"dueDate"`
+}
 
 // ProgramService orchestrates program reads and writes.
 type ProgramService struct {
@@ -238,6 +249,80 @@ func (s *ProgramService) Create(ctx context.Context, input models.ProgramCreateI
 		return nil, fmt.Errorf("create program: %w", err)
 	}
 	return p, nil
+}
+
+func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.ProgramEnrollmentInput) (*models.Program, error) {
+	if len(input.Terms) == 0 {
+		return nil, fmt.Errorf("%w: at least one term is required", domain.ErrInvalidInput)
+	}
+	if len(input.Terms) > maxEnrollmentTerms {
+		return nil, fmt.Errorf("%w: at most %d terms are allowed", domain.ErrInvalidInput, maxEnrollmentTerms)
+	}
+	if len(input.Skills) == 0 {
+		return nil, fmt.Errorf("%w: at least one skill is required", domain.ErrInvalidInput)
+	}
+	for _, term := range input.Terms {
+		if strings.TrimSpace(term.Name) == "" {
+			return nil, fmt.Errorf("%w: term name is required", domain.ErrInvalidInput)
+		}
+		if term.Status != "" && term.Status != models.ProgramTermStatusOpen {
+			return nil, fmt.Errorf("%w: enrollment terms must be open", domain.ErrInvalidInput)
+		}
+		if term.StartDateTime == nil || term.EndDateTime == nil || !term.EndDateTime.After(*term.StartDateTime) {
+			return nil, fmt.Errorf("%w: term end date must be after start date", domain.ErrInvalidInput)
+		}
+		if term.ApplicationStartDate == nil || term.ApplicationEndDate == nil || !term.ApplicationEndDate.After(*term.ApplicationStartDate) || term.ApplicationEndDate.After(*term.StartDateTime) {
+			return nil, fmt.Errorf("%w: application window must end after it starts and before the term", domain.ErrInvalidInput)
+		}
+	}
+	if len(input.Prerequisites) > 0 {
+		var prerequisites []enrollmentPrerequisite
+		if err := json.Unmarshal(input.Prerequisites, &prerequisites); err != nil {
+			return nil, fmt.Errorf("%w: prerequisites must be valid JSON", domain.ErrInvalidInput)
+		}
+		for _, prerequisite := range prerequisites {
+			if strings.TrimSpace(prerequisite.Name) == "" || prerequisite.Description == nil || strings.TrimSpace(*prerequisite.Description) == "" {
+				return nil, fmt.Errorf("%w: prerequisite name and description are required", domain.ErrInvalidInput)
+			}
+		}
+		templates := make([]taskTemplate, 0, len(prerequisites))
+		for _, prerequisite := range prerequisites {
+			var submitFile *string
+			if prerequisite.RequireFile {
+				value := "required"
+				submitFile = &value
+			}
+			templates = append(templates, taskTemplate{Name: prerequisite.Name, Description: prerequisite.Description, SubmitFile: submitFile, DueDate: prerequisite.DueDate})
+		}
+		input.Prerequisites, _ = json.Marshal(templates)
+	}
+	if strings.TrimSpace(input.Program.Name) == "" {
+		return nil, fmt.Errorf("%w: name is required", domain.ErrInvalidInput)
+	}
+	for _, value := range []*string{input.Program.RepoLink, input.Program.WebsiteURL, input.Program.CodeOfConduct} {
+		if value == nil || strings.TrimSpace(*value) == "" {
+			continue
+		}
+		parsed, err := url.ParseRequestURI(*value)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			return nil, fmt.Errorf("%w: invalid URL", domain.ErrInvalidInput)
+		}
+	}
+	if strings.TrimSpace(input.Program.Slug) == "" {
+		return nil, fmt.Errorf("%w: slug is required", domain.ErrInvalidInput)
+	}
+	if input.Program.ProjectUID == nil || strings.TrimSpace(*input.Program.ProjectUID) == "" {
+		return nil, fmt.Errorf("%w: project_uid is required", domain.ErrInvalidInput)
+	}
+	projectUID, err := uuid.Parse(strings.TrimSpace(*input.Program.ProjectUID))
+	if err != nil {
+		return nil, fmt.Errorf("%w: project_uid must be a UUID", domain.ErrInvalidInput)
+	}
+	canonicalProjectUID := projectUID.String()
+	input.Program.ProjectUID = &canonicalProjectUID
+	input.Program.Status = models.ProgramStatusDraft
+	input.Program.ID = uuid.New().String()
+	return s.repo.CreateEnrollment(ctx, input)
 }
 
 // Update validates and applies changes to the program with the given ID.

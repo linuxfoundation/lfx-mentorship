@@ -252,6 +252,9 @@ func (m *stubProgRepo) Create(ctx context.Context, in models.ProgramCreateInput)
 	}
 	return &models.Program{}, nil
 }
+func (m *stubProgRepo) CreateEnrollment(ctx context.Context, in models.ProgramEnrollmentInput) (*models.Program, error) {
+	return m.Create(ctx, in.Program)
+}
 func (m *stubProgRepo) Update(ctx context.Context, id string, in models.ProgramUpdateInput) (*models.Program, error) {
 	if m.update != nil {
 		return m.update(ctx, id, in)

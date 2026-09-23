@@ -78,6 +78,9 @@ func (s *stubProgramSvc) ListCatalogMentees(ctx context.Context, id string) ([]*
 func (s *stubProgramSvc) Create(context.Context, models.ProgramCreateInput) (*models.Program, error) {
 	return &models.Program{}, nil
 }
+func (s *stubProgramSvc) CreateEnrollment(ctx context.Context, input models.ProgramEnrollmentInput) (*models.Program, error) {
+	return s.Create(ctx, input.Program)
+}
 func (s *stubProgramSvc) Update(context.Context, string, models.ProgramUpdateInput) (*models.Program, error) {
 	return &models.Program{}, nil
 }

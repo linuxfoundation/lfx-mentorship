@@ -76,6 +76,7 @@ type ProgramRepository interface {
 	GetCatalog(ctx context.Context, id string) (*models.ProgramCatalogItem, error)
 	ListCatalogMentees(ctx context.Context, programID string) ([]*models.ProgramCatalogMentee, error)
 	Create(ctx context.Context, input models.ProgramCreateInput) (*models.Program, error)
+	CreateEnrollment(ctx context.Context, input models.ProgramEnrollmentInput) (*models.Program, error)
 	Update(ctx context.Context, id string, input models.ProgramUpdateInput) (*models.Program, error)
 	Delete(ctx context.Context, id string) error
 

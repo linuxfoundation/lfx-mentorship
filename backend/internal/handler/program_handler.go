@@ -5,6 +5,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -27,6 +28,7 @@ type programService interface {
 	GetCatalog(ctx context.Context, id string) (*models.ProgramCatalogItem, error)
 	ListCatalogMentees(ctx context.Context, programID string) ([]*models.ProgramCatalogMentee, error)
 	Create(ctx context.Context, input models.ProgramCreateInput) (*models.Program, error)
+	CreateEnrollment(ctx context.Context, input models.ProgramEnrollmentInput) (*models.Program, error)
 	Update(ctx context.Context, id string, input models.ProgramUpdateInput) (*models.Program, error)
 	Delete(ctx context.Context, id string) error
 	ListSkills(ctx context.Context, programID string) ([]*models.ProgramSkill, error)
@@ -55,6 +57,19 @@ func parseAggregateParam(r *http.Request) bool {
 // ProgramHandler holds Chi handlers for the programs resource.
 type ProgramHandler struct {
 	svc programService
+}
+
+type enrollmentRequest struct {
+	ProjectID        string                          `json:"projectId"`
+	Name             string                          `json:"name"`
+	Description      *string                         `json:"description,omitempty"`
+	RepositoryURL    *string                         `json:"repositoryUrl,omitempty"`
+	WebsiteURL       *string                         `json:"websiteUrl,omitempty"`
+	CodeOfConductURL *string                         `json:"codeOfConductUrl,omitempty"`
+	Skills           []string                        `json:"skills"`
+	Terms            []models.ProgramTermCreateInput `json:"terms"`
+	Prerequisites    json.RawMessage                 `json:"prerequisites,omitempty"`
+	TermsAccepted    bool                            `json:"termsAccepted"`
 }
 
 func withIndexMetadata(r *http.Request) *http.Request {
@@ -295,14 +310,31 @@ func (h *ProgramHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var input models.ProgramCreateInput
-	if !decodeBody(w, r, &input) {
+	var request enrollmentRequest
+	if !decodeBody(w, r, &request) {
 		return
 	}
-	input.CreatorUserID = principal.UserID
+	if !request.TermsAccepted {
+		Error(w, fmt.Errorf("%w: terms_accepted must be true", domain.ErrInvalidInput))
+		return
+	}
+	enrollment := models.ProgramEnrollmentInput{
+		Program: models.ProgramCreateInput{
+			ProjectUID:    &request.ProjectID,
+			Name:          request.Name,
+			Description:   request.Description,
+			RepoLink:      request.RepositoryURL,
+			WebsiteURL:    request.WebsiteURL,
+			CodeOfConduct: request.CodeOfConductURL,
+		},
+		Terms:         request.Terms,
+		Skills:        request.Skills,
+		Prerequisites: request.Prerequisites,
+	}
+	enrollment.Program.CreatorUserID = principal.UserID
 	r = withIndexMetadata(r)
 
-	program, err := h.svc.Create(r.Context(), input)
+	program, err := h.svc.CreateEnrollment(r.Context(), enrollment)
 	if err != nil {
 		Error(w, err)
 		return
