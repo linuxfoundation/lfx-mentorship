@@ -125,11 +125,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_user_profiles_user_type
 
 ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_status_check;
 
-UPDATE tasks SET status = 'pending' WHERE status = 'incomplete';
-UPDATE tasks SET status = 'completed' WHERE status = 'complete';
-
 ALTER TABLE tasks
   ADD CONSTRAINT tasks_status_check
-  CHECK (status IN ('pending', 'in_progress', 'submitted', 'completed'));
+  CHECK (status IN ('incomplete', 'pending', 'in_progress', 'submitted', 'complete', 'completed'));
 
 COMMIT;

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
@@ -20,9 +21,19 @@ type Envelope struct {
 }
 
 type Relay struct {
-	outbox domain.IndexOutboxRepository
-	conn   publisher
-	batch  int
+	outbox        domain.IndexOutboxRepository
+	conn          publisher
+	batch         int
+	logger        *slog.Logger
+	authorization string
+}
+
+func (r *Relay) SetLogger(logger *slog.Logger) {
+	r.logger = logger
+}
+
+func (r *Relay) SetAuthorization(authorization string) {
+	r.authorization = authorization
 }
 
 type publisher interface {
@@ -42,7 +53,14 @@ func (r *Relay) RunOnce(ctx context.Context) error {
 		return err
 	}
 	for _, record := range records {
-		envelope := Envelope{Action: record.Action, Headers: record.Headers, Data: record.Data, IndexingConfig: record.IndexingConfig}
+		headers := record.Headers
+		if r.authorization != "" {
+			headers, err = json.Marshal(map[string]string{"authorization": r.authorization})
+			if err != nil {
+				return fmt.Errorf("marshal index authorization for record %s: %w", record.ID, err)
+			}
+		}
+		envelope := Envelope{Action: record.Action, Headers: headers, Data: record.Data, IndexingConfig: record.IndexingConfig}
 		if record.Action == "deleted" {
 			envelope.Data, _ = json.Marshal(record.ObjectUID)
 		}
@@ -76,7 +94,9 @@ func (r *Relay) Run(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		_ = r.RunOnce(ctx)
+		if err := r.RunOnce(ctx); err != nil && r.logger != nil {
+			r.logger.Error("index outbox relay failed", "error", err)
+		}
 		select {
 		case <-ctx.Done():
 			return

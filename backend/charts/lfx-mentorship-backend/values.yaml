@@ -165,6 +165,8 @@ env: []
 #   CROWDFUNDING_CLIENT_SECRET — Auth0 M2M client secret for crowdfunding API
 #   MENTOR_INVITE_SECRET — HMAC secret for signing mentor invite tokens.
 #     Required: the service exits at startup if it is not set.
+#   INDEXER_AUTHORIZATION — managed bearer credential used by the index relay
+#     when publishing V2 index envelopes.
 secretName: lfx-mentorship-backend-secrets
 
 # allowLocalAuthBypass — opt-in, defaults to false.

@@ -117,6 +117,8 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		relayCtx, relayCancel = context.WithCancel(ctx)
 		go relay.Run(relayCtx, cfg.FGA.RelayInterval)
 		indexRelay := indexer.NewRelay(db.NewIndexOutboxRepository(pool), natsConn, cfg.FGA.RelayBatch)
+		indexRelay.SetLogger(logger)
+		indexRelay.SetAuthorization(cfg.FGA.IndexerAuthorization)
 		go indexRelay.Run(relayCtx, cfg.FGA.RelayInterval)
 	}
 
@@ -204,7 +206,6 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		r.Group(func(r chi.Router) {
 			r.Use(requireGatewayPrincipal)
 
-			r.Get("/me/managed-programs", programH.ListManaged)
 			r.Get("/programs/{id}/enroll-template", programH.GetEnrollmentTemplate)
 
 			// Mentor invite — both the invite token and signed principal are required.

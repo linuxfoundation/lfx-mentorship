@@ -156,7 +156,7 @@ func (s *TaskService) Create(ctx context.Context, applicationID string, input mo
 		return nil, fmt.Errorf("%w: task assignee must be the accepted application's mentee", domain.ErrInvalidInput)
 	}
 	if input.Status == "" {
-		input.Status = models.TaskStatusPending
+		input.Status = models.TaskStatusIncomplete
 	}
 	if !input.Status.IsValid() {
 		return nil, fmt.Errorf("%w: invalid status %q", domain.ErrInvalidInput, input.Status)
@@ -214,7 +214,7 @@ func (s *TaskService) Update(ctx context.Context, id string, input models.TaskUp
 		}
 
 		// State transition guard: only incomplete (reset) is unrestricted direction-wise.
-		if next != models.TaskStatusPending {
+		if next != models.TaskStatusPending && next != models.TaskStatusIncomplete {
 			var validTransition bool
 			switch current.Status {
 			case models.TaskStatusPending, models.TaskStatus("incomplete"):
@@ -222,7 +222,7 @@ func (s *TaskService) Update(ctx context.Context, id string, input models.TaskUp
 			case models.TaskStatusInProgress:
 				validTransition = next == models.TaskStatusSubmitted
 			case models.TaskStatusSubmitted:
-				validTransition = next == models.TaskStatusCompleted
+				validTransition = next == models.TaskStatusCompleted || next == models.TaskStatusComplete
 			}
 			if !validTransition {
 				return nil, fmt.Errorf("%w: cannot transition task from %q to %q", domain.ErrInvalidStateTransition, current.Status, next)
@@ -235,7 +235,7 @@ func (s *TaskService) Update(ctx context.Context, id string, input models.TaskUp
 			if !isAssignee {
 				return nil, fmt.Errorf("%w: only the task assignee may mark it %s", domain.ErrForbidden, next)
 			}
-		case models.TaskStatusCompleted, models.TaskStatusPending:
+		case models.TaskStatusCompleted, models.TaskStatusComplete, models.TaskStatusPending, models.TaskStatusIncomplete:
 			if isAssignee {
 				return nil, fmt.Errorf("%w: only a reviewer may mark a task %s", domain.ErrForbidden, next)
 			}

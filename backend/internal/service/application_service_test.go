@@ -216,9 +216,6 @@ func (m *stubProgRepo) List(ctx context.Context, f models.ProgramFilter) ([]*mod
 	}
 	return nil, &models.PaginationMeta{}, nil
 }
-func (m *stubProgRepo) ListManaged(ctx context.Context, userID string, f models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error) {
-	return []*models.Program{}, &models.PaginationMeta{}, nil
-}
 func (m *stubProgRepo) GetEnrollmentTemplate(ctx context.Context, userID, programID string) (*models.ProgramEnrollmentTemplate, error) {
 	return &models.ProgramEnrollmentTemplate{}, nil
 }

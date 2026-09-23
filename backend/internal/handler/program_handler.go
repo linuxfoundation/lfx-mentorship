@@ -24,7 +24,6 @@ type programService interface {
 	GetByID(ctx context.Context, id string) (*models.Program, error)
 	GetBySlug(ctx context.Context, slug string) (*models.Program, error)
 	List(ctx context.Context, filter models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error)
-	ListManaged(ctx context.Context, userID string, filter models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error)
 	GetEnrollmentTemplate(ctx context.Context, userID, programID string) (*models.ProgramEnrollmentTemplate, error)
 	GetManagementSummary(ctx context.Context, programID string) (*models.ProgramManagementSummary, error)
 	GetHeaderProjection(ctx context.Context, programID string) (*models.ProgramHeaderProjection, error)
@@ -193,27 +192,6 @@ func (h *ProgramHandler) List(w http.ResponseWriter, r *http.Request) {
 		Offset: offset,
 		Status: string(models.ProgramStatusPublished),
 		Search: r.URL.Query().Get("search"),
-	})
-	if err != nil {
-		Error(w, err)
-		return
-	}
-	JSON(w, http.StatusOK, map[string]any{"data": programs, "meta": meta})
-}
-
-// ListManaged handles GET /v1/me/managed-programs.
-func (h *ProgramHandler) ListManaged(w http.ResponseWriter, r *http.Request) {
-	principal := auth.PrincipalFromContext(r.Context())
-	if principal == nil {
-		Error(w, domain.ErrUnauthorized)
-		return
-	}
-	limit, offset, ok := parsePaginationParams(w, r)
-	if !ok {
-		return
-	}
-	programs, meta, err := h.svc.ListManaged(r.Context(), principal.UserID, models.ProgramFilter{
-		Limit: limit, Offset: offset, Status: r.URL.Query().Get("status"), Search: r.URL.Query().Get("search"),
 	})
 	if err != nil {
 		Error(w, err)

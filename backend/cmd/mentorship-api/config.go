@@ -52,11 +52,12 @@ type JWTConfig struct {
 
 // FGAConfig configures the optional transactional outbox relay.
 type FGAConfig struct {
-	NATSURL          string
-	RelayBatch       int
-	RelayInterval    time.Duration
-	RelayRetryDelay  time.Duration
-	RelayMaxAttempts int
+	NATSURL              string
+	IndexerAuthorization string
+	RelayBatch           int
+	RelayInterval        time.Duration
+	RelayRetryDelay      time.Duration
+	RelayMaxAttempts     int
 }
 
 // CrowdfundingConfig holds outbound crowdfunding API and M2M auth settings.
@@ -148,6 +149,10 @@ func loadConfig() (*Config, error) {
 			return nil, fmt.Errorf("FGA_RELAY_RETRY_DELAY: must be a positive duration")
 		}
 	}
+	indexerAuthorization := os.Getenv("INDEXER_AUTHORIZATION")
+	if os.Getenv("FGA_NATS_URL") != "" && indexerAuthorization == "" {
+		return nil, fmt.Errorf("INDEXER_AUTHORIZATION is required when FGA_NATS_URL is configured")
+	}
 
 	crowdfundingTimeout := 10 * time.Second
 	if v := os.Getenv("CROWDFUNDING_TIMEOUT"); v != "" {
@@ -181,11 +186,12 @@ func loadConfig() (*Config, error) {
 			HeimdallIssuer:   heimdallIssuer,
 		},
 		FGA: FGAConfig{
-			NATSURL:          os.Getenv("FGA_NATS_URL"),
-			RelayBatch:       relayBatch,
-			RelayInterval:    relayInterval,
-			RelayRetryDelay:  relayRetryDelay,
-			RelayMaxAttempts: relayMaxAttempts,
+			NATSURL:              os.Getenv("FGA_NATS_URL"),
+			IndexerAuthorization: indexerAuthorization,
+			RelayBatch:           relayBatch,
+			RelayInterval:        relayInterval,
+			RelayRetryDelay:      relayRetryDelay,
+			RelayMaxAttempts:     relayMaxAttempts,
 		},
 		Crowdfunding: CrowdfundingConfig{
 			BaseURL:      strings.TrimRight(os.Getenv("CROWDFUNDING_BASE_URL"), "/"),

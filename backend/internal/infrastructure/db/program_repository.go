@@ -251,53 +251,6 @@ func (r *ProgramRepository) List(ctx context.Context, filter models.ProgramFilte
 	return programs, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, nil
 }
 
-// ListManaged returns programs where the user is an active program admin.
-func (r *ProgramRepository) ListManaged(ctx context.Context, userID string, filter models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error) {
-	limit := filter.Limit
-	if limit <= 0 || limit > 50 {
-		limit = 50
-	}
-	offset := filter.Offset
-	if offset < 0 {
-		offset = 0
-	}
-	args := []any{userID}
-	where := ` WHERE pm.user_id = $1 AND pm.member_type = 'program_admin' AND pm.status = 'active'`
-	if filter.Status != "" {
-		args = append(args, filter.Status)
-		where += fmt.Sprintf(` AND programs.status = $%d`, len(args))
-	}
-	if filter.Search != "" {
-		args = append(args, "%"+filter.Search+"%")
-		where += fmt.Sprintf(` AND programs.name ILIKE $%d`, len(args))
-	}
-	countQ := `SELECT COUNT(*) FROM programs JOIN program_members pm ON pm.program_id = programs.id` + where
-	var total int
-	if err := r.pool.QueryRow(ctx, countQ, args...).Scan(&total); err != nil {
-		return nil, nil, fmt.Errorf("count managed programs: %w", err)
-	}
-	args = append(args, limit, offset)
-	listQ := `SELECT` + programSelectCols + programsWithFundingFrom + ` JOIN program_members pm ON pm.program_id = programs.id` + where +
-		fmt.Sprintf(` ORDER BY programs.updated_on DESC, programs.id ASC LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
-	rows, err := r.pool.Query(ctx, listQ, args...)
-	if err != nil {
-		return nil, nil, fmt.Errorf("list managed programs: %w", err)
-	}
-	defer rows.Close()
-	programs := make([]*models.Program, 0)
-	for rows.Next() {
-		program, scanErr := scanProgram(rows)
-		if scanErr != nil {
-			return nil, nil, fmt.Errorf("scan managed program: %w", scanErr)
-		}
-		programs = append(programs, program)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, nil, fmt.Errorf("managed program rows: %w", err)
-	}
-	return programs, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, nil
-}
-
 // GetEnrollmentTemplate returns enrollment fields only for an active program admin.
 func (r *ProgramRepository) GetEnrollmentTemplate(ctx context.Context, userID, programID string) (*models.ProgramEnrollmentTemplate, error) {
 	q := `SELECT ` + programSelectCols + ` FROM programs JOIN program_members pm ON pm.program_id = programs.id

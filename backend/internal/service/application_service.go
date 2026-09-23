@@ -292,7 +292,7 @@ func (s *ApplicationService) prerequisiteTasks(ctx context.Context, programTermI
 			Description:   tmpl.Description,
 			SubmitFile:    tmpl.SubmitFile,
 			Category:      &category,
-			Status:        models.TaskStatusPending,
+			Status:        models.TaskStatusIncomplete,
 			CreatedBy:     &createdBy,
 		})
 	}

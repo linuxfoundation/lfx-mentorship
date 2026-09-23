@@ -14,15 +14,15 @@ const (
 	TaskStatusCompleted  TaskStatus = "completed"
 	TaskStatusSubmitted  TaskStatus = "submitted"
 
-	// Deprecated aliases retained for callers compiled against the previous vocabulary.
-	TaskStatusIncomplete = TaskStatusPending
-	TaskStatusComplete   = TaskStatusCompleted
+	TaskStatusIncomplete TaskStatus = "incomplete"
+	TaskStatusComplete   TaskStatus = "complete"
 )
 
 // IsValid reports whether the status value is one of the allowed enum members.
 func (s TaskStatus) IsValid() bool {
 	switch s {
-	case TaskStatusPending, TaskStatusInProgress, TaskStatusCompleted, TaskStatusSubmitted:
+	case TaskStatusPending, TaskStatusInProgress, TaskStatusCompleted, TaskStatusSubmitted,
+		TaskStatusIncomplete, TaskStatusComplete:
 		return true
 	}
 	return false

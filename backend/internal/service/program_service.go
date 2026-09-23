@@ -106,16 +106,6 @@ func (s *ProgramService) List(ctx context.Context, filter models.ProgramFilter) 
 	return programs, meta, nil
 }
 
-func (s *ProgramService) ListManaged(ctx context.Context, userID string, filter models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error) {
-	if strings.TrimSpace(userID) == "" {
-		return nil, nil, fmt.Errorf("%w: user identity is required", domain.ErrUnauthorized)
-	}
-	if filter.Status != "" && !models.ProgramStatus(filter.Status).IsValid() {
-		return nil, nil, fmt.Errorf("%w: invalid program status", domain.ErrInvalidInput)
-	}
-	return s.repo.ListManaged(ctx, userID, filter)
-}
-
 func (s *ProgramService) GetEnrollmentTemplate(ctx context.Context, userID, programID string) (*models.ProgramEnrollmentTemplate, error) {
 	if strings.TrimSpace(userID) == "" {
 		return nil, fmt.Errorf("%w: user identity is required", domain.ErrUnauthorized)

@@ -181,6 +181,16 @@ func (r *ProgramTermRepository) ListManagementByProgram(ctx context.Context, pro
 func (r *ProgramTermRepository) Create(ctx context.Context, input models.ProgramTermCreateInput) (*models.ProgramTerm, error) {
 	ctx, span := programTermTracer.Start(ctx, "db.program_terms.Create")
 	defer span.End()
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin create program term transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if input.Status == models.ProgramTermStatusOpen {
+		if err := lockProgramAndCheckOpenTerms(ctx, tx, input.ProgramID, ""); err != nil {
+			return nil, err
+		}
+	}
 
 	const q = `
 		INSERT INTO program_terms (
@@ -189,13 +199,16 @@ func (r *ProgramTermRepository) Create(ctx context.Context, input models.Program
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 		RETURNING` + programTermCols
 
-	t, err := scanProgramTerm(r.pool.QueryRow(ctx, q,
+	t, err := scanProgramTerm(tx.QueryRow(ctx, q,
 		input.ID, input.ProgramID, input.Name, input.Status, input.ActiveUsers,
 		input.StartDateTime, input.EndDateTime, input.ApplicationStartDate, input.ApplicationEndDate,
 	))
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("create program term: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit create program term transaction: %w", err)
 	}
 	return t, nil
 }
@@ -205,6 +218,22 @@ func (r *ProgramTermRepository) Update(ctx context.Context, id string, input mod
 	ctx, span := programTermTracer.Start(ctx, "db.program_terms.Update")
 	defer span.End()
 	span.SetAttributes(attribute.String("db.term_id", id))
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin update program term transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if input.Status != nil && *input.Status == models.ProgramTermStatusOpen {
+		var programID string
+		if err := tx.QueryRow(ctx, `SELECT program_id FROM program_terms WHERE id = $1 FOR UPDATE`, id).Scan(&programID); errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrProgramTermNotFound
+		} else if err != nil {
+			return nil, fmt.Errorf("load program for term update: %w", err)
+		} else if err := lockProgramAndCheckOpenTerms(ctx, tx, programID, id); err != nil {
+			return nil, err
+		}
+	}
 
 	const q = `
 		UPDATE program_terms SET
@@ -218,7 +247,7 @@ func (r *ProgramTermRepository) Update(ctx context.Context, id string, input mod
 		WHERE id = $1
 		RETURNING` + programTermCols
 
-	t, err := scanProgramTerm(r.pool.QueryRow(ctx, q,
+	t, err := scanProgramTerm(tx.QueryRow(ctx, q,
 		id, input.Name, input.Status, input.ActiveUsers,
 		input.StartDateTime, input.EndDateTime, input.ApplicationStartDate, input.ApplicationEndDate,
 	))
@@ -229,7 +258,26 @@ func (r *ProgramTermRepository) Update(ctx context.Context, id string, input mod
 		span.RecordError(err)
 		return nil, fmt.Errorf("update program term: %w", err)
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit update program term transaction: %w", err)
+	}
 	return t, nil
+}
+
+func lockProgramAndCheckOpenTerms(ctx context.Context, tx pgx.Tx, programID, excludeTermID string) error {
+	if err := tx.QueryRow(ctx, `SELECT id FROM programs WHERE id = $1 FOR UPDATE`, programID).Scan(new(string)); errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrProgramNotFound
+	} else if err != nil {
+		return fmt.Errorf("lock program for open-term check: %w", err)
+	}
+	var count int
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM program_terms WHERE program_id = $1 AND status = 'open' AND ($2 = '' OR id <> $2)`, programID, excludeTermID).Scan(&count); err != nil {
+		return fmt.Errorf("count open terms for write: %w", err)
+	}
+	if count >= 4 {
+		return fmt.Errorf("%w: program already has %d open term(s) (max %d)", domain.ErrStateLocked, count, 4)
+	}
+	return nil
 }
 
 // Delete removes the program term with the given ID.
