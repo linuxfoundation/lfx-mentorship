@@ -8,9 +8,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
+	"github.com/nats-io/nats.go"
 )
 
 type Envelope struct {
@@ -43,6 +45,10 @@ func (r *Relay) SetAuthorizationProvider(provider authorizationProvider) {
 
 type publisher interface {
 	Publish(subject string, data []byte) error
+}
+
+type requester interface {
+	Request(subject string, data []byte, timeout time.Duration) (*nats.Msg, error)
 }
 
 type authorizationProvider interface {
@@ -106,12 +112,7 @@ func (r *Relay) RunOnce(ctx context.Context) error {
 				payload, recordErr = json.Marshal(envelope)
 			}
 			if recordErr == nil {
-				recordErr = r.conn.Publish("lfx.index."+record.ObjectType, payload)
-			}
-			if recordErr == nil {
-				if publisher, ok := r.conn.(flusher); ok {
-					recordErr = publisher.Flush()
-				}
+				recordErr = r.publishAndConfirm("lfx.index."+record.ObjectType, payload)
 			}
 		}
 		if recordErr != nil {
@@ -136,6 +137,29 @@ func (r *Relay) RunOnce(ctx context.Context) error {
 		}
 	}
 	return firstErr
+}
+
+func (r *Relay) publishAndConfirm(subject string, payload []byte) error {
+	if requester, ok := r.conn.(requester); ok {
+		response, err := requester.Request(subject, payload, 10*time.Second)
+		if err != nil {
+			return err
+		}
+		if response == nil || !strings.EqualFold(strings.TrimSpace(string(response.Data)), "OK") {
+			if response == nil {
+				return fmt.Errorf("index consumer returned no response")
+			}
+			return fmt.Errorf("index consumer rejected record: %s", strings.TrimSpace(string(response.Data)))
+		}
+		return nil
+	}
+	if err := r.conn.Publish(subject, payload); err != nil {
+		return err
+	}
+	if publisher, ok := r.conn.(flusher); ok {
+		return publisher.Flush()
+	}
+	return nil
 }
 
 func (r *Relay) Run(ctx context.Context, interval time.Duration) {

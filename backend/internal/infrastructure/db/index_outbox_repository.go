@@ -12,10 +12,19 @@ import (
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 )
 
-type IndexOutboxRepository struct{ pool *pgxpool.Pool }
+type IndexOutboxRepository struct {
+	pool        *pgxpool.Pool
+	maxAttempts int
+}
 
 func NewIndexOutboxRepository(pool *pgxpool.Pool) *IndexOutboxRepository {
-	return &IndexOutboxRepository{pool: pool}
+	return &IndexOutboxRepository{pool: pool, maxAttempts: 10}
+}
+
+func (r *IndexOutboxRepository) SetMaxAttempts(maxAttempts int) {
+	if maxAttempts > 0 {
+		r.maxAttempts = maxAttempts
+	}
 }
 
 func (r *IndexOutboxRepository) Enqueue(ctx context.Context, record domain.IndexOutboxRecord) error {
@@ -90,7 +99,7 @@ func (r *IndexOutboxRepository) MarkSent(ctx context.Context, record domain.Inde
 	return acknowledged || requeued, nil
 }
 func (r *IndexOutboxRepository) MarkRetry(ctx context.Context, record domain.IndexOutboxRecord) (bool, error) {
-	command, err := r.pool.Exec(ctx, `UPDATE index_outbox SET state = 'pending', claimed_generation = NULL, claimed_at = NULL WHERE id = $1 AND state = 'in_flight' AND generation = $2 AND claimed_generation = $2 AND claimed_at IS NOT DISTINCT FROM $3`, record.ID, record.Generation, record.ClaimedAt)
+	command, err := r.pool.Exec(ctx, `UPDATE index_outbox SET state = CASE WHEN attempts + 1 >= $4 THEN 'dead_letter' ELSE 'pending' END, attempts = attempts + 1, claimed_generation = NULL, claimed_at = NULL WHERE id = $1 AND state = 'in_flight' AND generation = $2 AND claimed_generation = $2 AND claimed_at IS NOT DISTINCT FROM $3`, record.ID, record.Generation, record.ClaimedAt, r.maxAttempts)
 	return command.RowsAffected() == 1, err
 }
 

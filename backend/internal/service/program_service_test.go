@@ -44,6 +44,50 @@ func TestProgramService_Create_AlwaysDraft(t *testing.T) {
 	}
 }
 
+func TestProgramService_CreateEnrollment_RejectsMissingTerms(t *testing.T) {
+	svc := newProgramSvc(&stubProgRepo{}, &stubTermRepo{}, &stubAppRepo{})
+	projectUID := "00000000-0000-0000-0000-000000000001"
+	_, err := svc.CreateEnrollment(context.Background(), models.ProgramEnrollmentInput{Program: models.ProgramCreateInput{ProjectUID: &projectUID, Name: "Program", Slug: "program"}, Skills: []string{"Go"}})
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("expected invalid input, got %v", err)
+	}
+}
+
+func TestProgramService_CreateEnrollment_NormalizesSkills(t *testing.T) {
+	projectUID := "00000000-0000-0000-0000-000000000001"
+	start := time.Now().Add(24 * time.Hour)
+	termEnd := start.Add(24 * time.Hour)
+	applicationStart := time.Now()
+	applicationEnd := start.Add(-time.Hour)
+	var captured models.ProgramEnrollmentInput
+	repo := &stubProgRepo{createEnrollment: func(_ context.Context, input models.ProgramEnrollmentInput) (*models.Program, error) {
+		captured = input
+		return &models.Program{ID: "p1"}, nil
+	}}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	_, err := svc.CreateEnrollment(context.Background(), models.ProgramEnrollmentInput{
+		Program: models.ProgramCreateInput{ProjectUID: &projectUID, Name: "Program", Slug: "program"},
+		Skills:  []string{" Go ", "go", "Kubernetes"},
+		Terms:   []models.ProgramTermCreateInput{{Name: "Term", StartDateTime: &start, EndDateTime: &termEnd, ApplicationStartDate: &applicationStart, ApplicationEndDate: &applicationEnd}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(captured.Skills) != 2 || captured.Skills[0] != "Go" || captured.Skills[1] != "Kubernetes" {
+		t.Fatalf("skills=%v", captured.Skills)
+	}
+}
+
+func TestProgramService_CreateEnrollment_RejectsUnsafeURL(t *testing.T) {
+	projectUID := "00000000-0000-0000-0000-000000000001"
+	unsafe := "javascript:alert(1)"
+	svc := newProgramSvc(&stubProgRepo{}, &stubTermRepo{}, &stubAppRepo{})
+	_, err := svc.CreateEnrollment(context.Background(), models.ProgramEnrollmentInput{Program: models.ProgramCreateInput{ProjectUID: &projectUID, Name: "Program", Slug: "program", WebsiteURL: &unsafe}, Skills: []string{"Go"}, Terms: []models.ProgramTermCreateInput{{Name: "Term"}}})
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("expected invalid URL input, got %v", err)
+	}
+}
+
 func TestProgramService_Update_InvalidTransition(t *testing.T) {
 	repo := &stubProgRepo{
 		getByID: func(_ context.Context, id string) (*models.Program, error) {

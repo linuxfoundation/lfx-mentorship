@@ -75,13 +75,7 @@ func enqueueProgramIndex(ctx context.Context, tx pgx.Tx, program *models.Program
 	if err != nil {
 		return err
 	}
-        config := map[string]any{"object_id": program.ID, "access_check_object": "mentorship_program:" + program.ID, "access_check_relation": "viewer", "history_check_object": "mentorship_program:" + program.ID, "history_check_relation": "auditor", "sort_name": program.Name, "name_and_aliases": []string{program.Name, program.Slug}, "public": program.Status == models.ProgramStatusPublished}
-        tags := []string{"status:" + string(program.Status)}
-        if program.ProjectUID != nil {
-                config["parent_refs"] = []string{"project:" + *program.ProjectUID}
-                tags = append(tags, "project_uid:"+*program.ProjectUID)
-        }
-        config["tags"] = tags
+	config := NewProgramIndexConfig(program.ID, program.ProjectUID, program.Name, program.Slug, string(program.Status))
 	configData, err := json.Marshal(config)
 	if err != nil {
 		return err

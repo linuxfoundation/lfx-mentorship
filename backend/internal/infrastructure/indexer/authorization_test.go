@@ -28,7 +28,7 @@ func TestManagedAuthorizationProviderCachesToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first != "token-1" || second != first || atomic.LoadInt32(&calls) != 1 {
+	if first != "Bearer token-1" || second != first || atomic.LoadInt32(&calls) != 1 {
 		t.Fatalf("tokens=%q/%q calls=%d", first, second, calls)
 	}
 }

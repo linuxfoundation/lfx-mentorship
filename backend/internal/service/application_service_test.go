@@ -193,6 +193,7 @@ type stubProgRepo struct {
 	getCatalog        func(context.Context, string) (*models.ProgramCatalogItem, error)
 	listMentees       func(context.Context, string) ([]*models.ProgramCatalogMentee, error)
 	create            func(context.Context, models.ProgramCreateInput) (*models.Program, error)
+	createEnrollment  func(context.Context, models.ProgramEnrollmentInput) (*models.Program, error)
 	update            func(context.Context, string, models.ProgramUpdateInput) (*models.Program, error)
 	delete            func(context.Context, string) error
 	listSkills        func(context.Context, string) ([]*models.ProgramSkill, error)
@@ -262,6 +263,9 @@ func (m *stubProgRepo) Create(ctx context.Context, in models.ProgramCreateInput)
 	return &models.Program{}, nil
 }
 func (m *stubProgRepo) CreateEnrollment(ctx context.Context, in models.ProgramEnrollmentInput) (*models.Program, error) {
+	if m.createEnrollment != nil {
+		return m.createEnrollment(ctx, in)
+	}
 	return m.Create(ctx, in.Program)
 }
 func (m *stubProgRepo) Update(ctx context.Context, id string, in models.ProgramUpdateInput) (*models.Program, error) {

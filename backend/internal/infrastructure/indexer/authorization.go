@@ -79,7 +79,7 @@ func (p *ManagedAuthorizationProvider) Authorization(ctx context.Context) (strin
 	if expiresIn <= 0 {
 		expiresIn = 5 * time.Minute
 	}
-	p.token = tokenResponse.AccessToken
+	p.token = "Bearer " + tokenResponse.AccessToken
 	p.expiresAt = time.Now().Add(expiresIn - time.Minute)
 	return p.token, nil
 }
