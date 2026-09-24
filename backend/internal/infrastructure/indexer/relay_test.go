@@ -44,6 +44,14 @@ type publisherStub struct {
 	err     error
 }
 
+type authorizationProviderStub struct {
+	err error
+}
+
+func (s authorizationProviderStub) Authorization(context.Context) (string, error) {
+	return "", s.err
+}
+
 func (s *publisherStub) Publish(subject string, data []byte) error {
 	s.subject, s.data = subject, data
 	return s.err
@@ -87,5 +95,20 @@ func TestRelayRunOnceFailsWhenMarkRetryIsNotAcknowledged(t *testing.T) {
 	err := NewRelay(outbox, &publisherStub{err: errors.New("down")}, 1).RunOnce(context.Background())
 	if err == nil {
 		t.Fatal("expected retry acknowledgement error")
+	}
+}
+
+func TestRelayRunOnceRetriesClaimedRecordsWhenAuthorizationFails(t *testing.T) {
+	outbox := &outboxStub{
+		records:               []domain.IndexOutboxRecord{{ID: "1"}, {ID: "2"}},
+		markRetryAcknowledged: true,
+	}
+	relay := NewRelay(outbox, &publisherStub{}, 2)
+	relay.SetAuthorizationProvider(authorizationProviderStub{err: errors.New("token endpoint down")})
+	if err := relay.RunOnce(context.Background()); err == nil {
+		t.Fatal("expected authorization error")
+	}
+	if outbox.retried != "2" {
+		t.Fatalf("last retried record=%q; want 2", outbox.retried)
 	}
 }

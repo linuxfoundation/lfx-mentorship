@@ -30,7 +30,7 @@ type ManagedAuthorizationProvider struct {
 
 func NewManagedAuthorizationProvider(client *http.Client, tokenURL, clientID, clientSecret, audience, scope string) *ManagedAuthorizationProvider {
 	if client == nil {
-		client = http.DefaultClient
+		client = &http.Client{Timeout: 10 * time.Second}
 	}
 	return &ManagedAuthorizationProvider{client: client, tokenURL: tokenURL, clientID: clientID, clientSecret: clientSecret, audience: audience, scope: scope}
 }

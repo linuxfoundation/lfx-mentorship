@@ -37,7 +37,7 @@ func NewProgramIndexConfig(id string, projectUID *string, name, slug, status str
 	config := map[string]any{
 		"object_id":              id,
 		"access_check_object":    "mentorship_program:" + id,
-		"access_check_relation":  "writer",
+		"access_check_relation":  "viewer",
 		"history_check_object":   "mentorship_program:" + id,
 		"history_check_relation": "auditor",
 		"sort_name":              name,
