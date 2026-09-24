@@ -241,19 +241,31 @@ func TestProgramTermDeleteIntegration_BlocksWhenApplicationsExist(t *testing.T) 
 	}
 }
 
-func TestUserProfileUpsertByUserAndTypeConflictsOnLegacyDuplicates(t *testing.T) {
+func TestUserProfileCreateAndUpsertOnExistingProfile(t *testing.T) {
 	pool := integrationPool(t)
 	fixture := seedIntegrationFixture(t, pool)
 	ctx := context.Background()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO user_profiles (id, user_id, profile_type, slug, first_name, last_name, terms_and_conditions)
 		VALUES
-			('00000000-0000-0000-0000-000000000060', $1, 'mentor', 'mentor-one', 'One', 'User', true),
-			('00000000-0000-0000-0000-000000000061', $1, 'mentor', 'mentor-two', 'Two', 'User', true)
+			('00000000-0000-0000-0000-000000000060', $1, 'mentor', 'mentor-one', 'One', 'User', true)
 	`, fixture.UserID); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := NewUserProfileRepository(pool).UpsertByUserAndType(ctx, models.UserProfileCreateInput{
+	repo := NewUserProfileRepository(pool)
+	_, err := repo.Create(ctx, models.UserProfileCreateInput{
+		ID:                 "00000000-0000-0000-0000-000000000061",
+		UserID:             fixture.UserID,
+		ProfileType:        "mentor",
+		Slug:               stringPtr("mentor-duplicate"),
+		FirstName:          stringPtr("Duplicate"),
+		LastName:           stringPtr("User"),
+		TermsAndConditions: true,
+	})
+	if !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("create error=%v; want ErrConflict", err)
+	}
+	updated, inserted, err := repo.UpsertByUserAndType(ctx, models.UserProfileCreateInput{
 		ID:                 "00000000-0000-0000-0000-000000000062",
 		UserID:             fixture.UserID,
 		ProfileType:        "mentor",
@@ -262,8 +274,11 @@ func TestUserProfileUpsertByUserAndTypeConflictsOnLegacyDuplicates(t *testing.T)
 		LastName:           stringPtr("User"),
 		TermsAndConditions: true,
 	})
-	if !errors.Is(err, domain.ErrConflict) {
-		t.Fatalf("upsert error=%v; want ErrConflict", err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inserted || updated.ID != "00000000-0000-0000-0000-000000000060" || updated.Slug == nil || *updated.Slug != "mentor-canonical" || updated.FirstName == nil || *updated.FirstName != "Canonical" {
+		t.Fatalf("updated=%+v inserted=%v; want existing profile updated", updated, inserted)
 	}
 }
 

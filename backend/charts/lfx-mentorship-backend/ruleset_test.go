@@ -65,3 +65,37 @@ func TestReviewerFieldsRequireReviewerRelation(t *testing.T) {
 		t.Fatal("reviewer-fields rule does not require reviewer relation")
 	}
 }
+
+func TestManagementReadsRequireManagerAuthorization(t *testing.T) {
+	contents, err := os.ReadFile("templates/ruleset.yaml")
+	if err != nil {
+		t.Fatalf("read RuleSet: %v", err)
+	}
+	ruleset := string(contents)
+	for _, route := range []string{
+		"/mentorship/v1/programs/:id/management-summary",
+		"/mentorship/v1/programs/:id/member-management",
+		"/mentorship/v1/programs/:id/term-management",
+	} {
+		start := strings.Index(ruleset, route)
+		if start < 0 {
+			t.Fatalf("RuleSet is missing management route %q", route)
+		}
+		end := strings.Index(ruleset[start:], "\n    - id:")
+		if end < 0 {
+			end = len(ruleset) - start
+		}
+		block := ruleset[start : start+end]
+		expected := `      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_program:{{ "{{- .Request.URL.Captures.id -}}" }}'
+              relation: manager
+        - finalizer: create_jwt`
+		if !strings.Contains(block, expected) {
+			t.Errorf("management route %q lacks oidc -> openfga manager -> create_jwt sequence", route)
+		}
+	}
+}
