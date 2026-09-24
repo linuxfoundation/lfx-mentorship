@@ -241,15 +241,14 @@ func TestProgramTermDeleteIntegration_BlocksWhenApplicationsExist(t *testing.T) 
 	}
 }
 
-func TestUserProfileUpsertByUserAndTypeConflictsOnLegacyDuplicates(t *testing.T) {
+func TestUserProfileCreateAndUpsertConflictOnExistingProfile(t *testing.T) {
 	pool := integrationPool(t)
 	fixture := seedIntegrationFixture(t, pool)
 	ctx := context.Background()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO user_profiles (id, user_id, profile_type, slug, first_name, last_name, terms_and_conditions)
 		VALUES
-			('00000000-0000-0000-0000-000000000060', $1, 'mentor', 'mentor-one', 'One', 'User', true),
-			('00000000-0000-0000-0000-000000000061', $1, 'mentor', 'mentor-two', 'Two', 'User', true)
+			('00000000-0000-0000-0000-000000000060', $1, 'mentor', 'mentor-one', 'One', 'User', true)
 	`, fixture.UserID); err != nil {
 		t.Fatal(err)
 	}
