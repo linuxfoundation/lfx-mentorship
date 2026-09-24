@@ -284,14 +284,37 @@ func lockProgramAndCheckOpenTerms(ctx context.Context, tx pgx.Tx, programID, exc
 func (r *ProgramTermRepository) Delete(ctx context.Context, id string) error {
 	ctx, span := programTermTracer.Start(ctx, "db.program_terms.Delete")
 	defer span.End()
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin delete program term transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 
-	cmd, err := r.pool.Exec(ctx, `UPDATE program_terms SET status = 'deleted', updated_on = NOW() WHERE id = $1`, id)
+	var locked int
+	if err := tx.QueryRow(ctx, `SELECT 1 FROM program_terms WHERE id = $1 FOR UPDATE`, id).Scan(&locked); errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrProgramTermNotFound
+	} else if err != nil {
+		return fmt.Errorf("lock program term for delete: %w", err)
+	}
+
+	var count int
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM applications WHERE program_term_id = $1`, id).Scan(&count); err != nil {
+		return fmt.Errorf("count applications for term delete: %w", err)
+	}
+	if count > 0 {
+		return fmt.Errorf("%w: term has %d application(s)", domain.ErrStateLocked, count)
+	}
+
+	cmd, err := tx.Exec(ctx, `UPDATE program_terms SET status = 'deleted', updated_on = NOW() WHERE id = $1`, id)
 	if err != nil {
 		span.RecordError(err)
 		return fmt.Errorf("delete program term: %w", err)
 	}
 	if cmd.RowsAffected() == 0 {
 		return domain.ErrProgramTermNotFound
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit delete program term transaction: %w", err)
 	}
 	return nil
 }

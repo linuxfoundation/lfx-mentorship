@@ -225,14 +225,6 @@ func (s *ProgramTermService) Delete(ctx context.Context, id string) error {
 	ctx, span := programTermSvcTracer.Start(ctx, "ProgramTermService.Delete")
 	defer span.End()
 	span.SetAttributes(attribute.String("term.id", id))
-	count, err := s.appRepo.CountByTerm(ctx, id)
-	if err != nil {
-		return fmt.Errorf("count applications for term deletion: %w", err)
-	}
-	if count > 0 {
-		return fmt.Errorf("%w: term has %d application(s)", domain.ErrStateLocked, count)
-	}
-
 	if err := s.repo.Delete(ctx, id); err != nil {
 		span.RecordError(err)
 		return fmt.Errorf("delete program term: %w", err)

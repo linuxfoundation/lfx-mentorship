@@ -68,8 +68,26 @@ func (r *IndexOutboxRepository) Claim(ctx context.Context, limit int) ([]domain.
 }
 
 func (r *IndexOutboxRepository) MarkSent(ctx context.Context, record domain.IndexOutboxRecord) (bool, error) {
-	command, err := r.pool.Exec(ctx, `UPDATE index_outbox SET state = 'sent', sent_on = NOW() WHERE id = $1 AND state = 'in_flight' AND generation = $2 AND claimed_generation = $2 AND claimed_at IS NOT DISTINCT FROM $3`, record.ID, record.Generation, record.ClaimedAt)
-	return command.RowsAffected() == 1, err
+	const query = `
+		WITH acknowledged AS (
+			UPDATE index_outbox
+			SET state = 'sent', sent_on = NOW()
+			WHERE id = $1 AND state = 'in_flight' AND generation = $2
+			  AND claimed_generation = $2 AND claimed_at IS NOT DISTINCT FROM $3
+			RETURNING id
+		), requeued AS (
+			UPDATE index_outbox
+			SET state = 'pending', claimed_generation = NULL, claimed_at = NULL, sent_on = NULL
+			WHERE id = $1 AND state = 'in_flight' AND claimed_generation = $2
+			  AND generation > $2 AND claimed_at IS NOT DISTINCT FROM $3
+			RETURNING id
+		)
+		SELECT EXISTS (SELECT 1 FROM acknowledged), EXISTS (SELECT 1 FROM requeued)`
+	var acknowledged, requeued bool
+	if err := r.pool.QueryRow(ctx, query, record.ID, record.Generation, record.ClaimedAt).Scan(&acknowledged, &requeued); err != nil {
+		return false, err
+	}
+	return acknowledged || requeued, nil
 }
 func (r *IndexOutboxRepository) MarkRetry(ctx context.Context, record domain.IndexOutboxRecord) (bool, error) {
 	command, err := r.pool.Exec(ctx, `UPDATE index_outbox SET state = 'pending', claimed_generation = NULL, claimed_at = NULL WHERE id = $1 AND state = 'in_flight' AND generation = $2 AND claimed_generation = $2 AND claimed_at IS NOT DISTINCT FROM $3`, record.ID, record.Generation, record.ClaimedAt)

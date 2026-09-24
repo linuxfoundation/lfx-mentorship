@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"os"
 	"sync"
 	"testing"
@@ -146,6 +147,46 @@ func TestIndexOutboxIntegration_ClaimRetryAndSent(t *testing.T) {
 	}
 }
 
+func TestIndexOutboxIntegration_MarkSentRequeuesNewerGeneration(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	repo := NewIndexOutboxRepository(pool)
+	ctx := context.Background()
+	record := domain.IndexOutboxRecord{
+		ObjectType:     "mentorship_program",
+		ObjectUID:      fixture.ProgramID,
+		Action:         "updated",
+		Headers:        []byte(`{"authorization":"******"}`),
+		Data:           []byte(`{"id":"` + fixture.ProgramID + `","name":"before"}`),
+		IndexingConfig: []byte(`{"object_id":"` + fixture.ProgramID + `"}`),
+	}
+	if err := repo.Enqueue(ctx, record); err != nil {
+		t.Fatalf("enqueue index record: %v", err)
+	}
+	claimed, err := repo.Claim(ctx, 1)
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim records=%d err=%v", len(claimed), err)
+	}
+	record.Data = []byte(`{"id":"` + fixture.ProgramID + `","name":"after"}`)
+	if err := repo.Enqueue(ctx, record); err != nil {
+		t.Fatalf("enqueue newer generation: %v", err)
+	}
+	if acknowledged, err := repo.MarkSent(ctx, claimed[0]); err != nil {
+		t.Fatalf("mark sent: %v", err)
+	} else if !acknowledged {
+		t.Fatal("expected newer generation to be requeued")
+	}
+	var state string
+	var generation int64
+	var claimedGeneration *int64
+	if err := pool.QueryRow(ctx, `SELECT state, generation, claimed_generation FROM index_outbox WHERE id = $1`, claimed[0].ID).Scan(&state, &generation, &claimedGeneration); err != nil {
+		t.Fatal(err)
+	}
+	if state != "pending" || generation != 2 || claimedGeneration != nil {
+		t.Fatalf("state=%q generation=%d claimed_generation=%v", state, generation, claimedGeneration)
+	}
+}
+
 func TestProgramHeaderProjectionIntegration_CountsProgramState(t *testing.T) {
 	pool := integrationPool(t)
 	fixture := seedIntegrationFixture(t, pool)
@@ -166,6 +207,65 @@ func TestProgramHeaderProjectionIntegration_CountsProgramState(t *testing.T) {
 	if projection.Stats.Mentors != 1 || projection.Stats.Mentees != 1 || projection.Stats.Graduated != 1 {
 		t.Fatalf("stats=%+v", projection.Stats)
 	}
+}
+
+func TestProgramHeaderProjectionIntegration_LeavesActiveTermNilWithoutOpenTerm(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `UPDATE program_terms SET status = 'closed' WHERE id = $1`, fixture.OpenTerm); err != nil {
+		t.Fatal(err)
+	}
+	projection, err := NewProgramRepository(pool).GetHeaderProjection(ctx, fixture.ProgramID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projection.ActiveTerm != nil {
+		t.Fatalf("active term=%#v; want nil", projection.ActiveTerm)
+	}
+}
+
+func TestProgramTermDeleteIntegration_BlocksWhenApplicationsExist(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ('00000000-0000-0000-0000-000000000050', $1, $2, 'mentee', 'pending')`, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatal(err)
+	}
+	err := NewProgramTermRepository(pool).Delete(ctx, fixture.OpenTerm)
+	if !errors.Is(err, domain.ErrStateLocked) {
+		t.Fatalf("delete error=%v; want ErrStateLocked", err)
+	}
+}
+
+func TestUserProfileUpsertByUserAndTypeConflictsOnLegacyDuplicates(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO user_profiles (id, user_id, profile_type, slug, first_name, last_name, terms_and_conditions)
+		VALUES
+			('00000000-0000-0000-0000-000000000060', $1, 'mentor', 'mentor-one', 'One', 'User', true),
+			('00000000-0000-0000-0000-000000000061', $1, 'mentor', 'mentor-two', 'Two', 'User', true)
+	`, fixture.UserID); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := NewUserProfileRepository(pool).UpsertByUserAndType(ctx, models.UserProfileCreateInput{
+		ID:                 "00000000-0000-0000-0000-000000000062",
+		UserID:             fixture.UserID,
+		ProfileType:        "mentor",
+		Slug:               stringPtr("mentor-canonical"),
+		FirstName:          stringPtr("Canonical"),
+		LastName:           stringPtr("User"),
+		TermsAndConditions: true,
+	})
+	if !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("upsert error=%v; want ErrConflict", err)
+	}
+}
+
+func stringPtr(value string) *string {
+	return &value
 }
 
 func TestTermManagementIntegration_CountsApplicationStatuses(t *testing.T) {

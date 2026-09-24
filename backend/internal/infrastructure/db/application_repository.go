@@ -282,6 +282,17 @@ func (r *ApplicationRepository) CreateWithTasks(ctx context.Context, programTerm
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	term, err := scanProgramTerm(tx.QueryRow(ctx, `SELECT`+programTermCols+` FROM program_terms WHERE id = $1 FOR UPDATE`, programTermID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrProgramTermNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("lock program term for application create: %w", err)
+	}
+	if term.Status != models.ProgramTermStatusOpen {
+		return nil, fmt.Errorf("%w: applications are not open for this term", domain.ErrIneligible)
+	}
+
 	const q = `
 		INSERT INTO applications (id, program_term_id, user_id, role, status, program_term_status, start_date_time, end_date_time, attendance_type)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)

@@ -120,9 +120,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_index_outbox_object
 ALTER TABLE index_outbox
   ADD COLUMN claimed_at TIMESTAMPTZ;
 
-CREATE UNIQUE INDEX IF NOT EXISTS uq_user_profiles_user_type
-  ON user_profiles(user_id, profile_type);
-
 ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_status_check;
 
 ALTER TABLE tasks

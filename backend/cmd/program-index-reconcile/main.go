@@ -10,22 +10,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"time"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/db"
 )
-
-type programSnapshot struct {
-	ID         string    `json:"id"`
-	ProjectUID *string   `json:"project_uid,omitempty"`
-	Name       string    `json:"name"`
-	Slug       string    `json:"slug"`
-	Status     string    `json:"status"`
-	LogoURL    *string   `json:"logo_url,omitempty"`
-	CreatedOn  time.Time `json:"created_on"`
-	UpdatedOn  time.Time `json:"updated_on"`
-}
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -51,7 +39,7 @@ func run(ctx context.Context, authorization string) error {
 	defer rows.Close()
 	outbox := db.NewIndexOutboxRepository(pool)
 	for rows.Next() {
-		var program programSnapshot
+		var program db.ProgramIndexDocument
 		if err := rows.Scan(&program.ID, &program.ProjectUID, &program.Name, &program.Slug, &program.Status, &program.LogoURL, &program.CreatedOn, &program.UpdatedOn); err != nil {
 			return fmt.Errorf("scan program: %w", err)
 		}
@@ -59,17 +47,7 @@ func run(ctx context.Context, authorization string) error {
 		if err != nil {
 			return err
 		}
-		config := map[string]any{
-			"object_id": program.ID, "access_check_object": "mentorship_program:" + program.ID,
-			"access_check_relation": "writer", "history_check_object": "mentorship_program:" + program.ID,
-			"history_check_relation": "auditor", "sort_name": program.Name,
-			"name_and_aliases": []string{program.Name, program.Slug}, "public": program.Status == "published",
-			"tags": []string{"status:" + program.Status},
-		}
-		if program.ProjectUID != nil {
-			config["parent_refs"] = []string{"project:" + *program.ProjectUID}
-			config["tags"] = []string{"status:" + program.Status, "project_uid:" + *program.ProjectUID}
-		}
+		config := db.NewProgramIndexConfig(program.ID, program.ProjectUID, program.Name, program.Slug, program.Status)
 		configData, err := json.Marshal(config)
 		if err != nil {
 			return err
