@@ -61,7 +61,7 @@ func (p *ManagedAuthorizationProvider) Authorization(ctx context.Context) (strin
 	if err != nil {
 		return "", fmt.Errorf("request indexer token: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("indexer token endpoint returned status %d", resp.StatusCode)
 	}
