@@ -118,7 +118,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		go relay.Run(relayCtx, cfg.FGA.RelayInterval)
 		indexRelay := indexer.NewRelay(db.NewIndexOutboxRepository(pool), natsConn, cfg.FGA.RelayBatch)
 		indexRelay.SetLogger(logger)
-		indexRelay.SetAuthorization(cfg.FGA.IndexerAuthorization)
+		indexRelay.SetAuthorizationProvider(indexer.NewManagedAuthorizationProvider(nil, cfg.FGA.IndexerTokenURL, cfg.FGA.IndexerClientID, cfg.FGA.IndexerClientSecret, cfg.FGA.IndexerAudience, cfg.FGA.IndexerScope))
 		go indexRelay.Run(relayCtx, cfg.FGA.RelayInterval)
 	}
 

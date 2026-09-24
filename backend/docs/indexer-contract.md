@@ -12,7 +12,7 @@ The resource ID is the program UUID.
 | --- | --- |
 | `object_type` | `mentorship_program` |
 | `access_check_object` | `mentorship_program:{program UUID}` |
-| `access_check_relation` | `writer` |
+| `access_check_relation` | `viewer` |
 | `public` | `true` only when program status is `published` |
 | `name_and_aliases` | Program name and slug |
 | `parent_refs` | `project:{project_uid}` when present |
@@ -23,4 +23,4 @@ The resource ID is the program UUID.
 `updated_on`.
 
 The Query Service uses the access-check fields to include direct and inherited
-program writers, including Project Service's `mentorship_program_admin` tuples.
+program viewers, including Project Service's `mentorship_program_admin` tuples.

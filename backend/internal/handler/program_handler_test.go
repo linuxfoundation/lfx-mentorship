@@ -45,7 +45,7 @@ func (s *stubProgramSvc) GetBySlug(ctx context.Context, id string) (*models.Prog
 func (s *stubProgramSvc) List(context.Context, models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error) {
 	return []*models.Program{}, &models.PaginationMeta{}, nil
 }
-func (s *stubProgramSvc) GetEnrollmentTemplate(context.Context, string, string) (*models.ProgramEnrollmentTemplate, error) {
+func (s *stubProgramSvc) GetEnrollmentTemplate(context.Context, string) (*models.ProgramEnrollmentTemplate, error) {
 	return &models.ProgramEnrollmentTemplate{}, nil
 }
 func (s *stubProgramSvc) GetManagementSummary(ctx context.Context, id string) (*models.ProgramManagementSummary, error) {

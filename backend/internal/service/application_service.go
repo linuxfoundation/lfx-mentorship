@@ -145,6 +145,9 @@ func (s *ApplicationService) ListByProgramTerm(ctx context.Context, programTermI
 }
 
 func (s *ApplicationService) ListByProgram(ctx context.Context, programID string, filter models.ProgramApplicationFilter) ([]*models.ProgramApplicationRow, *models.PaginationMeta, error) {
+	if filter.Type == "" {
+		filter.Type = models.ProgramApplicationTypeAll
+	}
 	if !filter.Type.IsValid() {
 		return nil, nil, fmt.Errorf("%w: type must be current, past, or all", domain.ErrInvalidInput)
 	}
@@ -325,15 +328,16 @@ func (s *ApplicationService) Update(ctx context.Context, id string, input models
 			return nil, fmt.Errorf("get application for update: %w", err)
 		}
 
+		if input.ActorID == "" {
+			return nil, fmt.Errorf("%w: actor identity is required", domain.ErrForbidden)
+		}
 		if input.Status == nil {
-			if input.ActorID != "" {
-				if err := s.requireReviewer(ctx, current, input.ActorID); err != nil {
-					return nil, err
-				}
+			if err := s.requireReviewer(ctx, current, input.ActorID); err != nil {
+				return nil, err
 			}
 		} else {
 			next := *input.Status
-			if input.ActorID != "" && (next != models.ApplicationStatusWithdrawn || input.ActorID != current.UserID) {
+			if next != models.ApplicationStatusWithdrawn || input.ActorID != current.UserID {
 				if err := s.requireReviewer(ctx, current, input.ActorID); err != nil {
 					return nil, err
 				}

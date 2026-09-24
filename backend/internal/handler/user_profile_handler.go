@@ -142,7 +142,7 @@ func (h *UserProfileHandler) PutMeByType(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	profileType := chi.URLParam(r, "profileType")
-	if profileType != "mentor" && profileType != "mentee" {
+	if !models.UserProfileType(profileType).IsValid() {
 		Error(w, fmt.Errorf("%w: profile_type must be mentor or mentee", domain.ErrInvalidInput))
 		return
 	}

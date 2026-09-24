@@ -24,7 +24,7 @@ type programService interface {
 	GetByID(ctx context.Context, id string) (*models.Program, error)
 	GetBySlug(ctx context.Context, slug string) (*models.Program, error)
 	List(ctx context.Context, filter models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error)
-	GetEnrollmentTemplate(ctx context.Context, userID, programID string) (*models.ProgramEnrollmentTemplate, error)
+	GetEnrollmentTemplate(ctx context.Context, programID string) (*models.ProgramEnrollmentTemplate, error)
 	GetManagementSummary(ctx context.Context, programID string) (*models.ProgramManagementSummary, error)
 	GetHeaderProjection(ctx context.Context, programID string) (*models.ProgramHeaderProjection, error)
 	NameAvailable(ctx context.Context, name, excludeProgramID string) (bool, error)
@@ -207,7 +207,7 @@ func (h *ProgramHandler) GetEnrollmentTemplate(w http.ResponseWriter, r *http.Re
 		Error(w, domain.ErrUnauthorized)
 		return
 	}
-	template, err := h.svc.GetEnrollmentTemplate(r.Context(), principal.UserID, chi.URLParam(r, "id"))
+	template, err := h.svc.GetEnrollmentTemplate(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		Error(w, err)
 		return

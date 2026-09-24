@@ -271,7 +271,7 @@ func lockProgramAndCheckOpenTerms(ctx context.Context, tx pgx.Tx, programID, exc
 		return fmt.Errorf("lock program for open-term check: %w", err)
 	}
 	var count int
-	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM program_terms WHERE program_id = $1 AND status = 'open' AND ($2 = '' OR id <> $2)`, programID, excludeTermID).Scan(&count); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM program_terms WHERE program_id = $1 AND status = 'open' AND ($2 = '' OR id::text <> $2)`, programID, excludeTermID).Scan(&count); err != nil {
 		return fmt.Errorf("count open terms for write: %w", err)
 	}
 	if count >= 4 {

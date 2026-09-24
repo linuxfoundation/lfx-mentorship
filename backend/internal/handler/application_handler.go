@@ -433,7 +433,7 @@ func (h *ApplicationHandler) BulkDeclineByTerm(w http.ResponseWriter, r *http.Re
 		Error(w, err)
 		return
 	}
-	JSON(w, http.StatusOK, map[string]any{"declined": count})
+	JSON(w, http.StatusOK, map[string]any{"declined_count": count})
 }
 
 // ExportByTerm handles GET /v1/program-terms/{id}/applications/export — requires JWT.

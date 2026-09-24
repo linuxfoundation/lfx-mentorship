@@ -71,7 +71,7 @@ type ProgramRepository interface {
 	GetByID(ctx context.Context, id string) (*models.Program, error)
 	GetBySlug(ctx context.Context, slug string) (*models.Program, error)
 	List(ctx context.Context, filter models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error)
-	GetEnrollmentTemplate(ctx context.Context, userID, programID string) (*models.ProgramEnrollmentTemplate, error)
+	GetEnrollmentTemplate(ctx context.Context, programID string) (*models.ProgramEnrollmentTemplate, error)
 	GetManagementSummary(ctx context.Context, programID string) (*models.ProgramManagementSummary, error)
 	GetHeaderProjection(ctx context.Context, programID string) (*models.ProgramHeaderProjection, error)
 	NameAvailable(ctx context.Context, name, excludeProgramID string) (bool, error)
@@ -106,6 +106,7 @@ type ProgramTermRepository interface {
 	Create(ctx context.Context, input models.ProgramTermCreateInput) (*models.ProgramTerm, error)
 	Update(ctx context.Context, id string, input models.ProgramTermUpdateInput) (*models.ProgramTerm, error)
 	Delete(ctx context.Context, id string) error
+	CloseWithBulkDecline(ctx context.Context, id string) (*models.ProgramTerm, int, error)
 
 	// CountOpenTermsByProgram returns the number of terms with status='open' for a program.
 	CountOpenTermsByProgram(ctx context.Context, programID string) (int, error)

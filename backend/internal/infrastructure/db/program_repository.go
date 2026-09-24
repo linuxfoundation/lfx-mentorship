@@ -66,9 +66,6 @@ func scanProgram(row pgx.Row) (*models.Program, error) {
 
 func enqueueProgramIndex(ctx context.Context, tx pgx.Tx, program *models.Program, action string) error {
 	headers := domain.SanitizedIndexHeaders(domain.IndexHeadersFromContext(ctx))
-	if headers["authorization"] == "" {
-		return fmt.Errorf("index program: authorization metadata is required")
-	}
 	headerData, err := json.Marshal(headers)
 	if err != nil {
 		return err
@@ -78,7 +75,13 @@ func enqueueProgramIndex(ctx context.Context, tx pgx.Tx, program *models.Program
 	if err != nil {
 		return err
 	}
-	config := NewProgramIndexConfig(document.ID, document.ProjectUID, document.Name, document.Slug, document.Status)
+        config := map[string]any{"object_id": program.ID, "access_check_object": "mentorship_program:" + program.ID, "access_check_relation": "viewer", "history_check_object": "mentorship_program:" + program.ID, "history_check_relation": "auditor", "sort_name": program.Name, "name_and_aliases": []string{program.Name, program.Slug}, "public": program.Status == models.ProgramStatusPublished}
+        tags := []string{"status:" + string(program.Status)}
+        if program.ProjectUID != nil {
+                config["parent_refs"] = []string{"project:" + *program.ProjectUID}
+                tags = append(tags, "project_uid:"+*program.ProjectUID)
+        }
+        config["tags"] = tags
 	configData, err := json.Marshal(config)
 	if err != nil {
 		return err
@@ -102,9 +105,6 @@ func enqueueProgramIndex(ctx context.Context, tx pgx.Tx, program *models.Program
 
 func enqueueProgramIndexDelete(ctx context.Context, tx pgx.Tx, id string) error {
 	headers := domain.SanitizedIndexHeaders(domain.IndexHeadersFromContext(ctx))
-	if headers["authorization"] == "" {
-		return fmt.Errorf("index program delete: authorization metadata is required")
-	}
 	headerData, err := json.Marshal(headers)
 	if err != nil {
 		return err
@@ -244,7 +244,7 @@ func (r *ProgramRepository) List(ctx context.Context, filter models.ProgramFilte
 }
 
 // GetEnrollmentTemplate returns enrollment fields for a gateway-authorized program.
-func (r *ProgramRepository) GetEnrollmentTemplate(ctx context.Context, _ string, programID string) (*models.ProgramEnrollmentTemplate, error) {
+func (r *ProgramRepository) GetEnrollmentTemplate(ctx context.Context, programID string) (*models.ProgramEnrollmentTemplate, error) {
 	q := `SELECT ` + programSelectCols + ` FROM programs WHERE programs.id = $1`
 	program, err := scanProgram(r.pool.QueryRow(ctx, q, programID))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -650,6 +650,7 @@ func (r *ProgramRepository) Create(ctx context.Context, input models.ProgramCrea
 	defer func() { _ = tx.Rollback(ctx) }()
 	p, err := r.createInTx(ctx, tx, input)
 	if err != nil {
+		span.RecordError(err)
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -713,6 +714,8 @@ func (r *ProgramRepository) createInTx(ctx context.Context, tx pgx.Tx, input mod
 }
 
 func (r *ProgramRepository) CreateEnrollment(ctx context.Context, input models.ProgramEnrollmentInput) (*models.Program, error) {
+	ctx, span := programTracer.Start(ctx, "db.programs.CreateEnrollment")
+	defer span.End()
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin create enrollment transaction: %w", err)
@@ -721,6 +724,7 @@ func (r *ProgramRepository) CreateEnrollment(ctx context.Context, input models.P
 	input.Program.TaskTemplates = input.Prerequisites
 	program, err := r.createInTx(ctx, tx, input.Program)
 	if err != nil {
+		span.RecordError(err)
 		return nil, err
 	}
 	for _, term := range input.Terms {

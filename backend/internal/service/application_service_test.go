@@ -173,6 +173,9 @@ func (m *stubTermRepo) Delete(ctx context.Context, id string) error {
 	}
 	return nil
 }
+func (m *stubTermRepo) CloseWithBulkDecline(context.Context, string) (*models.ProgramTerm, int, error) {
+	return &models.ProgramTerm{}, 0, nil
+}
 func (m *stubTermRepo) CountOpenTermsByProgram(ctx context.Context, id string) (int, error) {
 	if m.countOpenByProgram != nil {
 		return m.countOpenByProgram(ctx, id)
@@ -216,7 +219,7 @@ func (m *stubProgRepo) List(ctx context.Context, f models.ProgramFilter) ([]*mod
 	}
 	return nil, &models.PaginationMeta{}, nil
 }
-func (m *stubProgRepo) GetEnrollmentTemplate(ctx context.Context, userID, programID string) (*models.ProgramEnrollmentTemplate, error) {
+func (m *stubProgRepo) GetEnrollmentTemplate(ctx context.Context, programID string) (*models.ProgramEnrollmentTemplate, error) {
 	return &models.ProgramEnrollmentTemplate{}, nil
 }
 func (m *stubProgRepo) GetManagementSummary(ctx context.Context, id string) (*models.ProgramManagementSummary, error) {
@@ -368,7 +371,12 @@ func (n *stubNotifier) NotifyMenteeAccepted(_ context.Context, _, _ string) { n.
 // ── helpers ─────────────────────────────────────────────────────────────────
 
 func newApplicationSvc(appRepo *stubAppRepo, taskRepo *stubTaskRepo, termRepo *stubTermRepo, progRepo *stubProgRepo) *service.ApplicationService {
-	return service.NewApplicationService(appRepo, taskRepo, termRepo, progRepo, &stubMemberRepo{}, &stubNotifier{})
+	return service.NewApplicationService(appRepo, taskRepo, termRepo, progRepo, &stubMemberRepo{
+		findActiveReviewer: func(context.Context, string, string) (*models.ProgramMember, error) {
+			status := models.ProgramMemberStatusActive
+			return &models.ProgramMember{MemberType: models.MemberTypeMentor, Status: &status}, nil
+		},
+	}, &stubNotifier{})
 }
 
 func newApplicationSvcWithMember(appRepo *stubAppRepo, taskRepo *stubTaskRepo, termRepo *stubTermRepo, progRepo *stubProgRepo, memberRepo *stubMemberRepo) *service.ApplicationService {
@@ -561,7 +569,7 @@ func TestApplicationService_Update_ValidTransition(t *testing.T) {
 	svc := newApplicationSvc(repo, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{})
 	next := models.ApplicationStatusAccepted
 	attType := models.AttendanceTypeFullTime
-	_, err := svc.Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &next, AttendanceType: &attType})
+	_, err := svc.Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &next, AttendanceType: &attType, ActorID: "reviewer"})
 	if err != nil {
 		t.Errorf("expected valid transition pending→accepted, got %v", err)
 	}
@@ -578,10 +586,15 @@ func TestApplicationService_Update_AcceptedMenteeSendsNotification(t *testing.T)
 			return &models.Application{ID: id, Status: models.ApplicationStatusAccepted, ProgramTermID: "term-1", UserID: "mentee-1", Role: models.ApplicationRoleMentee, AttendanceType: &attType}, nil
 		},
 	}
-	svc := service.NewApplicationService(repo, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{}, &stubMemberRepo{}, notifier)
+	status := models.ProgramMemberStatusActive
+	svc := service.NewApplicationService(repo, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{}, &stubMemberRepo{
+		findActiveReviewer: func(context.Context, string, string) (*models.ProgramMember, error) {
+			return &models.ProgramMember{MemberType: models.MemberTypeMentor, Status: &status}, nil
+		},
+	}, notifier)
 	next := models.ApplicationStatusAccepted
 	attType := models.AttendanceTypeFullTime
-	if _, err := svc.Update(context.Background(), "app-mentee-1", models.ApplicationUpdateInput{Status: &next, AttendanceType: &attType}); err != nil {
+	if _, err := svc.Update(context.Background(), "app-mentee-1", models.ApplicationUpdateInput{Status: &next, AttendanceType: &attType, ActorID: "reviewer"}); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 	if notifier.menteeAcceptedCalls != 1 {
@@ -599,7 +612,7 @@ func TestApplicationService_Update_AcceptedToGraduated(t *testing.T) {
 	}
 	svc := newApplicationSvc(repo, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{})
 	next := models.ApplicationStatusGraduated
-	if _, err := svc.Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &next}); err != nil {
+	if _, err := svc.Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &next, ActorID: "reviewer"}); err != nil {
 		t.Errorf("expected valid transition accepted→graduated, got %v", err)
 	}
 }
@@ -612,7 +625,7 @@ func TestApplicationService_Update_InvalidTransition(t *testing.T) {
 	}
 	svc := newApplicationSvc(repo, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{})
 	next := models.ApplicationStatusGraduated
-	_, err := svc.Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &next})
+	_, err := svc.Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &next, ActorID: "reviewer"})
 	if !errors.Is(err, domain.ErrInvalidStateTransition) {
 		t.Errorf("expected ErrInvalidStateTransition, got %v", err)
 	}
@@ -626,7 +639,7 @@ func TestApplicationService_Update_WithdrawnTerminal(t *testing.T) {
 	}
 	svc := newApplicationSvc(repo, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{})
 	next := models.ApplicationStatusPending
-	_, err := svc.Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &next})
+	_, err := svc.Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &next, ActorID: "reviewer"})
 	if !errors.Is(err, domain.ErrInvalidStateTransition) {
 		t.Errorf("expected ErrInvalidStateTransition for terminal withdrawn, got %v", err)
 	}

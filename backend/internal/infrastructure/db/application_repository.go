@@ -281,17 +281,16 @@ func (r *ApplicationRepository) CreateWithTasks(ctx context.Context, programTerm
 		return nil, fmt.Errorf("begin create application transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-
-	term, err := scanProgramTerm(tx.QueryRow(ctx, `SELECT`+programTermCols+` FROM program_terms WHERE id = $1 FOR UPDATE`, programTermID))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, domain.ErrProgramTermNotFound
-	}
-	if err != nil {
-		return nil, fmt.Errorf("lock program term for application create: %w", err)
-	}
-	if term.Status != models.ProgramTermStatusOpen {
-		return nil, fmt.Errorf("%w: applications are not open for this term", domain.ErrIneligible)
-	}
+        term, err := scanProgramTerm(tx.QueryRow(ctx, `SELECT`+programTermCols+` FROM program_terms WHERE id = $1 FOR UPDATE`, programTermID))
+        if errors.Is(err, pgx.ErrNoRows) {
+                return nil, domain.ErrProgramTermNotFound
+        }
+        if err != nil {
+                return nil, fmt.Errorf("lock program term for application create: %w", err)
+        }
+        if term.Status != models.ProgramTermStatusOpen {
+                return nil, fmt.Errorf("%w: applications are not open for this term", domain.ErrIneligible)
+        }
 
 	const q = `
 		INSERT INTO applications (id, program_term_id, user_id, role, status, program_term_status, start_date_time, end_date_time, attendance_type)
@@ -406,6 +405,13 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 		return nil, fmt.Errorf("begin update application transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if input.Status != nil && *input.Status == models.ApplicationStatusAccepted {
+		if err := tx.QueryRow(ctx, `SELECT pt.id FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE a.id = $1 FOR UPDATE OF pt`, id).Scan(new(string)); errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrApplicationNotFound
+		} else if err != nil {
+			return nil, fmt.Errorf("lock application term for acceptance: %w", err)
+		}
+	}
 
 	const q = `
 		UPDATE applications SET

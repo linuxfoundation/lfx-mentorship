@@ -126,4 +126,7 @@ ALTER TABLE tasks
   ADD CONSTRAINT tasks_status_check
   CHECK (status IN ('incomplete', 'in_progress', 'submitted', 'complete'));
 
+CREATE UNIQUE INDEX IF NOT EXISTS uq_user_profiles_user_type
+  ON user_profiles(user_id, profile_type);
+
 COMMIT;

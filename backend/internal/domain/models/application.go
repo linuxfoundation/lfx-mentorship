@@ -128,8 +128,10 @@ type Application struct {
 }
 
 type ApplicationProgram struct {
-	ID, Name, Slug string
-	LogoURL        *string `json:"logo_url,omitempty"`
+	ID      string  `json:"id"`
+	Name    string  `json:"name"`
+	Slug    string  `json:"slug"`
+	LogoURL *string `json:"logo_url,omitempty"`
 }
 type ApplicationTerm struct {
 	ID                   string            `json:"id"`

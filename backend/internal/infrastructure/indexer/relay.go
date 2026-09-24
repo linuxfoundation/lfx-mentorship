@@ -26,6 +26,7 @@ type Relay struct {
 	batch         int
 	logger        *slog.Logger
 	authorization string
+	provider      authorizationProvider
 }
 
 func (r *Relay) SetLogger(logger *slog.Logger) {
@@ -36,8 +37,20 @@ func (r *Relay) SetAuthorization(authorization string) {
 	r.authorization = authorization
 }
 
+func (r *Relay) SetAuthorizationProvider(provider authorizationProvider) {
+	r.provider = provider
+}
+
 type publisher interface {
 	Publish(subject string, data []byte) error
+}
+
+type authorizationProvider interface {
+	Authorization(context.Context) (string, error)
+}
+
+type flusher interface {
+	Flush() error
 }
 
 func NewRelay(outbox domain.IndexOutboxRepository, conn publisher, batch int) *Relay {
@@ -52,48 +65,77 @@ func (r *Relay) RunOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	authorization := r.authorization
+	if r.provider != nil {
+		authorization, err = r.provider.Authorization(ctx)
+		if err != nil {
+			for _, record := range records {
+				_, _ = r.outbox.MarkRetry(ctx, record)
+			}
+			return fmt.Errorf("obtain index authorization: %w", err)
+		}
+	}
+	var firstErr error
 	for _, record := range records {
 		headers := record.Headers
-		if r.authorization != "" {
+		var recordErr error
+		if authorization != "" {
 			var headerValues map[string]string
 			if len(headers) > 0 {
 				if err := json.Unmarshal(headers, &headerValues); err != nil {
-					return fmt.Errorf("decode index headers for record %s: %w", record.ID, err)
+					recordErr = fmt.Errorf("decode index headers for record %s: %w", record.ID, err)
 				}
 			} else {
 				headerValues = map[string]string{}
 			}
-			headerValues["authorization"] = r.authorization
-			headers, err = json.Marshal(headerValues)
-			if err != nil {
-				return fmt.Errorf("marshal index authorization for record %s: %w", record.ID, err)
+			if recordErr == nil {
+				headerValues["authorization"] = authorization
+				headers, recordErr = json.Marshal(headerValues)
+				if recordErr != nil {
+					recordErr = fmt.Errorf("marshal index authorization for record %s: %w", record.ID, recordErr)
+				}
 			}
 		}
-		envelope := Envelope{Action: record.Action, Headers: headers, Data: record.Data, IndexingConfig: record.IndexingConfig}
-		if record.Action == "deleted" {
-			envelope.Data, _ = json.Marshal(record.ObjectUID)
+		if recordErr == nil {
+			envelope := Envelope{Action: record.Action, Headers: headers, Data: record.Data, IndexingConfig: record.IndexingConfig}
+			if record.Action == "deleted" {
+				envelope.Data, recordErr = json.Marshal(record.ObjectUID)
+			}
+			var payload []byte
+			if recordErr == nil {
+				payload, recordErr = json.Marshal(envelope)
+			}
+			if recordErr == nil {
+				recordErr = r.conn.Publish("lfx.index."+record.ObjectType, payload)
+			}
+			if recordErr == nil {
+				if publisher, ok := r.conn.(flusher); ok {
+					recordErr = publisher.Flush()
+				}
+			}
 		}
-		payload, marshalErr := json.Marshal(envelope)
-		if marshalErr == nil {
-			marshalErr = r.conn.Publish("lfx.index."+record.ObjectType, payload)
-		}
-		if marshalErr != nil {
+		if recordErr != nil {
 			if acknowledged, retryErr := r.outbox.MarkRetry(ctx, record); retryErr != nil {
-				return fmt.Errorf("mark retry for index record %s: %w", record.ID, retryErr)
+				recordErr = fmt.Errorf("mark retry for index record %s: %w", record.ID, retryErr)
 			} else if !acknowledged {
-				return fmt.Errorf("mark retry for index record %s was not acknowledged", record.ID)
+				recordErr = fmt.Errorf("mark retry for index record %s was not acknowledged", record.ID)
 			}
-			return fmt.Errorf("publish index record %s: %w", record.ID, marshalErr)
+			if firstErr == nil {
+				firstErr = recordErr
+			}
+			continue
 		}
-		acknowledged, err := r.outbox.MarkSent(ctx, record)
-		if err != nil {
-			return err
+		acknowledged, markErr := r.outbox.MarkSent(ctx, record)
+		if markErr != nil {
+			recordErr = markErr
+		} else if !acknowledged {
+			recordErr = fmt.Errorf("mark sent for index record %s was not acknowledged", record.ID)
 		}
-		if !acknowledged {
-			return fmt.Errorf("mark sent for index record %s was not acknowledged", record.ID)
+		if recordErr != nil && firstErr == nil {
+			firstErr = recordErr
 		}
 	}
-	return nil
+	return firstErr
 }
 
 func (r *Relay) Run(ctx context.Context, interval time.Duration) {

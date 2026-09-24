@@ -209,7 +209,7 @@ spec:
           config:
             values:
               object: 'mentorship_program:{{ "{{- .Request.URL.Captures.id -}}" }}'
-              relation: writer
+              relation: auditor
         - finalizer: create_jwt
           config:
             values:
@@ -227,7 +227,7 @@ spec:
           config:
             values:
               object: 'mentorship_program:{{ "{{- .Request.URL.Captures.id -}}" }}'
-              relation: manager
+              relation: auditor
         - finalizer: create_jwt
           config:
             values:
@@ -353,7 +353,7 @@ spec:
           config:
             values:
               object: 'mentorship_program:{{ "{{- .Request.URL.Captures.id -}}" }}'
-              relation: writer
+              relation: auditor
         - finalizer: create_jwt
           config:
             values:
@@ -371,7 +371,7 @@ spec:
           config:
             values:
               object: 'mentorship_program:{{ "{{- .Request.URL.Captures.id -}}" }}'
-              relation: writer
+              relation: auditor
         - finalizer: create_jwt
           config:
             values:

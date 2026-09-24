@@ -191,10 +191,13 @@ func TestProgramHeaderProjectionIntegration_CountsProgramState(t *testing.T) {
 	pool := integrationPool(t)
 	fixture := seedIntegrationFixture(t, pool)
 	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name) VALUES ('00000000-0000-0000-0000-000000000002', 'fixture-user-2', 'Fixture User 2')`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := pool.Exec(ctx, `INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES ('00000000-0000-0000-0000-000000000021', $1, $2, 'mentor', 'active')`, fixture.ProgramID, fixture.UserID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ('00000000-0000-0000-0000-000000000030', $1, $2, 'mentee', 'accepted'), ('00000000-0000-0000-0000-000000000031', $1, $2, 'mentee', 'graduated')`, fixture.OpenTerm, fixture.UserID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ('00000000-0000-0000-0000-000000000030', $1, $2, 'mentee', 'accepted'), ('00000000-0000-0000-0000-000000000031', $1, '00000000-0000-0000-0000-000000000002', 'mentee', 'graduated')`, fixture.OpenTerm, fixture.UserID); err != nil {
 		t.Fatal(err)
 	}
 	projection, err := NewProgramRepository(pool).GetHeaderProjection(ctx, fixture.ProgramID)
@@ -272,7 +275,10 @@ func TestTermManagementIntegration_CountsApplicationStatuses(t *testing.T) {
 	pool := integrationPool(t)
 	fixture := seedIntegrationFixture(t, pool)
 	ctx := context.Background()
-	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ('00000000-0000-0000-0000-000000000040', $1, $2, 'mentee', 'pending'), ('00000000-0000-0000-0000-000000000041', $1, $2, 'mentee', 'declined'), ('00000000-0000-0000-0000-000000000042', $1, $2, 'mentee', 'accepted'), ('00000000-0000-0000-0000-000000000043', $1, $2, 'mentee', 'graduated')`, fixture.OpenTerm, fixture.UserID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name) VALUES ('00000000-0000-0000-0000-000000000003', 'fixture-user-3', 'Fixture User 3'), ('00000000-0000-0000-0000-000000000004', 'fixture-user-4', 'Fixture User 4'), ('00000000-0000-0000-0000-000000000005', 'fixture-user-5', 'Fixture User 5')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ('00000000-0000-0000-0000-000000000040', $1, $2, 'mentee', 'pending'), ('00000000-0000-0000-0000-000000000041', $1, '00000000-0000-0000-0000-000000000003', 'mentee', 'declined'), ('00000000-0000-0000-0000-000000000042', $1, '00000000-0000-0000-0000-000000000004', 'mentee', 'accepted'), ('00000000-0000-0000-0000-000000000043', $1, '00000000-0000-0000-0000-000000000005', 'mentee', 'graduated')`, fixture.OpenTerm, fixture.UserID); err != nil {
 		t.Fatal(err)
 	}
 	rows, _, err := NewProgramTermRepository(pool).ListManagementByProgram(ctx, fixture.ProgramID, models.ProgramTermFilter{Limit: 10})

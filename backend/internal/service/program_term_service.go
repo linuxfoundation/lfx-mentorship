@@ -24,10 +24,6 @@ type ProgramTermService struct {
 	appRepo domain.ApplicationRepository
 }
 
-type termCloseRepository interface {
-	CloseWithBulkDecline(ctx context.Context, id string) (*models.ProgramTerm, int, error)
-}
-
 // maxOpenTermsPerProgram is the maximum number of concurrently open terms allowed (FR-003).
 const maxOpenTermsPerProgram = 4
 
@@ -170,11 +166,7 @@ func (s *ProgramTermService) Update(ctx context.Context, id string, input models
 func (s *ProgramTermService) Close(ctx context.Context, id string) (*models.ProgramTerm, int, error) {
 	ctx, span := programTermSvcTracer.Start(ctx, "ProgramTermService.Close")
 	defer span.End()
-	closer, ok := s.repo.(termCloseRepository)
-	if !ok {
-		return nil, 0, fmt.Errorf("close program term: repository does not support atomic close")
-	}
-	term, declined, err := closer.CloseWithBulkDecline(ctx, id)
+	term, declined, err := s.repo.CloseWithBulkDecline(ctx, id)
 	if err != nil {
 		span.RecordError(err)
 		return nil, 0, fmt.Errorf("close program term: %w", err)

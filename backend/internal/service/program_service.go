@@ -106,11 +106,8 @@ func (s *ProgramService) List(ctx context.Context, filter models.ProgramFilter) 
 	return programs, meta, nil
 }
 
-func (s *ProgramService) GetEnrollmentTemplate(ctx context.Context, userID, programID string) (*models.ProgramEnrollmentTemplate, error) {
-	if strings.TrimSpace(userID) == "" {
-		return nil, fmt.Errorf("%w: user identity is required", domain.ErrUnauthorized)
-	}
-	template, err := s.repo.GetEnrollmentTemplate(ctx, userID, programID)
+func (s *ProgramService) GetEnrollmentTemplate(ctx context.Context, programID string) (*models.ProgramEnrollmentTemplate, error) {
+	template, err := s.repo.GetEnrollmentTemplate(ctx, programID)
 	if err != nil {
 		return nil, fmt.Errorf("get enrollment template: %w", err)
 	}
@@ -274,6 +271,20 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 	if len(input.Terms) > maxEnrollmentTerms {
 		return nil, fmt.Errorf("%w: at most %d terms are allowed", domain.ErrInvalidInput, maxEnrollmentTerms)
 	}
+	normalizedSkills := make([]string, 0, len(input.Skills))
+	seenSkills := make(map[string]struct{}, len(input.Skills))
+	for _, skill := range input.Skills {
+		skill = strings.TrimSpace(skill)
+		if skill == "" {
+			continue
+		}
+		if _, exists := seenSkills[strings.ToLower(skill)]; exists {
+			continue
+		}
+		seenSkills[strings.ToLower(skill)] = struct{}{}
+		normalizedSkills = append(normalizedSkills, skill)
+	}
+	input.Skills = normalizedSkills
 	if len(input.Skills) == 0 {
 		return nil, fmt.Errorf("%w: at least one skill is required", domain.ErrInvalidInput)
 	}
