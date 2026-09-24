@@ -546,13 +546,13 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
         )
 
     if unresolved_project_uids:
-        sample = ", ".join(unresolved_project_uids[:10])
         log.warning(
             "%d programs are missing an explicit project UID and will be imported "
-            "without an authorization parent (sample: %s)",
+            "without an authorization parent",
             len(unresolved_project_uids),
-            sample,
         )
+        for program_id in unresolved_project_uids:
+            log.warning("UNMAPPED_PROGRAM program_id=%s", program_id)
 
     psycopg2.extras.execute_batch(
         cur,
@@ -694,10 +694,14 @@ def migrate_program_terms(cur, terms: list, known_program_ids: set) -> set:
 # ---------------------------------------------------------------------------
 
 
-_VALID_MEMBER_TYPES    = {"program_admin", "mentor"}
+_MEMBER_TYPE_MAP = {
+    "maintainer": "program_admin",
+    "program_admin": "program_admin",
+    "mentor": "mentor",
+}
 _VALID_MEMBER_STATUSES = {"invited", "requested", "pending", "active", "declined", "withdrawn"}
 # DynamoDB used "approved" for accepted mentors; Postgres stores that as "active".
-_MEMBER_STATUS_MAP = {"approved": "active"}
+_MEMBER_STATUS_MAP = {"accepted": "active", "approved": "active"}
 
 
 def migrate_program_members(
@@ -732,12 +736,50 @@ def migrate_program_members(
             )
             known_user_ids.add(uid)
 
-        member_type = (m.get("memberType") or "mentor").strip()
-        if member_type not in _VALID_MEMBER_TYPES:
-            member_type = "mentor"
-        raw_status = (m.get("status") or "").strip() or None
+        raw_member_type = (m.get("memberType") or "").strip().lower()
+        raw_status = (m.get("status") or "").strip().lower() or None
+        if raw_member_type in {"apprentice", "mentee"}:
+            log.info(
+                "SKIPPED_TERM_SCOPED_MEMBER member_id=%s program_id=%s user_id=%s",
+                mid,
+                pid,
+                uid,
+            )
+            skipped += 1
+            continue
+        member_type = _MEMBER_TYPE_MAP.get(raw_member_type)
+        if member_type is None:
+            log.warning(
+                "UNMAPPED_MEMBER_TYPE member_id=%s program_id=%s user_id=%s member_type=%r",
+                mid,
+                pid,
+                uid,
+                raw_member_type,
+            )
+            skipped += 1
+            continue
+        if member_type == "mentor" and raw_status in {"pending", "declined", "rejected"}:
+            log.warning(
+                "UNMAPPED_MENTOR_MEMBER member_id=%s program_id=%s user_id=%s status=%s",
+                mid,
+                pid,
+                uid,
+                raw_status,
+            )
+            skipped += 1
+            continue
         mapped_status = _MEMBER_STATUS_MAP.get(raw_status, raw_status) if raw_status else None
-        status = mapped_status if mapped_status in _VALID_MEMBER_STATUSES else None
+        if mapped_status not in _VALID_MEMBER_STATUSES:
+            log.warning(
+                "UNMAPPED_MEMBER_STATUS member_id=%s program_id=%s user_id=%s status=%r",
+                mid,
+                pid,
+                uid,
+                raw_status,
+            )
+            skipped += 1
+            continue
+        status = mapped_status
         member_rows.append(
             (
                 mid,
@@ -899,6 +941,7 @@ def migrate_tasks(
     rows = []
     skipped = 0
     unresolved = 0
+    unresolved_tasks = []
 
     for t in tasks:
         tid = _as_uuid(t.get("id"))
@@ -925,6 +968,7 @@ def migrate_tasks(
         application_id = application_index.get((term_id, assignee_id)) if term_id else None
         if not application_id:
             unresolved += 1
+            unresolved_tasks.append((tid, term_id, assignee_id))
 
         # term_id FK must exist
         resolved_term_id = term_id if term_id in known_term_ids else None
@@ -973,6 +1017,13 @@ def migrate_tasks(
             "imported without an authorization parent",
             unresolved,
         )
+        for task_id, program_term_id, assignee_id in unresolved_tasks:
+            log.warning(
+                "UNMAPPED_TASK task_id=%s program_term_id=%s assignee_id=%s",
+                task_id,
+                program_term_id,
+                assignee_id,
+            )
 
     psycopg2.extras.execute_batch(
         cur,
@@ -1011,6 +1062,217 @@ def migrate_tasks(
     )
 
 
+def seed_derived_state(cur) -> None:
+    """Queue current-state FGA and index snapshots through the normal relays."""
+    log.info("Queuing derived-state seeds ...")
+    cur.execute(
+        """
+        SELECT programs.id, program_members.id, program_members.user_id
+        FROM programs
+        JOIN program_members ON program_members.program_id = programs.id
+        JOIN users ON users.id = program_members.user_id
+        WHERE program_members.status = 'active'
+          AND program_members.member_type IN ('program_admin', 'mentor')
+          AND NULLIF(users.lfid, '') IS NULL
+        ORDER BY programs.id, program_members.id
+        """
+    )
+    unresolved_members = cur.fetchall()
+    for program_id, member_id, user_id in unresolved_members:
+        log.warning(
+            "UNMAPPED_PROGRAM_MEMBER program_id=%s member_id=%s user_id=%s",
+            program_id,
+            member_id,
+            user_id,
+        )
+
+    cur.execute(
+        """
+        SELECT applications.id, applications.user_id
+        FROM applications
+        JOIN users ON users.id = applications.user_id
+        WHERE NULLIF(users.lfid, '') IS NULL
+        ORDER BY applications.id
+        """
+    )
+    unresolved_applications = cur.fetchall()
+    for application_id, user_id in unresolved_applications:
+        log.warning(
+            "UNMAPPED_APPLICATION_USER application_id=%s user_id=%s",
+            application_id,
+            user_id,
+        )
+
+    cur.execute(
+        """
+        SELECT tasks.id, tasks.assignee_id
+        FROM tasks
+        JOIN users ON users.id = tasks.assignee_id
+        WHERE tasks.application_id IS NOT NULL
+          AND NULLIF(users.lfid, '') IS NULL
+        ORDER BY tasks.id
+        """
+    )
+    unresolved_task_users = cur.fetchall()
+    for task_id, assignee_id in unresolved_task_users:
+        log.warning(
+            "UNMAPPED_TASK_ASSIGNEE task_id=%s assignee_id=%s",
+            task_id,
+            assignee_id,
+        )
+
+    cur.execute(
+        """
+        SELECT mentorship_approver_team_members.user_id
+        FROM mentorship_approver_team_members
+        JOIN users ON users.id = mentorship_approver_team_members.user_id
+        WHERE NULLIF(users.lfid, '') IS NULL
+        ORDER BY mentorship_approver_team_members.user_id
+        """
+    )
+    for (user_id,) in cur.fetchall():
+        log.warning("UNMAPPED_APPROVER_USER user_id=%s", user_id)
+
+    cur.execute(
+            """
+            WITH seed AS (
+                SELECT 'mentorship_program'::text AS object_type, id::text AS object_uid
+      FROM programs AS program
+      WHERE project_uid IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1
+          FROM program_members
+          JOIN users ON users.id = program_members.user_id
+          WHERE program_members.program_id = program.id
+            AND program_members.status = 'active'
+            AND program_members.member_type IN ('program_admin', 'mentor')
+            AND NULLIF(users.lfid, '') IS NULL
+        )
+                UNION ALL
+                SELECT 'mentorship_application', applications.id::text
+                FROM applications
+                JOIN users ON users.id = applications.user_id
+                WHERE NULLIF(users.lfid, '') IS NOT NULL
+                UNION ALL
+                SELECT 'mentorship_task', tasks.id::text
+                FROM tasks
+                JOIN users ON users.id = tasks.assignee_id
+                WHERE tasks.application_id IS NOT NULL
+                    AND NULLIF(users.lfid, '') IS NOT NULL
+            )
+            INSERT INTO fga_outbox
+                (marker_kind, object_type, object_uid, desired_operation)
+            SELECT 'object', object_type, object_uid, 'update_access'
+            FROM seed
+            ON CONFLICT (object_type, object_uid) WHERE marker_kind = 'object'
+            DO UPDATE SET
+                desired_operation = 'update_access',
+                generation = fga_outbox.generation + 1,
+                state = CASE WHEN fga_outbox.state = 'in_flight' THEN 'in_flight' ELSE 'pending' END,
+                claimed_generation = CASE WHEN fga_outbox.state = 'in_flight' THEN fga_outbox.claimed_generation ELSE NULL END,
+                claimed_at = CASE WHEN fga_outbox.state = 'in_flight' THEN fga_outbox.claimed_at ELSE NULL END,
+                attempts = 0,
+                next_attempt_at = NOW(),
+                last_error = NULL,
+                updated_on = NOW()
+            RETURNING object_type
+            """
+    )
+    fga_counts = {}
+    for (object_type,) in cur.fetchall():
+            fga_counts[object_type] = fga_counts.get(object_type, 0) + 1
+    log.info(
+            "  → FGA seeds queued: programs=%d applications=%d tasks=%d",
+            fga_counts.get("mentorship_program", 0),
+            fga_counts.get("mentorship_application", 0),
+            fga_counts.get("mentorship_task", 0),
+    )
+
+    cur.execute(
+            """
+            INSERT INTO fga_outbox
+                (marker_kind, object_type, object_uid, relation, username, desired_operation)
+            SELECT
+                'membership',
+                'mentorship_approver_team',
+                'global',
+                'member',
+                users.lfid,
+                'sync'
+            FROM mentorship_approver_team_members
+            JOIN users ON users.id = mentorship_approver_team_members.user_id
+            WHERE NULLIF(users.lfid, '') IS NOT NULL
+            ON CONFLICT (object_type, object_uid, relation, username)
+                WHERE marker_kind = 'membership'
+            DO UPDATE SET
+                desired_operation = 'sync',
+                generation = fga_outbox.generation + 1,
+                state = CASE WHEN fga_outbox.state = 'in_flight' THEN 'in_flight' ELSE 'pending' END,
+                claimed_generation = CASE WHEN fga_outbox.state = 'in_flight' THEN fga_outbox.claimed_generation ELSE NULL END,
+                claimed_at = CASE WHEN fga_outbox.state = 'in_flight' THEN fga_outbox.claimed_at ELSE NULL END,
+                attempts = 0,
+                next_attempt_at = NOW(),
+                last_error = NULL,
+                updated_on = NOW()
+            RETURNING id
+            """
+    )
+    log.info("  → %d approver membership seeds queued", len(cur.fetchall()))
+
+    cur.execute(
+            """
+            INSERT INTO index_outbox
+                (object_type, object_uid, action, headers, data, indexing_config)
+            SELECT
+                'mentorship_program',
+                id,
+                'updated',
+                '{}'::jsonb,
+                jsonb_strip_nulls(jsonb_build_object(
+                    'id', id,
+                    'project_uid', project_uid,
+                    'name', name,
+                    'slug', slug,
+                    'status', status,
+                    'logo_url', logo_url,
+                    'created_on', created_on,
+                    'updated_on', updated_on
+                )),
+                jsonb_build_object(
+                    'object_id', id,
+                    'access_check_object', 'mentorship_program:' || id::text,
+                    'access_check_relation', 'viewer',
+                    'history_check_object', 'mentorship_program:' || id::text,
+                    'history_check_relation', 'auditor',
+                    'sort_name', name,
+                    'name_and_aliases', jsonb_build_array(name, slug),
+                    'public', status = 'published',
+                    'tags', CASE
+                        WHEN project_uid IS NULL THEN jsonb_build_array('status:' || status)
+                        ELSE jsonb_build_array('status:' || status, 'project_uid:' || project_uid)
+                    END
+                ) || CASE
+                    WHEN project_uid IS NULL THEN '{}'::jsonb
+                    ELSE jsonb_build_object('parent_refs', jsonb_build_array('project:' || project_uid))
+                END
+            FROM programs
+            ON CONFLICT (object_type, object_uid) DO UPDATE SET
+                action = EXCLUDED.action,
+                headers = EXCLUDED.headers,
+                data = EXCLUDED.data,
+                indexing_config = EXCLUDED.indexing_config,
+                generation = index_outbox.generation + 1,
+                state = CASE WHEN index_outbox.state = 'in_flight' THEN 'in_flight' ELSE 'pending' END,
+                claimed_generation = CASE WHEN index_outbox.state = 'in_flight' THEN index_outbox.claimed_generation ELSE NULL END,
+                claimed_at = CASE WHEN index_outbox.state = 'in_flight' THEN index_outbox.claimed_at ELSE NULL END,
+                attempts = 0,
+                sent_on = NULL
+            RETURNING object_uid
+            """
+    )
+    log.info("  → %d program index seeds queued", len(cur.fetchall()))
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -1044,6 +1306,7 @@ def main() -> None:
                 migrate_program_members(cur, members_raw, known_program_ids, known_user_ids)
                 application_index = migrate_mentees(cur, mentees_raw, known_term_ids, known_user_ids)
                 migrate_tasks(cur, tasks_raw, application_index, known_term_ids, known_user_ids)
+                seed_derived_state(cur)
 
         log.info("Migration complete.")
 

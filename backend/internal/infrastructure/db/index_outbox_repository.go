@@ -38,7 +38,7 @@ func (r *IndexOutboxRepository) Enqueue(ctx context.Context, record domain.Index
 	if err != nil {
 		return fmt.Errorf("enqueue index outbox: encode sanitized headers: %w", err)
 	}
-	_, err = r.pool.Exec(ctx, `INSERT INTO index_outbox (object_type, object_uid, action, headers, data, indexing_config) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (object_type, object_uid) DO UPDATE SET action = EXCLUDED.action, headers = EXCLUDED.headers, data = EXCLUDED.data, indexing_config = EXCLUDED.indexing_config, generation = index_outbox.generation + 1, state = CASE WHEN index_outbox.state = 'in_flight' THEN 'in_flight' ELSE 'pending' END, attempts = 0`, record.ObjectType, record.ObjectUID, record.Action, sanitizedHeaders, record.Data, record.IndexingConfig)
+	_, err = r.pool.Exec(ctx, `INSERT INTO index_outbox (object_type, object_uid, action, headers, data, indexing_config) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (object_type, object_uid) DO UPDATE SET action = EXCLUDED.action, headers = EXCLUDED.headers, data = EXCLUDED.data, indexing_config = EXCLUDED.indexing_config, generation = index_outbox.generation + 1, state = CASE WHEN index_outbox.state = 'in_flight' THEN 'in_flight' ELSE 'pending' END, claimed_generation = CASE WHEN index_outbox.state = 'in_flight' THEN index_outbox.claimed_generation ELSE NULL END, claimed_at = CASE WHEN index_outbox.state = 'in_flight' THEN index_outbox.claimed_at ELSE NULL END, attempts = 0, sent_on = NULL`, record.ObjectType, record.ObjectUID, record.Action, sanitizedHeaders, record.Data, record.IndexingConfig)
 	if err != nil {
 		return fmt.Errorf("enqueue index outbox: %w", err)
 	}
@@ -101,6 +101,19 @@ func (r *IndexOutboxRepository) MarkSent(ctx context.Context, record domain.Inde
 func (r *IndexOutboxRepository) MarkRetry(ctx context.Context, record domain.IndexOutboxRecord) (bool, error) {
 	command, err := r.pool.Exec(ctx, `UPDATE index_outbox SET state = CASE WHEN attempts + 1 >= $4 THEN 'dead_letter' ELSE 'pending' END, attempts = attempts + 1, claimed_generation = NULL, claimed_at = NULL WHERE id = $1 AND state = 'in_flight' AND generation = $2 AND claimed_generation = $2 AND claimed_at IS NOT DISTINCT FROM $3`, record.ID, record.Generation, record.ClaimedAt, r.maxAttempts)
 	return command.RowsAffected() == 1, err
+}
+
+// RequeueDeadLetter returns one retained record to the normal relay path.
+func (r *IndexOutboxRepository) RequeueDeadLetter(ctx context.Context, objectType, objectUID string) (bool, error) {
+	command, err := r.pool.Exec(ctx, `
+		UPDATE index_outbox
+		SET state = 'pending', claimed_generation = NULL, claimed_at = NULL,
+		    attempts = 0, sent_on = NULL
+		WHERE state = 'dead_letter' AND object_type = $1 AND object_uid = $2`, objectType, objectUID)
+	if err != nil {
+		return false, fmt.Errorf("requeue index dead-letter record: %w", err)
+	}
+	return command.RowsAffected() == 1, nil
 }
 
 var _ domain.IndexOutboxRepository = (*IndexOutboxRepository)(nil)

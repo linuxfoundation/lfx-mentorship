@@ -33,15 +33,20 @@ flowchart LR
 
   Whether an accepted mentor *also* gets a historical `applications` row is a deliberate choice, not an oversight: the recommendation is **no**, because legacy cannot distinguish "was invited" from "applied and was accepted" (both are one `accepted` row), so a synthesized application row would assert history that may be false. Mapping only mentee rows would silently drop mentor applications entirely — a parity feature per [02](./02-target-architecture.md).
 
-  **This contract is not what the ETL on `main` currently implements, and adopting it means changing that script.** `backend/db/scripts/migrate_dynamo_to_postgres.py` predates this section and encodes a different mapping in three ways that matter:
+  **The ETL now implements the safe portion of this partition explicitly.**
+  Legacy `maintainer` rows map to `program_admin`; approved/accepted mentors map
+  to active mentor memberships; and term-scoped `apprentice`/`mentee` rows are
+  skipped because `program-term-mentees` is their authoritative application
+  source. Unknown member types and ambiguous pending/declined mentor rows are
+  reported with their member, program, and user IDs instead of being converted
+  into an access-granting membership. The importer therefore never defaults an
+  unrecognized row to `mentor`.
 
-  | Merged ETL behavior | Consequence under this contract |
-  | --- | --- |
-  | `migrate_program_members` sends **every** `project-members` row to `program_members` (`:1012`), with no partition by member type | Mentee and program-admin rows land in the membership table instead of their targets above |
-  | `_VALID_MEMBER_TYPES = {"program_admin", "mentor"}` and `if member_type not in _VALID_MEMBER_TYPES: member_type = "mentor"` (`:671`, `:710-711`) | Legacy `apprentice` and `maintainer` are both unrecognized, so **every one of those rows becomes a mentor membership** — a false grant, and the most serious of the three: an apprentice would receive an effective mentor relation over the program |
-  | `applications` are sourced only from `jobspring-prod-program-term-mentees` (`:1001`) | Mentor applications are never created, and mentee rows may be both duplicated (as memberships) and mis-keyed |
-
-  The `apprentice → mentor` default is worth separating from the rest: it is a live defect in a script already on `main`, not merely a divergence from this proposal, and it should be fixed regardless of which mapping is finally adopted. Before this contract is adopted, that script must be updated to match it — or explicitly gated off (env flag / removed from the runbook) so it cannot be run against a real target. Shipping both leaves two contradictory backfills in the repo with no marker saying which is authoritative.
+  Mentor applications remain unresolved: `applications` are still sourced from
+  `program-term-mentees`, because project-member rows have neither a reliable
+  invitation/application discriminator nor a required term parent. The open
+  question below must be resolved before those historical rows can be imported
+  as applications.
 
   **Open question — pending mentor rows are blocked twice, and the two blockers must be settled together.** The partition table above is the intended contract, but pending/declined mentor rows cannot currently be written as stated, for two independent reasons. Resolving only one leaves the ETL still blocked, so they are recorded as one decision.
 

@@ -194,3 +194,22 @@ func (r *FGAOutboxRepository) DeadLetter(ctx context.Context, marker domain.FGAO
 	}
 	return nil
 }
+
+// RequeueDeadLetter returns one exact retained marker to the normal relay path.
+func (r *FGAOutboxRepository) RequeueDeadLetter(ctx context.Context, objectType, objectUID, relation, username string) (bool, error) {
+	command, err := r.pool.Exec(ctx, `
+		UPDATE fga_outbox
+		SET state = 'pending', claimed_generation = NULL, claimed_at = NULL,
+		    attempts = 0, next_attempt_at = NOW(), last_error = NULL, updated_on = NOW()
+		WHERE state = 'dead_letter' AND object_type = $1 AND object_uid = $2
+		  AND (
+		    ($3 = '' AND $4 = '' AND marker_kind = 'object')
+		    OR
+		    ($3 <> '' AND $4 <> '' AND marker_kind = 'membership'
+		      AND relation = $3 AND username = $4)
+		  )`, objectType, objectUID, relation, username)
+	if err != nil {
+		return false, fmt.Errorf("requeue FGA dead-letter marker: %w", err)
+	}
+	return command.RowsAffected() == 1, nil
+}

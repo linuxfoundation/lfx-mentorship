@@ -147,6 +147,42 @@ func TestIndexOutboxIntegration_ClaimRetryAndSent(t *testing.T) {
 	}
 }
 
+func TestIndexOutboxIntegration_RequeueDeadLetter(t *testing.T) {
+	pool := integrationPool(t)
+	repo := NewIndexOutboxRepository(pool)
+	repo.SetMaxAttempts(1)
+	ctx := context.Background()
+	record := domain.IndexOutboxRecord{
+		ObjectType:     "mentorship_program",
+		ObjectUID:      "00000000-0000-0000-0000-000000000010",
+		Action:         "updated",
+		Data:           []byte(`{"id":"00000000-0000-0000-0000-000000000010"}`),
+		IndexingConfig: []byte(`{"object_id":"00000000-0000-0000-0000-000000000010"}`),
+	}
+	if err := repo.Enqueue(ctx, record); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	claimed, err := repo.Claim(ctx, 1)
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim records=%d err=%v", len(claimed), err)
+	}
+	if acknowledged, err := repo.MarkRetry(ctx, claimed[0]); err != nil || !acknowledged {
+		t.Fatalf("dead-letter record: acknowledged=%v err=%v", acknowledged, err)
+	}
+	requeued, err := repo.RequeueDeadLetter(ctx, record.ObjectType, record.ObjectUID)
+	if err != nil || !requeued {
+		t.Fatalf("requeue dead-letter: requeued=%v err=%v", requeued, err)
+	}
+	var state string
+	var attempts int
+	if err := pool.QueryRow(ctx, `SELECT state, attempts FROM index_outbox WHERE object_type = $1 AND object_uid = $2`, record.ObjectType, record.ObjectUID).Scan(&state, &attempts); err != nil {
+		t.Fatal(err)
+	}
+	if state != "pending" || attempts != 0 {
+		t.Fatalf("state=%q attempts=%d; want pending and 0", state, attempts)
+	}
+}
+
 func TestIndexOutboxIntegration_MarkSentRequeuesNewerGeneration(t *testing.T) {
 	pool := integrationPool(t)
 	fixture := seedIntegrationFixture(t, pool)
@@ -438,6 +474,40 @@ func TestFGAOutboxIntegration_DeadLetterPreservesFailure(t *testing.T) {
 	}
 	if state != "dead_letter" || lastError != "permanent builder failure" {
 		t.Fatalf("state=%q last_error=%q; want dead_letter and preserved error", state, lastError)
+	}
+	requeued, err := repo.RequeueDeadLetter(ctx, "mentorship_application", "application-1", "", "")
+	if err != nil || !requeued {
+		t.Fatalf("requeue dead-letter: requeued=%v err=%v", requeued, err)
+	}
+	var attempts int
+	var clearedError *string
+	if err := pool.QueryRow(ctx, `SELECT state, attempts, last_error FROM fga_outbox WHERE id = $1`, markers[0].ID).Scan(&state, &attempts, &clearedError); err != nil {
+		t.Fatalf("read requeued marker: %v", err)
+	}
+	if state != "pending" || attempts != 0 || clearedError != nil {
+		t.Fatalf("state=%q attempts=%d last_error=%v; want pending, 0, and nil", state, attempts, clearedError)
+	}
+}
+
+func TestFGAOutboxIntegration_RequeueExactMembershipDeadLetter(t *testing.T) {
+	pool := integrationPool(t)
+	repo := NewFGAOutboxRepository(pool)
+	ctx := context.Background()
+	if err := repo.EnqueueMembershipRemoval(ctx, "mentorship_program", "program-1", "mentor", "fixture-user"); err != nil {
+		t.Fatalf("enqueue removal: %v", err)
+	}
+	markers, err := repo.Claim(ctx, 1)
+	if err != nil || len(markers) != 1 {
+		t.Fatalf("claim: markers=%d err=%v", len(markers), err)
+	}
+	if err := repo.DeadLetter(ctx, markers[0], "dependency unavailable"); err != nil {
+		t.Fatalf("dead-letter: %v", err)
+	}
+	if requeued, err := repo.RequeueDeadLetter(ctx, "mentorship_program", "program-1", "mentor", "other-user"); err != nil || requeued {
+		t.Fatalf("wrong member requeue: requeued=%v err=%v", requeued, err)
+	}
+	if requeued, err := repo.RequeueDeadLetter(ctx, "mentorship_program", "program-1", "mentor", "fixture-user"); err != nil || !requeued {
+		t.Fatalf("exact member requeue: requeued=%v err=%v", requeued, err)
 	}
 }
 

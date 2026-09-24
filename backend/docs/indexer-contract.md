@@ -24,3 +24,15 @@ The resource ID is the program UUID.
 
 The Query Service uses the access-check fields to include direct and inherited
 program viewers, including Project Service's `mentorship_program_admin` tuples.
+
+The DynamoDB importer queues one current-state snapshot for every program in
+`index_outbox`; the normal index relay publishes those snapshots. After fixing
+the cause of a dead-lettered record, an operator can requeue one exact record
+without publishing outside the relay:
+
+```bash
+/app/outbox-repair \
+	--outbox=index \
+	--object-type=mentorship_program \
+	--object-uid=<uuid>
+```
