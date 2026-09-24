@@ -86,7 +86,15 @@ func TestManagementReadsRequireManagerAuthorization(t *testing.T) {
 			end = len(ruleset) - start
 		}
 		block := ruleset[start : start+end]
-		if !strings.Contains(block, "authenticator: oidc") || !strings.Contains(block, "authorizer: openfga_check") || !strings.Contains(block, "relation: manager") || !strings.Contains(block, "finalizer: create_jwt") {
+		expected := `      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_program:{{ "{{- .Request.URL.Captures.id -}}" }}'
+              relation: manager
+        - finalizer: create_jwt`
+		if !strings.Contains(block, expected) {
 			t.Errorf("management route %q lacks oidc -> openfga manager -> create_jwt sequence", route)
 		}
 	}
