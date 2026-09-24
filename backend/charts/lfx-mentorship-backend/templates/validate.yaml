@@ -99,12 +99,6 @@ requiring them would block the documented local bypass flow
 {{- if not $.Values.config.FGA_NATS_URL }}
 {{- fail "values.yaml: config.FGA_NATS_URL is required when heimdall.enabled=true so authorization changes reach FGA." }}
 {{- end }}
-{{- if not $.Values.config.FGA_INDEXER_TOKEN_URL }}
-{{- fail "values.yaml: config.FGA_INDEXER_TOKEN_URL is required when FGA_NATS_URL is configured." }}
-{{- end }}
-{{- if not $.Values.config.FGA_INDEXER_AUDIENCE }}
-{{- fail "values.yaml: config.FGA_INDEXER_AUDIENCE is required when FGA_NATS_URL is configured." }}
-{{- end }}
 {{- end }}
 {{- if $heimdallConfigured }}
 {{- range $key := list "HEIMDALL_JWKS_URL" "HEIMDALL_JWT_AUDIENCE" "HEIMDALL_JWT_ISSUER" }}

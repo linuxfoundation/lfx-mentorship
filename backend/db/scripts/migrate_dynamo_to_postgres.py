@@ -48,6 +48,7 @@ Usage
   export AWS_SECRET_ACCESS_KEY=...
   export AWS_SESSION_TOKEN=...          # for STS / temporary credentials
   export AWS_REGION=us-east-1
+    export DYNAMODB_TABLE_PREFIX=jobspring-dev  # defaults to jobspring-prod
 
   export PG_DSN="host=localhost port=5432 dbname=mentorship user=postgres password=..."
 
@@ -88,7 +89,7 @@ PG_DSN = os.environ.get(
     "host=localhost port=5432 dbname=mentorship user=postgres password=postgres",
 )
 
-TABLE_PREFIX = "jobspring-prod"
+TABLE_PREFIX = os.environ.get("DYNAMODB_TABLE_PREFIX", "jobspring-prod")
 
 # Stable UUID namespace — must not change between runs to keep IDs deterministic.
 _UUID_NS = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
@@ -546,9 +547,11 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
 
     if unresolved_project_uids:
         sample = ", ".join(unresolved_project_uids[:10])
-        raise ValueError(
-            f"{len(unresolved_project_uids)} programs are missing an explicit "
-            f"project UID; repair the source mapping before migration (sample: {sample})"
+        log.warning(
+            "%d programs are missing an explicit project UID and will be imported "
+            "without an authorization parent (sample: %s)",
+            len(unresolved_project_uids),
+            sample,
         )
 
     psycopg2.extras.execute_batch(
@@ -965,9 +968,10 @@ def migrate_tasks(
         )
 
     if unresolved:
-        raise ValueError(
-            f"{unresolved} tasks could not be linked to an application; "
-            "repair term/user application mappings before migration"
+        log.warning(
+            "%d tasks could not be linked to an application and will be "
+            "imported without an authorization parent",
+            unresolved,
         )
 
     psycopg2.extras.execute_batch(

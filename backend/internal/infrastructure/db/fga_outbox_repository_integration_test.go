@@ -441,32 +441,6 @@ func TestFGAOutboxIntegration_DeadLetterPreservesFailure(t *testing.T) {
 	}
 }
 
-func TestFGAOutboxIntegration_ReplayDeadLetter(t *testing.T) {
-	pool := integrationPool(t)
-	repo := NewFGAOutboxRepository(pool)
-	ctx := context.Background()
-	if err := repo.EnqueueObject(ctx, "mentorship_program", "program-replay", "update_access"); err != nil {
-		t.Fatalf("enqueue: %v", err)
-	}
-	markers, err := repo.Claim(ctx, 1)
-	if err != nil || len(markers) != 1 {
-		t.Fatalf("claim: markers=%d err=%v", len(markers), err)
-	}
-	if err := repo.DeadLetter(ctx, markers[0], "permanent failure"); err != nil {
-		t.Fatalf("dead-letter: %v", err)
-	}
-	if err := repo.ReplayDeadLetter(ctx, markers[0].ID); err != nil {
-		t.Fatalf("replay: %v", err)
-	}
-	fresh, err := repo.Claim(ctx, 1)
-	if err != nil || len(fresh) != 1 {
-		t.Fatalf("claim replayed marker: markers=%d err=%v", len(fresh), err)
-	}
-	if fresh[0].ID != markers[0].ID || fresh[0].Attempts != 0 {
-		t.Fatalf("replayed marker = %+v; want original ID and zero attempts", fresh[0])
-	}
-}
-
 func TestFGAOutboxIntegration_AcknowledgeHandlesNullClaimedAt(t *testing.T) {
 	pool := integrationPool(t)
 	repo := NewFGAOutboxRepository(pool)
@@ -497,69 +471,5 @@ func TestFGAOutboxIntegration_AcknowledgeHandlesNullClaimedAt(t *testing.T) {
 	}
 	if remaining != 0 {
 		t.Fatalf("remaining markers = %d; want 0", remaining)
-	}
-}
-
-func TestFGAOutboxIntegration_ReconcileObjectPreservesDeadLetterState(t *testing.T) {
-	pool := integrationPool(t)
-	repo := NewFGAOutboxRepository(pool)
-	ctx := context.Background()
-
-	if err := repo.EnqueueObject(ctx, "mentorship_program", "program-dead-reconcile", "update_access"); err != nil {
-		t.Fatalf("enqueue: %v", err)
-	}
-	markers, err := repo.Claim(ctx, 1)
-	if err != nil || len(markers) != 1 {
-		t.Fatalf("claim: markers=%d err=%v", len(markers), err)
-	}
-	if err := repo.DeadLetter(ctx, markers[0], "builder failure"); err != nil {
-		t.Fatalf("dead-letter: %v", err)
-	}
-
-	if err := repo.ReconcileObject(ctx, "mentorship_program", "program-dead-reconcile", "update_access"); err != nil {
-		t.Fatalf("reconcile object: %v", err)
-	}
-
-	var state, lastError string
-	if err := pool.QueryRow(ctx, `SELECT state, last_error FROM fga_outbox WHERE id = $1`, markers[0].ID).Scan(&state, &lastError); err != nil {
-		t.Fatalf("read reconciled marker: %v", err)
-	}
-	if state != "dead_letter" {
-		t.Fatalf("state = %q; want dead_letter", state)
-	}
-	if lastError != "builder failure" {
-		t.Fatalf("last_error = %q; want builder failure", lastError)
-	}
-}
-
-func TestFGAOutboxIntegration_ReconcileMembershipPreservesDeadLetterState(t *testing.T) {
-	pool := integrationPool(t)
-	repo := NewFGAOutboxRepository(pool)
-	ctx := context.Background()
-
-	if err := repo.EnqueueMembership(ctx, "mentorship_program", "program-dead-membership", "mentor", "alice"); err != nil {
-		t.Fatalf("enqueue membership: %v", err)
-	}
-	markers, err := repo.Claim(ctx, 1)
-	if err != nil || len(markers) != 1 {
-		t.Fatalf("claim: markers=%d err=%v", len(markers), err)
-	}
-	if err := repo.DeadLetter(ctx, markers[0], "membership builder failure"); err != nil {
-		t.Fatalf("dead-letter: %v", err)
-	}
-
-	if err := repo.ReconcileMembership(ctx, "mentorship_program", "program-dead-membership", "mentor", "alice"); err != nil {
-		t.Fatalf("reconcile membership: %v", err)
-	}
-
-	var state, lastError string
-	if err := pool.QueryRow(ctx, `SELECT state, last_error FROM fga_outbox WHERE id = $1`, markers[0].ID).Scan(&state, &lastError); err != nil {
-		t.Fatalf("read reconciled membership marker: %v", err)
-	}
-	if state != "dead_letter" {
-		t.Fatalf("state = %q; want dead_letter", state)
-	}
-	if lastError != "membership builder failure" {
-		t.Fatalf("last_error = %q; want membership builder failure", lastError)
 	}
 }

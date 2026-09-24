@@ -341,21 +341,6 @@ func enqueueMemberMarker(ctx context.Context, tx pgx.Tx, member *models.ProgramM
 	if member.MemberType == models.MemberTypeProgramAdmin {
 		relation = "writer"
 	}
-	if operation == "remove" {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO fga_membership_tombstones (object_type, object_uid, relation, username)
-			VALUES ('mentorship_program', $1, $2, $3)
-			ON CONFLICT (object_type, object_uid, relation, username)
-			DO UPDATE SET deleted_on = NOW(), last_reconciled_on = NULL`,
-			member.ProgramID, relation, *lfid); err != nil {
-			return fmt.Errorf("record program member FGA tombstone: %w", err)
-		}
-	}
-	if operation == "put" {
-		if _, err := tx.Exec(ctx, `DELETE FROM fga_membership_tombstones WHERE object_type = 'mentorship_program' AND object_uid = $1 AND relation = $2 AND username = $3`, member.ProgramID, relation, *lfid); err != nil {
-			return fmt.Errorf("clear program member FGA tombstone: %w", err)
-		}
-	}
 	markerOperation := "sync"
 	if operation == "remove" {
 		markerOperation = "remove"

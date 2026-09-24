@@ -8,11 +8,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
-	"github.com/nats-io/nats.go"
 )
 
 type Envelope struct {
@@ -28,7 +26,6 @@ type Relay struct {
 	batch         int
 	logger        *slog.Logger
 	authorization string
-	provider      authorizationProvider
 }
 
 func (r *Relay) SetLogger(logger *slog.Logger) {
@@ -39,20 +36,8 @@ func (r *Relay) SetAuthorization(authorization string) {
 	r.authorization = authorization
 }
 
-func (r *Relay) SetAuthorizationProvider(provider authorizationProvider) {
-	r.provider = provider
-}
-
 type publisher interface {
 	Publish(subject string, data []byte) error
-}
-
-type requester interface {
-	Request(subject string, data []byte, timeout time.Duration) (*nats.Msg, error)
-}
-
-type authorizationProvider interface {
-	Authorization(context.Context) (string, error)
 }
 
 type flusher interface {
@@ -71,21 +56,11 @@ func (r *Relay) RunOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	authorization := r.authorization
-	if r.provider != nil {
-		authorization, err = r.provider.Authorization(ctx)
-		if err != nil {
-			for _, record := range records {
-				_, _ = r.outbox.MarkRetry(ctx, record)
-			}
-			return fmt.Errorf("obtain index authorization: %w", err)
-		}
-	}
 	var firstErr error
 	for _, record := range records {
 		headers := record.Headers
 		var recordErr error
-		if authorization != "" {
+		if r.authorization != "" {
 			var headerValues map[string]string
 			if len(headers) > 0 {
 				if err := json.Unmarshal(headers, &headerValues); err != nil {
@@ -95,7 +70,7 @@ func (r *Relay) RunOnce(ctx context.Context) error {
 				headerValues = map[string]string{}
 			}
 			if recordErr == nil {
-				headerValues["authorization"] = authorization
+				headerValues["authorization"] = r.authorization
 				headers, recordErr = json.Marshal(headerValues)
 				if recordErr != nil {
 					recordErr = fmt.Errorf("marshal index authorization for record %s: %w", record.ID, recordErr)
@@ -140,19 +115,6 @@ func (r *Relay) RunOnce(ctx context.Context) error {
 }
 
 func (r *Relay) publishAndConfirm(subject string, payload []byte) error {
-	if requester, ok := r.conn.(requester); ok {
-		response, err := requester.Request(subject, payload, 10*time.Second)
-		if err != nil {
-			return err
-		}
-		if response == nil || !strings.EqualFold(strings.TrimSpace(string(response.Data)), "OK") {
-			if response == nil {
-				return fmt.Errorf("index consumer returned no response")
-			}
-			return fmt.Errorf("index consumer rejected record: %s", strings.TrimSpace(string(response.Data)))
-		}
-		return nil
-	}
 	if err := r.conn.Publish(subject, payload); err != nil {
 		return err
 	}

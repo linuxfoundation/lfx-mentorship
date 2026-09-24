@@ -85,13 +85,13 @@ tuples.
 
 Relay failures are retried with generation guards. After the configured maximum
 attempt count, a marker moves to the `dead_letter` state and remains in the
-outbox with its last error for operator inspection and replay. Dead-lettered
-markers are never silently discarded.
+outbox with its last error for operator inspection. Dead-lettered markers are
+never silently discarded. Recovery should follow the product-service pattern:
+fix the source data or dependency, then re-run the affected domain write or a
+purpose-built backfill/reindex flow so the service emits a fresh message.
 
-Operators should monitor pending outbox age, `fga_relay_dead_lettered`, and
-tombstones whose `last_reconciled_on` is stale. Replay a dead-lettered marker
-with `fga-replay <marker-id>` after correcting its underlying data or dependency
-failure; do not delete the marker manually.
+Operators should monitor pending outbox age and `fga_relay_dead_lettered`; do
+not delete markers manually.
 
 ## Membership Mutations
 

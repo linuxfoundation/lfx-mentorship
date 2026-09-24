@@ -39,7 +39,8 @@ These platform-management routes require the corresponding OAuth scope:
 - `DELETE /admin/approver-team/members/{userID}` requires the same scope.
 
 Global approver changes are persisted with their FGA membership marker
-transactionally, and removals are retained as tombstones for reconciliation.
+transactionally. The outbox relay publishes precise membership additions and
+removals directly to the platform FGA stream.
 
 For local PostgreSQL-backed outbox tests, start `docker compose up -d`, create
 an isolated `mentorship_test` database, and run:

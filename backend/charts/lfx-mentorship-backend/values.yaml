@@ -130,9 +130,6 @@ config:
   HEIMDALL_JWT_AUDIENCE: ""
   HEIMDALL_JWT_ISSUER: ""
   FGA_NATS_URL: ""
-  FGA_INDEXER_TOKEN_URL: ""
-  FGA_INDEXER_AUDIENCE: ""
-  FGA_INDEXER_SCOPE: "access:query"
   FGA_RELAY_BATCH_SIZE: "50"
   FGA_RELAY_INTERVAL: "1s"
   FGA_RELAY_RETRY_DELAY: "1m"
@@ -168,8 +165,6 @@ env: []
 #   CROWDFUNDING_CLIENT_SECRET — Auth0 M2M client secret for crowdfunding API
 #   MENTOR_INVITE_SECRET — HMAC secret for signing mentor invite tokens.
 #     Required: the service exits at startup if it is not set.
-#   INDEXER_CLIENT_ID / INDEXER_CLIENT_SECRET — M2M credentials used to obtain
-#     short-lived Heimdall authorization for index envelopes.
 secretName: lfx-mentorship-backend-secrets
 
 # allowLocalAuthBypass — opt-in, defaults to false.
@@ -212,23 +207,3 @@ fundingStatsSyncCronJob:
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 1
   concurrencyPolicy: Forbid
-
-# ── CronJob: fga-reconcile ───────────────────────────────────────────────────
-# Re-dirties current PostgreSQL authorization state for the outbox relay.
-# Keep disabled until the FGA model, roster authority, and gateway rollout are
-# approved in the target environment.
-fgaReconcileCronJob:
-  enabled: false
-  schedule: "17 2 * * *"
-  activeDeadlineSeconds: 1800
-  backoffLimit: 2
-  successfulJobsHistoryLimit: 3
-  failedJobsHistoryLimit: 3
-  concurrencyPolicy: Forbid
-  resources:
-    requests:
-      cpu: 50m
-      memory: 64Mi
-    limits:
-      cpu: 200m
-      memory: 128Mi
