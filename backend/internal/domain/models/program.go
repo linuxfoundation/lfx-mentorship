@@ -82,6 +82,14 @@ type ProgramCreateInput struct {
 	TaskTemplates      json.RawMessage `json:"task_templates,omitempty"`
 }
 
+// ProgramEnrollmentInput is the atomic enrollment payload for a new program.
+type ProgramEnrollmentInput struct {
+	Program       ProgramCreateInput       `json:"program"`
+	Terms         []ProgramTermCreateInput `json:"terms"`
+	Skills        []string                 `json:"skills"`
+	Prerequisites json.RawMessage          `json:"prerequisites,omitempty"`
+}
+
 // ProgramUpdateInput is the request body for updating a program.
 type ProgramUpdateInput struct {
 	Name               *string            `json:"name,omitempty"`

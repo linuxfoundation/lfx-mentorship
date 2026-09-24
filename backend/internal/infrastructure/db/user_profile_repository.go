@@ -171,6 +171,101 @@ func (r *UserProfileRepository) Create(ctx context.Context, input models.UserPro
 	return p, nil
 }
 
+// UpsertByUserAndType creates or updates a user profile identified by user_id/profile_type.
+// It returns the profile and a flag indicating whether a new row was inserted.
+func (r *UserProfileRepository) UpsertByUserAndType(ctx context.Context, input models.UserProfileCreateInput) (*models.UserProfile, bool, error) {
+	ctx, span := userProfileTracer.Start(ctx, "db.user_profiles.UpsertByUserAndType")
+	defer span.End()
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, false, fmt.Errorf("begin upsert user profile transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))`, input.UserID, input.ProfileType); err != nil {
+		return nil, false, fmt.Errorf("lock user profile by user/type: %w", err)
+	}
+
+	rows, err := tx.Query(ctx, `SELECT `+userProfileCols+` FROM user_profiles WHERE user_id = $1 AND profile_type = $2 ORDER BY created_on ASC FOR UPDATE`, input.UserID, input.ProfileType)
+	if err != nil {
+		return nil, false, fmt.Errorf("list user profiles by user/type: %w", err)
+	}
+	defer rows.Close()
+
+	profiles := make([]*models.UserProfile, 0, 2)
+	for rows.Next() {
+		profile, scanErr := scanUserProfile(rows)
+		if scanErr != nil {
+			return nil, false, fmt.Errorf("scan user profile by user/type: %w", scanErr)
+		}
+		profiles = append(profiles, profile)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("iterate user profiles by user/type: %w", err)
+	}
+
+	if len(profiles) > 1 {
+		return nil, false, fmt.Errorf("%w: multiple %s profiles exist for user", domain.ErrConflict, input.ProfileType)
+	}
+
+	if len(profiles) == 0 {
+		const insertQ = `
+			INSERT INTO user_profiles (
+				id, user_id, profile_type, slug, first_name, last_name, email, phone,
+				logo_url, introduction, terms_and_conditions, number_of_projects,
+				address, demographics, socioeconomics, skill_set, profile_links
+			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+			RETURNING` + userProfileCols
+		created, err := scanUserProfile(tx.QueryRow(ctx, insertQ,
+			input.ID, input.UserID, input.ProfileType, input.Slug, input.FirstName, input.LastName,
+			input.Email, input.Phone, input.LogoURL, input.Introduction, input.TermsAndConditions,
+			input.NumberOfProjects, input.Address, input.Demographics, input.Socioeconomics,
+			input.SkillSet, input.ProfileLinks,
+		))
+		if err != nil {
+			span.RecordError(err)
+			return nil, false, fmt.Errorf("insert user profile by user/type: %w", err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, false, fmt.Errorf("commit insert user profile by user/type: %w", err)
+		}
+		return created, true, nil
+	}
+
+	const updateQ = `
+		UPDATE user_profiles SET
+			slug = $2,
+			first_name = $3,
+			last_name = $4,
+			email = $5,
+			phone = $6,
+			logo_url = $7,
+			introduction = $8,
+			terms_and_conditions = $9,
+			number_of_projects = $10,
+			address = $11,
+			demographics = $12,
+			socioeconomics = $13,
+			skill_set = $14,
+			profile_links = $15,
+			updated_on = NOW()
+		WHERE id = $1
+		RETURNING` + userProfileCols
+	updated, err := scanUserProfile(tx.QueryRow(ctx, updateQ,
+		profiles[0].ID, input.Slug, input.FirstName, input.LastName, input.Email, input.Phone,
+		input.LogoURL, input.Introduction, input.TermsAndConditions, input.NumberOfProjects,
+		input.Address, input.Demographics, input.Socioeconomics, input.SkillSet, input.ProfileLinks,
+	))
+	if err != nil {
+		span.RecordError(err)
+		return nil, false, fmt.Errorf("update user profile by user/type: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, false, fmt.Errorf("commit update user profile by user/type: %w", err)
+	}
+	return updated, false, nil
+}
+
 // Update patches the user profile fields that are set in input.
 func (r *UserProfileRepository) Update(ctx context.Context, id string, input models.UserProfileUpdateInput) (*models.UserProfile, error) {
 	ctx, span := userProfileTracer.Start(ctx, "db.user_profiles.Update")

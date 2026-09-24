@@ -3,6 +3,8 @@
 
 package models
 
+import "encoding/json"
+
 // PaginationMeta carries total count and current page parameters for list responses.
 type PaginationMeta struct {
 	Total  int `json:"total"`
@@ -53,6 +55,13 @@ type ProgramFilter struct {
 	SortBy          string // catalog only: accepting_first | completed_first | name_asc | name_desc | updated_oldest | updated_newest
 }
 
+// ProgramEnrollmentTemplate contains the fields needed to prefill enrollment.
+type ProgramEnrollmentTemplate struct {
+	Program       Program         `json:"program"`
+	Skills        []string        `json:"skills"`
+	Prerequisites json.RawMessage `json:"prerequisites,omitempty"`
+}
+
 // ProgramTermFilter constrains list queries for program terms.
 type ProgramTermFilter struct {
 	Limit     int
@@ -67,6 +76,7 @@ type ProgramMemberFilter struct {
 	Offset     int
 	MemberType string // program_admin | mentor
 	Status     string
+	Search     string
 }
 
 // ApplicationFilter constrains list queries for applications.
@@ -77,6 +87,15 @@ type ApplicationFilter struct {
 	Role           string // mentor | mentee
 	Status         string // pending | accepted | declined | withdrawn
 	TasksSubmitted *bool  // nil = no filter
+}
+
+type ProgramApplicationFilter struct {
+	Limit  int
+	Offset int
+	Type   ProgramApplicationType
+	Search string
+	Status string
+	TermID string
 }
 
 // TaskFilter constrains list queries for tasks.

@@ -19,6 +19,7 @@ type userProfileService interface {
 	GetBySlug(ctx context.Context, slug string) (*models.UserProfile, error)
 	List(ctx context.Context, filter models.UserProfileFilter) ([]*models.UserProfile, *models.PaginationMeta, error)
 	Create(ctx context.Context, input models.UserProfileCreateInput) (*models.UserProfile, error)
+	Upsert(ctx context.Context, input models.UserProfileCreateInput) (*models.UserProfile, bool, error)
 	Update(ctx context.Context, id string, input models.UserProfileUpdateInput) (*models.UserProfile, error)
 	Delete(ctx context.Context, id string) error
 }
@@ -102,27 +103,11 @@ func (h *UserProfileHandler) ListMe(w http.ResponseWriter, r *http.Request) {
 
 // GetMeByType handles GET /v1/me/profiles/{profileType} — requires JWT.
 func (h *UserProfileHandler) GetMeByType(w http.ResponseWriter, r *http.Request) {
-	principal := auth.PrincipalFromContext(r.Context())
-	if principal == nil {
-		Error(w, domain.ErrUnauthorized)
-		return
-	}
-	profileType := chi.URLParam(r, "profileType")
-	limit, offset, ok := parsePaginationParams(w, r)
+	profile, ok := h.profileForPrincipal(w, r)
 	if !ok {
 		return
 	}
-	profiles, meta, err := h.svc.List(r.Context(), models.UserProfileFilter{
-		Limit:       limit,
-		Offset:      offset,
-		UserID:      principal.UserID,
-		ProfileType: profileType,
-	})
-	if err != nil {
-		Error(w, err)
-		return
-	}
-	JSON(w, http.StatusOK, map[string]any{"data": profiles, "meta": meta})
+	JSON(w, http.StatusOK, profile)
 }
 
 // Create handles POST /v1/user-profiles — requires JWT.
@@ -146,6 +131,37 @@ func (h *UserProfileHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	JSON(w, http.StatusCreated, profile)
+}
+
+// PutMeByType creates or replaces the signed-in user's profile of the type in
+// the path. It is the canonical registration endpoint for mentee profiles.
+func (h *UserProfileHandler) PutMeByType(w http.ResponseWriter, r *http.Request) {
+	principal := auth.PrincipalFromContext(r.Context())
+	if principal == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	profileType := chi.URLParam(r, "profileType")
+	if !models.UserProfileType(profileType).IsValid() {
+		Error(w, fmt.Errorf("%w: profile_type must be mentor or mentee", domain.ErrInvalidInput))
+		return
+	}
+	var input models.UserProfileCreateInput
+	if !decodeBody(w, r, &input) {
+		return
+	}
+	input.UserID = principal.UserID
+	input.ProfileType = profileType
+	profile, inserted, err := h.svc.Upsert(r.Context(), input)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	status := http.StatusOK
+	if inserted {
+		status = http.StatusCreated
+	}
+	JSON(w, status, profile)
 }
 
 func (h *UserProfileHandler) profileForPrincipal(w http.ResponseWriter, r *http.Request) (*models.UserProfile, bool) {

@@ -21,6 +21,8 @@ type stubProgramSvc struct {
 	getCatalog                 func(context.Context, string) (*models.ProgramCatalogItem, error)
 	getByID                    func(context.Context, string) (*models.Program, error)
 	getBySlug                  func(context.Context, string) (*models.Program, error)
+	getManagementSummary       func(context.Context, string) (*models.ProgramManagementSummary, error)
+	nameAvailable              func(context.Context, string, string) (bool, error)
 	listMentees                func(context.Context, string) ([]*models.ProgramCatalogMentee, error)
 	listSkills                 func(context.Context, string) ([]*models.ProgramSkill, error)
 	deleteSkill                func(context.Context, string, string, string) error
@@ -43,6 +45,24 @@ func (s *stubProgramSvc) GetBySlug(ctx context.Context, id string) (*models.Prog
 func (s *stubProgramSvc) List(context.Context, models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error) {
 	return []*models.Program{}, &models.PaginationMeta{}, nil
 }
+func (s *stubProgramSvc) GetEnrollmentTemplate(context.Context, string) (*models.ProgramEnrollmentTemplate, error) {
+	return &models.ProgramEnrollmentTemplate{}, nil
+}
+func (s *stubProgramSvc) GetManagementSummary(ctx context.Context, id string) (*models.ProgramManagementSummary, error) {
+	if s.getManagementSummary != nil {
+		return s.getManagementSummary(ctx, id)
+	}
+	return &models.ProgramManagementSummary{}, nil
+}
+func (s *stubProgramSvc) GetHeaderProjection(ctx context.Context, id string) (*models.ProgramHeaderProjection, error) {
+	return &models.ProgramHeaderProjection{Program: &models.Program{ID: id}}, nil
+}
+func (s *stubProgramSvc) NameAvailable(ctx context.Context, name, excludeProgramID string) (bool, error) {
+	if s.nameAvailable != nil {
+		return s.nameAvailable(ctx, name, excludeProgramID)
+	}
+	return true, nil
+}
 func (s *stubProgramSvc) ListCatalog(ctx context.Context, f models.ProgramFilter) ([]*models.ProgramCatalogItem, *models.PaginationMeta, error) {
 	if s.listCatalog != nil {
 		return s.listCatalog(ctx, f)
@@ -63,6 +83,9 @@ func (s *stubProgramSvc) ListCatalogMentees(ctx context.Context, id string) ([]*
 }
 func (s *stubProgramSvc) Create(context.Context, models.ProgramCreateInput) (*models.Program, error) {
 	return &models.Program{}, nil
+}
+func (s *stubProgramSvc) CreateEnrollment(ctx context.Context, input models.ProgramEnrollmentInput) (*models.Program, error) {
+	return s.Create(ctx, input.Program)
 }
 func (s *stubProgramSvc) Update(context.Context, string, models.ProgramUpdateInput) (*models.Program, error) {
 	return &models.Program{}, nil

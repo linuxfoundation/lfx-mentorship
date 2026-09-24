@@ -19,6 +19,7 @@ type stubUserProfileRepo struct {
 	getBySlug                 func(context.Context, string) (*models.UserProfile, error)
 	list                      func(context.Context, models.UserProfileFilter) ([]*models.UserProfile, *models.PaginationMeta, error)
 	create                    func(context.Context, models.UserProfileCreateInput) (*models.UserProfile, error)
+	upsertByUserAndType       func(context.Context, models.UserProfileCreateInput) (*models.UserProfile, bool, error)
 	update                    func(context.Context, string, models.UserProfileUpdateInput) (*models.UserProfile, error)
 	delete                    func(context.Context, string) error
 	countActiveMenteeProfiles func(context.Context, string) (int, error)
@@ -47,6 +48,12 @@ func (m *stubUserProfileRepo) Create(ctx context.Context, in models.UserProfileC
 		return m.create(ctx, in)
 	}
 	return &models.UserProfile{UserID: in.UserID, ProfileType: in.ProfileType}, nil
+}
+func (m *stubUserProfileRepo) UpsertByUserAndType(ctx context.Context, in models.UserProfileCreateInput) (*models.UserProfile, bool, error) {
+	if m.upsertByUserAndType != nil {
+		return m.upsertByUserAndType(ctx, in)
+	}
+	return &models.UserProfile{UserID: in.UserID, ProfileType: in.ProfileType}, true, nil
 }
 func (m *stubUserProfileRepo) Update(ctx context.Context, id string, in models.UserProfileUpdateInput) (*models.UserProfile, error) {
 	if m.update != nil {

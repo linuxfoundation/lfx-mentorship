@@ -52,11 +52,16 @@ type JWTConfig struct {
 
 // FGAConfig configures the optional transactional outbox relay.
 type FGAConfig struct {
-	NATSURL          string
-	RelayBatch       int
-	RelayInterval    time.Duration
-	RelayRetryDelay  time.Duration
-	RelayMaxAttempts int
+	NATSURL             string
+	IndexerTokenURL     string
+	IndexerClientID     string
+	IndexerClientSecret string
+	IndexerAudience     string
+	IndexerScope        string
+	RelayBatch          int
+	RelayInterval       time.Duration
+	RelayRetryDelay     time.Duration
+	RelayMaxAttempts    int
 }
 
 // CrowdfundingConfig holds outbound crowdfunding API and M2M auth settings.
@@ -148,6 +153,13 @@ func loadConfig() (*Config, error) {
 			return nil, fmt.Errorf("FGA_RELAY_RETRY_DELAY: must be a positive duration")
 		}
 	}
+	indexerTokenURL := os.Getenv("FGA_INDEXER_TOKEN_URL")
+	indexerClientID := os.Getenv("INDEXER_CLIENT_ID")
+	indexerClientSecret := os.Getenv("INDEXER_CLIENT_SECRET")
+	indexerAudience := os.Getenv("FGA_INDEXER_AUDIENCE")
+	if os.Getenv("FGA_NATS_URL") != "" && (indexerTokenURL == "" || indexerClientID == "" || indexerClientSecret == "" || indexerAudience == "") {
+		return nil, fmt.Errorf("FGA_INDEXER_TOKEN_URL, INDEXER_CLIENT_ID, INDEXER_CLIENT_SECRET, and FGA_INDEXER_AUDIENCE are required when FGA_NATS_URL is configured")
+	}
 
 	crowdfundingTimeout := 10 * time.Second
 	if v := os.Getenv("CROWDFUNDING_TIMEOUT"); v != "" {
@@ -181,11 +193,16 @@ func loadConfig() (*Config, error) {
 			HeimdallIssuer:   heimdallIssuer,
 		},
 		FGA: FGAConfig{
-			NATSURL:          os.Getenv("FGA_NATS_URL"),
-			RelayBatch:       relayBatch,
-			RelayInterval:    relayInterval,
-			RelayRetryDelay:  relayRetryDelay,
-			RelayMaxAttempts: relayMaxAttempts,
+			NATSURL:             os.Getenv("FGA_NATS_URL"),
+			IndexerTokenURL:     indexerTokenURL,
+			IndexerClientID:     indexerClientID,
+			IndexerClientSecret: indexerClientSecret,
+			IndexerAudience:     indexerAudience,
+			IndexerScope:        getEnv("FGA_INDEXER_SCOPE", "access:query"),
+			RelayBatch:          relayBatch,
+			RelayInterval:       relayInterval,
+			RelayRetryDelay:     relayRetryDelay,
+			RelayMaxAttempts:    relayMaxAttempts,
 		},
 		Crowdfunding: CrowdfundingConfig{
 			BaseURL:      strings.TrimRight(os.Getenv("CROWDFUNDING_BASE_URL"), "/"),

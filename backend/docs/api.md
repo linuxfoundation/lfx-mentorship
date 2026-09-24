@@ -1,5 +1,11 @@
 # LFX Mentorship API — Developer Reference
 
+## Status Mapping
+
+Program creation persists the canonical backend status `draft`. BFF consumers
+map `draft` and `submitted` to their pending-review display state; this API does
+not expose a separate persisted `pending` program status.
+
 **Base URL**: `https://lfx-api.<environment>/mentorship/v1` through the Heimdall gateway.
 **Content-Type**: `application/json` for all request and response bodies  
 **Module**: `github.com/linuxfoundation/lfx-v2-mentorship-service`

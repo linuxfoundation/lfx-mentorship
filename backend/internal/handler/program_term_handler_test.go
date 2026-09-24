@@ -33,6 +33,9 @@ func (s *stubProgramTermSvc) GetByProgramAndID(ctx context.Context, programID, i
 func (s *stubProgramTermSvc) ListByProgram(ctx context.Context, programID string, filter models.ProgramTermFilter) ([]*models.ProgramTerm, *models.PaginationMeta, error) {
 	return []*models.ProgramTerm{{ID: "term-1", ProgramID: programID}}, &models.PaginationMeta{Total: 1}, nil
 }
+func (s *stubProgramTermSvc) ListManagementByProgram(ctx context.Context, programID string, filter models.ProgramTermFilter) ([]*models.ProgramTermManagementRow, *models.PaginationMeta, error) {
+	return []*models.ProgramTermManagementRow{}, &models.PaginationMeta{}, nil
+}
 
 func (s *stubProgramTermSvc) Create(ctx context.Context, input models.ProgramTermCreateInput) (*models.ProgramTerm, error) {
 	return &models.ProgramTerm{ID: input.ID, ProgramID: input.ProgramID}, nil
@@ -43,6 +46,14 @@ func (s *stubProgramTermSvc) Update(ctx context.Context, id string, input models
 }
 
 func (s *stubProgramTermSvc) Delete(ctx context.Context, id string) error { return nil }
+
+func (s *stubProgramTermSvc) Close(ctx context.Context, id string) (*models.ProgramTerm, int, error) {
+	return &models.ProgramTerm{ID: id}, 0, nil
+}
+
+func (s *stubProgramTermSvc) Reopen(ctx context.Context, id string) (*models.ProgramTerm, error) {
+	return &models.ProgramTerm{ID: id}, nil
+}
 
 func TestProgramTermHandler_GetByID_UsesProgramScope(t *testing.T) {
 	var gotProgramID, gotTermID string

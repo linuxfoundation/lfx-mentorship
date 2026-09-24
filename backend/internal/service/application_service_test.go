@@ -21,6 +21,7 @@ import (
 type stubAppRepo struct {
 	getByID           func(context.Context, string) (*models.Application, error)
 	listByProgramTerm func(context.Context, string, models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error)
+	listByProgram     func(context.Context, string, models.ProgramApplicationFilter) ([]*models.ProgramApplicationRow, *models.PaginationMeta, error)
 	listByUser        func(context.Context, string, models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error)
 	create            func(context.Context, string, models.ApplicationCreateInput) (*models.Application, error)
 	reapply           func(context.Context, string, string, models.ApplicationCreateInput) (*models.Application, error)
@@ -45,6 +46,12 @@ func (m *stubAppRepo) ListByProgramTerm(ctx context.Context, id string, f models
 		return m.listByProgramTerm(ctx, id, f)
 	}
 	return nil, &models.PaginationMeta{}, nil
+}
+func (m *stubAppRepo) ListByProgram(ctx context.Context, id string, f models.ProgramApplicationFilter) ([]*models.ProgramApplicationRow, *models.PaginationMeta, error) {
+	if m.listByProgram != nil {
+		return m.listByProgram(ctx, id, f)
+	}
+	return []*models.ProgramApplicationRow{}, &models.PaginationMeta{}, nil
 }
 func (m *stubAppRepo) ListByUser(ctx context.Context, id string, f models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error) {
 	if m.listByUser != nil {
@@ -97,6 +104,7 @@ func (m *stubAppRepo) CountAcceptedByTerm(ctx context.Context, id string) (int, 
 	}
 	return 0, nil
 }
+func (m *stubAppRepo) CountByTerm(context.Context, string) (int, error) { return 0, nil }
 func (m *stubAppRepo) FindByTermAndUser(ctx context.Context, termID, userID string) (*models.Application, error) {
 	if m.findByTermAndUser != nil {
 		return m.findByTermAndUser(ctx, termID, userID)
@@ -144,6 +152,9 @@ func (m *stubTermRepo) ListByProgram(ctx context.Context, id string, f models.Pr
 	}
 	return nil, &models.PaginationMeta{}, nil
 }
+func (m *stubTermRepo) ListManagementByProgram(context.Context, string, models.ProgramTermFilter) ([]*models.ProgramTermManagementRow, *models.PaginationMeta, error) {
+	return []*models.ProgramTermManagementRow{}, &models.PaginationMeta{}, nil
+}
 func (m *stubTermRepo) Create(ctx context.Context, in models.ProgramTermCreateInput) (*models.ProgramTerm, error) {
 	if m.create != nil {
 		return m.create(ctx, in)
@@ -162,6 +173,9 @@ func (m *stubTermRepo) Delete(ctx context.Context, id string) error {
 	}
 	return nil
 }
+func (m *stubTermRepo) CloseWithBulkDecline(context.Context, string) (*models.ProgramTerm, int, error) {
+	return &models.ProgramTerm{}, 0, nil
+}
 func (m *stubTermRepo) CountOpenTermsByProgram(ctx context.Context, id string) (int, error) {
 	if m.countOpenByProgram != nil {
 		return m.countOpenByProgram(ctx, id)
@@ -170,19 +184,22 @@ func (m *stubTermRepo) CountOpenTermsByProgram(ctx context.Context, id string) (
 }
 
 type stubProgRepo struct {
-	getByID         func(context.Context, string) (*models.Program, error)
-	getBySlug       func(context.Context, string) (*models.Program, error)
-	list            func(context.Context, models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error)
-	listCatalog     func(context.Context, models.ProgramFilter) ([]*models.ProgramCatalogItem, *models.PaginationMeta, error)
-	getCatalog      func(context.Context, string) (*models.ProgramCatalogItem, error)
-	listMentees     func(context.Context, string) ([]*models.ProgramCatalogMentee, error)
-	create          func(context.Context, models.ProgramCreateInput) (*models.Program, error)
-	update          func(context.Context, string, models.ProgramUpdateInput) (*models.Program, error)
-	delete          func(context.Context, string) error
-	listSkills      func(context.Context, string) ([]*models.ProgramSkill, error)
-	addSkill        func(context.Context, string, models.ProgramSkillCreateInput) (*models.ProgramSkill, error)
-	deleteSkill     func(context.Context, string, string) error
-	getFundingStats func(context.Context, string) (*models.ProgramFundingStats, error)
+	getByID           func(context.Context, string) (*models.Program, error)
+	getBySlug         func(context.Context, string) (*models.Program, error)
+	list              func(context.Context, models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error)
+	managementSummary func(context.Context, string) (*models.ProgramManagementSummary, error)
+	nameAvailable     func(context.Context, string, string) (bool, error)
+	listCatalog       func(context.Context, models.ProgramFilter) ([]*models.ProgramCatalogItem, *models.PaginationMeta, error)
+	getCatalog        func(context.Context, string) (*models.ProgramCatalogItem, error)
+	listMentees       func(context.Context, string) ([]*models.ProgramCatalogMentee, error)
+	create            func(context.Context, models.ProgramCreateInput) (*models.Program, error)
+	createEnrollment  func(context.Context, models.ProgramEnrollmentInput) (*models.Program, error)
+	update            func(context.Context, string, models.ProgramUpdateInput) (*models.Program, error)
+	delete            func(context.Context, string) error
+	listSkills        func(context.Context, string) ([]*models.ProgramSkill, error)
+	addSkill          func(context.Context, string, models.ProgramSkillCreateInput) (*models.ProgramSkill, error)
+	deleteSkill       func(context.Context, string, string) error
+	getFundingStats   func(context.Context, string) (*models.ProgramFundingStats, error)
 }
 
 func (m *stubProgRepo) GetByID(ctx context.Context, id string) (*models.Program, error) {
@@ -202,6 +219,24 @@ func (m *stubProgRepo) List(ctx context.Context, f models.ProgramFilter) ([]*mod
 		return m.list(ctx, f)
 	}
 	return nil, &models.PaginationMeta{}, nil
+}
+func (m *stubProgRepo) GetEnrollmentTemplate(ctx context.Context, programID string) (*models.ProgramEnrollmentTemplate, error) {
+	return &models.ProgramEnrollmentTemplate{}, nil
+}
+func (m *stubProgRepo) GetManagementSummary(ctx context.Context, id string) (*models.ProgramManagementSummary, error) {
+	if m.managementSummary != nil {
+		return m.managementSummary(ctx, id)
+	}
+	return &models.ProgramManagementSummary{}, nil
+}
+func (m *stubProgRepo) GetHeaderProjection(ctx context.Context, id string) (*models.ProgramHeaderProjection, error) {
+	return &models.ProgramHeaderProjection{Program: &models.Program{ID: id}}, nil
+}
+func (m *stubProgRepo) NameAvailable(ctx context.Context, name, excludeProgramID string) (bool, error) {
+	if m.nameAvailable != nil {
+		return m.nameAvailable(ctx, name, excludeProgramID)
+	}
+	return true, nil
 }
 func (m *stubProgRepo) ListCatalog(ctx context.Context, f models.ProgramFilter) ([]*models.ProgramCatalogItem, *models.PaginationMeta, error) {
 	if m.listCatalog != nil {
@@ -226,6 +261,12 @@ func (m *stubProgRepo) Create(ctx context.Context, in models.ProgramCreateInput)
 		return m.create(ctx, in)
 	}
 	return &models.Program{}, nil
+}
+func (m *stubProgRepo) CreateEnrollment(ctx context.Context, in models.ProgramEnrollmentInput) (*models.Program, error) {
+	if m.createEnrollment != nil {
+		return m.createEnrollment(ctx, in)
+	}
+	return m.Create(ctx, in.Program)
 }
 func (m *stubProgRepo) Update(ctx context.Context, id string, in models.ProgramUpdateInput) (*models.Program, error) {
 	if m.update != nil {
@@ -334,7 +375,12 @@ func (n *stubNotifier) NotifyMenteeAccepted(_ context.Context, _, _ string) { n.
 // ── helpers ─────────────────────────────────────────────────────────────────
 
 func newApplicationSvc(appRepo *stubAppRepo, taskRepo *stubTaskRepo, termRepo *stubTermRepo, progRepo *stubProgRepo) *service.ApplicationService {
-	return service.NewApplicationService(appRepo, taskRepo, termRepo, progRepo, &stubMemberRepo{}, &stubNotifier{})
+	return service.NewApplicationService(appRepo, taskRepo, termRepo, progRepo, &stubMemberRepo{
+		findActiveReviewer: func(context.Context, string, string) (*models.ProgramMember, error) {
+			status := models.ProgramMemberStatusActive
+			return &models.ProgramMember{MemberType: models.MemberTypeMentor, Status: &status}, nil
+		},
+	}, &stubNotifier{})
 }
 
 func newApplicationSvcWithMember(appRepo *stubAppRepo, taskRepo *stubTaskRepo, termRepo *stubTermRepo, progRepo *stubProgRepo, memberRepo *stubMemberRepo) *service.ApplicationService {
@@ -527,7 +573,7 @@ func TestApplicationService_Update_ValidTransition(t *testing.T) {
 	svc := newApplicationSvc(repo, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{})
 	next := models.ApplicationStatusAccepted
 	attType := models.AttendanceTypeFullTime
-	_, err := svc.Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &next, AttendanceType: &attType})
+	_, err := svc.Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &next, AttendanceType: &attType, ActorID: "reviewer"})
 	if err != nil {
 		t.Errorf("expected valid transition pending→accepted, got %v", err)
 	}
@@ -544,10 +590,15 @@ func TestApplicationService_Update_AcceptedMenteeSendsNotification(t *testing.T)
 			return &models.Application{ID: id, Status: models.ApplicationStatusAccepted, ProgramTermID: "term-1", UserID: "mentee-1", Role: models.ApplicationRoleMentee, AttendanceType: &attType}, nil
 		},
 	}
-	svc := service.NewApplicationService(repo, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{}, &stubMemberRepo{}, notifier)
+	status := models.ProgramMemberStatusActive
+	svc := service.NewApplicationService(repo, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{}, &stubMemberRepo{
+		findActiveReviewer: func(context.Context, string, string) (*models.ProgramMember, error) {
+			return &models.ProgramMember{MemberType: models.MemberTypeMentor, Status: &status}, nil
+		},
+	}, notifier)
 	next := models.ApplicationStatusAccepted
 	attType := models.AttendanceTypeFullTime
-	if _, err := svc.Update(context.Background(), "app-mentee-1", models.ApplicationUpdateInput{Status: &next, AttendanceType: &attType}); err != nil {
+	if _, err := svc.Update(context.Background(), "app-mentee-1", models.ApplicationUpdateInput{Status: &next, AttendanceType: &attType, ActorID: "reviewer"}); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 	if notifier.menteeAcceptedCalls != 1 {
@@ -565,7 +616,7 @@ func TestApplicationService_Update_AcceptedToGraduated(t *testing.T) {
 	}
 	svc := newApplicationSvc(repo, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{})
 	next := models.ApplicationStatusGraduated
-	if _, err := svc.Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &next}); err != nil {
+	if _, err := svc.Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &next, ActorID: "reviewer"}); err != nil {
 		t.Errorf("expected valid transition accepted→graduated, got %v", err)
 	}
 }
@@ -578,7 +629,7 @@ func TestApplicationService_Update_InvalidTransition(t *testing.T) {
 	}
 	svc := newApplicationSvc(repo, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{})
 	next := models.ApplicationStatusGraduated
-	_, err := svc.Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &next})
+	_, err := svc.Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &next, ActorID: "reviewer"})
 	if !errors.Is(err, domain.ErrInvalidStateTransition) {
 		t.Errorf("expected ErrInvalidStateTransition, got %v", err)
 	}
@@ -592,7 +643,7 @@ func TestApplicationService_Update_WithdrawnTerminal(t *testing.T) {
 	}
 	svc := newApplicationSvc(repo, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{})
 	next := models.ApplicationStatusPending
-	_, err := svc.Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &next})
+	_, err := svc.Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &next, ActorID: "reviewer"})
 	if !errors.Is(err, domain.ErrInvalidStateTransition) {
 		t.Errorf("expected ErrInvalidStateTransition for terminal withdrawn, got %v", err)
 	}

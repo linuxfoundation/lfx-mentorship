@@ -5,10 +5,13 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
+	"unicode"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -21,10 +24,15 @@ type programService interface {
 	GetByID(ctx context.Context, id string) (*models.Program, error)
 	GetBySlug(ctx context.Context, slug string) (*models.Program, error)
 	List(ctx context.Context, filter models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error)
+	GetEnrollmentTemplate(ctx context.Context, programID string) (*models.ProgramEnrollmentTemplate, error)
+	GetManagementSummary(ctx context.Context, programID string) (*models.ProgramManagementSummary, error)
+	GetHeaderProjection(ctx context.Context, programID string) (*models.ProgramHeaderProjection, error)
+	NameAvailable(ctx context.Context, name, excludeProgramID string) (bool, error)
 	ListCatalog(ctx context.Context, filter models.ProgramFilter) ([]*models.ProgramCatalogItem, *models.PaginationMeta, error)
 	GetCatalog(ctx context.Context, id string) (*models.ProgramCatalogItem, error)
 	ListCatalogMentees(ctx context.Context, programID string) ([]*models.ProgramCatalogMentee, error)
 	Create(ctx context.Context, input models.ProgramCreateInput) (*models.Program, error)
+	CreateEnrollment(ctx context.Context, input models.ProgramEnrollmentInput) (*models.Program, error)
 	Update(ctx context.Context, id string, input models.ProgramUpdateInput) (*models.Program, error)
 	Delete(ctx context.Context, id string) error
 	ListSkills(ctx context.Context, programID string) ([]*models.ProgramSkill, error)
@@ -53,6 +61,64 @@ func parseAggregateParam(r *http.Request) bool {
 // ProgramHandler holds Chi handlers for the programs resource.
 type ProgramHandler struct {
 	svc programService
+}
+
+type enrollmentRequest struct {
+	ProjectID        string                  `json:"projectId"`
+	Name             string                  `json:"name"`
+	Description      *string                 `json:"description,omitempty"`
+	RepositoryURL    *string                 `json:"repositoryUrl,omitempty"`
+	WebsiteURL       *string                 `json:"websiteUrl,omitempty"`
+	CodeOfConductURL *string                 `json:"codeOfConductUrl,omitempty"`
+	Skills           []string                `json:"skills"`
+	CIIProjectID     *string                 `json:"ciiProjectId,omitempty"`
+	LogoFileName     *string                 `json:"logoFileName,omitempty"`
+	Terms            []enrollmentTermRequest `json:"terms"`
+	Prerequisites    json.RawMessage         `json:"prerequisites,omitempty"`
+	TermsAccepted    bool                    `json:"termsAccepted"`
+}
+
+type enrollmentTermRequest struct {
+	ID                   string `json:"id"`
+	Name                 string `json:"name"`
+	StartDate            string `json:"startDate"`
+	EndDate              string `json:"endDate"`
+	ApplicationStartDate string `json:"applicationStartDate"`
+	ApplicationEndDate   string `json:"applicationEndDate"`
+}
+
+func enrollmentDate(value string) (*time.Time, error) {
+	parsed, err := time.Parse("2006-01-02", value)
+	if err != nil {
+		return nil, err
+	}
+	return &parsed, nil
+}
+
+func enrollmentSlug(name string) string {
+	var builder strings.Builder
+	separator := false
+	for _, value := range strings.ToLower(strings.TrimSpace(name)) {
+		if unicode.IsLetter(value) || unicode.IsDigit(value) {
+			builder.WriteRune(value)
+			separator = false
+		} else if !separator && builder.Len() > 0 {
+			builder.WriteByte('-')
+			separator = true
+		}
+	}
+	return strings.Trim(builder.String(), "-")
+}
+
+func withIndexMetadata(r *http.Request) *http.Request {
+	headers := map[string]string{}
+	if value := r.Header.Get("Authorization"); value != "" {
+		headers["authorization"] = value
+	}
+	if value := r.Header.Get("X-On-Behalf-Of"); value != "" {
+		headers["x-on-behalf-of"] = value
+	}
+	return r.WithContext(domain.ContextWithIndexHeaders(r.Context(), headers))
 }
 
 // NewProgramHandler creates a ProgramHandler.
@@ -134,6 +200,21 @@ func (h *ProgramHandler) List(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, map[string]any{"data": programs, "meta": meta})
 }
 
+// GetEnrollmentTemplate handles GET /v1/programs/{id}/enroll-template.
+func (h *ProgramHandler) GetEnrollmentTemplate(w http.ResponseWriter, r *http.Request) {
+	principal := auth.PrincipalFromContext(r.Context())
+	if principal == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	template, err := h.svc.GetEnrollmentTemplate(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, template)
+}
+
 func catalogSortParam(r *http.Request) string {
 	if v := r.URL.Query().Get("sort_by"); v != "" {
 		return v
@@ -196,12 +277,49 @@ func (h *ProgramHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, program)
 }
 
+// GetManagementSummary handles GET /v1/programs/{id}/management-summary.
+func (h *ProgramHandler) GetManagementSummary(w http.ResponseWriter, r *http.Request) {
+	if auth.PrincipalFromContext(r.Context()) == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	summary, err := h.svc.GetManagementSummary(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, summary)
+}
+
+func (h *ProgramHandler) GetHeaderProjection(w http.ResponseWriter, r *http.Request) {
+	projection, err := h.svc.GetHeaderProjection(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, projection)
+}
+
+func (h *ProgramHandler) NameAvailable(w http.ResponseWriter, r *http.Request) {
+	if auth.PrincipalFromContext(r.Context()) == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	available, err := h.svc.NameAvailable(r.Context(), r.URL.Query().Get("name"), r.URL.Query().Get("exclude_program_id"))
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]bool{"available": available})
+}
+
 // Submit transitions a program from draft or rejected to submitted.
 func (h *ProgramHandler) Submit(w http.ResponseWriter, r *http.Request) {
 	if auth.PrincipalFromContext(r.Context()) == nil {
 		Error(w, domain.ErrUnauthorized)
 		return
 	}
+	r = withIndexMetadata(r)
 	status := models.ProgramStatusSubmitted
 	program, err := h.svc.Update(r.Context(), chi.URLParam(r, "id"), models.ProgramUpdateInput{Status: &status})
 	if err != nil {
@@ -217,6 +335,7 @@ func (h *ProgramHandler) Decision(w http.ResponseWriter, r *http.Request) {
 		Error(w, domain.ErrUnauthorized)
 		return
 	}
+	r = withIndexMetadata(r)
 	var input models.ProgramUpdateInput
 	if !decodeBody(w, r, &input) {
 		return
@@ -255,13 +374,58 @@ func (h *ProgramHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var input models.ProgramCreateInput
-	if !decodeBody(w, r, &input) {
+	var request enrollmentRequest
+	if !decodeBody(w, r, &request) {
 		return
 	}
-	input.CreatorUserID = principal.UserID
+	if !request.TermsAccepted {
+		Error(w, fmt.Errorf("%w: terms_accepted must be true", domain.ErrInvalidInput))
+		return
+	}
+	terms := make([]models.ProgramTermCreateInput, 0, len(request.Terms))
+	for _, term := range request.Terms {
+		start, err := enrollmentDate(term.StartDate)
+		if err != nil {
+			Error(w, fmt.Errorf("%w: invalid term startDate", domain.ErrInvalidInput))
+			return
+		}
+		end, err := enrollmentDate(term.EndDate)
+		if err != nil {
+			Error(w, fmt.Errorf("%w: invalid term endDate", domain.ErrInvalidInput))
+			return
+		}
+		applicationStart, err := enrollmentDate(term.ApplicationStartDate)
+		if err != nil {
+			Error(w, fmt.Errorf("%w: invalid applicationStartDate", domain.ErrInvalidInput))
+			return
+		}
+		applicationEnd, err := enrollmentDate(term.ApplicationEndDate)
+		if err != nil {
+			Error(w, fmt.Errorf("%w: invalid applicationEndDate", domain.ErrInvalidInput))
+			return
+		}
+		terms = append(terms, models.ProgramTermCreateInput{ID: term.ID, Name: term.Name, Status: models.ProgramTermStatusOpen, StartDateTime: start, EndDateTime: end, ApplicationStartDate: applicationStart, ApplicationEndDate: applicationEnd})
+	}
+	enrollment := models.ProgramEnrollmentInput{
+		Program: models.ProgramCreateInput{
+			ProjectUID:         &request.ProjectID,
+			Name:               request.Name,
+			Slug:               enrollmentSlug(request.Name),
+			Description:        request.Description,
+			RepoLink:           request.RepositoryURL,
+			WebsiteURL:         request.WebsiteURL,
+			CodeOfConduct:      request.CodeOfConductURL,
+			CIIProjectID:       request.CIIProjectID,
+			TermsAndConditions: request.TermsAccepted,
+		},
+		Terms:         terms,
+		Skills:        request.Skills,
+		Prerequisites: request.Prerequisites,
+	}
+	enrollment.Program.CreatorUserID = principal.UserID
+	r = withIndexMetadata(r)
 
-	program, err := h.svc.Create(r.Context(), input)
+	program, err := h.svc.CreateEnrollment(r.Context(), enrollment)
 	if err != nil {
 		Error(w, err)
 		return
@@ -286,6 +450,7 @@ func (h *ProgramHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Error(w, fmt.Errorf("%w: status transitions are handled by dedicated submit/decision routes", domain.ErrInvalidInput))
 		return
 	}
+	r = withIndexMetadata(r)
 
 	program, err := h.svc.Update(r.Context(), id, input)
 	if err != nil {
@@ -304,6 +469,7 @@ func (h *ProgramHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := chi.URLParam(r, "id")
+	r = withIndexMetadata(r)
 	if err := h.svc.Delete(r.Context(), id); err != nil {
 		Error(w, err)
 		return
@@ -335,6 +501,7 @@ func (h *ProgramHandler) AddSkill(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &input) {
 		return
 	}
+	r = withIndexMetadata(r)
 
 	skill, err := h.svc.AddSkill(r.Context(), programID, input)
 	if err != nil {
@@ -354,6 +521,7 @@ func (h *ProgramHandler) DeleteSkill(w http.ResponseWriter, r *http.Request) {
 
 	programID := chi.URLParam(r, "id")
 	skillID := chi.URLParam(r, "skillId")
+	r = withIndexMetadata(r)
 	if err := h.svc.DeleteSkill(r.Context(), programID, skillID, principal.UserID); err != nil {
 		Error(w, err)
 		return

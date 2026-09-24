@@ -95,4 +95,46 @@ CREATE TABLE IF NOT EXISTS fga_membership_tombstones (
 CREATE INDEX IF NOT EXISTS idx_fga_membership_tombstones_reconcile
   ON fga_membership_tombstones(last_reconciled_on, deleted_on);
 
+CREATE TABLE IF NOT EXISTS index_outbox (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  object_type     TEXT NOT NULL,
+  object_uid      UUID NOT NULL,
+  action          TEXT NOT NULL CHECK (action IN ('created', 'updated', 'deleted')),
+  headers         JSONB NOT NULL,
+  data            JSONB,
+  indexing_config JSONB,
+  state           TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'in_flight', 'sent', 'dead_letter')),
+  generation      BIGINT NOT NULL DEFAULT 1,
+  claimed_generation BIGINT,
+  attempts        INTEGER NOT NULL DEFAULT 0,
+  created_on      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  sent_on         TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_index_outbox_pending
+  ON index_outbox(created_on) WHERE state = 'pending';
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_index_outbox_object
+  ON index_outbox(object_type, object_uid);
+
+ALTER TABLE index_outbox
+  ADD COLUMN claimed_at TIMESTAMPTZ;
+
+ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_status_check;
+
+ALTER TABLE tasks
+  ADD CONSTRAINT tasks_status_check
+  CHECK (status IN ('incomplete', 'in_progress', 'submitted', 'complete'));
+
+DELETE FROM user_profiles AS duplicate
+USING user_profiles AS keeper
+WHERE duplicate.user_id = keeper.user_id
+  AND duplicate.profile_type = keeper.profile_type
+  AND duplicate.id <> keeper.id
+  AND (COALESCE(duplicate.created_on, '-infinity'::timestamptz), duplicate.id)
+      < (COALESCE(keeper.created_on, '-infinity'::timestamptz), keeper.id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_user_profiles_user_type
+  ON user_profiles(user_id, profile_type);
+
 COMMIT;

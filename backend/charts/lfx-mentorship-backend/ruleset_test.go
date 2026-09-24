@@ -41,3 +41,27 @@ func TestRuleSetDoesNotContainRetiredRoutesOrBroadProgramMethods(t *testing.T) {
 		}
 	}
 }
+
+func TestReviewerFieldsRequireReviewerRelation(t *testing.T) {
+	contents, err := os.ReadFile("templates/ruleset.yaml")
+	if err != nil {
+		t.Fatalf("read RuleSet: %v", err)
+	}
+	ruleset := string(contents)
+	start := strings.Index(ruleset, "id: rule:lfx:lfx-mentorship-backend:application-reviewer-fields")
+	if start < 0 {
+		t.Fatal("RuleSet is missing application reviewer-fields rule")
+	}
+	block := ruleset[start:]
+	for _, route := range []string{
+		"/mentorship/v1/applications/:id/note",
+		"/mentorship/v1/applications/:id/evaluation",
+	} {
+		if !strings.Contains(block, route) {
+			t.Errorf("reviewer-fields rule is missing %q", route)
+		}
+	}
+	if !strings.Contains(block, "relation: reviewer") {
+		t.Fatal("reviewer-fields rule does not require reviewer relation")
+	}
+}

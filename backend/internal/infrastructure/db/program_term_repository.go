@@ -140,10 +140,57 @@ func (r *ProgramTermRepository) ListByProgram(ctx context.Context, programID str
 	return terms, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, nil
 }
 
+func (r *ProgramTermRepository) ListManagementByProgram(ctx context.Context, programID string, filter models.ProgramTermFilter) ([]*models.ProgramTermManagementRow, *models.PaginationMeta, error) {
+	limit, offset := filter.Limit, filter.Offset
+	if limit <= 0 || limit > 50 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	args := []any{programID}
+	where := ` WHERE pt.program_id = $1 AND pt.status <> 'deleted'`
+	var total int
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM program_terms pt`+where, args...).Scan(&total); err != nil {
+		return nil, nil, err
+	}
+	args = append(args, limit, offset)
+	q := `SELECT pt.id, pt.program_id, pt.name, pt.status, pt.active_users,
+		pt.start_date_time, pt.end_date_time, pt.application_start_date, pt.application_end_date,
+		pt.created_on, pt.updated_on,
+		COUNT(a.id) FILTER (WHERE a.role = 'mentee' AND a.status = 'pending'), COUNT(a.id) FILTER (WHERE a.role = 'mentee' AND a.status = 'declined'),
+		COUNT(a.id) FILTER (WHERE a.role = 'mentee' AND a.status = 'accepted'), COUNT(a.id) FILTER (WHERE a.role = 'mentee' AND a.status = 'graduated')
+		FROM program_terms pt LEFT JOIN applications a ON a.program_term_id = pt.id` + where + ` GROUP BY pt.id ORDER BY pt.start_date_time DESC NULLS LAST` + fmt.Sprintf(` LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
+	rows, err := r.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	result := make([]*models.ProgramTermManagementRow, 0)
+	for rows.Next() {
+		var row models.ProgramTermManagementRow
+		if err := rows.Scan(&row.ID, &row.ProgramID, &row.Name, &row.Status, &row.ActiveUsers, &row.StartDateTime, &row.EndDateTime, &row.ApplicationStartDate, &row.ApplicationEndDate, &row.CreatedOn, &row.UpdatedOn, &row.Pending, &row.Declined, &row.Accepted, &row.Graduated); err != nil {
+			return nil, nil, err
+		}
+		result = append(result, &row)
+	}
+	return result, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, rows.Err()
+}
+
 // Create inserts a new program term and returns the persisted record.
 func (r *ProgramTermRepository) Create(ctx context.Context, input models.ProgramTermCreateInput) (*models.ProgramTerm, error) {
 	ctx, span := programTermTracer.Start(ctx, "db.program_terms.Create")
 	defer span.End()
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin create program term transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if input.Status == models.ProgramTermStatusOpen {
+		if err := lockProgramAndCheckOpenTerms(ctx, tx, input.ProgramID, ""); err != nil {
+			return nil, err
+		}
+	}
 
 	const q = `
 		INSERT INTO program_terms (
@@ -152,13 +199,16 @@ func (r *ProgramTermRepository) Create(ctx context.Context, input models.Program
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 		RETURNING` + programTermCols
 
-	t, err := scanProgramTerm(r.pool.QueryRow(ctx, q,
+	t, err := scanProgramTerm(tx.QueryRow(ctx, q,
 		input.ID, input.ProgramID, input.Name, input.Status, input.ActiveUsers,
 		input.StartDateTime, input.EndDateTime, input.ApplicationStartDate, input.ApplicationEndDate,
 	))
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("create program term: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit create program term transaction: %w", err)
 	}
 	return t, nil
 }
@@ -168,6 +218,22 @@ func (r *ProgramTermRepository) Update(ctx context.Context, id string, input mod
 	ctx, span := programTermTracer.Start(ctx, "db.program_terms.Update")
 	defer span.End()
 	span.SetAttributes(attribute.String("db.term_id", id))
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin update program term transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if input.Status != nil && *input.Status == models.ProgramTermStatusOpen {
+		var programID string
+		if err := tx.QueryRow(ctx, `SELECT program_id FROM program_terms WHERE id = $1 FOR UPDATE`, id).Scan(&programID); errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrProgramTermNotFound
+		} else if err != nil {
+			return nil, fmt.Errorf("load program for term update: %w", err)
+		} else if err := lockProgramAndCheckOpenTerms(ctx, tx, programID, id); err != nil {
+			return nil, err
+		}
+	}
 
 	const q = `
 		UPDATE program_terms SET
@@ -181,7 +247,7 @@ func (r *ProgramTermRepository) Update(ctx context.Context, id string, input mod
 		WHERE id = $1
 		RETURNING` + programTermCols
 
-	t, err := scanProgramTerm(r.pool.QueryRow(ctx, q,
+	t, err := scanProgramTerm(tx.QueryRow(ctx, q,
 		id, input.Name, input.Status, input.ActiveUsers,
 		input.StartDateTime, input.EndDateTime, input.ApplicationStartDate, input.ApplicationEndDate,
 	))
@@ -192,15 +258,54 @@ func (r *ProgramTermRepository) Update(ctx context.Context, id string, input mod
 		span.RecordError(err)
 		return nil, fmt.Errorf("update program term: %w", err)
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit update program term transaction: %w", err)
+	}
 	return t, nil
+}
+
+func lockProgramAndCheckOpenTerms(ctx context.Context, tx pgx.Tx, programID, excludeTermID string) error {
+	if err := tx.QueryRow(ctx, `SELECT id FROM programs WHERE id = $1 FOR UPDATE`, programID).Scan(new(string)); errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrProgramNotFound
+	} else if err != nil {
+		return fmt.Errorf("lock program for open-term check: %w", err)
+	}
+	var count int
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM program_terms WHERE program_id = $1 AND status = 'open' AND ($2 = '' OR id::text <> $2)`, programID, excludeTermID).Scan(&count); err != nil {
+		return fmt.Errorf("count open terms for write: %w", err)
+	}
+	if count >= 4 {
+		return fmt.Errorf("%w: program already has %d open term(s) (max %d)", domain.ErrStateLocked, count, 4)
+	}
+	return nil
 }
 
 // Delete removes the program term with the given ID.
 func (r *ProgramTermRepository) Delete(ctx context.Context, id string) error {
 	ctx, span := programTermTracer.Start(ctx, "db.program_terms.Delete")
 	defer span.End()
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin delete program term transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 
-	cmd, err := r.pool.Exec(ctx, `UPDATE program_terms SET status = 'deleted', updated_on = NOW() WHERE id = $1`, id)
+	var locked int
+	if err := tx.QueryRow(ctx, `SELECT 1 FROM program_terms WHERE id = $1 FOR UPDATE`, id).Scan(&locked); errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrProgramTermNotFound
+	} else if err != nil {
+		return fmt.Errorf("lock program term for delete: %w", err)
+	}
+
+	var count int
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM applications WHERE program_term_id = $1`, id).Scan(&count); err != nil {
+		return fmt.Errorf("count applications for term delete: %w", err)
+	}
+	if count > 0 {
+		return fmt.Errorf("%w: term has %d application(s)", domain.ErrStateLocked, count)
+	}
+
+	cmd, err := tx.Exec(ctx, `UPDATE program_terms SET status = 'deleted', updated_on = NOW() WHERE id = $1`, id)
 	if err != nil {
 		span.RecordError(err)
 		return fmt.Errorf("delete program term: %w", err)
@@ -208,7 +313,76 @@ func (r *ProgramTermRepository) Delete(ctx context.Context, id string) error {
 	if cmd.RowsAffected() == 0 {
 		return domain.ErrProgramTermNotFound
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit delete program term transaction: %w", err)
+	}
 	return nil
+}
+
+// CloseWithBulkDecline declines pending applications, emits their FGA updates,
+// and closes the term in one transaction.
+func (r *ProgramTermRepository) CloseWithBulkDecline(ctx context.Context, id string) (*models.ProgramTerm, int, error) {
+	ctx, span := programTermTracer.Start(ctx, "db.program_terms.CloseWithBulkDecline")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.term_id", id))
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("begin close term transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	term, err := scanProgramTerm(tx.QueryRow(ctx, `SELECT`+programTermCols+` FROM program_terms WHERE id = $1 FOR UPDATE`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, 0, domain.ErrProgramTermNotFound
+	}
+	if err != nil {
+		return nil, 0, fmt.Errorf("load term for close: %w", err)
+	}
+	if term.Status != models.ProgramTermStatusOpen {
+		return nil, 0, fmt.Errorf("%w: only open terms can be closed", domain.ErrInvalidStateTransition)
+	}
+
+	var accepted int
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM applications WHERE program_term_id = $1 AND status = 'accepted'`, id).Scan(&accepted); err != nil {
+		return nil, 0, fmt.Errorf("count accepted applications for close: %w", err)
+	}
+	if accepted > 0 {
+		return nil, 0, fmt.Errorf("%w: term has %d accepted application(s)", domain.ErrStateLocked, accepted)
+	}
+
+	rows, err := tx.Query(ctx, `UPDATE applications SET status = 'declined' WHERE program_term_id = $1 AND status = 'pending' RETURNING `+applicationCols, id)
+	if err != nil {
+		return nil, 0, fmt.Errorf("decline pending applications for close: %w", err)
+	}
+	applications := make([]*models.Application, 0)
+	for rows.Next() {
+		application, scanErr := scanApplication(rows)
+		if scanErr != nil {
+			rows.Close()
+			return nil, 0, fmt.Errorf("scan declined application for close: %w", scanErr)
+		}
+		applications = append(applications, application)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, 0, fmt.Errorf("decline pending applications rows: %w", err)
+	}
+	rows.Close()
+	for _, application := range applications {
+		if err := enqueueApplicationMarker(ctx, tx, application, "update_access"); err != nil {
+			return nil, 0, err
+		}
+	}
+
+	closed := models.ProgramTermStatusClosed
+	updated, err := scanProgramTerm(tx.QueryRow(ctx, `UPDATE program_terms SET status = $2 WHERE id = $1 RETURNING`+programTermCols, id, closed))
+	if err != nil {
+		return nil, 0, fmt.Errorf("close term: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, 0, fmt.Errorf("commit close term transaction: %w", err)
+	}
+	return updated, len(applications), nil
 }
 
 // CountOpenTermsByProgram returns the count of terms with status='open' for a program.

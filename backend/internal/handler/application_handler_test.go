@@ -26,6 +26,7 @@ type stubApplicationSvc struct {
 	getByID            func(ctx context.Context, id string) (*models.Application, error)
 	getByIDForActor    func(ctx context.Context, id, actorID string) (*models.Application, error)
 	listByTerm         func(ctx context.Context, termID string, f models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error)
+	listByProgram      func(ctx context.Context, programID string, f models.ProgramApplicationFilter) ([]*models.ProgramApplicationRow, *models.PaginationMeta, error)
 	listByTermForActor func(ctx context.Context, termID string, f models.ApplicationFilter, actorID string) ([]*models.Application, *models.PaginationMeta, error)
 	update             func(ctx context.Context, id string, in models.ApplicationUpdateInput) (*models.Application, error)
 	delete             func(ctx context.Context, id string) error
@@ -65,6 +66,12 @@ func (s *stubApplicationSvc) ListByProgramTerm(ctx context.Context, termID strin
 		return s.listByTerm(ctx, termID, f)
 	}
 	return []*models.Application{}, &models.PaginationMeta{}, nil
+}
+func (s *stubApplicationSvc) ListByProgram(ctx context.Context, programID string, f models.ProgramApplicationFilter) ([]*models.ProgramApplicationRow, *models.PaginationMeta, error) {
+	if s.listByProgram != nil {
+		return s.listByProgram(ctx, programID, f)
+	}
+	return []*models.ProgramApplicationRow{}, &models.PaginationMeta{}, nil
 }
 func (s *stubApplicationSvc) ListByProgramTermForActor(ctx context.Context, termID string, f models.ApplicationFilter, actorID string) ([]*models.Application, *models.PaginationMeta, error) {
 	if s.listByTermForActor != nil {
