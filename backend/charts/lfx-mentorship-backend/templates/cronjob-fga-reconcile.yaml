@@ -15,12 +15,16 @@ spec:
   successfulJobsHistoryLimit: {{ .Values.fgaReconcileCronJob.successfulJobsHistoryLimit }}
   failedJobsHistoryLimit: {{ .Values.fgaReconcileCronJob.failedJobsHistoryLimit }}
   jobTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "lfx-v2-mentorship-service.name" . }}
     spec:
       activeDeadlineSeconds: {{ .Values.fgaReconcileCronJob.activeDeadlineSeconds }}
       backoffLimit: {{ .Values.fgaReconcileCronJob.backoffLimit }}
       template:
         metadata:
           labels:
+            app.kubernetes.io/name: {{ include "lfx-v2-mentorship-service.name" . }}
             app.kubernetes.io/component: fga-reconcile
         spec:
           restartPolicy: OnFailure
