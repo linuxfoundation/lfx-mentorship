@@ -137,3 +137,50 @@ func TestRelayRunOnceFailsWhenMarkRetryIsNotAcknowledged(t *testing.T) {
 		t.Fatal("expected retry acknowledgement error")
 	}
 }
+
+type failingAuthorizationProvider struct{}
+
+func (failingAuthorizationProvider) Authorization(context.Context) (string, error) {
+	return "", errors.New("token endpoint down")
+}
+
+func TestRelayRunOnceRetriesClaimedRecordsWhenAuthorizationFails(t *testing.T) {
+	start := indexRelayRetried.Value()
+	outbox := &outboxStub{
+		records: []domain.IndexOutboxRecord{
+			{ID: "1", ObjectType: "mentorship_program", Action: "updated"},
+			{ID: "2", ObjectType: "mentorship_program", Action: "updated"},
+		},
+		markRetryAcknowledged: true,
+	}
+	publisher := &publisherStub{}
+	relay := NewRelay(outbox, publisher, 2)
+	relay.SetAuthorizationProvider(failingAuthorizationProvider{})
+
+	if err := relay.RunOnce(context.Background()); err == nil {
+		t.Fatal("expected authorization error")
+	}
+	if publisher.subject != "" || outbox.sent != "" {
+		t.Fatalf("published subject=%q sent=%q; want nothing published", publisher.subject, outbox.sent)
+	}
+	if got := indexRelayRetried.Value() - start; got != 2 {
+		t.Fatalf("retried count delta=%d, want 2", got)
+	}
+}
+
+func TestRelayRunOnceDoesNotCountUnacknowledgedRetriesWhenAuthorizationFails(t *testing.T) {
+	start := indexRelayRetried.Value()
+	outbox := &outboxStub{records: []domain.IndexOutboxRecord{{ID: "1", ObjectType: "mentorship_program", Action: "updated"}}}
+	relay := NewRelay(outbox, &publisherStub{}, 1)
+	relay.SetAuthorizationProvider(failingAuthorizationProvider{})
+
+	if err := relay.RunOnce(context.Background()); err == nil {
+		t.Fatal("expected authorization error")
+	}
+	if outbox.retried != "1" {
+		t.Fatalf("retried=%q, want 1", outbox.retried)
+	}
+	if got := indexRelayRetried.Value() - start; got != 0 {
+		t.Fatalf("retried count delta=%d, want 0 for an unacknowledged retry", got)
+	}
+}

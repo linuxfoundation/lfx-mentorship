@@ -2182,12 +2182,11 @@ class ApiError extends Error {
 | `INDEX_RELAY_RETRY_DELAY` | No | `1m` | Index publish retry delay |
 | `INDEX_RELAY_MAX_ATTEMPTS` | No | `10` | Index attempts before dead letter |
 | `MENTOR_INVITE_SECRET` | Yes | — | HMAC secret for mentor invite tokens |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | — | OpenTelemetry collector endpoint |
+| `ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS` | No | `false` | Enable local dev JWT bypass |
+| `DISABLED_MOCK_LOCAL_PRINCIPAL` | No | — | Static user ID for bypass mode |
 
 For an environment upgrade, provision the indexer client ID and secret through
 Secrets Manager before enabling the relay. The token URL, audience, scope, and
 client credentials must describe the same M2M application; missing credentials
 fail startup validation rather than producing unauthenticated index publishes.
-
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | — | OpenTelemetry collector endpoint |
-| `ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS` | No | `false` | Enable local dev JWT bypass |
-| `DISABLED_MOCK_LOCAL_PRINCIPAL` | No | — | Static user ID for bypass mode |

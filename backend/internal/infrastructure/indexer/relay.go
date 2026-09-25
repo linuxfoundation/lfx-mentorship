@@ -6,6 +6,7 @@ package indexer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"expvar"
 	"fmt"
 	"log/slog"
@@ -81,14 +82,22 @@ func (r *Relay) RunOnce(ctx context.Context) error {
 	if r.provider != nil {
 		authorization, err = r.provider.Authorization(ctx)
 		if err != nil {
+			authErr := fmt.Errorf("obtain index authorization: %w", err)
 			for _, record := range records {
+				acknowledged, deadLettered, retryErr := r.outbox.MarkRetry(ctx, record)
+				if retryErr != nil {
+					authErr = errors.Join(authErr, fmt.Errorf("mark retry for index record %s: %w", record.ID, retryErr))
+					continue
+				}
+				if !acknowledged {
+					continue
+				}
 				indexRelayRetried.Add(1)
-				_, deadLettered, _ := r.outbox.MarkRetry(ctx, record)
 				if deadLettered {
 					indexRelayDeadLettered.Add(1)
 				}
 			}
-			return fmt.Errorf("obtain index authorization: %w", err)
+			return authErr
 		}
 	}
 	var firstErr error

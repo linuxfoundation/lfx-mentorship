@@ -87,7 +87,6 @@ def main() -> None:
     synthetic_users: dict[str, dict] = {}
     member_repairs: list[tuple[str, str]] = []
     task_repairs: list[tuple[str, str]] = []
-    task_application_repairs: list[tuple[str, str]] = []
     application_repairs: list[dict] = []
     profile_repairs: list[tuple[str, str]] = []
 
@@ -118,21 +117,13 @@ def main() -> None:
             profile_repairs.append((row["id"], user_id))
             require_user(user_id, "mentee" if str(row.get("type", "")).lower() == "mentee" else "mentor")
 
-    mentee_users_by_term: dict[str, list[str]] = {}
-    for row in mentee_rows:
-        term_id = row.get("programTermId")
-        user_id = row.get("userId")
-        if term_id and user_id:
-            mentee_users_by_term.setdefault(term_id, []).append(user_id)
-    for users_for_term in mentee_users_by_term.values():
-        users_for_term.sort()
     term_projects = {row.get("id"): row.get("projectId") for row in term_rows}
     existing_application_keys = {(row.get("programTermId"), row.get("userId")) for row in mentee_rows}
     for row in task_rows:
         term_id = row.get("programTermId")
         assignee_id = row.get("assigneeId") or str(uuid.uuid5(NAMESPACE, f"task-assignee:{row['id']}"))
-        candidates = mentee_users_by_term.get(term_id, [])
-        if term_id and (not candidates or assignee_id not in candidates) and (term_id, assignee_id) not in existing_application_keys:
+        if term_id and (term_id, assignee_id) not in existing_application_keys:
+            existing_application_keys.add((term_id, assignee_id))
             require_user(assignee_id, "mentee")
             application_repairs.append(
                 {
@@ -170,7 +161,7 @@ def main() -> None:
         if row.get("status") in {"inProgress", "completed"}
         or row.get("category") == "nonPrerequisite"
     ]
-    print(f"projects={len(project_repairs)} synthetic_users={len(synthetic_users)} member_repairs={len(member_repairs)} profile_repairs={len(profile_repairs)} application_repairs={len(application_repairs)} task_repairs={len(task_repairs)} task_application_repairs={len(task_application_repairs)} enum_repairs={len(enum_repairs)} apply={args.apply}")
+    print(f"projects={len(project_repairs)} synthetic_users={len(synthetic_users)} member_repairs={len(member_repairs)} profile_repairs={len(profile_repairs)} application_repairs={len(application_repairs)} task_repairs={len(task_repairs)} enum_repairs={len(enum_repairs)} apply={args.apply}")
     if not args.apply:
         return
 
@@ -179,8 +170,6 @@ def main() -> None:
     for member_id, user_id in member_repairs:
         members.update_item(Key={"id": member_id}, UpdateExpression="SET userId = :u", ExpressionAttributeValues={":u": user_id})
     for task_id, user_id in task_repairs:
-        tasks.update_item(Key={"id": task_id}, UpdateExpression="SET assigneeId = :u", ExpressionAttributeValues={":u": user_id})
-    for task_id, user_id in task_application_repairs:
         tasks.update_item(Key={"id": task_id}, UpdateExpression="SET assigneeId = :u", ExpressionAttributeValues={":u": user_id})
     for profile_id, user_id in profile_repairs:
         profiles.update_item(Key={"id": profile_id}, UpdateExpression="SET userId = :u", ExpressionAttributeValues={":u": user_id})
