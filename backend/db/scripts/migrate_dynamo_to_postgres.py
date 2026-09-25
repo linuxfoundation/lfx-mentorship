@@ -1122,6 +1122,12 @@ def migrate_tasks(
     if quarantined:
         psycopg2.extras.execute_batch(
             cur,
+            "DELETE FROM tasks WHERE id = %s",
+            [(row[0],) for row in quarantined],
+            page_size=500,
+        )
+        psycopg2.extras.execute_batch(
+            cur,
             f"""
             INSERT INTO quarantined_tasks ({columns}, quarantine_reason)
             VALUES ({placeholders}, 'missing application_id')
@@ -1132,7 +1138,7 @@ def migrate_tasks(
             quarantined,
             page_size=500,
         )
-    # A task that already has a parent in tasks is never also held in quarantine.
+    # A task that now has a parent in tasks is never also held in quarantine.
     cur.execute(
         "DELETE FROM quarantined_tasks USING tasks WHERE quarantined_tasks.id = tasks.id"
     )
