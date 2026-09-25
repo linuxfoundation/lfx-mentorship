@@ -396,12 +396,14 @@ DELETE FROM user_profiles AS duplicate
 USING user_profiles AS keeper
 WHERE duplicate.user_id = keeper.user_id
   AND duplicate.profile_type = keeper.profile_type
+  AND duplicate.profile_type = 'mentee'
   AND duplicate.id <> keeper.id
   AND (COALESCE(duplicate.created_on, '-infinity'::timestamptz), duplicate.id)
       < (COALESCE(keeper.created_on, '-infinity'::timestamptz), keeper.id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_user_profiles_user_type
-  ON user_profiles(user_id, profile_type);
+  ON user_profiles(user_id, profile_type)
+  WHERE profile_type = 'mentee';
 
 DROP TABLE IF EXISTS fga_membership_tombstones;
 
