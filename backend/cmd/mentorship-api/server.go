@@ -107,6 +107,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			return nil, fmt.Errorf("FGA JetStream client: %w", jsErr)
 		}
 		outbox := db.NewFGAOutboxRepository(pool)
+		outbox.SetMaxAttempts(cfg.FGA.RelayMaxAttempts)
 		approverRepo := db.NewApproverRepository(pool)
 		builder := fga.NewDatabaseBuilder(programRepo, programMemberRepo, userRepo, programTermRepo, applicationRepo, taskRepo, approverRepo)
 		publisher := fga.NewJetStreamPublisher(js)
@@ -117,10 +118,11 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		relayCtx, relayCancel = context.WithCancel(ctx)
 		go relay.Run(relayCtx, cfg.FGA.RelayInterval)
 		indexOutbox := db.NewIndexOutboxRepository(pool)
-		indexOutbox.SetMaxAttempts(cfg.FGA.RelayMaxAttempts)
+		indexOutbox.SetMaxAttempts(cfg.Indexer.MaxAttempts)
+		indexOutbox.SetRetryDelay(cfg.Indexer.RetryDelay)
 		indexRelay := indexer.NewRelay(indexOutbox, natsConn, cfg.FGA.RelayBatch)
 		indexRelay.SetLogger(logger)
-		indexRelay.SetAuthorizationProvider(indexer.NewManagedAuthorizationProvider(nil, cfg.FGA.IndexerTokenURL, cfg.FGA.IndexerClientID, cfg.FGA.IndexerClientSecret, cfg.FGA.IndexerAudience, cfg.FGA.IndexerScope))
+		indexRelay.SetAuthorizationProvider(indexer.NewManagedAuthorizationProvider(nil, cfg.Indexer.TokenURL, cfg.Indexer.ClientID, cfg.Indexer.ClientSecret, cfg.Indexer.Audience, cfg.Indexer.Scope))
 		go indexRelay.Run(relayCtx, cfg.FGA.RelayInterval)
 	}
 
@@ -170,20 +172,20 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		}
 		w.WriteHeader(http.StatusOK)
 	})
+	r.Handle("/internal/metrics", expvar.Handler())
 
 	var requireGatewayPrincipal func(http.Handler) http.Handler
 	routes := func(r chi.Router) {
-		optionalJWT := func(next http.Handler) http.Handler { return next }
 		// ── Public endpoints ─────────────────────────────────────────────────
 		r.With(requireGatewayPrincipal).Get("/programs/name-availability", programH.NameAvailable)
 		r.Get("/programs", programH.List)
 		r.Get("/programs/catalog", programH.ListCatalog)
-		r.With(optionalJWT).Get("/programs/resolve/{id}", programH.ResolveID)
-		r.With(optionalJWT).Get("/programs/{id}", programH.GetByID)
+		r.Get("/programs/resolve/{id}", programH.ResolveID)
+		r.Get("/programs/{id}", programH.GetByID)
 		r.Get("/programs/{id}/header", programH.GetHeaderProjection)
 		r.Get("/programs/{id}/management-summary", programH.GetManagementSummary)
 		r.Get("/programs/{id}/catalog", programH.GetCatalog)
-		r.With(optionalJWT).Get("/programs/{id}/mentees", programH.ListCatalogMentees)
+		r.Get("/programs/{id}/mentees", programH.ListCatalogMentees)
 		r.Get("/programs/{id}/skills", programH.ListSkills)
 
 		r.Get("/mentees", menteeH.List)
@@ -195,8 +197,8 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		r.Get("/summary", platformSummaryH.Get)
 		r.Get("/funding-stats/total", fundingStatsH.GetTotal)
 		r.Get("/programs/{id}/funding-stats", programH.GetFundingStats)
-		r.With(optionalJWT).Get("/programs/{id}/transactions", programH.GetCategorizedTransactions)
-		r.With(optionalJWT).Get("/programs/{id}/sponsors", programH.GetProgramSponsors)
+		r.Get("/programs/{id}/transactions", programH.GetCategorizedTransactions)
+		r.Get("/programs/{id}/sponsors", programH.GetProgramSponsors)
 		r.Get("/programs/{id}/terms", programTermH.ListByProgram)
 		r.Get("/programs/{id}/term-management", programTermH.ListManagementByProgram)
 		r.Get("/programs/{id}/members", programMemberH.List)
@@ -280,7 +282,8 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			r.Patch("/tasks/{id}/review", taskH.UpdateReview)
 			r.Delete("/tasks/{id}", taskH.Delete)
 
-			// Platform-authorized authorization roster management.
+			// These cluster-local platform-management routes use backend scope checks;
+			// they are intentionally not exposed through the Heimdall RuleSet yet.
 			r.Get("/admin/approver-team/members", rosterH.ListApprovers)
 			r.Post("/admin/approver-team/members", rosterH.AddApprover)
 			r.Delete("/admin/approver-team/members/{userID}", rosterH.RemoveApprover)
@@ -323,13 +326,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	}
 	r.Route("/mentorship/v1", func(r chi.Router) {
 		r.Use(jwtAuth.GatewayMiddleware)
-		r.Get("/internal/metrics", func(w http.ResponseWriter, req *http.Request) {
-			if !auth.HasScope(req.Context(), auth.ScopeReadMetrics()) {
-				http.Error(w, "forbidden", http.StatusForbidden)
-				return
-			}
-			expvar.Handler().ServeHTTP(w, req)
-		})
+		r.Use(handler.IndexMetadata)
 		routes(r)
 	})
 

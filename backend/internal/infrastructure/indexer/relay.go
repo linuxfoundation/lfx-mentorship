@@ -6,13 +6,22 @@ package indexer
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"expvar"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
-	"github.com/nats-io/nats.go"
+)
+
+var (
+	indexRelayClaimed       = expvar.NewInt("index_relay_claimed")
+	indexRelayPublished     = expvar.NewInt("index_relay_published")
+	indexRelayRetried       = expvar.NewInt("index_relay_retried")
+	indexRelayClaimFailures = expvar.NewInt("index_relay_claim_failures")
+	indexRelayAckFailures   = expvar.NewInt("index_relay_ack_failures")
+	indexRelayDeadLettered  = expvar.NewInt("index_relay_dead_lettered")
 )
 
 type Envelope struct {
@@ -47,16 +56,12 @@ type publisher interface {
 	Publish(subject string, data []byte) error
 }
 
-type requester interface {
-	Request(subject string, data []byte, timeout time.Duration) (*nats.Msg, error)
+type flusher interface {
+	Flush() error
 }
 
 type authorizationProvider interface {
 	Authorization(context.Context) (string, error)
-}
-
-type flusher interface {
-	Flush() error
 }
 
 func NewRelay(outbox domain.IndexOutboxRepository, conn publisher, batch int) *Relay {
@@ -69,37 +74,51 @@ func NewRelay(outbox domain.IndexOutboxRepository, conn publisher, batch int) *R
 func (r *Relay) RunOnce(ctx context.Context) error {
 	records, err := r.outbox.Claim(ctx, r.batch)
 	if err != nil {
+		indexRelayClaimFailures.Add(1)
 		return err
 	}
+	indexRelayClaimed.Add(int64(len(records)))
 	authorization := r.authorization
 	if r.provider != nil {
 		authorization, err = r.provider.Authorization(ctx)
 		if err != nil {
+			authErr := fmt.Errorf("obtain index authorization: %w", err)
 			for _, record := range records {
-				_, _ = r.outbox.MarkRetry(ctx, record)
+				acknowledged, deadLettered, retryErr := r.outbox.MarkRetry(ctx, record)
+				if retryErr != nil {
+					authErr = errors.Join(authErr, fmt.Errorf("mark retry for index record %s: %w", record.ID, retryErr))
+					continue
+				}
+				if !acknowledged {
+					continue
+				}
+				indexRelayRetried.Add(1)
+				if deadLettered {
+					indexRelayDeadLettered.Add(1)
+				}
 			}
-			return fmt.Errorf("obtain index authorization: %w", err)
+			return authErr
 		}
 	}
 	var firstErr error
 	for _, record := range records {
 		headers := record.Headers
 		var recordErr error
-		if authorization != "" {
-			var headerValues map[string]string
-			if len(headers) > 0 {
-				if err := json.Unmarshal(headers, &headerValues); err != nil {
-					recordErr = fmt.Errorf("decode index headers for record %s: %w", record.ID, err)
-				}
-			} else {
-				headerValues = map[string]string{}
+		var headerValues map[string]string
+		if len(headers) > 0 {
+			if err := json.Unmarshal(headers, &headerValues); err != nil {
+				recordErr = fmt.Errorf("decode index headers for record %s: %w", record.ID, err)
 			}
-			if recordErr == nil {
+		}
+		if recordErr == nil && (authorization != "" || headerValues != nil) {
+			// Rows stored before enqueue-time sanitization may still carry client-supplied actor headers.
+			headerValues = domain.SanitizedIndexHeaders(headerValues)
+			if authorization != "" {
 				headerValues["authorization"] = authorization
-				headers, recordErr = json.Marshal(headerValues)
-				if recordErr != nil {
-					recordErr = fmt.Errorf("marshal index authorization for record %s: %w", record.ID, recordErr)
-				}
+			}
+			headers, recordErr = json.Marshal(headerValues)
+			if recordErr != nil {
+				recordErr = fmt.Errorf("marshal index headers for record %s: %w", record.ID, recordErr)
 			}
 		}
 		if recordErr == nil {
@@ -116,10 +135,15 @@ func (r *Relay) RunOnce(ctx context.Context) error {
 			}
 		}
 		if recordErr != nil {
-			if acknowledged, retryErr := r.outbox.MarkRetry(ctx, record); retryErr != nil {
+			if acknowledged, deadLettered, retryErr := r.outbox.MarkRetry(ctx, record); retryErr != nil {
 				recordErr = fmt.Errorf("mark retry for index record %s: %w", record.ID, retryErr)
 			} else if !acknowledged {
 				recordErr = fmt.Errorf("mark retry for index record %s was not acknowledged", record.ID)
+			} else {
+				indexRelayRetried.Add(1)
+				if deadLettered {
+					indexRelayDeadLettered.Add(1)
+				}
 			}
 			if firstErr == nil {
 				firstErr = recordErr
@@ -132,27 +156,19 @@ func (r *Relay) RunOnce(ctx context.Context) error {
 		} else if !acknowledged {
 			recordErr = fmt.Errorf("mark sent for index record %s was not acknowledged", record.ID)
 		}
-		if recordErr != nil && firstErr == nil {
-			firstErr = recordErr
+		if recordErr != nil {
+			indexRelayAckFailures.Add(1)
+			if firstErr == nil {
+				firstErr = recordErr
+			}
+		} else {
+			indexRelayPublished.Add(1)
 		}
 	}
 	return firstErr
 }
 
 func (r *Relay) publishAndConfirm(subject string, payload []byte) error {
-	if requester, ok := r.conn.(requester); ok {
-		response, err := requester.Request(subject, payload, 10*time.Second)
-		if err != nil {
-			return err
-		}
-		if response == nil || !strings.EqualFold(strings.TrimSpace(string(response.Data)), "OK") {
-			if response == nil {
-				return fmt.Errorf("index consumer returned no response")
-			}
-			return fmt.Errorf("index consumer rejected record: %s", strings.TrimSpace(string(response.Data)))
-		}
-		return nil
-	}
 	if err := r.conn.Publish(subject, payload); err != nil {
 		return err
 	}

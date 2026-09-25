@@ -14,6 +14,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/handler"
+	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/auth"
 )
 
 type stubProgramSvc struct {
@@ -433,7 +434,7 @@ func TestProgramHandler_ResolveID_HiddenReturns404(t *testing.T) {
 	}
 }
 
-func TestProgramHandler_ResolveID_DraftResolvesLikePublished(t *testing.T) {
+func TestProgramHandler_ResolveID_DraftReturns404ToAnonymous(t *testing.T) {
 	h := handler.NewProgramHandler(&stubProgramSvc{
 		getBySlug: func(_ context.Context, slug string) (*models.Program, error) {
 			return &models.Program{ID: "draft-uuid", Slug: slug, Status: models.ProgramStatusDraft}, nil
@@ -442,6 +443,25 @@ func TestProgramHandler_ResolveID_DraftResolvesLikePublished(t *testing.T) {
 
 	r := httptest.NewRequest(http.MethodGet, "/v1/programs/resolve/my-draft", nil)
 	r = requestWithChiParam(r, "id", "my-draft")
+	w := httptest.NewRecorder()
+	h.ResolveID(w, r)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("got %d; want 404", w.Code)
+	}
+}
+
+func TestProgramHandler_ResolveID_DraftResolvesForOwner(t *testing.T) {
+	owner := "owner"
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		getBySlug: func(_ context.Context, slug string) (*models.Program, error) {
+			return &models.Program{ID: "draft-uuid", Slug: slug, Status: models.ProgramStatusDraft, LFID: &owner}, nil
+		},
+	})
+
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/resolve/my-draft", nil)
+	r = requestWithChiParam(r, "id", "my-draft")
+	r = r.WithContext(auth.ContextWithPrincipal(r.Context(), &models.Principal{UserID: "owner-user", Username: owner}))
 	w := httptest.NewRecorder()
 	h.ResolveID(w, r)
 

@@ -65,6 +65,9 @@ type ProgramHandler struct {
 
 type enrollmentRequest struct {
 	ProjectID        string                  `json:"projectId"`
+	ProjectSlug      *string                 `json:"projectSlug"`
+	ProjectName      *string                 `json:"projectName"`
+	ProjectLogoURL   *string                 `json:"projectLogoUrl,omitempty"`
 	Name             string                  `json:"name"`
 	Description      *string                 `json:"description,omitempty"`
 	RepositoryURL    *string                 `json:"repositoryUrl,omitempty"`
@@ -108,17 +111,6 @@ func enrollmentSlug(name string) string {
 		}
 	}
 	return strings.Trim(builder.String(), "-")
-}
-
-func withIndexMetadata(r *http.Request) *http.Request {
-	headers := map[string]string{}
-	if value := r.Header.Get("Authorization"); value != "" {
-		headers["authorization"] = value
-	}
-	if value := r.Header.Get("X-On-Behalf-Of"); value != "" {
-		headers["x-on-behalf-of"] = value
-	}
-	return r.WithContext(domain.ContextWithIndexHeaders(r.Context(), headers))
 }
 
 // NewProgramHandler creates a ProgramHandler.
@@ -171,14 +163,18 @@ func resolveVisibleProgram(w http.ResponseWriter, r *http.Request, svc programLo
 		if (len(gatewayNonPublic) == 0 || gatewayNonPublic[0]) && auth.IsGatewayPrincipal(r.Context()) && principal != nil && principal.UserID != "_anonymous" {
 			return program, true
 		}
-		isOwner := principal != nil && principal.UserID != "_anonymous" &&
-			program.LFID != nil && *program.LFID != "" && *program.LFID == principal.Username
-		if !isOwner {
+		if !isProgramOwner(r, program) {
 			Error(w, domain.ErrProgramNotFound)
 			return nil, false
 		}
 	}
 	return program, true
+}
+
+func isProgramOwner(r *http.Request, program *models.Program) bool {
+	principal := auth.PrincipalFromContext(r.Context())
+	return principal != nil && principal.UserID != "_anonymous" &&
+		program.LFID != nil && *program.LFID != "" && *program.LFID == principal.Username
 }
 
 // List handles GET /v1/programs.
@@ -319,7 +315,6 @@ func (h *ProgramHandler) Submit(w http.ResponseWriter, r *http.Request) {
 		Error(w, domain.ErrUnauthorized)
 		return
 	}
-	r = withIndexMetadata(r)
 	status := models.ProgramStatusSubmitted
 	program, err := h.svc.Update(r.Context(), chi.URLParam(r, "id"), models.ProgramUpdateInput{Status: &status})
 	if err != nil {
@@ -335,7 +330,6 @@ func (h *ProgramHandler) Decision(w http.ResponseWriter, r *http.Request) {
 		Error(w, domain.ErrUnauthorized)
 		return
 	}
-	r = withIndexMetadata(r)
 	var input models.ProgramUpdateInput
 	if !decodeBody(w, r, &input) {
 		return
@@ -357,10 +351,15 @@ func (h *ProgramHandler) Decision(w http.ResponseWriter, r *http.Request) {
 }
 
 // ResolveID handles GET /v1/programs/resolve/{id}.
-// It resolves either a UUID or slug to the canonical program UUID.
+// It resolves either a UUID or slug to the canonical program UUID. The route is
+// allow_all, so only published programs resolve for anyone but the owner.
 func (h *ProgramHandler) ResolveID(w http.ResponseWriter, r *http.Request) {
 	program, ok := resolveVisibleProgram(w, r, h.svc, false)
 	if !ok {
+		return
+	}
+	if program.Status != models.ProgramStatusPublished && !isProgramOwner(r, program) {
+		Error(w, domain.ErrProgramNotFound)
 		return
 	}
 	JSON(w, http.StatusOK, map[string]string{"id": program.ID})
@@ -409,6 +408,9 @@ func (h *ProgramHandler) Create(w http.ResponseWriter, r *http.Request) {
 	enrollment := models.ProgramEnrollmentInput{
 		Program: models.ProgramCreateInput{
 			ProjectUID:         &request.ProjectID,
+			ProjectSlug:        request.ProjectSlug,
+			ProjectName:        request.ProjectName,
+			ProjectLogoURL:     request.ProjectLogoURL,
 			Name:               request.Name,
 			Slug:               enrollmentSlug(request.Name),
 			Description:        request.Description,
@@ -423,7 +425,6 @@ func (h *ProgramHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Prerequisites: request.Prerequisites,
 	}
 	enrollment.Program.CreatorUserID = principal.UserID
-	r = withIndexMetadata(r)
 
 	program, err := h.svc.CreateEnrollment(r.Context(), enrollment)
 	if err != nil {
@@ -450,8 +451,6 @@ func (h *ProgramHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Error(w, fmt.Errorf("%w: status transitions are handled by dedicated submit/decision routes", domain.ErrInvalidInput))
 		return
 	}
-	r = withIndexMetadata(r)
-
 	program, err := h.svc.Update(r.Context(), id, input)
 	if err != nil {
 		Error(w, err)
@@ -469,7 +468,6 @@ func (h *ProgramHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := chi.URLParam(r, "id")
-	r = withIndexMetadata(r)
 	if err := h.svc.Delete(r.Context(), id); err != nil {
 		Error(w, err)
 		return
@@ -501,8 +499,6 @@ func (h *ProgramHandler) AddSkill(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &input) {
 		return
 	}
-	r = withIndexMetadata(r)
-
 	skill, err := h.svc.AddSkill(r.Context(), programID, input)
 	if err != nil {
 		Error(w, err)
@@ -521,7 +517,6 @@ func (h *ProgramHandler) DeleteSkill(w http.ResponseWriter, r *http.Request) {
 
 	programID := chi.URLParam(r, "id")
 	skillID := chi.URLParam(r, "skillId")
-	r = withIndexMetadata(r)
 	if err := h.svc.DeleteSkill(r.Context(), programID, skillID, principal.UserID); err != nil {
 		Error(w, err)
 		return

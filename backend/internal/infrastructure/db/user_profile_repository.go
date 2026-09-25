@@ -161,7 +161,8 @@ func (r *UserProfileRepository) Create(ctx context.Context, input models.UserPro
 	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM user_profiles WHERE user_id = $1 AND profile_type = $2`, input.UserID, input.ProfileType).Scan(&existing); err != nil {
 		return nil, fmt.Errorf("count existing user profiles: %w", err)
 	}
-	if existing > 0 {
+	// Only mentee profiles are unique per user (FR-025); mentors may hold several.
+	if models.UserProfileType(input.ProfileType) == models.UserProfileTypeMentee && existing > 0 {
 		return nil, fmt.Errorf("%w: %s profile already exists for user", domain.ErrConflict, input.ProfileType)
 	}
 

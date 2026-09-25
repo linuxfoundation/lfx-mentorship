@@ -373,6 +373,36 @@ func TestTaskService_Update_InvalidDenormalisedStatuses_Rejected(t *testing.T) {
 	}
 }
 
+func TestTaskService_DueDateMustBeISODate(t *testing.T) {
+	created := false
+	taskRepo := &stubTaskRepo{create: func(_ context.Context, _ string, in models.TaskCreateInput) (*models.Task, error) {
+		created = true
+		return &models.Task{ID: in.ID, DueDate: in.DueDate}, nil
+	}}
+	appRepo := &stubAppRepo{getByID: func(_ context.Context, id string) (*models.Application, error) {
+		return &models.Application{ID: id, UserID: "u1", Role: models.ApplicationRoleMentee, Status: models.ApplicationStatusAccepted}, nil
+	}}
+	svc := newTaskSvc(taskRepo, appRepo, &stubTermRepo{}, &stubMemberRepo{})
+
+	for _, bad := range []string{"tomorrow", "2026-2-5", "2026-02-30", ""} {
+		due := bad
+		if _, err := svc.Create(context.Background(), "app-1", models.TaskCreateInput{AssigneeID: "u1", DueDate: &due}); !errors.Is(err, domain.ErrInvalidInput) {
+			t.Errorf("create due_date %q: expected ErrInvalidInput, got %v", bad, err)
+		}
+		if _, err := svc.Update(context.Background(), "task-1", models.TaskUpdateInput{DueDate: &due}); !errors.Is(err, domain.ErrInvalidInput) {
+			t.Errorf("update due_date %q: expected ErrInvalidInput, got %v", bad, err)
+		}
+	}
+	if created {
+		t.Fatal("repository create called for an invalid due date")
+	}
+
+	valid := "2026-02-15"
+	if _, err := svc.Create(context.Background(), "app-1", models.TaskCreateInput{AssigneeID: "u1", DueDate: &valid}); err != nil || !created {
+		t.Fatalf("create valid due_date: created=%v err=%v", created, err)
+	}
+}
+
 func TestTaskService_InvalidCategory_Rejected(t *testing.T) {
 	svc := newTaskSvc(&stubTaskRepo{}, &stubAppRepo{}, &stubTermRepo{}, &stubMemberRepo{})
 	bad := models.TaskCategory("optional") // not a member of the enum

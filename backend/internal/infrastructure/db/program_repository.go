@@ -31,7 +31,7 @@ func NewProgramRepository(pool *pgxpool.Pool) *ProgramRepository {
 }
 
 const programSelectCols = `
-	programs.id, programs.project_uid, programs.name, programs.slug, programs.status, programs.is_paid,
+	programs.id, programs.lf_project_uid AS project_uid, programs.lf_project_slug AS project_slug, programs.lf_project_name AS project_name, programs.lf_project_logo_url AS project_logo_url, programs.name, programs.slug, programs.status, programs.is_paid,
 	programs.description, programs.logo_url, programs.website_url, programs.repo_link,
 	programs.code_of_conduct, programs.industry, programs.color, programs.lfid,
 	programs.cii_project_id, programs.accept_applications,
@@ -40,7 +40,7 @@ const programSelectCols = `
 	programs.mentee_needs, programs.task_templates, programs.created_on, programs.updated_on`
 
 const programReturningCols = `
-	id, project_uid, name, slug, status, is_paid, description, logo_url, website_url, repo_link,
+	id, lf_project_uid AS project_uid, lf_project_slug AS project_slug, lf_project_name AS project_name, lf_project_logo_url AS project_logo_url, name, slug, status, is_paid, description, logo_url, website_url, repo_link,
 	code_of_conduct, industry, color, lfid, cii_project_id, accept_applications,
 	terms_and_conditions, program_term_status, discover_sort_rank, amount_raised,
 	mentee_needs, task_templates, created_on, updated_on`
@@ -52,7 +52,7 @@ const programsWithFundingFrom = `
 func scanProgram(row pgx.Row) (*models.Program, error) {
 	var p models.Program
 	err := row.Scan(
-		&p.ID, &p.ProjectUID, &p.Name, &p.Slug, &p.Status, &p.IsPaid, &p.Description, &p.LogoURL,
+		&p.ID, &p.ProjectUID, &p.ProjectSlug, &p.ProjectName, &p.ProjectLogoURL, &p.Name, &p.Slug, &p.Status, &p.IsPaid, &p.Description, &p.LogoURL,
 		&p.WebsiteURL, &p.RepoLink, &p.CodeOfConduct, &p.Industry, &p.Color, &p.LFID,
 		&p.CIIProjectID, &p.AcceptApplications, &p.TermsAndConditions, &p.ProgramTermStatus,
 		&p.DiscoverSortRank, &p.AmountRaised, &p.MenteeNeeds, &p.TaskTemplates,
@@ -71,6 +71,15 @@ func enqueueProgramIndex(ctx context.Context, tx pgx.Tx, program *models.Program
 		return err
 	}
 	document := NewProgramIndexDocument(program)
+	if err := tx.QueryRow(ctx, `
+		SELECT
+			COUNT(*) FILTER (WHERE member_type = 'mentor' AND status = 'active'),
+			(SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE pt.program_id = $1 AND a.role = 'mentee' AND a.status = 'accepted'),
+			(SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE pt.program_id = $1 AND a.role = 'mentee' AND a.status = 'graduated')
+		FROM program_members
+		WHERE program_id = $1`, program.ID).Scan(&document.Stats.Mentors, &document.Stats.Mentees, &document.Stats.Graduated); err != nil {
+		return fmt.Errorf("resolve program index stats: %w", err)
+	}
 	data, err := json.Marshal(document)
 	if err != nil {
 		return err
@@ -93,8 +102,17 @@ func enqueueProgramIndex(ctx context.Context, tx pgx.Tx, program *models.Program
 			claimed_generation = CASE WHEN index_outbox.state = 'in_flight' THEN index_outbox.claimed_generation ELSE NULL END,
 			claimed_at = CASE WHEN index_outbox.state = 'in_flight' THEN index_outbox.claimed_at ELSE NULL END,
 			attempts = 0,
+			next_attempt_at = NOW(),
 			sent_on = NULL`, program.ID, action, headerData, data, configData)
 	return err
+}
+
+func enqueueProgramIndexByID(ctx context.Context, tx pgx.Tx, programID string) error {
+	program, err := scanProgram(tx.QueryRow(ctx, `SELECT`+programSelectCols+programsWithFundingFrom+` WHERE programs.id = $1`, programID))
+	if err != nil {
+		return fmt.Errorf("load program for index refresh: %w", err)
+	}
+	return enqueueProgramIndex(ctx, tx, program, "updated")
 }
 
 func enqueueProgramIndexDelete(ctx context.Context, tx pgx.Tx, id string) error {
@@ -657,14 +675,15 @@ func (r *ProgramRepository) createInTx(ctx context.Context, tx pgx.Tx, input mod
 
 	const q = `
 		INSERT INTO programs (
-			id, project_uid, name, slug, status, is_paid, description, logo_url, website_url, repo_link,
-			code_of_conduct, industry, color, lfid, cii_project_id, accept_applications,
-			terms_and_conditions, mentee_needs, task_templates
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+			id, lf_project_uid, lf_project_slug, lf_project_name, lf_project_logo_url, name, slug, status, is_paid,
+			description, logo_url, website_url, repo_link, code_of_conduct, industry, color, lfid, cii_project_id,
+			accept_applications, terms_and_conditions, mentee_needs, task_templates
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
 		RETURNING` + programReturningCols
 
 	p, err := scanProgram(tx.QueryRow(ctx, q,
-		input.ID, input.ProjectUID, input.Name, input.Slug, input.Status, input.IsPaid,
+		input.ID, input.ProjectUID, input.ProjectSlug, input.ProjectName, input.ProjectLogoURL,
+		input.Name, input.Slug, input.Status, input.IsPaid,
 		input.Description, input.LogoURL, input.WebsiteURL, input.RepoLink,
 		input.CodeOfConduct, input.Industry, input.Color, input.LFID, input.CIIProjectID,
 		input.AcceptApplications, input.TermsAndConditions,
@@ -846,9 +865,15 @@ func (r *ProgramRepository) Delete(ctx context.Context, id string) error {
 		if err := enqueueObjectMarker(ctx, tx, "mentorship_task", taskID, deleteAccessOperation); err != nil {
 			return err
 		}
+		if err := enqueueIndexDelete(ctx, tx, "mentorship_task", taskID); err != nil {
+			return err
+		}
 	}
 	for _, applicationID := range applicationIDs {
 		if err := enqueueObjectMarker(ctx, tx, "mentorship_application", applicationID, deleteAccessOperation); err != nil {
+			return err
+		}
+		if err := enqueueIndexDelete(ctx, tx, "mentorship_application", applicationID); err != nil {
 			return err
 		}
 	}

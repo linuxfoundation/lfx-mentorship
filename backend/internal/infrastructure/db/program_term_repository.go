@@ -258,6 +258,14 @@ func (r *ProgramTermRepository) Update(ctx context.Context, id string, input mod
 		span.RecordError(err)
 		return nil, fmt.Errorf("update program term: %w", err)
 	}
+	if input.Status != nil {
+		if err := syncApplicationsWithTermState(ctx, tx, id, t.Status); err != nil {
+			return nil, err
+		}
+		if err := enqueueProgramIndexByID(ctx, tx, t.ProgramID); err != nil {
+			return nil, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit update program term transaction: %w", err)
 	}
@@ -368,16 +376,17 @@ func (r *ProgramTermRepository) CloseWithBulkDecline(ctx context.Context, id str
 		return nil, 0, fmt.Errorf("decline pending applications rows: %w", err)
 	}
 	rows.Close()
-	for _, application := range applications {
-		if err := enqueueApplicationMarker(ctx, tx, application, "update_access"); err != nil {
-			return nil, 0, err
-		}
-	}
 
 	closed := models.ProgramTermStatusClosed
 	updated, err := scanProgramTerm(tx.QueryRow(ctx, `UPDATE program_terms SET status = $2 WHERE id = $1 RETURNING`+programTermCols, id, closed))
 	if err != nil {
 		return nil, 0, fmt.Errorf("close term: %w", err)
+	}
+	if err := syncApplicationsWithTermState(ctx, tx, id, closed); err != nil {
+		return nil, 0, err
+	}
+	if err := enqueueProgramIndexByID(ctx, tx, updated.ProgramID); err != nil {
+		return nil, 0, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, 0, fmt.Errorf("commit close term transaction: %w", err)

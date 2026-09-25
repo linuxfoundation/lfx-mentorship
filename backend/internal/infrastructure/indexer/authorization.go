@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-// ManagedAuthorizationProvider obtains and caches a Heimdall-compatible M2M token.
+// ManagedAuthorizationProvider obtains and caches an M2M token for index publishing.
 type ManagedAuthorizationProvider struct {
 	client       *http.Client
 	tokenURL     string
@@ -79,7 +79,11 @@ func (p *ManagedAuthorizationProvider) Authorization(ctx context.Context) (strin
 	if expiresIn <= 0 {
 		expiresIn = 5 * time.Minute
 	}
+	refreshBefore := expiresIn / 10
+	if refreshBefore > time.Minute {
+		refreshBefore = time.Minute
+	}
 	p.token = "Bearer " + tokenResponse.AccessToken
-	p.expiresAt = time.Now().Add(expiresIn - time.Minute)
+	p.expiresAt = time.Now().Add(expiresIn - refreshBefore)
 	return p.token, nil
 }

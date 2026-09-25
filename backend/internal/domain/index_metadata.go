@@ -32,6 +32,8 @@ func SanitizedIndexHeaders(headers map[string]string) map[string]string {
 			if strings.TrimSpace(value) != "" {
 				out[lower] = "present"
 			}
+		case "x-on-behalf-of":
+			continue
 		default:
 			out[lower] = value
 		}

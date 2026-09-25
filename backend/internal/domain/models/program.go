@@ -34,6 +34,9 @@ func (s ProgramStatus) IsValid() bool {
 type Program struct {
 	ID                 string             `json:"id"`
 	ProjectUID         *string            `json:"project_uid,omitempty"`
+	ProjectSlug        *string            `json:"project_slug,omitempty"`
+	ProjectName        *string            `json:"project_name,omitempty"`
+	ProjectLogoURL     *string            `json:"project_logo_url,omitempty"`
 	Name               string             `json:"name"`
 	Slug               string             `json:"slug"`
 	Status             ProgramStatus      `json:"status"`
@@ -63,6 +66,9 @@ type ProgramCreateInput struct {
 	CreatorUserID      string          `json:"-"`
 	ID                 string          `json:"id"`
 	ProjectUID         *string         `json:"project_uid,omitempty"`
+	ProjectSlug        *string         `json:"project_slug,omitempty"`
+	ProjectName        *string         `json:"project_name,omitempty"`
+	ProjectLogoURL     *string         `json:"project_logo_url,omitempty"`
 	Name               string          `json:"name"`
 	Slug               string          `json:"slug"`
 	Status             ProgramStatus   `json:"status"`

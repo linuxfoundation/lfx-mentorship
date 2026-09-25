@@ -204,9 +204,6 @@ func (s *ApplicationService) Create(ctx context.Context, programTermID string, i
 	if !input.Role.IsValid() {
 		return nil, fmt.Errorf("%w: role must be mentor or mentee", domain.ErrInvalidInput)
 	}
-	if input.ProgramTermStatus != nil && !input.ProgramTermStatus.IsValid() {
-		return nil, fmt.Errorf("%w: invalid program term status %q", domain.ErrInvalidInput, *input.ProgramTermStatus)
-	}
 	if input.AttendanceType != nil && !input.AttendanceType.IsValid() {
 		return nil, fmt.Errorf("%w: attendance_type must be full_time or part_time", domain.ErrInvalidInput)
 	}
