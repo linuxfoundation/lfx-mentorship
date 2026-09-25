@@ -10,14 +10,15 @@ import (
 )
 
 type ProgramIndexDocument struct {
-	ID         string    `json:"id"`
-	ProjectUID *string   `json:"project_uid,omitempty"`
-	Name       string    `json:"name"`
-	Slug       string    `json:"slug"`
-	Status     string    `json:"status"`
-	LogoURL    *string   `json:"logo_url,omitempty"`
-	CreatedOn  time.Time `json:"created_on"`
-	UpdatedOn  time.Time `json:"updated_on"`
+	ID         string                    `json:"id"`
+	ProjectUID *string                   `json:"project_uid,omitempty"`
+	Name       string                    `json:"name"`
+	Slug       string                    `json:"slug"`
+	Status     string                    `json:"status"`
+	LogoURL    *string                   `json:"logo_url,omitempty"`
+	Stats      models.ProgramHeaderStats `json:"stats"`
+	CreatedOn  time.Time                 `json:"created_on"`
+	UpdatedOn  time.Time                 `json:"updated_on"`
 }
 
 func NewProgramIndexDocument(program *models.Program) ProgramIndexDocument {

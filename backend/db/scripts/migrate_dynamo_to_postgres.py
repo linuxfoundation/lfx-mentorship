@@ -1308,6 +1308,119 @@ def seed_derived_state(cur) -> None:
     )
     log.info("  → %d program index seeds queued", len(cur.fetchall()))
 
+    cur.execute(
+        """
+        INSERT INTO index_outbox
+            (object_type, object_uid, action, headers, data, indexing_config)
+        SELECT
+            'mentorship_application',
+            a.id,
+            'updated',
+            '{}'::jsonb,
+            jsonb_strip_nulls(jsonb_build_object(
+                'id', a.id,
+                'program_term_id', a.program_term_id,
+                'user_id', a.user_id,
+                'role', a.role,
+                'status', a.status,
+                'program_term_status', a.program_term_status,
+                'created_on', a.created_on,
+                'updated_on', a.updated_on
+            )),
+            jsonb_build_object(
+                'object_id', a.id,
+                'object_ref', 'mentorship_application:' || a.id::text,
+                'object_type', 'mentorship_application',
+                'access_check_object', 'mentorship_application:' || a.id::text,
+                'access_check_relation', 'auditor',
+                'history_check_object', 'mentorship_program:' || pt.program_id::text,
+                'history_check_relation', 'auditor',
+                'sort_name', a.user_id::text,
+                'name_and_aliases', jsonb_build_array(a.user_id::text, a.role),
+                'public', false,
+                'tags', jsonb_build_array('role:' || a.role, 'status:' || a.status),
+                'parent_refs', jsonb_build_array('mentorship_program:' || pt.program_id::text)
+            )
+        FROM applications a
+        JOIN program_terms pt ON pt.id = a.program_term_id
+        JOIN users u ON u.id = a.user_id
+        WHERE NULLIF(u.lfid, '') IS NOT NULL
+        ON CONFLICT (object_type, object_uid) DO UPDATE SET
+            action = EXCLUDED.action,
+            headers = EXCLUDED.headers,
+            data = EXCLUDED.data,
+            indexing_config = EXCLUDED.indexing_config,
+            generation = CASE WHEN index_outbox.state = 'dead_letter' THEN index_outbox.generation ELSE index_outbox.generation + 1 END,
+            state = CASE WHEN index_outbox.state IN ('in_flight', 'dead_letter') THEN index_outbox.state ELSE 'pending' END,
+            claimed_generation = CASE WHEN index_outbox.state = 'in_flight' THEN index_outbox.claimed_generation ELSE NULL END,
+            claimed_at = CASE WHEN index_outbox.state = 'in_flight' THEN index_outbox.claimed_at ELSE NULL END,
+            attempts = CASE WHEN index_outbox.state = 'dead_letter' THEN index_outbox.attempts ELSE 0 END,
+            next_attempt_at = CASE WHEN index_outbox.state = 'dead_letter' THEN index_outbox.next_attempt_at ELSE NOW() END,
+            sent_on = CASE WHEN index_outbox.state = 'dead_letter' THEN index_outbox.sent_on ELSE NULL END
+        RETURNING object_uid
+        """
+    )
+    log.info("  → %d application index seeds queued", len(cur.fetchall()))
+
+    cur.execute(
+        """
+        INSERT INTO index_outbox
+            (object_type, object_uid, action, headers, data, indexing_config)
+        SELECT
+            'mentorship_task',
+            t.id,
+            'updated',
+            '{}'::jsonb,
+            jsonb_strip_nulls(jsonb_build_object(
+                'id', t.id,
+                'application_id', t.application_id,
+                'assignee_id', t.assignee_id,
+                'name', t.name,
+                'category', t.category,
+                'status', t.status,
+                'created_on', t.created_on,
+                'updated_on', t.updated_on
+            )),
+            jsonb_build_object(
+                'object_id', t.id,
+                'object_ref', 'mentorship_task:' || t.id::text,
+                'object_type', 'mentorship_task',
+                'access_check_object', 'mentorship_task:' || t.id::text,
+                'access_check_relation', 'auditor',
+                'history_check_object', 'mentorship_application:' || t.application_id::text,
+                'history_check_relation', 'auditor',
+                'sort_name', COALESCE(t.name, ''),
+                'name_and_aliases', jsonb_build_array(COALESCE(t.name, ''), COALESCE(t.category, '')),
+                'public', false,
+                'tags', jsonb_build_array(
+                    'status:' || t.status,
+                    'category:' || COALESCE(t.category, ''),
+                    'assignee_id:' || t.assignee_id::text
+                ),
+                'parent_refs', jsonb_build_array('mentorship_application:' || t.application_id::text)
+            )
+        FROM tasks t
+        JOIN applications a ON a.id = t.application_id
+        JOIN users u ON u.id = t.assignee_id
+        WHERE t.application_id IS NOT NULL
+          AND NULLIF(u.lfid, '') IS NOT NULL
+        ON CONFLICT (object_type, object_uid) DO UPDATE SET
+            action = EXCLUDED.action,
+            headers = EXCLUDED.headers,
+            data = EXCLUDED.data,
+            indexing_config = EXCLUDED.indexing_config,
+            generation = CASE WHEN index_outbox.state = 'dead_letter' THEN index_outbox.generation ELSE index_outbox.generation + 1 END,
+            state = CASE WHEN index_outbox.state IN ('in_flight', 'dead_letter') THEN index_outbox.state ELSE 'pending' END,
+            claimed_generation = CASE WHEN index_outbox.state = 'in_flight' THEN index_outbox.claimed_generation ELSE NULL END,
+            claimed_at = CASE WHEN index_outbox.state = 'in_flight' THEN index_outbox.claimed_at ELSE NULL END,
+            attempts = CASE WHEN index_outbox.state = 'dead_letter' THEN index_outbox.attempts ELSE 0 END,
+            next_attempt_at = CASE WHEN index_outbox.state = 'dead_letter' THEN index_outbox.next_attempt_at ELSE NOW() END,
+            sent_on = CASE WHEN index_outbox.state = 'dead_letter' THEN index_outbox.sent_on ELSE NULL END
+        RETURNING object_uid
+        """
+    )
+    log.info("  → %d task index seeds queued", len(cur.fetchall()))
+
 
 # ---------------------------------------------------------------------------
 # Main

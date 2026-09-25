@@ -172,6 +172,9 @@ func (r *TaskRepository) Create(ctx context.Context, applicationID string, input
 	if err := enqueueTaskMarker(ctx, tx, t, "update_access"); err != nil {
 		return nil, err
 	}
+	if err := enqueueTaskIndex(ctx, tx, t, "created"); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create task transaction: %w", err)
 	}
@@ -219,6 +222,9 @@ func (r *TaskRepository) Update(ctx context.Context, id string, input models.Tas
 	if err := enqueueTaskMarker(ctx, tx, t, "update_access"); err != nil {
 		return nil, err
 	}
+	if err := enqueueTaskIndex(ctx, tx, t, "updated"); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit update task transaction: %w", err)
 	}
@@ -251,6 +257,9 @@ func (r *TaskRepository) Delete(ctx context.Context, id string) error {
 		return domain.ErrTaskNotFound
 	}
 	if err := enqueueTaskMarker(ctx, tx, current, "delete_access"); err != nil {
+		return err
+	}
+	if err := enqueueIndexDelete(ctx, tx, "mentorship_task", current.ID); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {

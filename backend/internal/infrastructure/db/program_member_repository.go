@@ -233,6 +233,11 @@ func (r *ProgramMemberRepository) Create(ctx context.Context, programID string, 
 		if err := enqueueMemberMarker(ctx, tx, m, "put"); err != nil {
 			return nil, err
 		}
+		if m.MemberType == models.MemberTypeMentor {
+			if err := enqueueProgramIndexByID(ctx, tx, m.ProgramID); err != nil {
+				return nil, err
+			}
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create program member transaction: %w", err)
@@ -282,6 +287,11 @@ func (r *ProgramMemberRepository) Update(ctx context.Context, id string, input m
 		if err := enqueueMemberMarker(ctx, tx, m, op); err != nil {
 			return nil, err
 		}
+		if current.MemberType == models.MemberTypeMentor || m.MemberType == models.MemberTypeMentor {
+			if err := enqueueProgramIndexByID(ctx, tx, m.ProgramID); err != nil {
+				return nil, err
+			}
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit update program member transaction: %w", err)
@@ -317,6 +327,11 @@ func (r *ProgramMemberRepository) Delete(ctx context.Context, id string) error {
 	if isActiveMember(current) {
 		if err := enqueueMemberMarker(ctx, tx, current, "remove"); err != nil {
 			return err
+		}
+		if current.MemberType == models.MemberTypeMentor {
+			if err := enqueueProgramIndexByID(ctx, tx, current.ProgramID); err != nil {
+				return err
+			}
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {

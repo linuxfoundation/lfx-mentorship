@@ -45,6 +45,9 @@ func (s *stubProgramSvc) GetBySlug(ctx context.Context, id string) (*models.Prog
 func (s *stubProgramSvc) List(context.Context, models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error) {
 	return []*models.Program{}, &models.PaginationMeta{}, nil
 }
+func (s *stubProgramSvc) ListManagedByUser(context.Context, string, models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error) {
+	return []*models.Program{}, &models.PaginationMeta{}, nil
+}
 func (s *stubProgramSvc) GetEnrollmentTemplate(context.Context, string) (*models.ProgramEnrollmentTemplate, error) {
 	return &models.ProgramEnrollmentTemplate{}, nil
 }
@@ -120,6 +123,58 @@ func (s *stubProgramSvc) GetProgramSponsors(ctx context.Context, programID, cate
 		return s.getProgramSponsors(ctx, programID, categoryType, subscriptionOnly, aggregate)
 	}
 	return []models.ProgramSponsor{}, nil
+}
+
+func TestProgramHandler_ListManagedByMe_UsesPrincipalScope(t *testing.T) {
+	var capturedUserID string
+	var capturedFilter models.ProgramFilter
+	h := handler.NewProgramHandler(&stubProgramSvcWithManaged{listManagedByUser: func(_ context.Context, userID string, filter models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error) {
+		capturedUserID = userID
+		capturedFilter = filter
+		return []*models.Program{{ID: "program-1", Name: "Managed"}}, &models.PaginationMeta{Total: 1, Limit: 50, Offset: 0}, nil
+	}})
+	r := requestWithPrincipal(httptest.NewRequest(http.MethodGet, "/v1/me/managed-programs?status=published&search=managed", nil), "caller-user")
+	w := httptest.NewRecorder()
+	h.ListManagedByMe(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d; want 200", w.Code)
+	}
+	if capturedUserID != "caller-user" || capturedFilter.Status != "published" || capturedFilter.Search != "managed" {
+		t.Fatalf("scope/filter = %q/%+v", capturedUserID, capturedFilter)
+	}
+}
+
+func TestProgramHandler_ListManagedByMe_MapsPendingStatus(t *testing.T) {
+	var capturedStatus string
+	h := handler.NewProgramHandler(&stubProgramSvcWithManaged{listManagedByUser: func(_ context.Context, _ string, filter models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error) {
+		capturedStatus = filter.Status
+		return []*models.Program{}, &models.PaginationMeta{}, nil
+	}})
+	r := requestWithPrincipal(httptest.NewRequest(http.MethodGet, "/v1/me/managed-programs?status=pending", nil), "caller-user")
+	w := httptest.NewRecorder()
+	h.ListManagedByMe(w, r)
+	if w.Code != http.StatusOK || capturedStatus != string(models.ProgramStatusDraft) {
+		t.Fatalf("status/code = %q/%d; want draft/200", capturedStatus, w.Code)
+	}
+}
+
+func TestProgramHandler_ListManagedByMe_RejectsInvalidStatus(t *testing.T) {
+	h := handler.NewProgramHandler(&stubProgramSvcWithManaged{})
+	r := requestWithPrincipal(httptest.NewRequest(http.MethodGet, "/v1/me/managed-programs?status=unknown", nil), "caller-user")
+	w := httptest.NewRecorder()
+	h.ListManagedByMe(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("got %d; want 400", w.Code)
+	}
+}
+
+type stubProgramSvcWithManaged struct {
+	stubProgramSvc
+	listManagedByUser func(context.Context, string, models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error)
+}
+
+func (s *stubProgramSvcWithManaged) ListManagedByUser(ctx context.Context, userID string, filter models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error) {
+	return s.listManagedByUser(ctx, userID, filter)
 }
 
 func TestProgramHandler_ListCatalog_OK(t *testing.T) {

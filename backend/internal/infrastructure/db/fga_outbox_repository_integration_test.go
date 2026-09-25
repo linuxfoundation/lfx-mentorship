@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"sync"
@@ -163,6 +164,154 @@ func TestIndexOutboxIntegration_ClaimRetryAndSent(t *testing.T) {
 	}
 	if headerAuth != "present" {
 		t.Fatalf("authorization header=%q; want present", headerAuth)
+	}
+}
+
+func TestIndexOutboxIntegration_ApplicationAndTaskLifecycle(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+	applicationID := "00000000-0000-0000-0000-000000000030"
+	taskID := "00000000-0000-0000-0000-000000000031"
+
+	application, err := NewApplicationRepository(pool).Create(ctx, fixture.OpenTerm, models.ApplicationCreateInput{
+		ID:     applicationID,
+		UserID: fixture.UserID,
+		Role:   models.ApplicationRoleMentee,
+		Status: models.ApplicationStatusPending,
+	})
+	if err != nil {
+		t.Fatalf("create application: %v", err)
+	}
+
+	var applicationAction string
+	var applicationConfig []byte
+	if err := pool.QueryRow(ctx, `SELECT action, indexing_config FROM index_outbox WHERE object_type = 'mentorship_application' AND object_uid = $1`, application.ID).Scan(&applicationAction, &applicationConfig); err != nil {
+		t.Fatalf("read application index record: %v", err)
+	}
+	var applicationConfigMap map[string]any
+	if err := json.Unmarshal(applicationConfig, &applicationConfigMap); err != nil {
+		t.Fatalf("decode application index config: %v", err)
+	}
+	if applicationAction != "created" || applicationConfigMap["object_ref"] != "mentorship_application:"+applicationID || applicationConfigMap["access_check_relation"] != "auditor" {
+		t.Fatalf("application index action/config = %q/%v", applicationAction, applicationConfigMap)
+	}
+
+	name := "First task"
+	category := models.TaskCategoryPrerequisite
+	programTermID := fixture.OpenTerm
+	if _, err := NewTaskRepository(pool).Create(ctx, application.ID, models.TaskCreateInput{
+		ID:            taskID,
+		ProgramTermID: &programTermID,
+		AssigneeID:    fixture.UserID,
+		Name:          &name,
+		Category:      &category,
+		Status:        models.TaskStatusInProgress,
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	var taskAction string
+	var taskConfig []byte
+	if err := pool.QueryRow(ctx, `SELECT action, indexing_config FROM index_outbox WHERE object_type = 'mentorship_task' AND object_uid = $1`, taskID).Scan(&taskAction, &taskConfig); err != nil {
+		t.Fatalf("read task index record: %v", err)
+	}
+	var taskConfigMap map[string]any
+	if err := json.Unmarshal(taskConfig, &taskConfigMap); err != nil {
+		t.Fatalf("decode task index config: %v", err)
+	}
+	if taskAction != "created" || taskConfigMap["object_ref"] != "mentorship_task:"+taskID || taskConfigMap["history_check_object"] != "mentorship_application:"+applicationID {
+		t.Fatalf("task index action/config = %q/%v", taskAction, taskConfigMap)
+	}
+}
+
+func TestProgramRepositoryIntegration_ListManagedByUser(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `INSERT INTO programs (id, project_uid, name, slug, status) VALUES ('00000000-0000-0000-0000-000000000013', '00000000-0000-0000-0000-000000000100', 'Inactive Program', 'inactive-program', 'published')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES ('00000000-0000-0000-0000-000000000022', '00000000-0000-0000-0000-000000000013', $1, 'program_admin', 'withdrawn')`, fixture.UserID); err != nil {
+		t.Fatal(err)
+	}
+
+	programs, meta, err := NewProgramRepository(pool).ListManagedByUser(ctx, fixture.UserID, models.ProgramFilter{Limit: 10, Search: "fixture"})
+	if err != nil {
+		t.Fatalf("list managed programs: %v", err)
+	}
+	if len(programs) != 1 || programs[0].ID != fixture.ProgramID || meta.Total != 1 {
+		t.Fatalf("programs/meta = %#v/%#v; want fixture program and total 1", programs, meta)
+	}
+}
+
+func TestProgramIndexIntegration_RefreshesPublicStats(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+
+	mentorID := "00000000-0000-0000-0000-000000000002"
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name) VALUES ($1, 'fixture-mentor', 'Fixture Mentor')`, mentorID); err != nil {
+		t.Fatal(err)
+	}
+	graduatedUserID := "00000000-0000-0000-0000-000000000003"
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name) VALUES ($1, 'fixture-graduated', 'Fixture Graduated')`, graduatedUserID); err != nil {
+		t.Fatal(err)
+	}
+	active := models.ProgramMemberStatusActive
+	if _, err := NewProgramMemberRepository(pool).Create(ctx, fixture.ProgramID, models.ProgramMemberCreateInput{
+		ID:         "00000000-0000-0000-0000-000000000021",
+		UserID:     mentorID,
+		MemberType: models.MemberTypeMentor,
+		Status:     &active,
+	}); err != nil {
+		t.Fatalf("create mentor membership: %v", err)
+	}
+
+	applicationRepo := NewApplicationRepository(pool)
+	acceptedApplication, err := applicationRepo.Create(ctx, fixture.OpenTerm, models.ApplicationCreateInput{
+		ID:     "00000000-0000-0000-0000-000000000040",
+		UserID: fixture.UserID,
+		Role:   models.ApplicationRoleMentee,
+		Status: models.ApplicationStatusPending,
+	})
+	if err != nil {
+		t.Fatalf("create accepted application: %v", err)
+	}
+	accepted := models.ApplicationStatusAccepted
+	if _, err := applicationRepo.Update(ctx, acceptedApplication.ID, models.ApplicationUpdateInput{Status: &accepted}); err != nil {
+		t.Fatalf("accept application: %v", err)
+	}
+
+	graduatedApplication, err := applicationRepo.Create(ctx, fixture.OpenTerm, models.ApplicationCreateInput{
+		ID:     "00000000-0000-0000-0000-000000000041",
+		UserID: graduatedUserID,
+		Role:   models.ApplicationRoleMentee,
+		Status: models.ApplicationStatusPending,
+	})
+	if err != nil {
+		t.Fatalf("create graduated application: %v", err)
+	}
+	if _, err := applicationRepo.Update(ctx, graduatedApplication.ID, models.ApplicationUpdateInput{Status: &accepted}); err != nil {
+		t.Fatalf("accept graduated application: %v", err)
+	}
+	graduated := models.ApplicationStatusGraduated
+	if _, err := applicationRepo.Update(ctx, graduatedApplication.ID, models.ApplicationUpdateInput{Status: &graduated}); err != nil {
+		t.Fatalf("graduate application: %v", err)
+	}
+
+	var data []byte
+	if err := pool.QueryRow(ctx, `SELECT data FROM index_outbox WHERE object_type = 'mentorship_program' AND object_uid = $1`, fixture.ProgramID).Scan(&data); err != nil {
+		t.Fatalf("read program index snapshot: %v", err)
+	}
+	var document struct {
+		Stats models.ProgramHeaderStats `json:"stats"`
+	}
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatalf("decode program index snapshot: %v", err)
+	}
+	if document.Stats.Mentors != 1 || document.Stats.Mentees != 1 || document.Stats.Graduated != 1 {
+		t.Fatalf("program stats = %+v; want mentors=1 mentees=1 graduated=1", document.Stats)
 	}
 }
 

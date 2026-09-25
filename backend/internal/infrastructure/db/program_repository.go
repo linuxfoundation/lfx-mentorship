@@ -71,6 +71,15 @@ func enqueueProgramIndex(ctx context.Context, tx pgx.Tx, program *models.Program
 		return err
 	}
 	document := NewProgramIndexDocument(program)
+	if err := tx.QueryRow(ctx, `
+		SELECT
+			COUNT(*) FILTER (WHERE member_type = 'mentor' AND status = 'active'),
+			(SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE pt.program_id = $1 AND a.role = 'mentee' AND a.status = 'accepted'),
+			(SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE pt.program_id = $1 AND a.role = 'mentee' AND a.status = 'graduated')
+		FROM program_members
+		WHERE program_id = $1`, program.ID).Scan(&document.Stats.Mentors, &document.Stats.Mentees, &document.Stats.Graduated); err != nil {
+		return fmt.Errorf("resolve program index stats: %w", err)
+	}
 	data, err := json.Marshal(document)
 	if err != nil {
 		return err
@@ -95,6 +104,14 @@ func enqueueProgramIndex(ctx context.Context, tx pgx.Tx, program *models.Program
 			attempts = 0,
 			sent_on = NULL`, program.ID, action, headerData, data, configData)
 	return err
+}
+
+func enqueueProgramIndexByID(ctx context.Context, tx pgx.Tx, programID string) error {
+	program, err := scanProgram(tx.QueryRow(ctx, `SELECT`+programSelectCols+programsWithFundingFrom+` WHERE programs.id = $1`, programID))
+	if err != nil {
+		return fmt.Errorf("load program for index refresh: %w", err)
+	}
+	return enqueueProgramIndex(ctx, tx, program, "updated")
 }
 
 func enqueueProgramIndexDelete(ctx context.Context, tx pgx.Tx, id string) error {
@@ -233,6 +250,63 @@ func (r *ProgramRepository) List(ctx context.Context, filter models.ProgramFilte
 	}
 	if programs == nil {
 		programs = []*models.Program{}
+	}
+	return programs, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, nil
+}
+
+// ListManagedByUser returns programs where the user is an active Program Admin.
+func (r *ProgramRepository) ListManagedByUser(ctx context.Context, userID string, filter models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error) {
+	ctx, span := programTracer.Start(ctx, "db.programs.ListManagedByUser")
+	defer span.End()
+
+	limit := filter.Limit
+	if limit <= 0 || limit > 50 {
+		limit = 50
+	}
+	offset := filter.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	args := []any{userID}
+	where := ` WHERE pm.user_id = $1 AND pm.member_type = 'program_admin' AND pm.status = 'active'`
+	if filter.Status != "" {
+		args = append(args, filter.Status)
+		where += fmt.Sprintf(` AND programs.status = $%d`, len(args))
+	}
+	if filter.Search != "" {
+		args = append(args, "%"+filter.Search+"%")
+		where += fmt.Sprintf(` AND programs.name ILIKE $%d`, len(args))
+	}
+	from := ` FROM programs LEFT JOIN program_funding_stats pfs ON pfs.program_id = programs.id JOIN program_members pm ON pm.program_id = programs.id`
+	var total int
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(DISTINCT programs.id)`+from+where, args...).Scan(&total); err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("count managed programs: %w", err)
+	}
+
+	args = append(args, limit, offset)
+	q := `SELECT` + programSelectCols + from + where +
+		fmt.Sprintf(` ORDER BY programs.discover_sort_rank DESC, programs.created_on DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
+	rows, err := r.pool.Query(ctx, q, args...)
+	if err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("list managed programs: %w", err)
+	}
+	defer rows.Close()
+
+	programs := make([]*models.Program, 0)
+	for rows.Next() {
+		program, scanErr := scanProgram(rows)
+		if scanErr != nil {
+			span.RecordError(scanErr)
+			return nil, nil, fmt.Errorf("scan managed program: %w", scanErr)
+		}
+		programs = append(programs, program)
+	}
+	if err := rows.Err(); err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("managed program rows: %w", err)
 	}
 	return programs, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, nil
 }

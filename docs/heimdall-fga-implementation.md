@@ -295,8 +295,10 @@ PostgreSQL transaction. It queues:
 - approver-team membership markers for roster users with LFIDs; and
 - one program snapshot per program in `index_outbox`.
 
-Current seeding indexes programs only. Applications and tasks must gain index
-documents before their collections or caller-owned views move to Query Service.
+Seeding now indexes eligible programs, applications, and tasks. Applications
+and tasks with missing parents or LFIDs remain excluded and are reported by the
+existing migration audit; those rows must be repaired or explicitly quarantined
+before their collections or caller-owned views move to Query Service.
 
 The importer is idempotent. Re-running it coalesces markers and increments their
 generation rather than creating duplicate outbox rows.
@@ -438,9 +440,10 @@ Not yet validated end to end:
   callers.
 - [ ] After the RuleSet is live, run the platform `populate-jtbds` workflow and
   regenerate `PERMISSIONS.md` in `lfx-v2-helm`.
-- [ ] Index `mentorship_application` and `mentorship_task` with stable
+- [x] Index `mentorship_application` and `mentorship_task` with stable
   `object_ref`, `object_type`, parent references, access-check metadata, and
-  the fields required by their collection views.
+  the fields required by their collection views. Runtime lifecycle writes and
+  importer seed upserts use the same generation-guarded index outbox.
 - [ ] Define Query Service resource projections for mentor/mentee directories
   and replace service-owned summary aggregation with Query Service count/group
   queries where supported.
@@ -460,7 +463,7 @@ Not yet validated end to end:
   program, application, task, membership, wildcard, and parent reference.
 - [ ] Verify program documents and access metadata in Query Service/OpenSearch.
 - [ ] Verify application/task documents, parent filters, and direct-grant
-  queries in Query Service/OpenSearch.
+  queries in Query Service/OpenSearch after the projections are enabled.
 
 ### 4. Land Environment Configuration
 

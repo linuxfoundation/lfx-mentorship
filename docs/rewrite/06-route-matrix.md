@@ -75,6 +75,7 @@ Per [04 §decision 7](./04-authorization-model.md), `user` has no relations of i
 | `PATCH`/`DELETE /v1/users/{id}` → **`/v1/me`** | required | — | `allow_all` | Reshape per decision 7. The by-ID routes are already removed ([lfx-mentorship#153](https://github.com/linuxfoundation/lfx-mentorship/pull/153)); the `/v1/me` replacements are the follow-up. No target ID means no check; `principal` settles it |
 | `PATCH`/`DELETE /v1/user-profiles/{id}` → **`/v1/me/profile`** | required | — | `allow_all` | As above — removed in the same PR, replacements in the follow-up |
 | `GET /v1/users/{userId}/applications` → **`/v1/me/applications`** | required | — | `allow_all` | Filter by `principal`. As a `{userId}` route it is uncheckable *and* lets any caller read another user's applications |
+| `GET /v1/me/managed-programs` | required | — | `allow_all` | Filter by `principal` through active `program_admin` membership; status and search filters remain service-side |
 
 ## Program routes
 

@@ -106,6 +106,20 @@ func (s *ProgramService) List(ctx context.Context, filter models.ProgramFilter) 
 	return programs, meta, nil
 }
 
+// ListManagedByUser returns programs where the user is an active Program Admin.
+func (s *ProgramService) ListManagedByUser(ctx context.Context, userID string, filter models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error) {
+	ctx, span := programSvcTracer.Start(ctx, "ProgramService.ListManagedByUser")
+	defer span.End()
+	span.SetAttributes(attribute.String("user.id", userID))
+
+	programs, meta, err := s.repo.ListManagedByUser(ctx, userID, filter)
+	if err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("list managed programs: %w", err)
+	}
+	return programs, meta, nil
+}
+
 func (s *ProgramService) GetEnrollmentTemplate(ctx context.Context, programID string) (*models.ProgramEnrollmentTemplate, error) {
 	template, err := s.repo.GetEnrollmentTemplate(ctx, programID)
 	if err != nil {
