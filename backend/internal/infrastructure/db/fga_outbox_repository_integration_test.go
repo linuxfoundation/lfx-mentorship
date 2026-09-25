@@ -600,18 +600,6 @@ func TestUserProfileCreateAndUpsertOnExistingProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	repo := NewUserProfileRepository(pool)
-	_, err := repo.Create(ctx, models.UserProfileCreateInput{
-		ID:                 "00000000-0000-0000-0000-000000000061",
-		UserID:             fixture.UserID,
-		ProfileType:        "mentor",
-		Slug:               stringPtr("mentor-duplicate"),
-		FirstName:          stringPtr("Duplicate"),
-		LastName:           stringPtr("User"),
-		TermsAndConditions: true,
-	})
-	if !errors.Is(err, domain.ErrConflict) {
-		t.Fatalf("create error=%v; want ErrConflict", err)
-	}
 	updated, inserted, err := repo.UpsertByUserAndType(ctx, models.UserProfileCreateInput{
 		ID:                 "00000000-0000-0000-0000-000000000062",
 		UserID:             fixture.UserID,
@@ -626,6 +614,38 @@ func TestUserProfileCreateAndUpsertOnExistingProfile(t *testing.T) {
 	}
 	if inserted || updated.ID != "00000000-0000-0000-0000-000000000060" || updated.Slug == nil || *updated.Slug != "mentor-canonical" || updated.FirstName == nil || *updated.FirstName != "Canonical" {
 		t.Fatalf("updated=%+v inserted=%v; want existing profile updated", updated, inserted)
+	}
+
+	if _, err := repo.Create(ctx, models.UserProfileCreateInput{
+		ID:                 "00000000-0000-0000-0000-000000000061",
+		UserID:             fixture.UserID,
+		ProfileType:        "mentor",
+		Slug:               stringPtr("mentor-second"),
+		FirstName:          stringPtr("Second"),
+		LastName:           stringPtr("User"),
+		TermsAndConditions: true,
+	}); err != nil {
+		t.Fatalf("create second mentor profile: %v; want success", err)
+	}
+
+	if _, err := repo.Create(ctx, models.UserProfileCreateInput{
+		ID:                 "00000000-0000-0000-0000-000000000063",
+		UserID:             fixture.UserID,
+		ProfileType:        "mentee",
+		Slug:               stringPtr("mentee-one"),
+		TermsAndConditions: true,
+	}); err != nil {
+		t.Fatalf("create first mentee profile: %v", err)
+	}
+	_, err = repo.Create(ctx, models.UserProfileCreateInput{
+		ID:                 "00000000-0000-0000-0000-000000000064",
+		UserID:             fixture.UserID,
+		ProfileType:        "mentee",
+		Slug:               stringPtr("mentee-duplicate"),
+		TermsAndConditions: true,
+	})
+	if !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("create duplicate mentee error=%v; want ErrConflict", err)
 	}
 }
 
