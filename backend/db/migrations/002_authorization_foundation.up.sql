@@ -118,7 +118,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_index_outbox_object
   ON index_outbox(object_type, object_uid);
 
 ALTER TABLE index_outbox
-  ADD COLUMN claimed_at TIMESTAMPTZ;
+  ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;
 
 ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_status_check;
 
