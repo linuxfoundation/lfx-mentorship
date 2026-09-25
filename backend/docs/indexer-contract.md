@@ -115,7 +115,7 @@ provide field-level redaction for an applicant who can otherwise audit the
 application.
 
 Application and task index records use the same publish-time M2M
-authorization, actor-attribution headers, retry policy, and exact dead-letter
-repair command as program records. They remain non-public and are intended for
+authorization, retry policy, and exact dead-letter repair command as program
+records. They remain non-public and are intended for
 Query Service collection and direct-grant filtering after the corresponding
 resource projections are enabled.
