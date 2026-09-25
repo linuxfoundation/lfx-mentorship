@@ -138,8 +138,8 @@ func (r *IndexOutboxRepository) MarkRetry(ctx context.Context, record domain.Ind
 	const query = `
 		WITH retried AS (
 			UPDATE index_outbox
-			SET state = CASE WHEN attempts + 1 >= $4 THEN 'dead_letter' ELSE 'pending' END,
-			    attempts = attempts + 1, next_attempt_at = $5,
+			SET state = CASE WHEN attempts >= $4 THEN 'dead_letter' ELSE 'pending' END,
+			    next_attempt_at = $5,
 			    claimed_generation = NULL, claimed_at = NULL
 			WHERE id = $1 AND state = 'in_flight' AND generation = $2
 			  AND claimed_generation = $2 AND claimed_at IS NOT DISTINCT FROM $3
