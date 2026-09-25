@@ -107,6 +107,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			return nil, fmt.Errorf("FGA JetStream client: %w", jsErr)
 		}
 		outbox := db.NewFGAOutboxRepository(pool)
+		outbox.SetMaxAttempts(cfg.FGA.RelayMaxAttempts)
 		approverRepo := db.NewApproverRepository(pool)
 		builder := fga.NewDatabaseBuilder(programRepo, programMemberRepo, userRepo, programTermRepo, applicationRepo, taskRepo, approverRepo)
 		publisher := fga.NewJetStreamPublisher(js)
@@ -160,7 +161,6 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	r.Use(chimiddleware.Recoverer)
 	r.Use(otelhttp.NewMiddleware("mentorship-api"))
 	r.Use(chimiddleware.Timeout(time.Duration(float64(cfg.Server.WriteTimeout) * 0.8)))
-	r.Use(handler.IndexMetadata)
 
 	// Health probes
 	r.Get("/livez", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
@@ -326,6 +326,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	}
 	r.Route("/mentorship/v1", func(r chi.Router) {
 		r.Use(jwtAuth.GatewayMiddleware)
+		r.Use(handler.IndexMetadata)
 		routes(r)
 	})
 

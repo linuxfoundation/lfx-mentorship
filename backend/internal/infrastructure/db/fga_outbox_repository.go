@@ -14,12 +14,20 @@ import (
 
 // FGAOutboxRepository implements generation-guarded FGA marker delivery.
 type FGAOutboxRepository struct {
-	pool *pgxpool.Pool
+	pool        *pgxpool.Pool
+	maxAttempts int
 }
 
 // NewFGAOutboxRepository creates an FGA outbox repository.
 func NewFGAOutboxRepository(pool *pgxpool.Pool) *FGAOutboxRepository {
-	return &FGAOutboxRepository{pool: pool}
+	return &FGAOutboxRepository{pool: pool, maxAttempts: 10}
+}
+
+// SetMaxAttempts bounds stale-claim recovery before dead lettering.
+func (r *FGAOutboxRepository) SetMaxAttempts(maxAttempts int) {
+	if maxAttempts > 0 {
+		r.maxAttempts = maxAttempts
+	}
 }
 
 // EnqueueObject coalesces a whole-object change and invalidates an older claim.
@@ -81,7 +89,16 @@ func (r *FGAOutboxRepository) Claim(ctx context.Context, limit int) ([]domain.FG
 		return []domain.FGAOutboxMarker{}, nil
 	}
 	const query = `
-		WITH lockable AS (
+		WITH stale_dead AS (
+			UPDATE fga_outbox
+			SET state = 'dead_letter', claimed_generation = NULL, claimed_at = NULL,
+			    last_error = 'relay crashed while in flight', updated_on = NOW()
+			WHERE state = 'in_flight'
+			  AND claimed_at <= NOW() - INTERVAL '5 minutes'
+			  AND generation = claimed_generation
+			  AND attempts >= $2
+			RETURNING id
+		), lockable AS (
 			SELECT pending.id, pending.object_type, pending.object_uid
 			FROM fga_outbox AS pending
 			WHERE ((pending.state = 'pending' AND pending.next_attempt_at <= NOW())
@@ -115,7 +132,7 @@ func (r *FGAOutboxRepository) Claim(ctx context.Context, limit int) ([]domain.FG
 			          outbox.generation, outbox.claimed_generation, outbox.claimed_at, outbox.attempts,
 		          outbox.last_error`
 
-	rows, err := r.pool.Query(ctx, query, limit)
+	rows, err := r.pool.Query(ctx, query, limit, r.maxAttempts)
 	if err != nil {
 		return nil, fmt.Errorf("claim FGA outbox markers: %w", err)
 	}

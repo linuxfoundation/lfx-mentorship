@@ -545,14 +545,15 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
                 (p.get("programTermStatus") or "").strip() or None,
                 _as_int(p.get("discoverSortRank")),
                 amount,
-                _to_jsonb(p.get("menteeNeeds")),  # DynamoDB field was apprenticeNeeds
+                _to_jsonb(p.get("menteeNeeds")),  # Legacy apprenticeNeeds fallback is retained only for cutover imports.
                 _to_jsonb(p.get("taskTemplates")),
                 _parse_ts(p.get("createdOn")),
                 _parse_ts(p.get("updatedOn")),
             )
         )
 
-        needs = p.get("menteeNeeds") or p.get("apprenticeNeeds") or {}  # field renamed in new data
+        # Keep the legacy field fallback until the final DynamoDB export is retired.
+        needs = p.get("menteeNeeds") or p.get("apprenticeNeeds") or {}
         for skill in needs.get("skills") or []:
             if skill and str(skill).strip():
                 skill_rows.append(

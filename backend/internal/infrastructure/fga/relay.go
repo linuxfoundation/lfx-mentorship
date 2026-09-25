@@ -103,13 +103,17 @@ func (r *Relay) RunOnce(ctx context.Context) error {
 			buildErr = r.publisher.Publish(ctx, message)
 		}
 		if buildErr != nil {
-			relayRetried.Add(1)
 			var retryErr error
 			if marker.Attempts+1 >= r.maxAttempts {
-				relayDeadLettered.Add(1)
 				retryErr = r.outbox.DeadLetter(ctx, marker, buildErr.Error())
+				if retryErr == nil {
+					relayDeadLettered.Add(1)
+				}
 			} else {
 				retryErr = r.outbox.Retry(ctx, marker, r.clock().Add(r.retryDelay), buildErr.Error())
+				if retryErr == nil {
+					relayRetried.Add(1)
+				}
 			}
 			firstErr = errors.Join(firstErr, buildErr)
 			if retryErr != nil {

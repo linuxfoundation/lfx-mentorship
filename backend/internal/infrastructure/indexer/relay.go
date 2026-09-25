@@ -126,13 +126,15 @@ func (r *Relay) RunOnce(ctx context.Context) error {
 			}
 		}
 		if recordErr != nil {
-			indexRelayRetried.Add(1)
 			if acknowledged, deadLettered, retryErr := r.outbox.MarkRetry(ctx, record); retryErr != nil {
 				recordErr = fmt.Errorf("mark retry for index record %s: %w", record.ID, retryErr)
 			} else if !acknowledged {
 				recordErr = fmt.Errorf("mark retry for index record %s was not acknowledged", record.ID)
-			} else if deadLettered {
-				indexRelayDeadLettered.Add(1)
+			} else {
+				indexRelayRetried.Add(1)
+				if deadLettered {
+					indexRelayDeadLettered.Add(1)
+				}
 			}
 			if firstErr == nil {
 				firstErr = recordErr

@@ -12,6 +12,7 @@ import (
 // IndexMetadata preserves request identity for transactional index snapshots.
 func IndexMetadata(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Keep this whitelist explicit: identity headers are never copied from the client.
 		headers := map[string]string{}
 		if value := r.Header.Get("Authorization"); value != "" {
 			headers["authorization"] = value
