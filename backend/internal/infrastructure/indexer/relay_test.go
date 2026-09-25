@@ -9,11 +9,16 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/nats-io/nats.go"
+
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 )
 
+const testToken = "service-token"
+
 type outboxStub struct {
 	records               []domain.IndexOutboxRecord
+	claimed               bool
 	sent, retried         string
 	markSentAcknowledged  bool
 	markRetryAcknowledged bool
@@ -21,6 +26,7 @@ type outboxStub struct {
 
 func (s *outboxStub) Enqueue(context.Context, domain.IndexOutboxRecord) error { return nil }
 func (s *outboxStub) Claim(context.Context, int) ([]domain.IndexOutboxRecord, error) {
+	s.claimed = true
 	return s.records, nil
 }
 func (s *outboxStub) MarkSent(_ context.Context, record domain.IndexOutboxRecord) (bool, error) {
@@ -41,18 +47,26 @@ func (s *outboxStub) MarkRetry(_ context.Context, record domain.IndexOutboxRecor
 type publisherStub struct {
 	subject string
 	data    []byte
+	reply   string
 	err     error
 }
 
-func (s *publisherStub) Publish(subject string, data []byte) error {
+func (s *publisherStub) RequestWithContext(_ context.Context, subject string, data []byte) (*nats.Msg, error) {
 	s.subject, s.data = subject, data
-	return s.err
+	if s.err != nil {
+		return nil, s.err
+	}
+	reply := s.reply
+	if reply == "" {
+		reply = indexerAck
+	}
+	return &nats.Msg{Data: []byte(reply)}, nil
 }
 
 func TestRelayRunOncePublishesDelete(t *testing.T) {
 	outbox := &outboxStub{records: []domain.IndexOutboxRecord{{ID: "1", ObjectType: "mentorship_program", ObjectUID: "p1", Action: "deleted", Headers: json.RawMessage(`{"authorization":"Bearer x"}`)}}, markSentAcknowledged: true, markRetryAcknowledged: true}
 	publisher := &publisherStub{}
-	if err := NewRelay(outbox, publisher, 1).RunOnce(context.Background()); err != nil {
+	if err := NewRelay(outbox, publisher, 1, testToken).RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if publisher.subject != "lfx.index.mentorship_program" || outbox.sent != "1" {
@@ -69,12 +83,39 @@ func TestRelayRunOncePublishesDelete(t *testing.T) {
 
 func TestRelayRunOnceRetriesPublishFailure(t *testing.T) {
 	outbox := &outboxStub{records: []domain.IndexOutboxRecord{{ID: "1", ObjectType: "mentorship_program", Action: "updated"}}, markSentAcknowledged: true, markRetryAcknowledged: true}
-	if err := NewRelay(outbox, &publisherStub{err: errors.New("down")}, 1).RunOnce(context.Background()); err == nil || outbox.retried != "1" {
+	if err := NewRelay(outbox, &publisherStub{err: errors.New("down")}, 1, testToken).RunOnce(context.Background()); err == nil || outbox.retried != "1" {
 		t.Fatalf("err=%v retried=%q", err, outbox.retried)
 	}
 }
 
-func TestRelaySetAuthorizationOverridesStoredHeaderAndDropsStoredActor(t *testing.T) {
+func TestRelayRunOnceRetriesWhenIndexerRejectsMessage(t *testing.T) {
+	outbox := &outboxStub{records: []domain.IndexOutboxRecord{{ID: "1", ObjectType: "mentorship_program", Action: "updated"}}, markSentAcknowledged: true, markRetryAcknowledged: true}
+	err := NewRelay(outbox, &publisherStub{reply: "ERROR: error processing indexing message"}, 1, testToken).RunOnce(context.Background())
+	if err == nil || outbox.retried != "1" || outbox.sent != "" {
+		t.Fatalf("err=%v retried=%q sent=%q; want retry and no mark-sent", err, outbox.retried, outbox.sent)
+	}
+}
+
+func TestRelayRunOnceRetriesWhenIndexerHasNoResponders(t *testing.T) {
+	outbox := &outboxStub{records: []domain.IndexOutboxRecord{{ID: "1", ObjectType: "mentorship_program", Action: "updated"}}, markSentAcknowledged: true, markRetryAcknowledged: true}
+	err := NewRelay(outbox, &publisherStub{err: nats.ErrNoResponders}, 1, testToken).RunOnce(context.Background())
+	if !errors.Is(err, nats.ErrNoResponders) || outbox.retried != "1" || outbox.sent != "" {
+		t.Fatalf("err=%v retried=%q sent=%q; want a retried record", err, outbox.retried, outbox.sent)
+	}
+}
+
+func TestRelayRunOnceIdlesWithoutServiceToken(t *testing.T) {
+	outbox := &outboxStub{records: []domain.IndexOutboxRecord{{ID: "1", ObjectType: "mentorship_program", Action: "updated"}}, markSentAcknowledged: true}
+	publisher := &publisherStub{}
+	if err := NewRelay(outbox, publisher, 1, "  ").RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if outbox.claimed || publisher.subject != "" {
+		t.Fatalf("claimed=%v published=%q; want rows left pending", outbox.claimed, publisher.subject)
+	}
+}
+
+func TestRelayStampsServiceTokenOverStoredHeaderAndDropsStoredActor(t *testing.T) {
 	outbox := &outboxStub{
 		records: []domain.IndexOutboxRecord{{
 			ID:         "1",
@@ -86,8 +127,7 @@ func TestRelaySetAuthorizationOverridesStoredHeaderAndDropsStoredActor(t *testin
 		markRetryAcknowledged: true,
 	}
 	publisher := &publisherStub{}
-	relay := NewRelay(outbox, publisher, 1)
-	relay.SetAuthorization("Bearer machine-token")
+	relay := NewRelay(outbox, publisher, 1, testToken)
 	if err := relay.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +139,7 @@ func TestRelaySetAuthorizationOverridesStoredHeaderAndDropsStoredActor(t *testin
 	if err := json.Unmarshal(envelope.Headers, &headers); err != nil {
 		t.Fatal(err)
 	}
-	if headers["authorization"] != "Bearer machine-token" {
+	if headers["authorization"] != "Bearer "+testToken {
 		t.Fatalf("headers=%v", headers)
 	}
 	if _, ok := headers["x-on-behalf-of"]; ok {
@@ -107,7 +147,7 @@ func TestRelaySetAuthorizationOverridesStoredHeaderAndDropsStoredActor(t *testin
 	}
 }
 
-func TestRelayDropsStoredActorWithoutAuthorization(t *testing.T) {
+func TestRelayDropsStoredActorAndKeepsPrefixedToken(t *testing.T) {
 	outbox := &outboxStub{
 		records: []domain.IndexOutboxRecord{{
 			ID:         "1",
@@ -118,7 +158,7 @@ func TestRelayDropsStoredActorWithoutAuthorization(t *testing.T) {
 		markSentAcknowledged: true,
 	}
 	publisher := &publisherStub{}
-	if err := NewRelay(outbox, publisher, 1).RunOnce(context.Background()); err != nil {
+	if err := NewRelay(outbox, publisher, 1, "Bearer "+testToken).RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	var envelope Envelope
@@ -132,11 +172,14 @@ func TestRelayDropsStoredActorWithoutAuthorization(t *testing.T) {
 	if _, ok := headers["x-on-behalf-of"]; ok {
 		t.Fatalf("stored client actor header was republished: %v", headers)
 	}
+	if headers["authorization"] != "Bearer "+testToken {
+		t.Fatalf("authorization=%q; want an already-prefixed token left unchanged", headers["authorization"])
+	}
 }
 
 func TestRelayRunOnceFailsWhenMarkSentIsNotAcknowledged(t *testing.T) {
 	outbox := &outboxStub{records: []domain.IndexOutboxRecord{{ID: "1", ObjectType: "mentorship_program", Action: "updated"}}, markRetryAcknowledged: true}
-	err := NewRelay(outbox, &publisherStub{}, 1).RunOnce(context.Background())
+	err := NewRelay(outbox, &publisherStub{}, 1, testToken).RunOnce(context.Background())
 	if err == nil {
 		t.Fatal("expected acknowledgement error")
 	}
@@ -152,7 +195,7 @@ func TestRelayRunOnceCountsEveryMarkSentAcknowledgementFailure(t *testing.T) {
 		markRetryAcknowledged: true,
 	}
 
-	if err := NewRelay(outbox, &publisherStub{}, 2).RunOnce(context.Background()); err == nil {
+	if err := NewRelay(outbox, &publisherStub{}, 2, testToken).RunOnce(context.Background()); err == nil {
 		t.Fatal("expected acknowledgement error")
 	}
 	if got := indexRelayAckFailures.Value() - start; got != 2 {
@@ -162,55 +205,8 @@ func TestRelayRunOnceCountsEveryMarkSentAcknowledgementFailure(t *testing.T) {
 
 func TestRelayRunOnceFailsWhenMarkRetryIsNotAcknowledged(t *testing.T) {
 	outbox := &outboxStub{records: []domain.IndexOutboxRecord{{ID: "1", ObjectType: "mentorship_program", Action: "updated"}}, markSentAcknowledged: true}
-	err := NewRelay(outbox, &publisherStub{err: errors.New("down")}, 1).RunOnce(context.Background())
+	err := NewRelay(outbox, &publisherStub{err: errors.New("down")}, 1, testToken).RunOnce(context.Background())
 	if err == nil {
 		t.Fatal("expected retry acknowledgement error")
-	}
-}
-
-type failingAuthorizationProvider struct{}
-
-func (failingAuthorizationProvider) Authorization(context.Context) (string, error) {
-	return "", errors.New("token endpoint down")
-}
-
-func TestRelayRunOnceRetriesClaimedRecordsWhenAuthorizationFails(t *testing.T) {
-	start := indexRelayRetried.Value()
-	outbox := &outboxStub{
-		records: []domain.IndexOutboxRecord{
-			{ID: "1", ObjectType: "mentorship_program", Action: "updated"},
-			{ID: "2", ObjectType: "mentorship_program", Action: "updated"},
-		},
-		markRetryAcknowledged: true,
-	}
-	publisher := &publisherStub{}
-	relay := NewRelay(outbox, publisher, 2)
-	relay.SetAuthorizationProvider(failingAuthorizationProvider{})
-
-	if err := relay.RunOnce(context.Background()); err == nil {
-		t.Fatal("expected authorization error")
-	}
-	if publisher.subject != "" || outbox.sent != "" {
-		t.Fatalf("published subject=%q sent=%q; want nothing published", publisher.subject, outbox.sent)
-	}
-	if got := indexRelayRetried.Value() - start; got != 2 {
-		t.Fatalf("retried count delta=%d, want 2", got)
-	}
-}
-
-func TestRelayRunOnceDoesNotCountUnacknowledgedRetriesWhenAuthorizationFails(t *testing.T) {
-	start := indexRelayRetried.Value()
-	outbox := &outboxStub{records: []domain.IndexOutboxRecord{{ID: "1", ObjectType: "mentorship_program", Action: "updated"}}}
-	relay := NewRelay(outbox, &publisherStub{}, 1)
-	relay.SetAuthorizationProvider(failingAuthorizationProvider{})
-
-	if err := relay.RunOnce(context.Background()); err == nil {
-		t.Fatal("expected authorization error")
-	}
-	if outbox.retried != "1" {
-		t.Fatalf("retried=%q, want 1", outbox.retried)
-	}
-	if got := indexRelayRetried.Value() - start; got != 0 {
-		t.Fatalf("retried count delta=%d, want 0 for an unacknowledged retry", got)
 	}
 }

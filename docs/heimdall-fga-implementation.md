@@ -23,7 +23,7 @@ For the detailed relation model and route-by-route decisions, see the
 | Shared-gateway HTTPRoute and Middleware | **Implemented in chart** | Rendered successfully with live-shaped dev values; environment activation is pending |
 | FGA transactional outbox | **Implemented and tested** | Generation-guarded claim, retry, acknowledgement, and dead-letter behavior |
 | FGA NATS/JetStream relay | **Implemented and dev-validated** | A program marker was acknowledged and its tuple was verified in the live `lfx-core` store |
-| Index relay authentication and retry | **Implemented and tested** | Cached M2M token, delayed single-count retries, generation guards, and relay metrics |
+| Index relay authentication and retry | **Implemented and tested** | Service-token stamping, indexer `OK` acknowledgement, delayed single-count retries, generation guards, and relay metrics |
 | Program/application/task tuple lifecycle | **Implemented** | Full-state updates, precise membership changes, and hard-delete messages use fga-sync subjects |
 | Approver-team membership lifecycle | **Partially implemented** | PostgreSQL storage and precise markers exist; administration stays off the gateway until a platform staff relation is approved |
 | Initial FGA and index seeding | **Implemented in importer** | Environment seed still needs to be run after all reported data gaps are resolved or quarantined |
@@ -239,23 +239,19 @@ required components must be present.
 | `FGA_RELAY_INTERVAL` | `1s` | Poll interval for FGA and index relays |
 | `FGA_RELAY_RETRY_DELAY` | `1m` | Delay before retrying an FGA marker |
 | `FGA_RELAY_MAX_ATTEMPTS` | `10` | Attempts before FGA dead letter |
-| `FGA_INDEXER_TOKEN_URL` | None | OAuth client-credentials token endpoint for index publishing |
-| `FGA_INDEXER_AUDIENCE` | None | Machine-token audience accepted by the indexer |
-| `FGA_INDEXER_SCOPE` | `access:query` | Machine-token scope for index publishing |
-| `INDEXER_CLIENT_ID` | None | Indexer M2M client ID; secret value |
-| `INDEXER_CLIENT_SECRET` | None | Indexer M2M client secret; secret value |
+| `INDEXER_SERVICE_TOKEN` | None | Service credential stamped on index messages; secret value. Without it the index relay idles |
 | `INDEX_RELAY_RETRY_DELAY` | `1m` | Delay after a failed index publish |
 | `INDEX_RELAY_MAX_ATTEMPTS` | `10` | Failed index publishes before dead letter |
 | `JWT_CLOCK_SKEW` | `5s` | Allowed Heimdall JWT clock skew |
 | `DB_MAX_CONNS` | `10` | PostgreSQL pool maximum |
 | `DB_MIN_CONNS` | `2` | PostgreSQL pool minimum |
 
-The index relay shares `FGA_NATS_URL`, obtains and caches an Auth0
-client-credentials token, and overwrites the redacted stored authorization
-placeholder before publishing. Client-supplied `x-on-behalf-of` metadata is
-discarded; index records currently carry no actor attribution because the
-request metadata middleware runs before the validated Heimdall principal is
-available. The publisher authenticates as the Mentorship service.
+The index relay shares `FGA_NATS_URL` and stamps `INDEXER_SERVICE_TOKEN` over the
+redacted stored authorization placeholder, as lfx-v2-campaign-service does. It
+sends each record as a NATS request and marks it sent only on the indexer's
+`OK` reply. Client-supplied `x-on-behalf-of` metadata is discarded; index
+records currently carry no actor attribution because the request metadata
+middleware runs before the validated Heimdall principal is available.
 
 ### Helm Values Required for Gateway Activation
 
@@ -271,13 +267,18 @@ These are Helm values, not process environment variables:
 | `lfx.domain` | Environment domain used to form `lfx-api.{domain}` |
 | `traefik.gateway.name` | Shared gateway name |
 | `traefik.gateway.namespace` | Shared gateway namespace |
+| `networkPolicy.enabled` | `true`; restricts backend ingress to the gateway namespace. Required with `heimdall.enabled` |
+| `networkPolicy.gatewayNamespace` | Namespace of the Traefik pods, when it differs from `traefik.gateway.namespace` |
+| `networkPolicy.extraIngressFrom` | Extra `NetworkPolicyPeer` entries, such as the `/internal/metrics` scraper or the pre-cutover BFF |
 | `secretName` | Existing externally managed Kubernetes Secret |
 | `createPlaceholderSecret` | `false` outside local clusters |
 | `allowLocalAuthBypass` | Always `false` in deployed environments |
 
 The chart refuses partial Heimdall activation. JWT settings must be supplied as
-a complete trio; gateway/domain values, Middleware, OpenFGA gate, and NATS must
-also be present.
+a complete trio; gateway/domain values, Middleware, OpenFGA gate, NetworkPolicy,
+and NATS must also be present. The NetworkPolicy matters because a request with
+no `Authorization` header is served as the gateway's anonymous principal, so any
+pod that could reach the Service directly would skip the RuleSet's checks.
 
 ### Local-Only Authentication Bypass
 
@@ -317,7 +318,11 @@ reported row. Reports include:
 
 The most recent dev import observed at least 34 programs without `project_uid`
 and 366 tasks without `application_id`. Those objects cannot have complete
-authorization inheritance and must not be treated as cutover-ready.
+authorization inheritance and must not be treated as cutover-ready. Migration
+004 moves parentless tasks into `quarantined_tasks` and makes
+`tasks.application_id` `NOT NULL`; the importer writes unmatched tasks there
+too. A repaired task is restored by inserting it into `tasks` with its
+application and deleting its quarantine row.
 
 The relays must be running before the seed commits so that new writes and seed
 markers converge through the same path.
@@ -420,7 +425,7 @@ Not yet validated end to end:
 
 - [ ] Resolve every missing program `project_uid` or explicitly quarantine the
   program from gateway-backed workflows.
-- [ ] Resolve every task without `application_id` or explicitly quarantine it.
+- [ ] Repair or accept the tasks migration 004 moves into `quarantined_tasks`.
 - [ ] Resolve all missing LFIDs reported for members, applicants, assignees, and
   approvers.
 - [ ] Resolve historical ambiguous mentor rows; do not turn pending invitations

@@ -6,14 +6,22 @@ package indexer
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"expvar"
 	"fmt"
 	"log/slog"
+	"strings"
+	"sync"
 	"time"
+
+	"github.com/nats-io/nats.go"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 )
+
+// indexerAck is the reply lfx-v2-indexer-service sends once a message is indexed.
+const indexerAck = "OK"
+
+const defaultReplyTimeout = 10 * time.Second
 
 var (
 	indexRelayClaimed       = expvar.NewInt("index_relay_claimed")
@@ -33,73 +41,60 @@ type Envelope struct {
 
 type Relay struct {
 	outbox        domain.IndexOutboxRepository
-	conn          publisher
+	conn          requester
 	batch         int
+	replyTimeout  time.Duration
 	logger        *slog.Logger
 	authorization string
-	provider      authorizationProvider
+	warnOnce      sync.Once
 }
 
 func (r *Relay) SetLogger(logger *slog.Logger) {
-	r.logger = logger
+	if logger != nil {
+		r.logger = logger
+	}
 }
 
-func (r *Relay) SetAuthorization(authorization string) {
-	r.authorization = authorization
+type requester interface {
+	RequestWithContext(ctx context.Context, subject string, data []byte) (*nats.Msg, error)
 }
 
-func (r *Relay) SetAuthorizationProvider(provider authorizationProvider) {
-	r.provider = provider
-}
-
-type publisher interface {
-	Publish(subject string, data []byte) error
-}
-
-type flusher interface {
-	Flush() error
-}
-
-type authorizationProvider interface {
-	Authorization(context.Context) (string, error)
-}
-
-func NewRelay(outbox domain.IndexOutboxRepository, conn publisher, batch int) *Relay {
+// NewRelay stamps serviceToken on every message; without one it idles, since the indexer drops unauthenticated messages.
+func NewRelay(outbox domain.IndexOutboxRepository, conn requester, batch int, serviceToken string) *Relay {
 	if batch <= 0 {
 		batch = 50
 	}
-	return &Relay{outbox: outbox, conn: conn, batch: batch}
+	return &Relay{
+		outbox:        outbox,
+		conn:          conn,
+		batch:         batch,
+		replyTimeout:  defaultReplyTimeout,
+		logger:        slog.Default(),
+		authorization: bearer(serviceToken),
+	}
+}
+
+func bearer(token string) string {
+	token = strings.TrimSpace(token)
+	if token == "" || strings.HasPrefix(strings.ToLower(token), "bearer ") {
+		return token
+	}
+	return "Bearer " + token
 }
 
 func (r *Relay) RunOnce(ctx context.Context) error {
+	if r.authorization == "" {
+		r.warnOnce.Do(func() {
+			r.logger.WarnContext(ctx, "index relay is idle: INDEXER_SERVICE_TOKEN is not set; outbox rows stay pending")
+		})
+		return nil
+	}
 	records, err := r.outbox.Claim(ctx, r.batch)
 	if err != nil {
 		indexRelayClaimFailures.Add(1)
 		return err
 	}
 	indexRelayClaimed.Add(int64(len(records)))
-	authorization := r.authorization
-	if r.provider != nil {
-		authorization, err = r.provider.Authorization(ctx)
-		if err != nil {
-			authErr := fmt.Errorf("obtain index authorization: %w", err)
-			for _, record := range records {
-				acknowledged, deadLettered, retryErr := r.outbox.MarkRetry(ctx, record)
-				if retryErr != nil {
-					authErr = errors.Join(authErr, fmt.Errorf("mark retry for index record %s: %w", record.ID, retryErr))
-					continue
-				}
-				if !acknowledged {
-					continue
-				}
-				indexRelayRetried.Add(1)
-				if deadLettered {
-					indexRelayDeadLettered.Add(1)
-				}
-			}
-			return authErr
-		}
-	}
 	var firstErr error
 	for _, record := range records {
 		headers := record.Headers
@@ -110,12 +105,10 @@ func (r *Relay) RunOnce(ctx context.Context) error {
 				recordErr = fmt.Errorf("decode index headers for record %s: %w", record.ID, err)
 			}
 		}
-		if recordErr == nil && (authorization != "" || headerValues != nil) {
+		if recordErr == nil {
 			// Rows stored before enqueue-time sanitization may still carry client-supplied actor headers.
 			headerValues = domain.SanitizedIndexHeaders(headerValues)
-			if authorization != "" {
-				headerValues["authorization"] = authorization
-			}
+			headerValues["authorization"] = r.authorization
 			headers, recordErr = json.Marshal(headerValues)
 			if recordErr != nil {
 				recordErr = fmt.Errorf("marshal index headers for record %s: %w", record.ID, recordErr)
@@ -131,7 +124,10 @@ func (r *Relay) RunOnce(ctx context.Context) error {
 				payload, recordErr = json.Marshal(envelope)
 			}
 			if recordErr == nil {
-				recordErr = r.publishAndConfirm("lfx.index."+record.ObjectType, payload)
+				recordErr = r.publishAndConfirm(ctx, "lfx.index."+record.ObjectType, payload)
+				if recordErr != nil {
+					recordErr = fmt.Errorf("index record %s: %w", record.ID, recordErr)
+				}
 			}
 		}
 		if recordErr != nil {
@@ -168,12 +164,16 @@ func (r *Relay) RunOnce(ctx context.Context) error {
 	return firstErr
 }
 
-func (r *Relay) publishAndConfirm(subject string, payload []byte) error {
-	if err := r.conn.Publish(subject, payload); err != nil {
-		return err
+// publishAndConfirm counts only the indexer's OK reply as delivery.
+func (r *Relay) publishAndConfirm(ctx context.Context, subject string, payload []byte) error {
+	ctx, cancel := context.WithTimeout(ctx, r.replyTimeout)
+	defer cancel()
+	reply, err := r.conn.RequestWithContext(ctx, subject, payload)
+	if err != nil {
+		return fmt.Errorf("indexer request: %w", err)
 	}
-	if publisher, ok := r.conn.(flusher); ok {
-		return publisher.Flush()
+	if body := strings.TrimSpace(string(reply.Data)); body != indexerAck {
+		return fmt.Errorf("indexer rejected message: %.200s", body)
 	}
 	return nil
 }
@@ -185,8 +185,8 @@ func (r *Relay) Run(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		if err := r.RunOnce(ctx); err != nil && r.logger != nil {
-			r.logger.Error("index outbox relay failed", "error", err)
+		if err := r.RunOnce(ctx); err != nil {
+			r.logger.ErrorContext(ctx, "index outbox relay failed", "error", err)
 		}
 		select {
 		case <-ctx.Done():

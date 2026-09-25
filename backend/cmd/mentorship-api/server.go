@@ -120,9 +120,8 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		indexOutbox := db.NewIndexOutboxRepository(pool)
 		indexOutbox.SetMaxAttempts(cfg.Indexer.MaxAttempts)
 		indexOutbox.SetRetryDelay(cfg.Indexer.RetryDelay)
-		indexRelay := indexer.NewRelay(indexOutbox, natsConn, cfg.FGA.RelayBatch)
+		indexRelay := indexer.NewRelay(indexOutbox, natsConn, cfg.FGA.RelayBatch, cfg.Indexer.ServiceToken)
 		indexRelay.SetLogger(logger)
-		indexRelay.SetAuthorizationProvider(indexer.NewManagedAuthorizationProvider(nil, cfg.Indexer.TokenURL, cfg.Indexer.ClientID, cfg.Indexer.ClientSecret, cfg.Indexer.Audience, cfg.Indexer.Scope))
 		go indexRelay.Run(relayCtx, cfg.FGA.RelayInterval)
 	}
 

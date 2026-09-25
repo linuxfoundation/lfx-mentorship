@@ -45,10 +45,13 @@ must parse the value as a date before performing date comparisons.
 The DynamoDB importer queues one current-state snapshot for every program in
 `index_outbox`; the normal index relay publishes those snapshots. Stored
 authorization is redacted, and client-supplied `x-on-behalf-of` metadata is
-discarded before it reaches the outbox. At publish time the relay obtains a
-cached client-credentials token and replaces the redacted authorization value,
-allowing the indexer to authenticate the service without trusting caller-
-controlled actor attribution.
+discarded before it reaches the outbox. At publish time the relay stamps
+`INDEXER_SERVICE_TOKEN` over the redacted authorization value, following the
+lfx-v2-campaign-service pattern. Without the token the relay idles and rows stay
+pending.
+
+Each record is sent as a NATS request, and only the indexer's `OK` reply marks
+it sent. A timeout or `ERROR:` reply counts as a failed publish.
 
 Failed publishes increment attempts once, wait for `INDEX_RELAY_RETRY_DELAY`,
 and dead-letter after `INDEX_RELAY_MAX_ATTEMPTS`. A newer generation arriving
@@ -114,8 +117,8 @@ the UI contract makes them reviewer-only, while Query Service projections do not
 provide field-level redaction for an applicant who can otherwise audit the
 application.
 
-Application and task index records use the same publish-time M2M
-authorization, retry policy, and exact dead-letter repair command as program
+Application and task index records use the same publish-time service token,
+acknowledgement, retry policy, and exact dead-letter repair command as program
 records. They remain non-public and are intended for
 Query Service collection and direct-grant filtering after the corresponding
 resource projections are enabled.

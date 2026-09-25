@@ -560,6 +560,18 @@ func (s *ProgramService) DeleteSkill(ctx context.Context, programID, skillID, ac
 	return nil
 }
 
+// IsActiveProgramAdmin reports whether userID holds an active program_admin membership on programID.
+func (s *ProgramService) IsActiveProgramAdmin(ctx context.Context, programID, userID string) (bool, error) {
+	_, err := s.memberRepo.FindActiveProgramAdminByProgramAndUser(ctx, programID, userID)
+	if errors.Is(err, domain.ErrProgramMemberNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("find program admin membership: %w", err)
+	}
+	return true, nil
+}
+
 // GetFundingStats returns funding stats for a program.
 func (s *ProgramService) GetFundingStats(ctx context.Context, programID string) (*models.ProgramFundingStats, error) {
 	ctx, span := programSvcTracer.Start(ctx, "ProgramService.GetFundingStats")

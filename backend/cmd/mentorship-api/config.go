@@ -62,11 +62,8 @@ type FGAConfig struct {
 
 // IndexerConfig configures authenticated index publishing and retry behavior.
 type IndexerConfig struct {
-	TokenURL     string
-	ClientID     string
-	ClientSecret string
-	Audience     string
-	Scope        string
+	// ServiceToken is stamped on every index message; without it the relay idles.
+	ServiceToken string
 	RetryDelay   time.Duration
 	MaxAttempts  int
 }
@@ -171,13 +168,6 @@ func loadConfig() (*Config, error) {
 	if err != nil || indexMaxAttempts <= 0 {
 		return nil, fmt.Errorf("INDEX_RELAY_MAX_ATTEMPTS: must be a positive integer")
 	}
-	indexerTokenURL := os.Getenv("FGA_INDEXER_TOKEN_URL")
-	indexerClientID := os.Getenv("INDEXER_CLIENT_ID")
-	indexerClientSecret := os.Getenv("INDEXER_CLIENT_SECRET")
-	indexerAudience := os.Getenv("FGA_INDEXER_AUDIENCE")
-	if os.Getenv("FGA_NATS_URL") != "" && (indexerTokenURL == "" || indexerClientID == "" || indexerClientSecret == "" || indexerAudience == "") {
-		return nil, fmt.Errorf("FGA_INDEXER_TOKEN_URL, INDEXER_CLIENT_ID, INDEXER_CLIENT_SECRET, and FGA_INDEXER_AUDIENCE are required when FGA_NATS_URL is configured")
-	}
 	crowdfundingTimeout := 10 * time.Second
 	if v := os.Getenv("CROWDFUNDING_TIMEOUT"); v != "" {
 		d, err := time.ParseDuration(v)
@@ -217,11 +207,7 @@ func loadConfig() (*Config, error) {
 			RelayMaxAttempts: relayMaxAttempts,
 		},
 		Indexer: IndexerConfig{
-			TokenURL:     indexerTokenURL,
-			ClientID:     indexerClientID,
-			ClientSecret: indexerClientSecret,
-			Audience:     indexerAudience,
-			Scope:        getEnv("FGA_INDEXER_SCOPE", "access:query"),
+			ServiceToken: os.Getenv("INDEXER_SERVICE_TOKEN"),
 			RetryDelay:   indexRetryDelay,
 			MaxAttempts:  indexMaxAttempts,
 		},
