@@ -732,14 +732,15 @@ func (r *ProgramRepository) createInTx(ctx context.Context, tx pgx.Tx, input mod
 
 	const q = `
 		INSERT INTO programs (
-			id, lf_project_uid, name, slug, status, is_paid, description, logo_url, website_url, repo_link,
-			code_of_conduct, industry, color, lfid, cii_project_id, accept_applications,
-			terms_and_conditions, mentee_needs, task_templates
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+			id, lf_project_uid, lf_project_slug, lf_project_name, lf_project_logo_url, name, slug, status, is_paid,
+			description, logo_url, website_url, repo_link, code_of_conduct, industry, color, lfid, cii_project_id,
+			accept_applications, terms_and_conditions, mentee_needs, task_templates
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
 		RETURNING` + programReturningCols
 
 	p, err := scanProgram(tx.QueryRow(ctx, q,
-		input.ID, input.ProjectUID, input.Name, input.Slug, input.Status, input.IsPaid,
+		input.ID, input.ProjectUID, input.ProjectSlug, input.ProjectName, input.ProjectLogoURL,
+		input.Name, input.Slug, input.Status, input.IsPaid,
 		input.Description, input.LogoURL, input.WebsiteURL, input.RepoLink,
 		input.CodeOfConduct, input.Industry, input.Color, input.LFID, input.CIIProjectID,
 		input.AcceptApplications, input.TermsAndConditions,

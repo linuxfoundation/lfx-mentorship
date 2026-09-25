@@ -992,24 +992,32 @@ Resolve a program UUID or slug to the canonical program UUID.
 
 #### `POST /v1/programs` 🔒
 
-Create a program. New programs start in `draft` status.
+Create a program with its first terms, skills, and prerequisites in one transaction. New programs start in `draft` status and the slug is derived from `name`.
+
+The caller resolves the LF project from Project Service and passes its UID, slug, name, and logo. They are persisted with the program and feed its search index snapshot (`project_slug`, `project_name`, `project_logo_url`).
 
 **Request body**
 ```json
 {
-  "name":        "CNCF Mentorship 2026",  // required; must be unique
-  "slug":        "cncf-mentorship-2026",  // required; must be unique
-  "description": "...",
-  "logo_url":    "https://...",
-  "website_url": "https://...",
-  "repo_link":   "https://github.com/cncf/mentorship",
-  "code_of_conduct": "https://...",
-  "lfid":        "alice",
-  "cii_project_id": "12345",
-  "is_paid":     true,
-  "task_templates": [
-    { "name": "Contribution PR", "description": "...", "submitFile": null, "dueDate": null }
-  ]
+  "projectId":        "7cad5a8d-19d0-41a4-81a6-043453daf9ee", // required; Project Service UUID
+  "projectSlug":      "cncf",                                 // required
+  "projectName":      "Cloud Native Computing Foundation",   // required
+  "projectLogoUrl":   "https://...",                          // optional; http(s)
+  "name":             "CNCF Mentorship 2026",                 // required; must be unique
+  "description":      "...",
+  "repositoryUrl":    "https://github.com/cncf/mentorship",
+  "websiteUrl":       "https://...",
+  "codeOfConductUrl": "https://...",
+  "ciiProjectId":     "12345",
+  "skills":           ["Go"],                                 // required; at least one
+  "terms": [                                                  // required; 1–4 terms
+    { "name": "Spring 2026", "startDate": "2026-03-01", "endDate": "2026-05-31",
+      "applicationStartDate": "2026-01-15", "applicationEndDate": "2026-02-15" }
+  ],
+  "prerequisites": [
+    { "name": "Contribution PR", "description": "...", "required": true, "requireFile": false, "dueDate": null }
+  ],
+  "termsAccepted":    true                                    // required; must be true
 }
 ```
 

@@ -722,6 +722,37 @@ func TestEnrollmentIntegration_RollsBackWhenSkillInsertFails(t *testing.T) {
 	}
 }
 
+func TestEnrollmentIntegration_PersistsProjectMetadataInIndexSnapshot(t *testing.T) {
+	pool := integrationPool(t)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name) VALUES ('00000000-0000-0000-0000-000000000060', 'enroll-admin', 'Enroll Admin')`); err != nil {
+		t.Fatal(err)
+	}
+	projectUID, projectSlug, projectName, projectLogo := "00000000-0000-0000-0000-000000000099", "enroll-project", "Enroll Project", "https://example.com/logo.svg"
+	program, err := NewProgramRepository(pool).CreateEnrollment(ctx, models.ProgramEnrollmentInput{Program: models.ProgramCreateInput{ID: "00000000-0000-0000-0000-000000000061", CreatorUserID: "00000000-0000-0000-0000-000000000060", ProjectUID: &projectUID, ProjectSlug: &projectSlug, ProjectName: &projectName, ProjectLogoURL: &projectLogo, Name: "Enroll", Slug: "enroll", Status: models.ProgramStatusDraft}, Skills: []string{"Go"}})
+	if err != nil {
+		t.Fatalf("create enrollment: %v", err)
+	}
+	if program.ProjectSlug == nil || *program.ProjectSlug != projectSlug || program.ProjectName == nil || *program.ProjectName != projectName {
+		t.Fatalf("returned project metadata = %v %v", program.ProjectSlug, program.ProjectName)
+	}
+	var data []byte
+	if err := pool.QueryRow(ctx, `SELECT data FROM index_outbox WHERE object_type = 'mentorship_program' AND object_uid = $1`, program.ID).Scan(&data); err != nil {
+		t.Fatalf("read program index snapshot: %v", err)
+	}
+	var document struct {
+		ProjectSlug    string `json:"project_slug"`
+		ProjectName    string `json:"project_name"`
+		ProjectLogoURL string `json:"project_logo_url"`
+	}
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatalf("decode program index snapshot: %v", err)
+	}
+	if document.ProjectSlug != projectSlug || document.ProjectName != projectName || document.ProjectLogoURL != projectLogo {
+		t.Fatalf("program index project metadata = %+v", document)
+	}
+}
+
 func TestFGAOutboxIntegration_NewGenerationCannotBeAcknowledgedByOldClaim(t *testing.T) {
 	pool := integrationPool(t)
 	repo := NewFGAOutboxRepository(pool)

@@ -65,6 +65,9 @@ type ProgramHandler struct {
 
 type enrollmentRequest struct {
 	ProjectID        string                  `json:"projectId"`
+	ProjectSlug      *string                 `json:"projectSlug"`
+	ProjectName      *string                 `json:"projectName"`
+	ProjectLogoURL   *string                 `json:"projectLogoUrl,omitempty"`
 	Name             string                  `json:"name"`
 	Description      *string                 `json:"description,omitempty"`
 	RepositoryURL    *string                 `json:"repositoryUrl,omitempty"`
@@ -396,6 +399,9 @@ func (h *ProgramHandler) Create(w http.ResponseWriter, r *http.Request) {
 	enrollment := models.ProgramEnrollmentInput{
 		Program: models.ProgramCreateInput{
 			ProjectUID:         &request.ProjectID,
+			ProjectSlug:        request.ProjectSlug,
+			ProjectName:        request.ProjectName,
+			ProjectLogoURL:     request.ProjectLogoURL,
 			Name:               request.Name,
 			Slug:               enrollmentSlug(request.Name),
 			Description:        request.Description,
