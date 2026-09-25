@@ -113,8 +113,8 @@ For a precise membership marker, also provide both selectors:
   --username=<lfid>
 ```
 
-Operators should monitor pending outbox age and `fga_relay_dead_lettered`; do
-not delete markers manually.
+Operators should monitor pending outbox age, `fga_relay_dead_lettered`, and
+`fga_outbox_stale_dead_lettered`; do not delete markers manually.
 
 ## Membership Mutations
 

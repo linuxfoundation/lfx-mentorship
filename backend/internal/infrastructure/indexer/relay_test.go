@@ -74,7 +74,7 @@ func TestRelayRunOnceRetriesPublishFailure(t *testing.T) {
 	}
 }
 
-func TestRelaySetAuthorizationOverridesStoredHeaderAndPreservesActor(t *testing.T) {
+func TestRelaySetAuthorizationOverridesStoredHeaderAndDropsStoredActor(t *testing.T) {
 	outbox := &outboxStub{
 		records: []domain.IndexOutboxRecord{{
 			ID:         "1",
@@ -99,8 +99,38 @@ func TestRelaySetAuthorizationOverridesStoredHeaderAndPreservesActor(t *testing.
 	if err := json.Unmarshal(envelope.Headers, &headers); err != nil {
 		t.Fatal(err)
 	}
-	if headers["authorization"] != "Bearer machine-token" || headers["x-on-behalf-of"] != "alice" {
+	if headers["authorization"] != "Bearer machine-token" {
 		t.Fatalf("headers=%v", headers)
+	}
+	if _, ok := headers["x-on-behalf-of"]; ok {
+		t.Fatalf("stored client actor header was republished: %v", headers)
+	}
+}
+
+func TestRelayDropsStoredActorWithoutAuthorization(t *testing.T) {
+	outbox := &outboxStub{
+		records: []domain.IndexOutboxRecord{{
+			ID:         "1",
+			ObjectType: "mentorship_program",
+			Action:     "updated",
+			Headers:    json.RawMessage(`{"x-on-behalf-of":"alice"}`),
+		}},
+		markSentAcknowledged: true,
+	}
+	publisher := &publisherStub{}
+	if err := NewRelay(outbox, publisher, 1).RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var envelope Envelope
+	if err := json.Unmarshal(publisher.data, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	var headers map[string]string
+	if err := json.Unmarshal(envelope.Headers, &headers); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := headers["x-on-behalf-of"]; ok {
+		t.Fatalf("stored client actor header was republished: %v", headers)
 	}
 }
 

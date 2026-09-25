@@ -37,9 +37,13 @@ func TestIndexOutboxIntegration_StaleClaimDeadLettersAtLimit(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE index_outbox SET claimed_at = NOW() - INTERVAL '6 minutes'`); err != nil {
 		t.Fatalf("age second claim: %v", err)
 	}
+	start := indexOutboxStaleDeadLettered.Value()
 	claimed, err = repo.Claim(ctx, 1)
 	if err != nil || len(claimed) != 0 {
 		t.Fatalf("exhausted claim = %#v, err=%v", claimed, err)
+	}
+	if got := indexOutboxStaleDeadLettered.Value() - start; got != 1 {
+		t.Fatalf("stale dead-letter count delta=%d, want 1", got)
 	}
 	var state, lastError string
 	if err := pool.QueryRow(ctx, `SELECT state, last_error FROM index_outbox`).Scan(&state, &lastError); err != nil {
@@ -64,8 +68,12 @@ func TestFGAOutboxIntegration_StaleSameGenerationDeadLettersAtLimit(t *testing.T
 	if _, err := pool.Exec(ctx, `UPDATE fga_outbox SET claimed_at = NOW() - INTERVAL '6 minutes'`); err != nil {
 		t.Fatalf("age claim: %v", err)
 	}
+	start := fgaOutboxStaleDeadLettered.Value()
 	if markers, err := repo.Claim(ctx, 1); err != nil || len(markers) != 0 {
 		t.Fatalf("exhausted claim: markers=%d err=%v", len(markers), err)
+	}
+	if got := fgaOutboxStaleDeadLettered.Value() - start; got != 1 {
+		t.Fatalf("stale dead-letter count delta=%d, want 1", got)
 	}
 	var state, lastError string
 	var attempts int

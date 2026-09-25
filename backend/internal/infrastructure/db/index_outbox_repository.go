@@ -6,6 +6,7 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"expvar"
 	"fmt"
 	"log/slog"
 	"time"
@@ -13,6 +14,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 )
+
+var indexOutboxStaleDeadLettered = expvar.NewInt("index_outbox_stale_dead_lettered")
 
 type IndexOutboxRepository struct {
 	pool        *pgxpool.Pool
@@ -79,9 +82,6 @@ func (r *IndexOutboxRepository) Claim(ctx context.Context, limit int) ([]domain.
 		SELECT COUNT(*) FROM stale_dead`, r.maxAttempts).Scan(&deadLettered); err != nil {
 		return nil, fmt.Errorf("dead-letter stale index outbox records: %w", err)
 	}
-	if deadLettered > 0 {
-		slog.Default().WarnContext(ctx, "dead-lettered stale index outbox records", "count", deadLettered)
-	}
 	rows, err := tx.Query(ctx, `
 		WITH claimed AS (
 			SELECT id
@@ -122,6 +122,10 @@ func (r *IndexOutboxRepository) Claim(ctx context.Context, limit int) ([]domain.
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
+	}
+	if deadLettered > 0 {
+		indexOutboxStaleDeadLettered.Add(int64(deadLettered))
+		slog.Default().WarnContext(ctx, "dead-lettered stale index outbox records", "count", deadLettered)
 	}
 	return result, nil
 }

@@ -5,6 +5,7 @@ package db
 
 import (
 	"context"
+	"expvar"
 	"fmt"
 	"log/slog"
 	"time"
@@ -12,6 +13,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 )
+
+var fgaOutboxStaleDeadLettered = expvar.NewInt("fga_outbox_stale_dead_lettered")
 
 // FGAOutboxRepository implements generation-guarded FGA marker delivery.
 type FGAOutboxRepository struct {
@@ -106,6 +109,7 @@ func (r *FGAOutboxRepository) Claim(ctx context.Context, limit int) ([]domain.FG
 		return nil, fmt.Errorf("dead-letter stale FGA outbox markers: %w", err)
 	}
 	if deadLettered > 0 {
+		fgaOutboxStaleDeadLettered.Add(int64(deadLettered))
 		slog.Default().WarnContext(ctx, "dead-lettered stale FGA outbox markers", "count", deadLettered)
 	}
 	const query = `

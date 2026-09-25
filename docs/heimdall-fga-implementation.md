@@ -360,12 +360,14 @@ The backend exposes relay counters through its internal metrics surface:
 - `fga_relay_ack_failures`;
 - `fga_relay_claim_failures`; and
 - `fga_relay_dead_lettered`;
+- `fga_outbox_stale_dead_lettered` (markers dead-lettered after the relay crashed mid-delivery);
 - `index_relay_claimed`;
 - `index_relay_published`;
 - `index_relay_retried`;
 - `index_relay_claim_failures`;
-- `index_relay_ack_failures`; and
-- `index_relay_dead_lettered`.
+- `index_relay_ack_failures`;
+- `index_relay_dead_lettered`; and
+- `index_outbox_stale_dead_lettered` (records dead-lettered after the relay crashed mid-delivery).
 
 Metrics are served on cluster-local `/internal/metrics`, outside the
 `/mentorship/` HTTPRoute and Heimdall JWT middleware. They are not exposed on

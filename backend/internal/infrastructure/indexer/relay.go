@@ -104,21 +104,21 @@ func (r *Relay) RunOnce(ctx context.Context) error {
 	for _, record := range records {
 		headers := record.Headers
 		var recordErr error
-		if authorization != "" {
-			var headerValues map[string]string
-			if len(headers) > 0 {
-				if err := json.Unmarshal(headers, &headerValues); err != nil {
-					recordErr = fmt.Errorf("decode index headers for record %s: %w", record.ID, err)
-				}
-			} else {
-				headerValues = map[string]string{}
+		var headerValues map[string]string
+		if len(headers) > 0 {
+			if err := json.Unmarshal(headers, &headerValues); err != nil {
+				recordErr = fmt.Errorf("decode index headers for record %s: %w", record.ID, err)
 			}
-			if recordErr == nil {
+		}
+		if recordErr == nil && (authorization != "" || headerValues != nil) {
+			// Rows stored before enqueue-time sanitization may still carry client-supplied actor headers.
+			headerValues = domain.SanitizedIndexHeaders(headerValues)
+			if authorization != "" {
 				headerValues["authorization"] = authorization
-				headers, recordErr = json.Marshal(headerValues)
-				if recordErr != nil {
-					recordErr = fmt.Errorf("marshal index authorization for record %s: %w", record.ID, recordErr)
-				}
+			}
+			headers, recordErr = json.Marshal(headerValues)
+			if recordErr != nil {
+				recordErr = fmt.Errorf("marshal index headers for record %s: %w", record.ID, recordErr)
 			}
 		}
 		if recordErr == nil {
