@@ -96,13 +96,15 @@ func (r *FGAOutboxRepository) Claim(ctx context.Context, limit int) ([]domain.FG
 			WHERE state = 'in_flight'
 			  AND claimed_at <= NOW() - INTERVAL '5 minutes'
 			  AND generation = claimed_generation
-			  AND attempts >= $2
+			  AND attempts + 1 >= $2
 			RETURNING id
 		), lockable AS (
 			SELECT pending.id, pending.object_type, pending.object_uid
 			FROM fga_outbox AS pending
 			WHERE ((pending.state = 'pending' AND pending.next_attempt_at <= NOW())
-			   OR (pending.state = 'in_flight' AND pending.claimed_at <= NOW() - INTERVAL '5 minutes'))
+			   OR (pending.state = 'in_flight'
+			       AND pending.claimed_at <= NOW() - INTERVAL '5 minutes'
+			       AND pending.attempts + 1 < $2))
 			  AND NOT EXISTS (
 				SELECT 1 FROM fga_outbox AS active
 				WHERE active.object_type = pending.object_type
@@ -124,7 +126,9 @@ func (r *FGAOutboxRepository) Claim(ctx context.Context, limit int) ([]domain.FG
 		)
 		UPDATE fga_outbox AS outbox
 		SET state = 'in_flight', claimed_generation = outbox.generation,
-		    claimed_at = NOW(), next_attempt_at = NOW() + INTERVAL '5 minutes', updated_on = NOW()
+		    claimed_at = NOW(), next_attempt_at = NOW() + INTERVAL '5 minutes',
+		    attempts = CASE WHEN outbox.state = 'in_flight' THEN outbox.attempts + 1 ELSE outbox.attempts END,
+		    updated_on = NOW()
 		FROM candidates
 		WHERE outbox.id = candidates.id
 		RETURNING outbox.id, outbox.marker_kind, outbox.object_type, outbox.object_uid,
