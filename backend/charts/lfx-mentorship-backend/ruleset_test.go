@@ -20,14 +20,33 @@ func TestRuleSetDoesNotContainRetiredRoutesOrBroadProgramMethods(t *testing.T) {
 		"/mentorship/v1/program-terms/:id",
 		"/mentorship/v1/internal/metrics",
 		"/mentorship/v1/admin/approver-team/members",
+	} {
+		if strings.Contains(ruleset, retired) {
+			t.Errorf("RuleSet contains retired route %q", retired)
+		}
+	}
+	routeLines := map[string]bool{}
+	for _, line := range strings.Split(ruleset, "\n") {
+		routeLines[strings.TrimSpace(line)] = true
+	}
+	// Query Service owns these collections; the matching detail routes stay in the RuleSet.
+	for _, collection := range []string{
 		"- path: /mentorship/v1/programs/catalog",
 		"- path: /mentorship/v1/mentors",
 		"- path: /mentorship/v1/mentees",
 		"- path: /mentorship/v1/summary",
 		"- path: /mentorship/v1/funding-stats/total",
 	} {
-		if strings.Contains(ruleset, retired) {
-			t.Errorf("RuleSet contains retired route %q", retired)
+		if routeLines[collection] {
+			t.Errorf("RuleSet contains retired collection route %q", collection)
+		}
+	}
+	for _, profile := range []string{
+		"- path: /mentorship/v1/mentors/:id",
+		"- path: /mentorship/v1/mentees/:id",
+	} {
+		if !routeLines[profile] {
+			t.Errorf("RuleSet is missing public directory profile route %q", profile)
 		}
 	}
 	resolverStart := strings.Index(ruleset, "id: rule:lfx:lfx-mentorship-backend:public-resolver")

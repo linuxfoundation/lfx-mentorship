@@ -35,6 +35,11 @@ DROP INDEX IF EXISTS idx_index_outbox_pending;
 CREATE INDEX IF NOT EXISTS idx_index_outbox_pending
   ON index_outbox(next_attempt_at, created_on) WHERE state = 'pending';
 
+-- Rows enqueued before sanitization may hold a client-supplied actor header.
+UPDATE index_outbox
+SET headers = headers - 'x-on-behalf-of'
+WHERE headers ? 'x-on-behalf-of';
+
 DROP INDEX IF EXISTS uq_user_profiles_user_type;
 
 DELETE FROM user_profiles AS duplicate
