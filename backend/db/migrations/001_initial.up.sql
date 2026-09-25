@@ -77,9 +77,10 @@ CREATE TABLE IF NOT EXISTS user_profiles (
 -- ============================================
 CREATE TABLE IF NOT EXISTS programs (
   id                   UUID         PRIMARY KEY,
-  project_uid          TEXT,
-  project_slug         TEXT,
-  project_name         TEXT,
+  lf_project_uid          TEXT,
+  lf_project_slug         TEXT,
+  lf_project_name         TEXT,
+  lf_project_logo_url         TEXT,
   name                 TEXT         NOT NULL,
   slug                 TEXT         NOT NULL UNIQUE,
   status               VARCHAR(20)  NOT NULL DEFAULT 'draft',    -- draft | submitted | published | rejected | archived | hidden
@@ -291,13 +292,13 @@ CREATE INDEX IF NOT EXISTS idx_tasks_owner_id        ON tasks(owner_id) WHERE ow
 CREATE INDEX IF NOT EXISTS idx_tasks_status          ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_category        ON tasks(category);
 
-CREATE INDEX IF NOT EXISTS idx_programs_project_uid
-  ON programs(project_uid)
-  WHERE project_uid IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_programs_lf_project_uid
+  ON programs(lf_project_uid)
+  WHERE lf_project_uid IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_programs_project_slug
-  ON programs(project_slug)
-  WHERE project_slug IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_programs_lf_project_slug
+  ON programs(lf_project_slug)
+  WHERE lf_project_slug IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS mentorship_approver_team_members (
   user_id    UUID PRIMARY KEY REFERENCES users(id),

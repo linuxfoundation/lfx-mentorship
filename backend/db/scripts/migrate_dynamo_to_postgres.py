@@ -480,6 +480,7 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
         linked_project = p.get("project") if isinstance(p.get("project"), dict) else {}
         project_uid = _as_uuid(
             p.get("projectUid")
+            or p.get("lfProjectUid")
             or p.get("lfProjectId")
             or p.get("lfProjectUID")
             or linked_project.get("id")
@@ -501,6 +502,7 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
         )
         project_slug = str(project_slug).strip() if project_slug else None
         project_name = str(project_name).strip() if project_name else None
+        project_logo_url = (p.get("projectLogoUrl") or p.get("lfProjectLogoUrl") or p.get("project_logo_url") or "").strip() or None
         if not project_uid or not project_slug or not project_name:
             unresolved_project_mappings.append((pid, project_uid, project_slug, project_name))
 
@@ -524,6 +526,7 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
                 project_uid,
                 project_slug,
                 project_name,
+                project_logo_url,
                 (p.get("name") or "").strip() or None,
                 slug,
                 _normalize_program_status(p.get("status")),
@@ -590,16 +593,17 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
         cur,
         """
         INSERT INTO programs
-                    (id, project_uid, project_slug, project_name, name, slug, status, is_paid, description, logo_url, website_url,
+                    (id, lf_project_uid, lf_project_slug, lf_project_name, lf_project_logo_url, name, slug, status, is_paid, description, logo_url, website_url,
            repo_link, code_of_conduct, industry, color, lfid, cii_project_id,
            accept_applications, terms_and_conditions, program_term_status,
            discover_sort_rank, amount_raised, mentee_needs, task_templates,
            created_on, updated_on)
                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         ON CONFLICT (id) DO UPDATE SET
-                    project_uid         = EXCLUDED.project_uid,
-                project_slug        = EXCLUDED.project_slug,
-                project_name        = EXCLUDED.project_name,
+                    lf_project_uid     = EXCLUDED.lf_project_uid,
+          lf_project_slug        = EXCLUDED.lf_project_slug,
+          lf_project_name        = EXCLUDED.lf_project_name,
+          lf_project_logo_url   = EXCLUDED.lf_project_logo_url,
           name                = EXCLUDED.name,
           slug                = EXCLUDED.slug,
           status              = EXCLUDED.status,
@@ -1205,7 +1209,7 @@ def seed_derived_state(cur) -> None:
             WITH seed AS (
                 SELECT 'mentorship_program'::text AS object_type, id::text AS object_uid
       FROM programs AS program
-      WHERE project_uid IS NOT NULL
+    WHERE lf_project_uid IS NOT NULL
         AND NOT EXISTS (
           SELECT 1
           FROM program_members
@@ -1297,7 +1301,7 @@ def seed_derived_state(cur) -> None:
                 '{}'::jsonb,
                 jsonb_strip_nulls(jsonb_build_object(
                     'id', id,
-                    'project_uid', project_uid,
+                    'project_uid', lf_project_uid,
                     'name', name,
                     'slug', slug,
                     'status', status,
@@ -1320,12 +1324,12 @@ def seed_derived_state(cur) -> None:
                     'name_and_aliases', jsonb_build_array(name, slug),
                     'public', status = 'published',
                     'tags', CASE
-                        WHEN project_uid IS NULL THEN jsonb_build_array('status:' || status)
-                        ELSE jsonb_build_array('status:' || status, 'project_uid:' || project_uid)
+                        WHEN lf_project_uid IS NULL THEN jsonb_build_array('status:' || status)
+                        ELSE jsonb_build_array('status:' || status, 'project_uid:' || lf_project_uid)
                     END
                 ) || CASE
-                    WHEN project_uid IS NULL THEN '{}'::jsonb
-                    ELSE jsonb_build_object('parent_refs', jsonb_build_array('project:' || project_uid))
+                        WHEN lf_project_uid IS NULL THEN '{}'::jsonb
+                        ELSE jsonb_build_object('parent_refs', jsonb_build_array('project:' || lf_project_uid))
                 END
             FROM programs
             ON CONFLICT (object_type, object_uid) DO UPDATE SET

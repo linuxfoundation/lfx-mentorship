@@ -116,9 +116,10 @@ def main() -> None:
             project_slug = f"{base_slug}-{str(project_id).replace('-', '')[:8]}"
         used_slugs.add(project_slug)
         project_name = str(row.get("name") or f"Synthetic LF Project {str(project_id)[:8]}").strip()
+        project_logo_url = str(row.get("logoUrl") or "https://example.invalid/lf-projects/default.svg").strip()
         existing_uid = row.get("projectUid") or row.get("lfProjectId") or row.get("lfProjectUID") or row.get("fundspringProjectId")
         project_uid = existing_uid if existing_uid and UUID_RE.match(str(existing_uid)) else str(uuid.uuid5(NAMESPACE, f"lf-project:{project_slug}"))
-        project_repairs.append((project_id, project_uid, project_slug, project_name))
+        project_repairs.append((project_id, project_uid, project_slug, project_name, project_logo_url))
 
     enum_repairs = [
         row["id"]
@@ -152,11 +153,11 @@ def main() -> None:
             names = {f"#{key}": key for key in values}
             expr = "SET " + ", ".join(f"#{key} = :{key}" for key in values)
             tasks.update_item(Key={"id": row["id"]}, UpdateExpression=expr, ExpressionAttributeNames=names, ExpressionAttributeValues={f":{key}": value for key, value in values.items()})
-    for project_id, project_uid, project_slug, project_name in project_repairs:
+    for project_id, project_uid, project_slug, project_name, project_logo_url in project_repairs:
         projects.update_item(
             Key={"projectId": project_id},
-            UpdateExpression="SET projectUid = :uid, projectSlug = :slug, projectName = :name",
-            ExpressionAttributeValues={":uid": project_uid, ":slug": project_slug, ":name": project_name},
+            UpdateExpression="SET lfProjectUid = :uid, lfProjectSlug = :slug, lfProjectName = :name, lfProjectLogoUrl = :logo",
+            ExpressionAttributeValues={":uid": project_uid, ":slug": project_slug, ":name": project_name, ":logo": project_logo_url},
         )
     print("status=applied")
 
