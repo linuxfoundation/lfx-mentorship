@@ -253,6 +253,9 @@ func (s *ProgramService) Create(ctx context.Context, input models.ProgramCreateI
 	}
 	canonicalProjectUID := projectUID.String()
 	input.ProjectUID = &canonicalProjectUID
+	if err := normalizeProjectMetadata(&input); err != nil {
+		return nil, err
+	}
 	input.Status = models.ProgramStatusDraft // programs always start as draft
 	input.ID = uuid.New().String()
 
@@ -314,6 +317,9 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 			if strings.TrimSpace(prerequisite.Name) == "" || prerequisite.Description == nil || strings.TrimSpace(*prerequisite.Description) == "" {
 				return nil, fmt.Errorf("%w: prerequisite name and description are required", domain.ErrInvalidInput)
 			}
+			if err := validateDueDate(prerequisite.DueDate); err != nil {
+				return nil, err
+			}
 		}
 		templates := make([]taskTemplate, 0, len(prerequisites))
 		for _, prerequisite := range prerequisites {
@@ -339,7 +345,7 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 	if !available {
 		return nil, fmt.Errorf("%w: program name is already in use", domain.ErrConflict)
 	}
-	for _, value := range []*string{input.Program.RepoLink, input.Program.WebsiteURL, input.Program.CodeOfConduct} {
+	for _, value := range []*string{input.Program.RepoLink, input.Program.WebsiteURL, input.Program.CodeOfConduct, input.Program.ProjectLogoURL} {
 		if value == nil || strings.TrimSpace(*value) == "" {
 			continue
 		}
@@ -364,9 +370,38 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 	}
 	canonicalProjectUID := projectUID.String()
 	input.Program.ProjectUID = &canonicalProjectUID
+	if err := normalizeProjectMetadata(&input.Program); err != nil {
+		return nil, err
+	}
 	input.Program.Status = models.ProgramStatusDraft
 	input.Program.ID = uuid.New().String()
 	return s.repo.CreateEnrollment(ctx, input)
+}
+
+// normalizeProjectMetadata trims the Project Service slug, name, and logo the
+// caller resolved alongside project_uid. The program index snapshot is derived
+// from the persisted row, so slug and name must be present at creation.
+func normalizeProjectMetadata(input *models.ProgramCreateInput) error {
+	trim := func(value *string) *string {
+		if value == nil {
+			return nil
+		}
+		trimmed := strings.TrimSpace(*value)
+		if trimmed == "" {
+			return nil
+		}
+		return &trimmed
+	}
+	input.ProjectSlug = trim(input.ProjectSlug)
+	input.ProjectName = trim(input.ProjectName)
+	input.ProjectLogoURL = trim(input.ProjectLogoURL)
+	if input.ProjectSlug == nil {
+		return fmt.Errorf("%w: project_slug is required", domain.ErrInvalidInput)
+	}
+	if input.ProjectName == nil {
+		return fmt.Errorf("%w: project_name is required", domain.ErrInvalidInput)
+	}
+	return nil
 }
 
 // Update validates and applies changes to the program with the given ID.

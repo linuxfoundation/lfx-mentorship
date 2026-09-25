@@ -85,13 +85,36 @@ tuples.
 
 Relay failures are retried with generation guards. After the configured maximum
 attempt count, a marker moves to the `dead_letter` state and remains in the
-outbox with its last error for operator inspection and replay. Dead-lettered
-markers are never silently discarded.
+outbox with its last error for operator inspection. Dead-lettered markers are
+never silently discarded. After fixing the source data or dependency, requeue
+one exact marker through the normal relay path:
+
+```bash
+/app/outbox-repair \
+  --outbox=fga \
+  --object-type=mentorship_program \
+  --object-uid=<uuid>
+```
+
+The command only accepts an exact object key and only changes a retained
+`dead_letter` marker to `pending`. It does not scan domain rows or publish
+directly. This also repairs `delete_access` markers after their source row has
+been deleted because the retained marker still carries the object key and
+operation.
+
+For a precise membership marker, also provide both selectors:
+
+```bash
+/app/outbox-repair \
+  --outbox=fga \
+  --object-type=mentorship_program \
+  --object-uid=<uuid> \
+  --relation=mentor \
+  --username=<lfid>
+```
 
 Operators should monitor pending outbox age, `fga_relay_dead_lettered`, and
-tombstones whose `last_reconciled_on` is stale. Replay a dead-lettered marker
-with `fga-replay <marker-id>` after correcting its underlying data or dependency
-failure; do not delete the marker manually.
+`fga_outbox_stale_dead_lettered`; do not delete markers manually.
 
 ## Membership Mutations
 

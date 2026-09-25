@@ -218,6 +218,17 @@ func TestApplicationHandler_Create_NoPrincipal_Returns401(t *testing.T) {
 	}
 }
 
+func TestApplicationHandler_BulkDeclineByTerm_NoPrincipal_Returns401(t *testing.T) {
+	h := newApplicationHandler(&stubApplicationSvc{})
+	r := httptest.NewRequest(http.MethodPost, "/program-terms/term-1/applications/bulk-decline", nil)
+	r = requestWithChiParam(r, "id", "term-1")
+	w := httptest.NewRecorder()
+	h.BulkDeclineByTerm(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("got %d; want 401", w.Code)
+	}
+}
+
 func TestApplicationHandler_Create_UserIDBoundToPrincipal(t *testing.T) {
 	// Attacker tries to submit on behalf of "victim-user" by setting user_id in body.
 	var capturedUserID string

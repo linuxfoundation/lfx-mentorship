@@ -146,14 +146,13 @@ type ApplicationTerm struct {
 // ApplicationCreateInput is the request body for submitting an application.
 // Status is intentionally absent — the service always assigns "pending".
 type ApplicationCreateInput struct {
-	ID                string             `json:"id"`
-	UserID            string             `json:"user_id"`
-	Role              ApplicationRole    `json:"role"`
-	Status            ApplicationStatus  `json:"-"` // server-assigned; never read from client
-	ProgramTermStatus *ProgramTermStatus `json:"program_term_status,omitempty"`
-	StartDateTime     *time.Time         `json:"start_date_time,omitempty"`
-	EndDateTime       *time.Time         `json:"end_date_time,omitempty"`
-	AttendanceType    *AttendanceType    `json:"attendance_type,omitempty"`
+	ID             string            `json:"id"`
+	UserID         string            `json:"user_id"`
+	Role           ApplicationRole   `json:"role"`
+	Status         ApplicationStatus `json:"-"` // server-assigned; never read from client
+	StartDateTime  *time.Time        `json:"start_date_time,omitempty"`
+	EndDateTime    *time.Time        `json:"end_date_time,omitempty"`
+	AttendanceType *AttendanceType   `json:"attendance_type,omitempty"`
 }
 
 // ApplicationUpdateInput is the request body for updating an application's status.

@@ -10,23 +10,15 @@ metadata:
     {{- include "lfx-v2-mentorship-service.labels" . | nindent 4 }}
 spec:
   rules:
-    # Public collections and discovery routes have no single FGA object.
-    - id: rule:lfx:lfx-mentorship-backend:public-collections
+    # Slug resolution must happen before an object-level FGA check. Top-level
+    # resource collections are served by Query Service and are absent here;
+    # nested views remain checked against their path parent.
+    - id: rule:lfx:lfx-mentorship-backend:public-resolver
       allow_encoded_slashes: "off"
       match:
         methods: [GET]
         routes:
-          - path: /mentorship/v1/programs
-          - path: /mentorship/v1/programs/catalog
           - path: /mentorship/v1/programs/resolve/:id
-          - path: /mentorship/v1/mentees
-          - path: /mentorship/v1/mentees/summary
-          - path: /mentorship/v1/mentors
-          - path: /mentorship/v1/mentors/summary
-          - path: /mentorship/v1/summary
-          - path: /mentorship/v1/funding-stats/total
-          - path: /mentorship/v1/mentees/:id
-          - path: /mentorship/v1/mentors/:id
       execute:
         - authenticator: oidc
         - authenticator: anonymous_authenticator
@@ -36,14 +28,17 @@ spec:
             values:
               aud: {{ .Values.app.audience | quote }}
 
-    - id: rule:lfx:lfx-mentorship-backend:internal-metrics
+    # Directory profiles have no FGA type; the service returns only publicly listable records.
+    - id: rule:lfx:lfx-mentorship-backend:directory-profiles-public
       allow_encoded_slashes: "off"
       match:
         methods: [GET]
         routes:
-          - path: /mentorship/v1/internal/metrics
+          - path: /mentorship/v1/mentors/:id
+          - path: /mentorship/v1/mentees/:id
       execute:
         - authenticator: oidc
+        - authenticator: anonymous_authenticator
         - authorizer: allow_all
         - finalizer: create_jwt
           config:
@@ -125,23 +120,6 @@ spec:
           - path: /mentorship/v1/me/profiles/:profileType
           - path: /mentorship/v1/me/profiles/by-id/:id
           - path: /mentorship/v1/me/applications
-      execute:
-        - authenticator: oidc
-        - authorizer: allow_all
-        - finalizer: create_jwt
-          config:
-            values:
-              aud: {{ .Values.app.audience | quote }}
-
-    # Roster management is authenticated at the gateway; the service enforces
-    # platform-issued management scopes and self-escalation rules.
-    - id: rule:lfx:lfx-mentorship-backend:roster-management
-      allow_encoded_slashes: "off"
-      match:
-        methods: [GET, POST, DELETE]
-        routes:
-          - path: /mentorship/v1/admin/approver-team/members
-          - path: /mentorship/v1/admin/approver-team/members/:userID
       execute:
         - authenticator: oidc
         - authorizer: allow_all

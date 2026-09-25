@@ -31,6 +31,6 @@ type FGAOutboxRepository interface {
 	EnqueueMembershipRemoval(ctx context.Context, objectType, objectUID, relation, username string) error
 	Claim(ctx context.Context, limit int) ([]FGAOutboxMarker, error)
 	Acknowledge(ctx context.Context, marker FGAOutboxMarker) (bool, error)
-	Retry(ctx context.Context, marker FGAOutboxMarker, nextAttemptAt time.Time, errText string) error
-	DeadLetter(ctx context.Context, marker FGAOutboxMarker, errText string) error
+	Retry(ctx context.Context, marker FGAOutboxMarker, nextAttemptAt time.Time, errText string) (bool, error)
+	DeadLetter(ctx context.Context, marker FGAOutboxMarker, errText string) (bool, error)
 }

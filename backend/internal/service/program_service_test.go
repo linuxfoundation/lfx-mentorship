@@ -5,6 +5,7 @@ package service_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -35,12 +36,31 @@ func TestProgramService_Create_AlwaysDraft(t *testing.T) {
 	}
 	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
 	projectUID := "00000000-0000-0000-0000-000000000001"
-	_, err := svc.Create(context.Background(), models.ProgramCreateInput{Name: "Test", Slug: "test", ProjectUID: &projectUID})
+	projectSlug, projectName := "test-project", "Test Project"
+	_, err := svc.Create(context.Background(), models.ProgramCreateInput{Name: "Test", Slug: "test", ProjectUID: &projectUID, ProjectSlug: &projectSlug, ProjectName: &projectName})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	if capturedStatus != models.ProgramStatusDraft {
 		t.Errorf("status = %q; want %q", capturedStatus, models.ProgramStatusDraft)
+	}
+}
+
+func TestProgramService_Create_RequiresProjectMetadata(t *testing.T) {
+	projectUID := "00000000-0000-0000-0000-000000000001"
+	blank, name, slug := "  ", "Test Project", "test-project"
+	for label, input := range map[string]models.ProgramCreateInput{
+		"missing slug": {Name: "Test", Slug: "test", ProjectUID: &projectUID, ProjectName: &name},
+		"blank slug":   {Name: "Test", Slug: "test", ProjectUID: &projectUID, ProjectSlug: &blank, ProjectName: &name},
+		"missing name": {Name: "Test", Slug: "test", ProjectUID: &projectUID, ProjectSlug: &slug},
+	} {
+		svc := newProgramSvc(&stubProgRepo{create: func(context.Context, models.ProgramCreateInput) (*models.Program, error) {
+			t.Fatalf("%s: repository must not be called", label)
+			return nil, nil
+		}}, &stubTermRepo{}, &stubAppRepo{})
+		if _, err := svc.Create(context.Background(), input); !errors.Is(err, domain.ErrInvalidInput) {
+			t.Errorf("%s: expected invalid input, got %v", label, err)
+		}
 	}
 }
 
@@ -65,8 +85,9 @@ func TestProgramService_CreateEnrollment_NormalizesSkills(t *testing.T) {
 		return &models.Program{ID: "p1"}, nil
 	}}
 	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	projectSlug, projectName, projectLogo := " program-project ", "Program Project", " "
 	_, err := svc.CreateEnrollment(context.Background(), models.ProgramEnrollmentInput{
-		Program: models.ProgramCreateInput{ProjectUID: &projectUID, Name: "Program", Slug: "program"},
+		Program: models.ProgramCreateInput{ProjectUID: &projectUID, ProjectSlug: &projectSlug, ProjectName: &projectName, ProjectLogoURL: &projectLogo, Name: "Program", Slug: "program"},
 		Skills:  []string{" Go ", "go", "Kubernetes"},
 		Terms:   []models.ProgramTermCreateInput{{Name: "Term", StartDateTime: &start, EndDateTime: &termEnd, ApplicationStartDate: &applicationStart, ApplicationEndDate: &applicationEnd}},
 	})
@@ -75,6 +96,30 @@ func TestProgramService_CreateEnrollment_NormalizesSkills(t *testing.T) {
 	}
 	if len(captured.Skills) != 2 || captured.Skills[0] != "Go" || captured.Skills[1] != "Kubernetes" {
 		t.Fatalf("skills=%v", captured.Skills)
+	}
+	if captured.Program.ProjectSlug == nil || *captured.Program.ProjectSlug != "program-project" || captured.Program.ProjectName == nil || *captured.Program.ProjectName != "Program Project" || captured.Program.ProjectLogoURL != nil {
+		t.Fatalf("project metadata=%v %v %v", captured.Program.ProjectSlug, captured.Program.ProjectName, captured.Program.ProjectLogoURL)
+	}
+}
+
+func TestProgramService_CreateEnrollment_RejectsNonISOPrerequisiteDueDate(t *testing.T) {
+	projectUID := "00000000-0000-0000-0000-000000000001"
+	start := time.Now().Add(24 * time.Hour)
+	termEnd := start.Add(24 * time.Hour)
+	applicationStart := time.Now()
+	applicationEnd := start.Add(-time.Hour)
+	svc := newProgramSvc(&stubProgRepo{createEnrollment: func(context.Context, models.ProgramEnrollmentInput) (*models.Program, error) {
+		t.Fatal("repository must not be called")
+		return nil, nil
+	}}, &stubTermRepo{}, &stubAppRepo{})
+	_, err := svc.CreateEnrollment(context.Background(), models.ProgramEnrollmentInput{
+		Program:       models.ProgramCreateInput{ProjectUID: &projectUID, Name: "Program", Slug: "program"},
+		Skills:        []string{"Go"},
+		Terms:         []models.ProgramTermCreateInput{{Name: "Term", StartDateTime: &start, EndDateTime: &termEnd, ApplicationStartDate: &applicationStart, ApplicationEndDate: &applicationEnd}},
+		Prerequisites: json.RawMessage(`[{"name":"PR","description":"Open a PR","required":true,"dueDate":"tomorrow"}]`),
+	})
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("expected invalid due date input, got %v", err)
 	}
 }
 

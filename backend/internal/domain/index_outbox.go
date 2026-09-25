@@ -28,5 +28,5 @@ type IndexOutboxRepository interface {
 	Enqueue(ctx context.Context, record IndexOutboxRecord) error
 	Claim(ctx context.Context, limit int) ([]IndexOutboxRecord, error)
 	MarkSent(ctx context.Context, record IndexOutboxRecord) (bool, error)
-	MarkRetry(ctx context.Context, record IndexOutboxRecord) (bool, error)
+	MarkRetry(ctx context.Context, record IndexOutboxRecord) (acknowledged bool, deadLettered bool, err error)
 }

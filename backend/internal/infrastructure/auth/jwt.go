@@ -191,7 +191,6 @@ func IsGatewayPrincipal(ctx context.Context) bool {
 }
 
 func ScopeManageApprovers() string { return scopeManageApprovers }
-func ScopeReadMetrics() string     { return "read:mentorship:metrics" }
 
 func HasScope(ctx context.Context, scope string) bool {
 	p := PrincipalFromContext(ctx)
