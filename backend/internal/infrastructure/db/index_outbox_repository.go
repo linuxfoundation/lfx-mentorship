@@ -85,7 +85,7 @@ func (r *IndexOutboxRepository) Claim(ctx context.Context, limit int) ([]domain.
 		UPDATE index_outbox o
 		SET state = 'in_flight', claimed_generation = generation,
 		    claimed_at = NOW(),
-		    attempts = CASE WHEN o.state = 'in_flight' THEN o.attempts + 1 ELSE o.attempts END
+			attempts = o.attempts + 1
 		FROM claimed
 		WHERE o.id = claimed.id
 		RETURNING o.id, o.object_type, o.object_uid, o.action, o.headers, o.data,
