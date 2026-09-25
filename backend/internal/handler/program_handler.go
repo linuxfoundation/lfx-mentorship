@@ -163,14 +163,18 @@ func resolveVisibleProgram(w http.ResponseWriter, r *http.Request, svc programLo
 		if (len(gatewayNonPublic) == 0 || gatewayNonPublic[0]) && auth.IsGatewayPrincipal(r.Context()) && principal != nil && principal.UserID != "_anonymous" {
 			return program, true
 		}
-		isOwner := principal != nil && principal.UserID != "_anonymous" &&
-			program.LFID != nil && *program.LFID != "" && *program.LFID == principal.Username
-		if !isOwner {
+		if !isProgramOwner(r, program) {
 			Error(w, domain.ErrProgramNotFound)
 			return nil, false
 		}
 	}
 	return program, true
+}
+
+func isProgramOwner(r *http.Request, program *models.Program) bool {
+	principal := auth.PrincipalFromContext(r.Context())
+	return principal != nil && principal.UserID != "_anonymous" &&
+		program.LFID != nil && *program.LFID != "" && *program.LFID == principal.Username
 }
 
 // List handles GET /v1/programs.
@@ -347,10 +351,15 @@ func (h *ProgramHandler) Decision(w http.ResponseWriter, r *http.Request) {
 }
 
 // ResolveID handles GET /v1/programs/resolve/{id}.
-// It resolves either a UUID or slug to the canonical program UUID.
+// It resolves either a UUID or slug to the canonical program UUID. The route is
+// allow_all, so only published programs resolve for anyone but the owner.
 func (h *ProgramHandler) ResolveID(w http.ResponseWriter, r *http.Request) {
 	program, ok := resolveVisibleProgram(w, r, h.svc, false)
 	if !ok {
+		return
+	}
+	if program.Status != models.ProgramStatusPublished && !isProgramOwner(r, program) {
+		Error(w, domain.ErrProgramNotFound)
 		return
 	}
 	JSON(w, http.StatusOK, map[string]string{"id": program.ID})
