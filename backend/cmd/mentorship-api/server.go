@@ -28,8 +28,6 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
-const indexerAuthorizationHeader = "Bearer lfx-mentorship-backend"
-
 // Server wraps the Chi router and all service dependencies.
 type Server struct {
 	router      *chi.Mux
@@ -123,7 +121,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		indexOutbox.SetRetryDelay(cfg.Indexer.RetryDelay)
 		indexRelay := indexer.NewRelay(indexOutbox, natsConn, cfg.FGA.RelayBatch)
 		indexRelay.SetLogger(logger)
-		indexRelay.SetAuthorization(indexerAuthorizationHeader)
+		indexRelay.SetAuthorizationProvider(indexer.NewManagedAuthorizationProvider(nil, cfg.Indexer.TokenURL, cfg.Indexer.ClientID, cfg.Indexer.ClientSecret, cfg.Indexer.Audience, cfg.Indexer.Scope))
 		go indexRelay.Run(relayCtx, cfg.FGA.RelayInterval)
 	}
 

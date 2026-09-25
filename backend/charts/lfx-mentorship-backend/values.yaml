@@ -134,6 +134,9 @@ config:
   FGA_RELAY_INTERVAL: "1s"
   FGA_RELAY_RETRY_DELAY: "1m"
   FGA_RELAY_MAX_ATTEMPTS: "10"
+  FGA_INDEXER_TOKEN_URL: ""
+  FGA_INDEXER_AUDIENCE: ""
+  FGA_INDEXER_SCOPE: "access:query"
   INDEX_RELAY_RETRY_DELAY: "1m"
   INDEX_RELAY_MAX_ATTEMPTS: "10"
   LEDGER_BASE_URL: ""
@@ -165,6 +168,8 @@ env: []
 #   LEDGER_API_KEY — bearer token for Ledger service API
 #   CROWDFUNDING_CLIENT_ID — Auth0 M2M client ID for crowdfunding API
 #   CROWDFUNDING_CLIENT_SECRET — Auth0 M2M client secret for crowdfunding API
+#   INDEXER_CLIENT_ID — Auth0 M2M client ID for index publishing
+#   INDEXER_CLIENT_SECRET — Auth0 M2M client secret for index publishing
 #   MENTOR_INVITE_SECRET — HMAC secret for signing mentor invite tokens.
 #     Required: the service exits at startup if it is not set.
 secretName: lfx-mentorship-backend-secrets

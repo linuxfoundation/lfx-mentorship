@@ -239,6 +239,11 @@ required components must be present.
 | `FGA_RELAY_INTERVAL` | `1s` | Poll interval for FGA and index relays |
 | `FGA_RELAY_RETRY_DELAY` | `1m` | Delay before retrying an FGA marker |
 | `FGA_RELAY_MAX_ATTEMPTS` | `10` | Attempts before FGA dead letter |
+| `FGA_INDEXER_TOKEN_URL` | None | OAuth client-credentials token endpoint for index publishing |
+| `FGA_INDEXER_AUDIENCE` | None | Machine-token audience accepted by the indexer |
+| `FGA_INDEXER_SCOPE` | `access:query` | Machine-token scope for index publishing |
+| `INDEXER_CLIENT_ID` | None | Indexer M2M client ID; secret value |
+| `INDEXER_CLIENT_SECRET` | None | Indexer M2M client secret; secret value |
 | `INDEX_RELAY_RETRY_DELAY` | `1m` | Delay after a failed index publish |
 | `INDEX_RELAY_MAX_ATTEMPTS` | `10` | Failed index publishes before dead letter |
 | `JWT_CLOCK_SKEW` | `5s` | Allowed Heimdall JWT clock skew |
