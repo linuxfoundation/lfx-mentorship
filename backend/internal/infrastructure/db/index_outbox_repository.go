@@ -63,7 +63,34 @@ func (r *IndexOutboxRepository) Claim(ctx context.Context, limit int) ([]domain.
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	rows, err := tx.Query(ctx, `WITH claimed AS (SELECT id FROM index_outbox WHERE (state = 'pending' AND next_attempt_at <= NOW()) OR (state = 'in_flight' AND claimed_at < NOW() - INTERVAL '5 minutes') ORDER BY next_attempt_at, created_on FOR UPDATE SKIP LOCKED LIMIT $1) UPDATE index_outbox o SET state = 'in_flight', claimed_generation = generation, claimed_at = NOW(), attempts = attempts + 1 FROM claimed WHERE o.id = claimed.id RETURNING o.id, o.object_type, o.object_uid, o.action, o.headers, o.data, o.indexing_config, o.attempts, o.generation, o.claimed_generation, o.claimed_at, o.created_on`, limit)
+	rows, err := tx.Query(ctx, `
+		WITH stale_dead AS (
+			UPDATE index_outbox
+			SET state = 'dead_letter', attempts = attempts + 1,
+			    claimed_generation = NULL, claimed_at = NULL, sent_on = NULL
+			WHERE state = 'in_flight'
+			  AND claimed_at < NOW() - INTERVAL '5 minutes'
+			  AND attempts + 1 >= $2
+		), claimed AS (
+			SELECT id
+			FROM index_outbox
+			WHERE (state = 'pending' AND next_attempt_at <= NOW())
+			   OR (state = 'in_flight'
+			       AND claimed_at < NOW() - INTERVAL '5 minutes'
+			       AND attempts + 1 < $2)
+			ORDER BY next_attempt_at, created_on
+			FOR UPDATE SKIP LOCKED
+			LIMIT $1
+		)
+		UPDATE index_outbox o
+		SET state = 'in_flight', claimed_generation = generation,
+		    claimed_at = NOW(),
+		    attempts = CASE WHEN o.state = 'in_flight' THEN o.attempts + 1 ELSE o.attempts END
+		FROM claimed
+		WHERE o.id = claimed.id
+		RETURNING o.id, o.object_type, o.object_uid, o.action, o.headers, o.data,
+		          o.indexing_config, o.attempts, o.generation, o.claimed_generation,
+		          o.claimed_at, o.created_on`, limit, r.maxAttempts)
 	if err != nil {
 		return nil, fmt.Errorf("claim index outbox: %w", err)
 	}

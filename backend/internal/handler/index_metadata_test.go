@@ -12,7 +12,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/handler"
 )
 
-func TestIndexMetadataPreservesActorHeaders(t *testing.T) {
+func TestIndexMetadataStripsClientControlledActorHeader(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/programs", nil)
 	req.Header.Set("Authorization", "Bearer caller")
 	req.Header.Set("X-On-Behalf-Of", "alice")
@@ -23,7 +23,10 @@ func TestIndexMetadataPreservesActorHeaders(t *testing.T) {
 
 	handler.IndexMetadata(next).ServeHTTP(httptest.NewRecorder(), req)
 
-	if got["authorization"] != "Bearer caller" || got["x-on-behalf-of"] != "alice" {
+	if got["authorization"] != "Bearer caller" {
 		t.Fatalf("index headers = %v", got)
+	}
+	if _, ok := got["x-on-behalf-of"]; ok {
+		t.Fatalf("client-controlled x-on-behalf-of header was preserved: %v", got)
 	}
 }

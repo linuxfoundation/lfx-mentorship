@@ -16,9 +16,6 @@ func IndexMetadata(next http.Handler) http.Handler {
 		if value := r.Header.Get("Authorization"); value != "" {
 			headers["authorization"] = value
 		}
-		if value := r.Header.Get("X-On-Behalf-Of"); value != "" {
-			headers["x-on-behalf-of"] = value
-		}
 		next.ServeHTTP(w, r.WithContext(domain.ContextWithIndexHeaders(r.Context(), headers)))
 	})
 }
