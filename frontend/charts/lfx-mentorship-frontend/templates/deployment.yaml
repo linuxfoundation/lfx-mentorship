@@ -27,6 +27,7 @@ spec:
       {{- end }}
       labels:
         {{- include "lfx-mentorship-frontend.selectorLabels" . | nindent 8 }}
+        app: {{ include "lfx-mentorship-frontend.name" . }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
