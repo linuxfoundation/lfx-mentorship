@@ -272,19 +272,18 @@ CREATE INDEX IF NOT EXISTS idx_program_terms_start        ON program_terms(start
 CREATE INDEX IF NOT EXISTS idx_program_members_program_id ON program_members(program_id);
 CREATE INDEX IF NOT EXISTS idx_program_members_user_id    ON program_members(user_id);
 CREATE INDEX IF NOT EXISTS idx_program_members_type       ON program_members(member_type);
-DELETE FROM user_profiles AS duplicate
-USING user_profiles AS keeper
-WHERE duplicate.user_id = keeper.user_id
-  AND duplicate.profile_type = keeper.profile_type
-  AND duplicate.profile_type = 'mentee'
-  AND duplicate.id <> keeper.id
-  AND (COALESCE(duplicate.created_on, '-infinity'::timestamptz), duplicate.id)
-      < (COALESCE(keeper.created_on, '-infinity'::timestamptz), keeper.id);
 
-CREATE UNIQUE INDEX IF NOT EXISTS uq_user_profiles_user_type
-  ON user_profiles(user_id, profile_type)
-  WHERE profile_type = 'mentee';
+-- applications
+CREATE INDEX IF NOT EXISTS idx_applications_program_term_id ON applications(program_term_id);
+CREATE INDEX IF NOT EXISTS idx_applications_user_id         ON applications(user_id);
+CREATE INDEX IF NOT EXISTS idx_applications_status          ON applications(status);
 
-DROP TABLE IF EXISTS fga_membership_tombstones;
+-- tasks
+CREATE INDEX IF NOT EXISTS idx_tasks_application_id  ON tasks(application_id) WHERE application_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_tasks_program_term_id ON tasks(program_term_id) WHERE program_term_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_tasks_assignee_id     ON tasks(assignee_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_owner_id        ON tasks(owner_id) WHERE owner_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_tasks_status          ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_category        ON tasks(category);
 
 COMMIT;

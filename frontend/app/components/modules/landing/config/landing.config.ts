@@ -16,7 +16,7 @@ export const LANDING_GRADUATED_COUNT_LABEL = 'mentees graduated since 2019';
 export const LANDING_HERO_TITLE = 'Learn open source by building it.';
 
 export const LANDING_HERO_SUBTITLE =
-  'LFX Mentorship pairs contributors with maintainers of the projects that run modern infrastructure. Over the course of a term you take on real, scoped work and review it with your mentor.';
+  'LFX Mentorship pairs contributors with experienced project members who run modern infrastructure. Over the course of a term you take on real, scoped work and review it with your mentor.';
 
 export const LANDING_HERO_FEATURES = (summary: LandingSummaryResponse): LandingHeroFeature[] => [
   { icon: 'sack-dollar', label: 'Many programs offer a stipend' },
@@ -95,7 +95,7 @@ export const LANDING_BENEFITS: LandingBenefit[] = [
     icon: 'user-tie',
     title: 'A named mentor',
     description:
-      'You work with a maintainer of the project who scopes your tasks and reviews everything you submit.',
+	  'You work with an experienced project contributor who scopes your tasks and reviews everything you submit.',
   },
   {
     icon: 'code-branch',

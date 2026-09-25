@@ -176,17 +176,16 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 
 	var requireGatewayPrincipal func(http.Handler) http.Handler
 	routes := func(r chi.Router) {
-		optionalJWT := func(next http.Handler) http.Handler { return next }
 		// ── Public endpoints ─────────────────────────────────────────────────
 		r.With(requireGatewayPrincipal).Get("/programs/name-availability", programH.NameAvailable)
 		r.Get("/programs", programH.List)
 		r.Get("/programs/catalog", programH.ListCatalog)
-		r.With(optionalJWT).Get("/programs/resolve/{id}", programH.ResolveID)
-		r.With(optionalJWT).Get("/programs/{id}", programH.GetByID)
+		r.Get("/programs/resolve/{id}", programH.ResolveID)
+		r.Get("/programs/{id}", programH.GetByID)
 		r.Get("/programs/{id}/header", programH.GetHeaderProjection)
 		r.Get("/programs/{id}/management-summary", programH.GetManagementSummary)
 		r.Get("/programs/{id}/catalog", programH.GetCatalog)
-		r.With(optionalJWT).Get("/programs/{id}/mentees", programH.ListCatalogMentees)
+		r.Get("/programs/{id}/mentees", programH.ListCatalogMentees)
 		r.Get("/programs/{id}/skills", programH.ListSkills)
 
 		r.Get("/mentees", menteeH.List)
@@ -198,8 +197,8 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		r.Get("/summary", platformSummaryH.Get)
 		r.Get("/funding-stats/total", fundingStatsH.GetTotal)
 		r.Get("/programs/{id}/funding-stats", programH.GetFundingStats)
-		r.With(optionalJWT).Get("/programs/{id}/transactions", programH.GetCategorizedTransactions)
-		r.With(optionalJWT).Get("/programs/{id}/sponsors", programH.GetProgramSponsors)
+		r.Get("/programs/{id}/transactions", programH.GetCategorizedTransactions)
+		r.Get("/programs/{id}/sponsors", programH.GetProgramSponsors)
 		r.Get("/programs/{id}/terms", programTermH.ListByProgram)
 		r.Get("/programs/{id}/term-management", programTermH.ListManagementByProgram)
 		r.Get("/programs/{id}/members", programMemberH.List)

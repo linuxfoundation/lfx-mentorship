@@ -35,7 +35,7 @@ export const ENROLL_PROGRAM_BENEFITS: EnrollProgramBenefit[] = [
     icon: 'code-branch',
     title: 'Grow your contributor base',
     description:
-      'Most graduated mentees keep contributing after the term ends, often becoming reviewers and maintainers.',
+	  'Most graduated mentees keep contributing after the term ends, often becoming reviewers and core contributors.',
   },
   {
     icon: 'list-check',

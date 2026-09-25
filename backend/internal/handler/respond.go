@@ -76,9 +76,9 @@ func mapError(err error) (int, string) {
 	case errors.Is(err, domain.ErrConflict):
 		return http.StatusConflict, "conflict"
 	case errors.Is(err, domain.ErrInvalidStateTransition):
-		return http.StatusConflict, err.Error()
+		return http.StatusConflict, "invalid state transition"
 	case errors.Is(err, domain.ErrStateLocked):
-		return http.StatusConflict, err.Error()
+		return http.StatusConflict, "state locked"
 	case errors.Is(err, domain.ErrIneligible):
 		return http.StatusUnprocessableEntity, err.Error()
 	case errors.Is(err, domain.ErrUpstreamUnavailable):
