@@ -10,8 +10,13 @@ import argparse
 import re
 import uuid
 from datetime import datetime, timezone
+from typing import Any, Protocol, cast
 
 import boto3
+
+
+class DynamoResource(Protocol):
+    def Table(self, name: str) -> Any: ...
 
 
 NAMESPACE = uuid.UUID("4c7f6c44-3b54-5bb2-bb4b-9f3b5c6938a1")
@@ -58,7 +63,7 @@ def main() -> None:
     parser.add_argument("--apply", action="store_true", help="write changes; default is dry-run")
     args = parser.parse_args()
 
-    dynamo = boto3.resource("dynamodb", region_name=args.region)
+    dynamo = cast(DynamoResource, boto3.resource("dynamodb", region_name=args.region))
     table = lambda suffix: dynamo.Table(f"{args.table_prefix}-{suffix}")
     projects = table("projects")
     members = table("project-members")
