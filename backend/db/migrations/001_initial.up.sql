@@ -224,7 +224,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   custom               BOOLEAN     DEFAULT false,
   submit_file          TEXT,                                     -- null | 'required' | URL
   file                 TEXT,                                     -- uploaded file URL
-  due_date             DATE,
+  due_date             TEXT,                                     -- ISO date string
   created_by           TEXT,                                     -- lfid of creator
   created_on           TIMESTAMPTZ DEFAULT NOW(),
   updated_on           TIMESTAMPTZ DEFAULT NOW(),

@@ -598,7 +598,7 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
            accept_applications, terms_and_conditions, program_term_status,
            discover_sort_rank, amount_raised, mentee_needs, task_templates,
            created_on, updated_on)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         ON CONFLICT (id) DO UPDATE SET
                     lf_project_uid     = EXCLUDED.lf_project_uid,
           lf_project_slug        = EXCLUDED.lf_project_slug,

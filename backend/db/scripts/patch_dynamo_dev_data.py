@@ -41,9 +41,12 @@ def slugify(value: object) -> str:
     return slug or "project"
 
 
+def now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 def synthetic_user(user_id: str, role: str) -> dict:
     short_id = user_id.replace("-", "")[:16]
-    now = datetime.now(timezone.utc).isoformat()
     return {
         "id": user_id,
         "lfid": f"dev-synthetic-{short_id}",
@@ -51,8 +54,8 @@ def synthetic_user(user_id: str, role: str) -> dict:
         "name": f"Synthetic Dev {role.title()} {short_id[:8]}",
         "givenName": "Synthetic",
         "familyName": f"Dev {short_id[:8]}",
-        "createdAt": now,
-        "updatedAt": now,
+        "createdAt": now(),
+        "updatedAt": now(),
     }
 
 
@@ -67,6 +70,7 @@ def main() -> None:
     table = lambda suffix: dynamo.Table(f"{args.table_prefix}-{suffix}")
     projects = table("projects")
     members = table("project-members")
+    terms = table("program-terms")
     mentees = table("program-term-mentees")
     tasks = table("tasks")
     profiles = table("user-profiles")
@@ -74,6 +78,7 @@ def main() -> None:
 
     project_rows = scan(projects)
     member_rows = scan(members)
+    term_rows = scan(terms)
     mentee_rows = scan(mentees)
     task_rows = scan(tasks)
     profile_rows = scan(profiles)
@@ -82,6 +87,8 @@ def main() -> None:
     synthetic_users: dict[str, dict] = {}
     member_repairs: list[tuple[str, str]] = []
     task_repairs: list[tuple[str, str]] = []
+    task_application_repairs: list[tuple[str, str]] = []
+    application_repairs: list[dict] = []
     profile_repairs: list[tuple[str, str]] = []
 
     def require_user(user_id: str | None, role: str) -> None:
@@ -111,6 +118,39 @@ def main() -> None:
             profile_repairs.append((row["id"], user_id))
             require_user(user_id, "mentee" if str(row.get("type", "")).lower() == "mentee" else "mentor")
 
+    mentee_users_by_term: dict[str, list[str]] = {}
+    for row in mentee_rows:
+        term_id = row.get("programTermId")
+        user_id = row.get("userId")
+        if term_id and user_id:
+            mentee_users_by_term.setdefault(term_id, []).append(user_id)
+    for users_for_term in mentee_users_by_term.values():
+        users_for_term.sort()
+    term_projects = {row.get("id"): row.get("projectId") for row in term_rows}
+    existing_application_keys = {(row.get("programTermId"), row.get("userId")) for row in mentee_rows}
+    for row in task_rows:
+        term_id = row.get("programTermId")
+        assignee_id = row.get("assigneeId") or str(uuid.uuid5(NAMESPACE, f"task-assignee:{row['id']}"))
+        candidates = mentee_users_by_term.get(term_id, [])
+        if term_id and candidates and assignee_id not in candidates:
+            task_application_repairs.append((row["id"], candidates[0]))
+        elif term_id and not candidates and (term_id, assignee_id) not in existing_application_keys:
+            require_user(assignee_id, "mentee")
+            application_repairs.append(
+                {
+                    "id": str(uuid.uuid5(NAMESPACE, f"task-application:{term_id}:{assignee_id}")),
+                    "programTermId": term_id,
+                    "projectId": term_projects.get(term_id),
+                    "userId": assignee_id,
+                    "status": "pending",
+                    "programTermStatus": "open",
+                    "tasksSubmitted": False,
+                    "adminNotified": False,
+                    "createdOn": now(),
+                    "updatedOn": now(),
+                }
+            )
+
     used_slugs: set[str] = set()
     project_repairs = []
     for row in sorted(project_rows, key=lambda item: str(item.get("projectId", ""))):
@@ -132,7 +172,7 @@ def main() -> None:
         if row.get("status") in {"inProgress", "completed"}
         or row.get("category") == "nonPrerequisite"
     ]
-    print(f"projects={len(project_repairs)} synthetic_users={len(synthetic_users)} member_repairs={len(member_repairs)} profile_repairs={len(profile_repairs)} task_repairs={len(task_repairs)} enum_repairs={len(enum_repairs)} apply={args.apply}")
+    print(f"projects={len(project_repairs)} synthetic_users={len(synthetic_users)} member_repairs={len(member_repairs)} profile_repairs={len(profile_repairs)} application_repairs={len(application_repairs)} task_repairs={len(task_repairs)} task_application_repairs={len(task_application_repairs)} enum_repairs={len(enum_repairs)} apply={args.apply}")
     if not args.apply:
         return
 
@@ -142,8 +182,12 @@ def main() -> None:
         members.update_item(Key={"id": member_id}, UpdateExpression="SET userId = :u", ExpressionAttributeValues={":u": user_id})
     for task_id, user_id in task_repairs:
         tasks.update_item(Key={"id": task_id}, UpdateExpression="SET assigneeId = :u", ExpressionAttributeValues={":u": user_id})
+    for task_id, user_id in task_application_repairs:
+        tasks.update_item(Key={"id": task_id}, UpdateExpression="SET assigneeId = :u", ExpressionAttributeValues={":u": user_id})
     for profile_id, user_id in profile_repairs:
         profiles.update_item(Key={"id": profile_id}, UpdateExpression="SET userId = :u", ExpressionAttributeValues={":u": user_id})
+    for application in application_repairs:
+        mentees.put_item(Item=application)
     for row in task_rows:
         values = {}
         if row.get("status") == "inProgress":
