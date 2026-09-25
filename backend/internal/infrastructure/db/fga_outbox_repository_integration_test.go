@@ -368,6 +368,69 @@ func TestApplicationRepositoryIntegration_UpdateRefreshesTaskStateAndIndex(t *te
 	}
 }
 
+func TestApplicationTaskIntegration_CreateSnapshotsCanonicalLifecycleState(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+
+	application, err := NewApplicationRepository(pool).Create(ctx, fixture.OpenTerm, models.ApplicationCreateInput{
+		ID:     "00000000-0000-0000-0000-000000000082",
+		UserID: fixture.UserID,
+		Role:   models.ApplicationRoleMentee,
+		Status: models.ApplicationStatusPending,
+	})
+	if err != nil {
+		t.Fatalf("create application: %v", err)
+	}
+	if application.ProgramTermStatus == nil || *application.ProgramTermStatus != models.ProgramTermStatusOpen {
+		t.Fatalf("application program_term_status=%v; want open", application.ProgramTermStatus)
+	}
+	accepted := models.ApplicationStatusAccepted
+	if _, err := NewApplicationRepository(pool).Update(ctx, application.ID, models.ApplicationUpdateInput{Status: &accepted}); err != nil {
+		t.Fatalf("accept application: %v", err)
+	}
+
+	taskID := "00000000-0000-0000-0000-000000000083"
+	name := "Created after acceptance"
+	programTermID := fixture.OpenTerm
+	task, err := NewTaskRepository(pool).Create(ctx, application.ID, models.TaskCreateInput{
+		ID:            taskID,
+		ProgramTermID: &programTermID,
+		AssigneeID:    fixture.UserID,
+		Name:          &name,
+		Status:        models.TaskStatusIncomplete,
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	if task.ApplicationStatus == nil || *task.ApplicationStatus != models.ApplicationStatusAccepted || task.ProgramTermStatus == nil || *task.ProgramTermStatus != models.ProgramTermStatusOpen {
+		t.Fatalf("task lifecycle=%v/%v; want accepted/open", task.ApplicationStatus, task.ProgramTermStatus)
+	}
+
+	type lifecycle struct {
+		ApplicationStatus models.ApplicationStatus `json:"application_status"`
+		ProgramTermStatus models.ProgramTermStatus `json:"program_term_status"`
+	}
+	snapshot := func(objectType, objectID string) lifecycle {
+		t.Helper()
+		var data []byte
+		if err := pool.QueryRow(ctx, `SELECT data FROM index_outbox WHERE object_type = $1 AND object_uid = $2`, objectType, objectID).Scan(&data); err != nil {
+			t.Fatalf("read %s index snapshot: %v", objectType, err)
+		}
+		var document lifecycle
+		if err := json.Unmarshal(data, &document); err != nil {
+			t.Fatalf("decode %s index snapshot: %v", objectType, err)
+		}
+		return document
+	}
+	if got := snapshot("mentorship_application", application.ID); got.ProgramTermStatus != models.ProgramTermStatusOpen {
+		t.Fatalf("application snapshot program_term_status=%q; want open", got.ProgramTermStatus)
+	}
+	if got := snapshot("mentorship_task", taskID); got.ApplicationStatus != models.ApplicationStatusAccepted || got.ProgramTermStatus != models.ProgramTermStatusOpen {
+		t.Fatalf("task snapshot lifecycle=%+v; want accepted/open", got)
+	}
+}
+
 func TestProgramRepositoryIntegration_DeleteEnqueuesChildIndexDeletes(t *testing.T) {
 	pool := integrationPool(t)
 	fixture := seedIntegrationFixture(t, pool)

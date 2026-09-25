@@ -298,7 +298,7 @@ func (r *ApplicationRepository) CreateWithTasks(ctx context.Context, programTerm
 		RETURNING ` + applicationCols
 
 	a, err := scanApplication(tx.QueryRow(ctx, q,
-		input.ID, programTermID, input.UserID, input.Role, input.Status, input.ProgramTermStatus,
+		input.ID, programTermID, input.UserID, input.Role, input.Status, term.Status,
 		input.StartDateTime, input.EndDateTime, input.AttendanceType,
 	))
 	if err != nil {
@@ -337,6 +337,15 @@ func (r *ApplicationRepository) ReapplyWithTasks(ctx context.Context, oldID, pro
 		return nil, fmt.Errorf("begin reapply transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	var programID string
+	var termStatus models.ProgramTermStatus
+	err = tx.QueryRow(ctx, `SELECT program_id, status FROM program_terms WHERE id = $1 FOR UPDATE`, programTermID).Scan(&programID, &termStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrProgramTermNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("lock program term for reapply: %w", err)
+	}
 	var taskIDs []string
 	rows, err := tx.Query(ctx, `SELECT id FROM tasks WHERE application_id = $1`, oldID)
 	if err != nil {
@@ -355,7 +364,7 @@ func (r *ApplicationRepository) ReapplyWithTasks(ctx context.Context, oldID, pro
 		return nil, fmt.Errorf("delete withdrawn application: %w", err)
 	}
 	const q = `INSERT INTO applications (id, program_term_id, user_id, role, status, program_term_status, start_date_time, end_date_time, attendance_type) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING ` + applicationCols
-	a, err := scanApplication(tx.QueryRow(ctx, q, input.ID, programTermID, input.UserID, input.Role, input.Status, input.ProgramTermStatus, input.StartDateTime, input.EndDateTime, input.AttendanceType))
+	a, err := scanApplication(tx.QueryRow(ctx, q, input.ID, programTermID, input.UserID, input.Role, input.Status, termStatus, input.StartDateTime, input.EndDateTime, input.AttendanceType))
 	if err != nil {
 		return nil, fmt.Errorf("create replacement application: %w", err)
 	}
@@ -378,10 +387,6 @@ func (r *ApplicationRepository) ReapplyWithTasks(ctx context.Context, oldID, pro
 	}
 	if err := enqueueApplicationIndex(ctx, tx, a, "created"); err != nil {
 		return nil, err
-	}
-	var programID string
-	if err := tx.QueryRow(ctx, `SELECT program_id FROM program_terms WHERE id = $1`, programTermID).Scan(&programID); err != nil {
-		return nil, fmt.Errorf("resolve reapply program for index refresh: %w", err)
 	}
 	if err := enqueueProgramIndexByID(ctx, tx, programID); err != nil {
 		return nil, err
