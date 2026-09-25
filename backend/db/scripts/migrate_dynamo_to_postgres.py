@@ -1127,10 +1127,9 @@ def migrate_tasks(
         page_size=500,
     )
     log.info(
-        "  → %d tasks upserted, %d skipped, %d with unresolved application_id",
+        "  → %d tasks upserted, %d skipped",
         len(rows),
         skipped,
-        unresolved,
     )
 
 
