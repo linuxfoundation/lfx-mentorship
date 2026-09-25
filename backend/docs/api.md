@@ -2171,10 +2171,6 @@ class ApiError extends Error {
 | `FGA_RELAY_INTERVAL` | No | `1s` | Relay polling interval |
 | `FGA_RELAY_RETRY_DELAY` | No | `1m` | FGA retry delay |
 | `FGA_RELAY_MAX_ATTEMPTS` | No | `10` | FGA attempts before dead letter |
-| `FGA_INDEXER_TOKEN_URL` | Required with `FGA_NATS_URL` | — | Indexer M2M token endpoint |
-| `FGA_INDEXER_AUDIENCE` | Required with `FGA_NATS_URL` | — | Indexer M2M audience |
-| `FGA_INDEXER_SCOPE` | No | `access:query` | Indexer M2M scope |
-| `INDEXER_CLIENT_ID`, `INDEXER_CLIENT_SECRET` | Required with `FGA_NATS_URL` | — | Indexer M2M credentials |
 | `INDEX_RELAY_RETRY_DELAY` | No | `1m` | Index publish retry delay |
 | `INDEX_RELAY_MAX_ATTEMPTS` | No | `10` | Index attempts before dead letter |
 | `MENTOR_INVITE_SECRET` | Yes | — | HMAC secret for mentor invite tokens |
