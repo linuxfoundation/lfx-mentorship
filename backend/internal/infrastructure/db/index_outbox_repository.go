@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -63,21 +64,32 @@ func (r *IndexOutboxRepository) Claim(ctx context.Context, limit int) ([]domain.
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	rows, err := tx.Query(ctx, `
+	var deadLettered int
+	if err := tx.QueryRow(ctx, `
 		WITH stale_dead AS (
 			UPDATE index_outbox
-			SET state = 'dead_letter', attempts = attempts + 1,
-			    claimed_generation = NULL, claimed_at = NULL, sent_on = NULL
+			SET state = 'dead_letter', claimed_generation = NULL, claimed_at = NULL,
+			    last_error = 'relay crashed while in flight'
 			WHERE state = 'in_flight'
 			  AND claimed_at < NOW() - INTERVAL '5 minutes'
-			  AND attempts + 1 >= $2
-		), claimed AS (
+			  AND generation = claimed_generation
+			  AND attempts >= $1
+			RETURNING id
+		)
+		SELECT COUNT(*) FROM stale_dead`, r.maxAttempts).Scan(&deadLettered); err != nil {
+		return nil, fmt.Errorf("dead-letter stale index outbox records: %w", err)
+	}
+	if deadLettered > 0 {
+		slog.Default().WarnContext(ctx, "dead-lettered stale index outbox records", "count", deadLettered)
+	}
+	rows, err := tx.Query(ctx, `
+		WITH claimed AS (
 			SELECT id
 			FROM index_outbox
 			WHERE (state = 'pending' AND next_attempt_at <= NOW())
 			   OR (state = 'in_flight'
 			       AND claimed_at < NOW() - INTERVAL '5 minutes'
-			       AND attempts + 1 < $2)
+			       AND (generation > claimed_generation OR attempts < $2))
 			ORDER BY next_attempt_at, created_on
 			FOR UPDATE SKIP LOCKED
 			LIMIT $1
@@ -85,7 +97,9 @@ func (r *IndexOutboxRepository) Claim(ctx context.Context, limit int) ([]domain.
 		UPDATE index_outbox o
 		SET state = 'in_flight', claimed_generation = generation,
 		    claimed_at = NOW(),
-			attempts = o.attempts + 1
+		    attempts = CASE WHEN o.state = 'in_flight' AND o.generation > o.claimed_generation
+		                    THEN 1 ELSE o.attempts + 1 END,
+		    last_error = NULL
 		FROM claimed
 		WHERE o.id = claimed.id
 		RETURNING o.id, o.object_type, o.object_uid, o.action, o.headers, o.data,

@@ -102,6 +102,7 @@ func enqueueProgramIndex(ctx context.Context, tx pgx.Tx, program *models.Program
 			claimed_generation = CASE WHEN index_outbox.state = 'in_flight' THEN index_outbox.claimed_generation ELSE NULL END,
 			claimed_at = CASE WHEN index_outbox.state = 'in_flight' THEN index_outbox.claimed_at ELSE NULL END,
 			attempts = 0,
+			next_attempt_at = NOW(),
 			sent_on = NULL`, program.ID, action, headerData, data, configData)
 	return err
 }

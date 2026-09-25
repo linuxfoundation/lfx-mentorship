@@ -8,6 +8,15 @@ Related: [01-current-system.md](./01-current-system.md), [02-target-architecture
 
 Proposal-level plan, modeled on the Crowdfunding cutover ([lfx-crowdfunding/backend/docs/rewrite/05-migration-plan.md](https://github.com/linuxfoundation/lfx-crowdfunding/blob/main/backend/docs/rewrite/05-migration-plan.md)). Detailed runbooks are an implementation-phase deliverable.
 
+## Development migration reset
+
+The current development deployment resets the disposable Mentorship database
+before applying the consolidated version-1 schema. Do not run this reset against
+an environment containing data: export the database, drop and recreate the
+Mentorship schema, run `cmd/migrate`, and re-import through the migration
+scripts. Deployed environments require an approved backup and cutover window
+before using this reset procedure.
+
 ## Data volume & risk
 
 Mentorship data is small by database standards — thousands to low tens of thousands of rows across 8 DynamoDB tables (an exact per-table inventory is the first Build-phase task, as it was for Crowdfunding). The migration risk is **shape** (document → relational, nested program terms → rows), not volume. A full backfill runs in minutes and can be re-run freely until cutover.

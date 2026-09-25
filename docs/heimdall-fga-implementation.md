@@ -252,9 +252,10 @@ required components must be present.
 
 The index relay shares `FGA_NATS_URL`, obtains and caches an Auth0
 client-credentials token, and overwrites the redacted stored authorization
-placeholder before publishing. Stored `x-on-behalf-of` metadata remains in the
-envelope so the indexer can attribute the initiating user while authenticating
-the publisher as the Mentorship service.
+placeholder before publishing. Client-supplied `x-on-behalf-of` metadata is
+discarded; index records currently carry no actor attribution because the
+request metadata middleware runs before the validated Heimdall principal is
+available. The publisher authenticates as the Mentorship service.
 
 ### Helm Values Required for Gateway Activation
 

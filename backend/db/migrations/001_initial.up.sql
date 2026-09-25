@@ -77,10 +77,6 @@ CREATE TABLE IF NOT EXISTS user_profiles (
 -- ============================================
 CREATE TABLE IF NOT EXISTS programs (
   id                   UUID         PRIMARY KEY,
-  lf_project_uid          TEXT,
-  lf_project_slug         TEXT,
-  lf_project_name         TEXT,
-  lf_project_logo_url         TEXT,
   name                 TEXT         NOT NULL,
   slug                 TEXT         NOT NULL UNIQUE,
   status               VARCHAR(20)  NOT NULL DEFAULT 'draft',    -- draft | submitted | published | rejected | archived | hidden
@@ -191,8 +187,6 @@ CREATE TABLE IF NOT EXISTS applications (
   tasks_submitted      BOOLEAN     DEFAULT false,
   admin_notified       BOOLEAN     DEFAULT false,
   attendance_type      VARCHAR(20),                                 -- full_time | part_time (required on accept)
-  evaluation           TEXT,
-  reviewer_note        TEXT,
   created_on           TIMESTAMPTZ DEFAULT NOW(),
   updated_on           TIMESTAMPTZ DEFAULT NOW(),
   CONSTRAINT applications_role_check       CHECK (role   IN ('mentor', 'mentee')),
@@ -224,7 +218,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   custom               BOOLEAN     DEFAULT false,
   submit_file          TEXT,                                     -- null | 'required' | URL
   file                 TEXT,                                     -- uploaded file URL
-  due_date             TEXT,                                     -- ISO date string
+  due_date             DATE,
   created_by           TEXT,                                     -- lfid of creator
   created_on           TIMESTAMPTZ DEFAULT NOW(),
   updated_on           TIMESTAMPTZ DEFAULT NOW(),
@@ -278,120 +272,6 @@ CREATE INDEX IF NOT EXISTS idx_program_terms_start        ON program_terms(start
 CREATE INDEX IF NOT EXISTS idx_program_members_program_id ON program_members(program_id);
 CREATE INDEX IF NOT EXISTS idx_program_members_user_id    ON program_members(user_id);
 CREATE INDEX IF NOT EXISTS idx_program_members_type       ON program_members(member_type);
-
--- applications
-CREATE INDEX IF NOT EXISTS idx_applications_program_term_id ON applications(program_term_id);
-CREATE INDEX IF NOT EXISTS idx_applications_user_id         ON applications(user_id);
-CREATE INDEX IF NOT EXISTS idx_applications_status          ON applications(status);
-
--- tasks
-CREATE INDEX IF NOT EXISTS idx_tasks_application_id  ON tasks(application_id) WHERE application_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_tasks_program_term_id ON tasks(program_term_id) WHERE program_term_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_tasks_assignee_id     ON tasks(assignee_id);
-CREATE INDEX IF NOT EXISTS idx_tasks_owner_id        ON tasks(owner_id) WHERE owner_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_tasks_status          ON tasks(status);
-CREATE INDEX IF NOT EXISTS idx_tasks_category        ON tasks(category);
-
-CREATE INDEX IF NOT EXISTS idx_programs_lf_project_uid
-  ON programs(lf_project_uid)
-  WHERE lf_project_uid IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_programs_lf_project_slug
-  ON programs(lf_project_slug)
-  WHERE lf_project_slug IS NOT NULL;
-
-CREATE TABLE IF NOT EXISTS mentorship_approver_team_members (
-  user_id    UUID PRIMARY KEY REFERENCES users(id),
-  created_on TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_on TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS fga_outbox (
-  id                 BIGSERIAL PRIMARY KEY,
-  marker_kind        TEXT NOT NULL,
-  object_type        TEXT NOT NULL,
-  object_uid         TEXT NOT NULL,
-  relation           TEXT,
-  username           TEXT,
-  desired_operation  TEXT NOT NULL,
-  generation         BIGINT NOT NULL DEFAULT 1,
-  state              TEXT NOT NULL DEFAULT 'pending',
-  claimed_generation BIGINT,
-  claimed_at         TIMESTAMPTZ,
-  attempts           INTEGER NOT NULL DEFAULT 0,
-  next_attempt_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  last_error         TEXT,
-  created_on         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_on         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT fga_outbox_marker_kind_check
-    CHECK (marker_kind IN ('object', 'membership')),
-  CONSTRAINT fga_outbox_operation_check
-    CHECK (desired_operation IN ('sync', 'remove', 'update_access', 'delete_access')),
-  CONSTRAINT fga_outbox_state_check
-    CHECK (state IN ('pending', 'in_flight', 'dead_letter')),
-  CONSTRAINT fga_outbox_membership_fields_check
-    CHECK (
-      marker_kind = 'object'
-      OR (relation IS NOT NULL AND username IS NOT NULL)
-    ),
-  CONSTRAINT fga_outbox_object_operation_check
-    CHECK (
-      (marker_kind = 'object' AND desired_operation IN ('update_access', 'delete_access'))
-      OR (marker_kind = 'membership' AND desired_operation IN ('sync', 'remove'))
-    )
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS uq_fga_outbox_object_marker
-  ON fga_outbox(object_type, object_uid)
-  WHERE marker_kind = 'object';
-
-CREATE UNIQUE INDEX IF NOT EXISTS uq_fga_outbox_membership_marker
-  ON fga_outbox(object_type, object_uid, relation, username)
-  WHERE marker_kind = 'membership';
-
-CREATE INDEX IF NOT EXISTS idx_fga_outbox_claimable
-  ON fga_outbox(state, next_attempt_at, id);
-
-CREATE INDEX IF NOT EXISTS idx_fga_outbox_object_serialization
-  ON fga_outbox(object_type, object_uid, id);
-
-ALTER TABLE tasks
-  DROP CONSTRAINT IF EXISTS tasks_application_id_fkey;
-
-ALTER TABLE tasks
-  ADD CONSTRAINT tasks_application_id_fkey
-  FOREIGN KEY (application_id) REFERENCES applications(id) ON DELETE CASCADE;
-
-CREATE TABLE IF NOT EXISTS index_outbox (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  object_type     TEXT NOT NULL,
-  object_uid      UUID NOT NULL,
-  action          TEXT NOT NULL CHECK (action IN ('created', 'updated', 'deleted')),
-  headers         JSONB NOT NULL,
-  data            JSONB,
-  indexing_config JSONB,
-  state           TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'in_flight', 'sent', 'dead_letter')),
-  generation      BIGINT NOT NULL DEFAULT 1,
-  claimed_at      TIMESTAMPTZ,
-  claimed_generation BIGINT,
-  attempts        INTEGER NOT NULL DEFAULT 0,
-  next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  created_on      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  sent_on         TIMESTAMPTZ
-);
-
-CREATE INDEX IF NOT EXISTS idx_index_outbox_pending
-  ON index_outbox(next_attempt_at, created_on) WHERE state = 'pending';
-
-CREATE UNIQUE INDEX IF NOT EXISTS uq_index_outbox_object
-  ON index_outbox(object_type, object_uid);
-
-ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_status_check;
-
-ALTER TABLE tasks
-  ADD CONSTRAINT tasks_status_check
-  CHECK (status IN ('incomplete', 'in_progress', 'submitted', 'complete'));
-
 DELETE FROM user_profiles AS duplicate
 USING user_profiles AS keeper
 WHERE duplicate.user_id = keeper.user_id

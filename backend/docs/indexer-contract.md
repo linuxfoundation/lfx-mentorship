@@ -39,6 +39,9 @@ changes re-enqueue the program snapshot so counts do not remain stale.
 The Query Service uses the access-check fields to include direct and inherited
 program viewers, including Project Service's `mentorship_program_admin` tuples.
 
+Task `due_date` values are serialized as ISO 8601 date strings. Index consumers
+must parse the value as a date before performing date comparisons.
+
 The DynamoDB importer queues one current-state snapshot for every program in
 `index_outbox`; the normal index relay publishes those snapshots. Stored
 authorization is redacted, and client-supplied `x-on-behalf-of` metadata is

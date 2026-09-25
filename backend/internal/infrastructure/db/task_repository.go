@@ -285,7 +285,11 @@ func enqueueTaskMarker(ctx context.Context, tx pgx.Tx, task *models.Task, operat
 		return nil
 	}
 	if task.ApplicationID == nil || *task.ApplicationID == "" {
-		return fmt.Errorf("task %s has no application parent", task.ID)
+		operation = "delete_access"
+		if _, err := tx.Exec(ctx, q, task.ID, operation); err != nil {
+			return fmt.Errorf("enqueue task FGA marker: %w", err)
+		}
+		return nil
 	}
 	var lfid string
 	const lookup = `
