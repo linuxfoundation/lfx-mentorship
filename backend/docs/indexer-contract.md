@@ -41,10 +41,11 @@ program viewers, including Project Service's `mentorship_program_admin` tuples.
 
 The DynamoDB importer queues one current-state snapshot for every program in
 `index_outbox`; the normal index relay publishes those snapshots. Stored
-authorization is redacted, while `x-on-behalf-of` is retained. At publish time
-the relay obtains a cached client-credentials token and replaces the redacted
-authorization value, allowing the indexer to authenticate the service and
-attribute the initiating user.
+authorization is redacted, and client-supplied `x-on-behalf-of` metadata is
+discarded before it reaches the outbox. At publish time the relay obtains a
+cached client-credentials token and replaces the redacted authorization value,
+allowing the indexer to authenticate the service without trusting caller-
+controlled actor attribution.
 
 Failed publishes increment attempts once, wait for `INDEX_RELAY_RETRY_DELAY`,
 and dead-letter after `INDEX_RELAY_MAX_ATTEMPTS`. A newer generation arriving
