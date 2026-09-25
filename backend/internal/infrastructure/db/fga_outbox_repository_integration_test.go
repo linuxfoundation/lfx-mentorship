@@ -315,6 +315,111 @@ func TestProgramIndexIntegration_RefreshesPublicStats(t *testing.T) {
 	}
 }
 
+func TestApplicationRepositoryIntegration_UpdateRefreshesTaskStateAndIndex(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+
+	applicationID := "00000000-0000-0000-0000-000000000080"
+	application, err := NewApplicationRepository(pool).Create(ctx, fixture.OpenTerm, models.ApplicationCreateInput{
+		ID:     applicationID,
+		UserID: fixture.UserID,
+		Role:   models.ApplicationRoleMentee,
+		Status: models.ApplicationStatusPending,
+	})
+	if err != nil {
+		t.Fatalf("create application: %v", err)
+	}
+
+	taskID := "00000000-0000-0000-0000-000000000081"
+	name := "Status follower"
+	category := models.TaskCategoryPrerequisite
+	programTermID := fixture.OpenTerm
+	if _, err := NewTaskRepository(pool).Create(ctx, application.ID, models.TaskCreateInput{
+		ID:            taskID,
+		ProgramTermID: &programTermID,
+		AssigneeID:    fixture.UserID,
+		Name:          &name,
+		Category:      &category,
+		Status:        models.TaskStatusIncomplete,
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	accepted := models.ApplicationStatusAccepted
+	if _, err := NewApplicationRepository(pool).Update(ctx, application.ID, models.ApplicationUpdateInput{Status: &accepted}); err != nil {
+		t.Fatalf("update application: %v", err)
+	}
+
+	var taskApplicationStatus models.ApplicationStatus
+	if err := pool.QueryRow(ctx, `SELECT application_status FROM tasks WHERE id = $1`, taskID).Scan(&taskApplicationStatus); err != nil {
+		t.Fatalf("read task application_status: %v", err)
+	}
+	if taskApplicationStatus != models.ApplicationStatusAccepted {
+		t.Fatalf("task application_status=%q; want %q", taskApplicationStatus, models.ApplicationStatusAccepted)
+	}
+
+	var action string
+	if err := pool.QueryRow(ctx, `SELECT action FROM index_outbox WHERE object_type = 'mentorship_task' AND object_uid = $1`, taskID).Scan(&action); err != nil {
+		t.Fatalf("read task index action: %v", err)
+	}
+	if action != "updated" {
+		t.Fatalf("task index action=%q; want updated", action)
+	}
+}
+
+func TestProgramRepositoryIntegration_DeleteEnqueuesChildIndexDeletes(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+
+	applicationID := "00000000-0000-0000-0000-000000000082"
+	application, err := NewApplicationRepository(pool).Create(ctx, fixture.OpenTerm, models.ApplicationCreateInput{
+		ID:     applicationID,
+		UserID: fixture.UserID,
+		Role:   models.ApplicationRoleMentee,
+		Status: models.ApplicationStatusPending,
+	})
+	if err != nil {
+		t.Fatalf("create application: %v", err)
+	}
+
+	taskID := "00000000-0000-0000-0000-000000000083"
+	name := "To be deleted with program"
+	category := models.TaskCategoryPrerequisite
+	programTermID := fixture.OpenTerm
+	if _, err := NewTaskRepository(pool).Create(ctx, application.ID, models.TaskCreateInput{
+		ID:            taskID,
+		ProgramTermID: &programTermID,
+		AssigneeID:    fixture.UserID,
+		Name:          &name,
+		Category:      &category,
+		Status:        models.TaskStatusIncomplete,
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	if err := NewProgramRepository(pool).Delete(ctx, fixture.ProgramID); err != nil {
+		t.Fatalf("delete program: %v", err)
+	}
+
+	var applicationAction string
+	if err := pool.QueryRow(ctx, `SELECT action FROM index_outbox WHERE object_type = 'mentorship_application' AND object_uid = $1`, applicationID).Scan(&applicationAction); err != nil {
+		t.Fatalf("read application index delete action: %v", err)
+	}
+	if applicationAction != "deleted" {
+		t.Fatalf("application index action=%q; want deleted", applicationAction)
+	}
+
+	var taskAction string
+	if err := pool.QueryRow(ctx, `SELECT action FROM index_outbox WHERE object_type = 'mentorship_task' AND object_uid = $1`, taskID).Scan(&taskAction); err != nil {
+		t.Fatalf("read task index delete action: %v", err)
+	}
+	if taskAction != "deleted" {
+		t.Fatalf("task index action=%q; want deleted", taskAction)
+	}
+}
+
 func TestIndexOutboxIntegration_MarkRetryRequeuesNewerGeneration(t *testing.T) {
 	pool := integrationPool(t)
 	fixture := seedIntegrationFixture(t, pool)

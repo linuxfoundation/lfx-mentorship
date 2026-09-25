@@ -920,9 +920,15 @@ func (r *ProgramRepository) Delete(ctx context.Context, id string) error {
 		if err := enqueueObjectMarker(ctx, tx, "mentorship_task", taskID, deleteAccessOperation); err != nil {
 			return err
 		}
+		if err := enqueueIndexDelete(ctx, tx, "mentorship_task", taskID); err != nil {
+			return err
+		}
 	}
 	for _, applicationID := range applicationIDs {
 		if err := enqueueObjectMarker(ctx, tx, "mentorship_application", applicationID, deleteAccessOperation); err != nil {
+			return err
+		}
+		if err := enqueueIndexDelete(ctx, tx, "mentorship_application", applicationID); err != nil {
 			return err
 		}
 	}

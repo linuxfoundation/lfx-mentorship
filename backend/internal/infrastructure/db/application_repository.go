@@ -479,11 +479,20 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 			return nil, err
 		}
 	}
+	updatedTasks, err := syncTasksWithApplicationState(ctx, tx, a)
+	if err != nil {
+		return nil, err
+	}
 	if err := enqueueApplicationMarker(ctx, tx, a, "update_access"); err != nil {
 		return nil, err
 	}
 	if err := enqueueApplicationIndex(ctx, tx, a, "updated"); err != nil {
 		return nil, err
+	}
+	for _, task := range updatedTasks {
+		if err := enqueueTaskIndex(ctx, tx, task, "updated"); err != nil {
+			return nil, fmt.Errorf("enqueue task index for application update: %w", err)
+		}
 	}
 	var programID string
 	if err := tx.QueryRow(ctx, `SELECT program_id FROM program_terms WHERE id = $1`, a.ProgramTermID).Scan(&programID); err != nil {
@@ -496,6 +505,33 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 		return nil, fmt.Errorf("commit update application transaction: %w", err)
 	}
 	return a, nil
+}
+
+func syncTasksWithApplicationState(ctx context.Context, tx pgx.Tx, application *models.Application) ([]*models.Task, error) {
+	rows, err := tx.Query(ctx, `
+		UPDATE tasks
+		SET application_status = $2,
+		    program_term_status = $3,
+		    updated_on = NOW()
+		WHERE application_id = $1
+		RETURNING `+taskCols, application.ID, application.Status, application.ProgramTermStatus)
+	if err != nil {
+		return nil, fmt.Errorf("sync tasks for application update: %w", err)
+	}
+	defer rows.Close()
+
+	updatedTasks := make([]*models.Task, 0)
+	for rows.Next() {
+		task, scanErr := scanTask(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("scan synced task for application update: %w", scanErr)
+		}
+		updatedTasks = append(updatedTasks, task)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate synced tasks for application update: %w", err)
+	}
+	return updatedTasks, nil
 }
 
 func ensureAcceptedMentorMembership(ctx context.Context, tx pgx.Tx, application *models.Application) error {
