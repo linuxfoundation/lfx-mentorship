@@ -11,7 +11,7 @@ The resource ID is the program UUID.
 | Field | Value |
 | --- | --- |
 | `object_type` | `mentorship_program` |
-| `object_ref` | `mentorship_program:{program UUID}` |
+| `object_ref` | Derived by the indexer from the NATS subject and `object_id` |
 | `access_check_object` | `mentorship_program:{program UUID}` |
 | `access_check_relation` | `viewer` |
 | `public` | `true` only when program status is `published` |
@@ -66,7 +66,7 @@ Mentorship publishes one snapshot per application on
 | Field | Value |
 | --- | --- |
 | `object_type` | `mentorship_application` |
-| `object_ref` | `mentorship_application:{application UUID}` |
+| `object_ref` | Derived by the indexer from the NATS subject and `object_id` |
 | `access_check_object` | `mentorship_application:{application UUID}` |
 | `access_check_relation` | `auditor` |
 | `history_check_object` | `mentorship_program:{program UUID}` |
@@ -88,7 +88,7 @@ resource ID is the task UUID.
 | Field | Value |
 | --- | --- |
 | `object_type` | `mentorship_task` |
-| `object_ref` | `mentorship_task:{task UUID}` |
+| `object_ref` | Derived by the indexer from the NATS subject and `object_id` |
 | `access_check_object` | `mentorship_task:{task UUID}` |
 | `access_check_relation` | `auditor` |
 | `history_check_object` | `mentorship_application:{application UUID}` |

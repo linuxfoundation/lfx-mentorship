@@ -49,12 +49,11 @@ func NewApplicationIndexDocument(application *models.Application) ApplicationInd
 func NewApplicationIndexConfig(applicationID, programID, userID, role, status string) map[string]any {
 	return map[string]any{
 		"object_id":              applicationID,
-		"object_ref":             "mentorship_application:" + applicationID,
-		"object_type":            "mentorship_application",
 		"access_check_object":    "mentorship_application:" + applicationID,
 		"access_check_relation":  "auditor",
 		"history_check_object":   "mentorship_program:" + programID,
 		"history_check_relation": "auditor",
+		"parent_refs":            []string{"mentorship_program:" + programID},
 		"sort_name":              userID,
 		"name_and_aliases":       []string{userID, role},
 		"public":                 false,
@@ -105,8 +104,6 @@ func NewTaskIndexDocument(task *models.Task) TaskIndexDocument {
 func NewTaskIndexConfig(taskID, applicationID, assigneeID, name, category, status string) map[string]any {
 	return map[string]any{
 		"object_id":              taskID,
-		"object_ref":             "mentorship_task:" + taskID,
-		"object_type":            "mentorship_task",
 		"access_check_object":    "mentorship_task:" + taskID,
 		"access_check_relation":  "auditor",
 		"history_check_object":   "mentorship_application:" + applicationID,

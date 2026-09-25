@@ -1268,13 +1268,16 @@ def seed_derived_state(cur) -> None:
                     'slug', slug,
                     'status', status,
                     'logo_url', logo_url,
+                    'stats', jsonb_build_object(
+                        'mentors', (SELECT COUNT(*) FROM program_members pm WHERE pm.program_id = programs.id AND pm.member_type = 'mentor' AND pm.status = 'active'),
+                        'mentees', (SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE pt.program_id = programs.id AND a.role = 'mentee' AND a.status = 'accepted'),
+                        'graduated', (SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE pt.program_id = programs.id AND a.role = 'mentee' AND a.status = 'graduated')
+                    ),
                     'created_on', created_on,
                     'updated_on', updated_on
                 )),
                 jsonb_build_object(
                     'object_id', id,
-                        'object_ref', 'mentorship_program:' || id::text,
-                        'object_type', 'mentorship_program',
                     'access_check_object', 'mentorship_program:' || id::text,
                     'access_check_relation', 'viewer',
                     'history_check_object', 'mentorship_program:' || id::text,
@@ -1329,8 +1332,6 @@ def seed_derived_state(cur) -> None:
             )),
             jsonb_build_object(
                 'object_id', a.id,
-                'object_ref', 'mentorship_application:' || a.id::text,
-                'object_type', 'mentorship_application',
                 'access_check_object', 'mentorship_application:' || a.id::text,
                 'access_check_relation', 'auditor',
                 'history_check_object', 'mentorship_program:' || pt.program_id::text,
@@ -1383,8 +1384,6 @@ def seed_derived_state(cur) -> None:
             )),
             jsonb_build_object(
                 'object_id', t.id,
-                'object_ref', 'mentorship_task:' || t.id::text,
-                'object_type', 'mentorship_task',
                 'access_check_object', 'mentorship_task:' || t.id::text,
                 'access_check_relation', 'auditor',
                 'history_check_object', 'mentorship_application:' || t.application_id::text,

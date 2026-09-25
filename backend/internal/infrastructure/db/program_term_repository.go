@@ -372,6 +372,9 @@ func (r *ProgramTermRepository) CloseWithBulkDecline(ctx context.Context, id str
 		if err := enqueueApplicationMarker(ctx, tx, application, "update_access"); err != nil {
 			return nil, 0, err
 		}
+		if err := enqueueApplicationIndex(ctx, tx, application, "updated"); err != nil {
+			return nil, 0, err
+		}
 	}
 
 	closed := models.ProgramTermStatusClosed

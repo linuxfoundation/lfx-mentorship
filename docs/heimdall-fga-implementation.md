@@ -96,7 +96,7 @@ flowchart LR
 
 Anonymous object reads still pass through OpenFGA. Published programs carry
 `viewer@user:*`; unpublished programs do not. Resource collections do not pass
-through the Mentorship RuleSet: callers use Query Service `GET /v1/resources`,
+through the Mentorship RuleSet: callers use Query Service `GET /query/resources?v=1`,
 which applies access filtering over indexed objects.
 
 ### Write and Derived-State Path
@@ -171,7 +171,7 @@ parent and the repository enforces the parent-child association.
 Caller-owned resources use the verified direct-grant contract:
 
 ```text
-GET /v1/resources?type=mentorship_program&filter_grants=direct
+GET /query/resources?v=1&type=mentorship_program&filter_grants=direct
 ```
 
 The caller identity comes from the bearer token; no user ID is passed as a
@@ -441,13 +441,14 @@ Not yet validated end to end:
 - [ ] After the RuleSet is live, run the platform `populate-jtbds` workflow and
   regenerate `PERMISSIONS.md` in `lfx-v2-helm`.
 - [x] Index `mentorship_application` and `mentorship_task` with stable
-  `object_ref`, `object_type`, parent references, access-check metadata, and
-  the fields required by their collection views. Runtime lifecycle writes and
-  importer seed upserts use the same generation-guarded index outbox.
+  indexer-derived `object_ref` and `object_type`, parent references,
+  access-check metadata, and the fields required by their collection views.
+  Runtime lifecycle writes and importer seed upserts use the same
+  generation-guarded index outbox.
 - [ ] Define Query Service resource projections for mentor/mentee directories
   and replace service-owned summary aggregation with Query Service count/group
   queries where supported.
-- [ ] Move all top-level collection consumers to `GET /v1/resources`.
+- [ ] Move all top-level collection consumers to `GET /query/resources?v=1`.
 - [ ] Use `filter_grants=direct` with an explicit `type` for caller-owned
   initiative views; forward the caller bearer token rather than a user ID.
 - [ ] Remove or retire the superseded Mentorship collection endpoints after all

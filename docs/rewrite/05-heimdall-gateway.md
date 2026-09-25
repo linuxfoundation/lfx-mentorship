@@ -11,7 +11,7 @@ Related: [04-authorization-model.md](./04-authorization-model.md) (what FGA hold
 > **Platform collection decision:** The earlier GW-2 service-owned collection
 > shape is superseded. Query Service holds all resource objects and serves
 > collections. Caller-owned initiative views use
-> `GET /v1/resources?type=<resource-type>&filter_grants=direct`; identity comes
+> `GET /query/resources?v=1&type=<resource-type>&filter_grants=direct`; identity comes
 > from the bearer token. The Mentorship RuleSet retains only the public
 > slug-to-UID resolver and UID-addressed resource routes.
 

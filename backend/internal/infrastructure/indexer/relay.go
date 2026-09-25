@@ -145,10 +145,12 @@ func (r *Relay) RunOnce(ctx context.Context) error {
 		} else if !acknowledged {
 			recordErr = fmt.Errorf("mark sent for index record %s was not acknowledged", record.ID)
 		}
-		if recordErr != nil && firstErr == nil {
+		if recordErr != nil {
 			indexRelayAckFailures.Add(1)
-			firstErr = recordErr
-		} else if recordErr == nil {
+			if firstErr == nil {
+				firstErr = recordErr
+			}
+		} else {
 			indexRelayPublished.Add(1)
 		}
 	}

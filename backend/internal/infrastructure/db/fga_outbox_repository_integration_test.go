@@ -193,7 +193,7 @@ func TestIndexOutboxIntegration_ApplicationAndTaskLifecycle(t *testing.T) {
 	if err := json.Unmarshal(applicationConfig, &applicationConfigMap); err != nil {
 		t.Fatalf("decode application index config: %v", err)
 	}
-	if applicationAction != "created" || applicationConfigMap["object_ref"] != "mentorship_application:"+applicationID || applicationConfigMap["access_check_relation"] != "auditor" {
+	if applicationAction != "created" || applicationConfigMap["object_ref"] != nil || applicationConfigMap["access_check_relation"] != "auditor" || applicationConfigMap["parent_refs"] == nil {
 		t.Fatalf("application index action/config = %q/%v", applicationAction, applicationConfigMap)
 	}
 
@@ -220,7 +220,7 @@ func TestIndexOutboxIntegration_ApplicationAndTaskLifecycle(t *testing.T) {
 	if err := json.Unmarshal(taskConfig, &taskConfigMap); err != nil {
 		t.Fatalf("decode task index config: %v", err)
 	}
-	if taskAction != "created" || taskConfigMap["object_ref"] != "mentorship_task:"+taskID || taskConfigMap["history_check_object"] != "mentorship_application:"+applicationID {
+	if taskAction != "created" || taskConfigMap["object_ref"] != nil || taskConfigMap["history_check_object"] != "mentorship_application:"+applicationID {
 		t.Fatalf("task index action/config = %q/%v", taskAction, taskConfigMap)
 	}
 }

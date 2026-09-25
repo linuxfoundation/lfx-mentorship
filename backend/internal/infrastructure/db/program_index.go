@@ -37,8 +37,6 @@ func NewProgramIndexDocument(program *models.Program) ProgramIndexDocument {
 func NewProgramIndexConfig(id string, projectUID *string, name, slug, status string) map[string]any {
 	config := map[string]any{
 		"object_id":              id,
-		"object_ref":             "mentorship_program:" + id,
-		"object_type":            "mentorship_program",
 		"access_check_object":    "mentorship_program:" + id,
 		"access_check_relation":  "viewer",
 		"history_check_object":   "mentorship_program:" + id,

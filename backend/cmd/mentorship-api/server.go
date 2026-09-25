@@ -222,7 +222,6 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			r.Patch("/me", userH.UpdateMe)
 			r.Delete("/me", userH.DeleteMe)
 			r.Get("/me/applications", applicationH.ListByMe)
-			r.Get("/me/managed-programs", programH.ListManagedByMe)
 
 			// User profiles
 			r.Get("/me/profiles", userProfileH.ListMe)

@@ -19,8 +19,8 @@ The gateway-authorized API uses canonical resource paths:
 
 - Self-service user and profile mutations use `/me` and `/me/profiles`.
 - User application reads use `/me/applications`.
-- Program-admin collection reads use `/me/managed-programs`; results are
-  scoped to active `program_admin` membership for the authenticated principal.
+- Program-admin collection reads use Query Service
+  `/query/resources?v=1&type=mentorship_program&filter_grants=direct`.
 - Term-scoped routes use `/programs/{programUID}/terms/{termID}`.
 - Profile records with duplicate profile types use `/me/profiles/by-id/{id}`.
 - Application lifecycle operations are split into dedicated status, withdrawal,

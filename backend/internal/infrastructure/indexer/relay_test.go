@@ -112,6 +112,24 @@ func TestRelayRunOnceFailsWhenMarkSentIsNotAcknowledged(t *testing.T) {
 	}
 }
 
+func TestRelayRunOnceCountsEveryMarkSentAcknowledgementFailure(t *testing.T) {
+	start := indexRelayAckFailures.Value()
+	outbox := &outboxStub{
+		records: []domain.IndexOutboxRecord{
+			{ID: "1", ObjectType: "mentorship_program", Action: "updated"},
+			{ID: "2", ObjectType: "mentorship_program", Action: "updated"},
+		},
+		markRetryAcknowledged: true,
+	}
+
+	if err := NewRelay(outbox, &publisherStub{}, 2).RunOnce(context.Background()); err == nil {
+		t.Fatal("expected acknowledgement error")
+	}
+	if got := indexRelayAckFailures.Value() - start; got != 2 {
+		t.Fatalf("ack failure count delta=%d, want 2", got)
+	}
+}
+
 func TestRelayRunOnceFailsWhenMarkRetryIsNotAcknowledged(t *testing.T) {
 	outbox := &outboxStub{records: []domain.IndexOutboxRecord{{ID: "1", ObjectType: "mentorship_program", Action: "updated"}}, markSentAcknowledged: true}
 	err := NewRelay(outbox, &publisherStub{err: errors.New("down")}, 1).RunOnce(context.Background())

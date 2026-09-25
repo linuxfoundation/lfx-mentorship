@@ -4,6 +4,7 @@
 package db
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
@@ -13,14 +14,17 @@ import (
 func TestNewApplicationIndexConfig(t *testing.T) {
 	config := NewApplicationIndexConfig("app-1", "program-1", "user-1", "mentee", "accepted")
 
-	if got, want := config["object_ref"], "mentorship_application:app-1"; got != want {
-		t.Fatalf("object_ref = %v, want %v", got, want)
+	if _, ok := config["object_ref"]; ok {
+		t.Fatalf("object_ref must be derived, got %v", config["object_ref"])
 	}
 	if got, want := config["access_check_relation"], "auditor"; got != want {
 		t.Fatalf("access_check_relation = %v, want %v", got, want)
 	}
 	if got, want := config["history_check_object"], "mentorship_program:program-1"; got != want {
 		t.Fatalf("history_check_object = %v, want %v", got, want)
+	}
+	if got, want := config["parent_refs"], []string{"mentorship_program:program-1"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("parent_refs = %v, want %v", got, want)
 	}
 }
 

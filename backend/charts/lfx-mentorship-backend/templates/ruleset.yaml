@@ -103,7 +103,6 @@ spec:
           - path: /mentorship/v1/me/profiles/:profileType
           - path: /mentorship/v1/me/profiles/by-id/:id
           - path: /mentorship/v1/me/applications
-	          - path: /mentorship/v1/me/managed-programs
       execute:
         - authenticator: oidc
         - authorizer: allow_all
