@@ -547,6 +547,38 @@ func syncAndEnqueueTasksWithApplicationState(ctx context.Context, tx pgx.Tx, app
 	return nil
 }
 
+func syncApplicationsWithTermState(ctx context.Context, tx pgx.Tx, termID string, termStatus models.ProgramTermStatus) error {
+	rows, err := tx.Query(ctx, `
+		UPDATE applications
+		SET program_term_status = $2, updated_on = NOW()
+		WHERE program_term_id = $1
+		RETURNING `+applicationCols, termID, termStatus)
+	if err != nil {
+		return fmt.Errorf("sync applications for term update: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		application, scanErr := scanApplication(rows)
+		if scanErr != nil {
+			return fmt.Errorf("scan application for term update: %w", scanErr)
+		}
+		if err := enqueueApplicationMarker(ctx, tx, application, "update_access"); err != nil {
+			return err
+		}
+		if err := enqueueApplicationIndex(ctx, tx, application, "updated"); err != nil {
+			return err
+		}
+		if err := syncAndEnqueueTasksWithApplicationState(ctx, tx, application); err != nil {
+			return err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate applications for term update: %w", err)
+	}
+	return nil
+}
+
 func ensureAcceptedMentorMembership(ctx context.Context, tx pgx.Tx, application *models.Application) error {
 	var programID string
 	if err := tx.QueryRow(ctx, `SELECT program_id FROM program_terms WHERE id = $1`, application.ProgramTermID).Scan(&programID); err != nil {
