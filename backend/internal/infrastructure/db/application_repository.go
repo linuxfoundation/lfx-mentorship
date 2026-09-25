@@ -558,11 +558,20 @@ func syncApplicationsWithTermState(ctx context.Context, tx pgx.Tx, termID string
 	}
 	defer rows.Close()
 
+	applications := make([]*models.Application, 0)
 	for rows.Next() {
 		application, scanErr := scanApplication(rows)
 		if scanErr != nil {
 			return fmt.Errorf("scan application for term update: %w", scanErr)
 		}
+		applications = append(applications, application)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate applications for term update: %w", err)
+	}
+	rows.Close()
+
+	for _, application := range applications {
 		if err := enqueueApplicationMarker(ctx, tx, application, "update_access"); err != nil {
 			return err
 		}
@@ -572,9 +581,6 @@ func syncApplicationsWithTermState(ctx context.Context, tx pgx.Tx, termID string
 		if err := syncAndEnqueueTasksWithApplicationState(ctx, tx, application); err != nil {
 			return err
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate applications for term update: %w", err)
 	}
 	return nil
 }
