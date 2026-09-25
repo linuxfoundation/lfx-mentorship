@@ -466,6 +466,7 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
     program_ids: set = set()
     seen_slugs: set = set()
     unresolved_project_uids = []
+    unresolved_project_mappings = []
 
     for p in projects:
         pid = _as_uuid(p.get("projectId"))
@@ -476,11 +477,32 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
         # project_uid is the LF project parent used by the authorization
         # inheritance chain. Do not substitute the program ID when the legacy
         # source does not provide an explicit project identifier.
+        linked_project = p.get("project") if isinstance(p.get("project"), dict) else {}
         project_uid = _as_uuid(
-            p.get("projectUid") or p.get("lfProjectId") or p.get("lfProjectUID")
+            p.get("projectUid")
+            or p.get("lfProjectId")
+            or p.get("lfProjectUID")
+            or linked_project.get("id")
         )
         if not project_uid:
             unresolved_project_uids.append(pid)
+
+        project_slug = (
+            p.get("projectSlug")
+            or p.get("lfProjectSlug")
+            or p.get("project_slug")
+            or linked_project.get("slug")
+        )
+        project_name = (
+            p.get("projectName")
+            or p.get("lfProjectName")
+            or p.get("project_name")
+            or linked_project.get("name")
+        )
+        project_slug = str(project_slug).strip() if project_slug else None
+        project_name = str(project_name).strip() if project_name else None
+        if not project_uid or not project_slug or not project_name:
+            unresolved_project_mappings.append((pid, project_uid, project_slug, project_name))
 
         amount = _as_float(p.get("amountRaised")) / 100  # DynamoDB stores cents; convert to dollars
 
@@ -500,6 +522,8 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
             (
                 pid,
                 project_uid,
+                project_slug,
+                project_name,
                 (p.get("name") or "").strip() or None,
                 slug,
                 _normalize_program_status(p.get("status")),
@@ -553,19 +577,29 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
         )
         for program_id in unresolved_project_uids:
             log.warning("UNMAPPED_PROGRAM program_id=%s", program_id)
+    for program_id, project_uid, project_slug, project_name in unresolved_project_mappings:
+        log.warning(
+            "UNMAPPED_PROGRAM_PROJECT_MAPPING program_id=%s project_uid=%s project_slug=%s project_name_present=%s",
+            program_id,
+            project_uid or "",
+            project_slug or "",
+            bool(project_name),
+        )
 
     psycopg2.extras.execute_batch(
         cur,
         """
         INSERT INTO programs
-                    (id, project_uid, name, slug, status, is_paid, description, logo_url, website_url,
+                    (id, project_uid, project_slug, project_name, name, slug, status, is_paid, description, logo_url, website_url,
            repo_link, code_of_conduct, industry, color, lfid, cii_project_id,
            accept_applications, terms_and_conditions, program_term_status,
            discover_sort_rank, amount_raised, mentee_needs, task_templates,
            created_on, updated_on)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         ON CONFLICT (id) DO UPDATE SET
                     project_uid         = EXCLUDED.project_uid,
+                project_slug        = EXCLUDED.project_slug,
+                project_name        = EXCLUDED.project_name,
           name                = EXCLUDED.name,
           slug                = EXCLUDED.slug,
           status              = EXCLUDED.status,

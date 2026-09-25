@@ -31,7 +31,7 @@ func NewProgramRepository(pool *pgxpool.Pool) *ProgramRepository {
 }
 
 const programSelectCols = `
-	programs.id, programs.project_uid, programs.name, programs.slug, programs.status, programs.is_paid,
+	programs.id, programs.project_uid, programs.project_slug, programs.project_name, programs.name, programs.slug, programs.status, programs.is_paid,
 	programs.description, programs.logo_url, programs.website_url, programs.repo_link,
 	programs.code_of_conduct, programs.industry, programs.color, programs.lfid,
 	programs.cii_project_id, programs.accept_applications,
@@ -40,7 +40,7 @@ const programSelectCols = `
 	programs.mentee_needs, programs.task_templates, programs.created_on, programs.updated_on`
 
 const programReturningCols = `
-	id, project_uid, name, slug, status, is_paid, description, logo_url, website_url, repo_link,
+	id, project_uid, project_slug, project_name, name, slug, status, is_paid, description, logo_url, website_url, repo_link,
 	code_of_conduct, industry, color, lfid, cii_project_id, accept_applications,
 	terms_and_conditions, program_term_status, discover_sort_rank, amount_raised,
 	mentee_needs, task_templates, created_on, updated_on`
@@ -52,7 +52,7 @@ const programsWithFundingFrom = `
 func scanProgram(row pgx.Row) (*models.Program, error) {
 	var p models.Program
 	err := row.Scan(
-		&p.ID, &p.ProjectUID, &p.Name, &p.Slug, &p.Status, &p.IsPaid, &p.Description, &p.LogoURL,
+		&p.ID, &p.ProjectUID, &p.ProjectSlug, &p.ProjectName, &p.Name, &p.Slug, &p.Status, &p.IsPaid, &p.Description, &p.LogoURL,
 		&p.WebsiteURL, &p.RepoLink, &p.CodeOfConduct, &p.Industry, &p.Color, &p.LFID,
 		&p.CIIProjectID, &p.AcceptApplications, &p.TermsAndConditions, &p.ProgramTermStatus,
 		&p.DiscoverSortRank, &p.AmountRaised, &p.MenteeNeeds, &p.TaskTemplates,

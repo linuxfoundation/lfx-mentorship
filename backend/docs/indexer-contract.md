@@ -20,7 +20,8 @@ The resource ID is the program UUID.
 | `tags` | `status:{status}`, `project_uid:{project_uid}` when present |
 
 `data` contains the program card fields required by Mentorship clients: `id`,
-`name`, `slug`, `status`, `logo_url`, `project_uid`, `created_on`, and
+`name`, `slug`, `status`, `logo_url`, `project_uid`, `project_slug`,
+`project_name`, `created_on`, and
 `updated_on`, plus public enrollment statistics:
 
 ```json
