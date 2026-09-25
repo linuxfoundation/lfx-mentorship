@@ -102,18 +102,21 @@ func NewTaskIndexDocument(task *models.Task) TaskIndexDocument {
 }
 
 func NewTaskIndexConfig(taskID, applicationID, assigneeID, name, category, status string) map[string]any {
-	return map[string]any{
-		"object_id":              taskID,
-		"access_check_object":    "mentorship_task:" + taskID,
-		"access_check_relation":  "auditor",
-		"history_check_object":   "mentorship_application:" + applicationID,
-		"history_check_relation": "auditor",
-		"parent_refs":            []string{"mentorship_application:" + applicationID},
-		"sort_name":              name,
-		"name_and_aliases":       []string{name, category},
-		"public":                 false,
-		"tags":                   []string{"status:" + status, "category:" + category, "assignee_id:" + assigneeID},
+	config := map[string]any{
+		"object_id":             taskID,
+		"access_check_object":   "mentorship_task:" + taskID,
+		"access_check_relation": "auditor",
+		"sort_name":             name,
+		"name_and_aliases":      []string{name, category},
+		"public":                false,
+		"tags":                  []string{"status:" + status, "category:" + category, "assignee_id:" + assigneeID},
 	}
+	if applicationID != "" {
+		config["history_check_object"] = "mentorship_application:" + applicationID
+		config["history_check_relation"] = "auditor"
+		config["parent_refs"] = []string{"mentorship_application:" + applicationID}
+	}
+	return config
 }
 
 func enqueueApplicationIndex(ctx context.Context, tx pgx.Tx, application *models.Application, action string) error {
@@ -127,8 +130,9 @@ func enqueueApplicationIndex(ctx context.Context, tx pgx.Tx, application *models
 }
 
 func enqueueTaskIndex(ctx context.Context, tx pgx.Tx, task *models.Task, action string) error {
-	if task.ApplicationID == nil || *task.ApplicationID == "" {
-		return fmt.Errorf("task %s has no application parent for indexing", task.ID)
+	applicationID := ""
+	if task.ApplicationID != nil {
+		applicationID = *task.ApplicationID
 	}
 	name, category := "", ""
 	if task.Name != nil {
@@ -138,7 +142,7 @@ func enqueueTaskIndex(ctx context.Context, tx pgx.Tx, task *models.Task, action 
 		category = string(*task.Category)
 	}
 	return enqueueIndexDocument(ctx, tx, "mentorship_task", task.ID, action, NewTaskIndexDocument(task),
-		NewTaskIndexConfig(task.ID, *task.ApplicationID, task.AssigneeID, name, category, string(task.Status)))
+		NewTaskIndexConfig(task.ID, applicationID, task.AssigneeID, name, category, string(task.Status)))
 }
 
 func enqueueIndexDocument(ctx context.Context, tx pgx.Tx, objectType, objectID, action string, document any, config map[string]any) error {

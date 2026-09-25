@@ -534,6 +534,19 @@ func syncTasksWithApplicationState(ctx context.Context, tx pgx.Tx, application *
 	return updatedTasks, nil
 }
 
+func syncAndEnqueueTasksWithApplicationState(ctx context.Context, tx pgx.Tx, application *models.Application) error {
+	updatedTasks, err := syncTasksWithApplicationState(ctx, tx, application)
+	if err != nil {
+		return err
+	}
+	for _, task := range updatedTasks {
+		if err := enqueueTaskIndex(ctx, tx, task, "updated"); err != nil {
+			return fmt.Errorf("enqueue task index for application update: %w", err)
+		}
+	}
+	return nil
+}
+
 func ensureAcceptedMentorMembership(ctx context.Context, tx pgx.Tx, application *models.Application) error {
 	var programID string
 	if err := tx.QueryRow(ctx, `SELECT program_id FROM program_terms WHERE id = $1`, application.ProgramTermID).Scan(&programID); err != nil {
@@ -770,19 +783,22 @@ func (r *ApplicationRepository) BulkDeclineByTerm(ctx context.Context, termID st
 	}
 	rows.Close()
 	for _, application := range applications {
+		if err := syncAndEnqueueTasksWithApplicationState(ctx, tx, application); err != nil {
+			return 0, fmt.Errorf("sync bulk-declined tasks: %w", err)
+		}
 		if err := enqueueApplicationMarker(ctx, tx, application, "update_access"); err != nil {
 			return 0, err
 		}
 		if err := enqueueApplicationIndex(ctx, tx, application, "updated"); err != nil {
 			return 0, err
 		}
-		var programID string
-		if err := tx.QueryRow(ctx, `SELECT program_id FROM program_terms WHERE id = $1`, application.ProgramTermID).Scan(&programID); err != nil {
-			return 0, fmt.Errorf("resolve bulk-declined program for index refresh: %w", err)
-		}
-		if err := enqueueProgramIndexByID(ctx, tx, programID); err != nil {
-			return 0, err
-		}
+	}
+	var programID string
+	if err := tx.QueryRow(ctx, `SELECT program_id FROM program_terms WHERE id = $1`, termID).Scan(&programID); err != nil {
+		return 0, fmt.Errorf("resolve bulk-declined program for index refresh: %w", err)
+	}
+	if err := enqueueProgramIndexByID(ctx, tx, programID); err != nil {
+		return 0, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("commit bulk decline transaction: %w", err)

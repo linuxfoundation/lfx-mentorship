@@ -94,6 +94,16 @@ func TestNewTaskIndexConfigIncludesApplicationParent(t *testing.T) {
 	}
 }
 
+func TestNewTaskIndexConfigAllowsOrphanTask(t *testing.T) {
+	config := NewTaskIndexConfig("task-1", "", "user-1", "Task", "prerequisite", "pending")
+	if _, ok := config["parent_refs"]; ok {
+		t.Fatalf("orphan task must not reference a missing application: %v", config["parent_refs"])
+	}
+	if _, ok := config["history_check_object"]; ok {
+		t.Fatalf("orphan task must not reference a missing application: %v", config["history_check_object"])
+	}
+}
+
 func stringPointer(value string) *string {
 	return &value
 }

@@ -283,7 +283,8 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			r.Patch("/tasks/{id}/review", taskH.UpdateReview)
 			r.Delete("/tasks/{id}", taskH.Delete)
 
-			// Platform-authorized authorization roster management.
+			// These cluster-local platform-management routes use backend scope checks;
+			// they are intentionally not exposed through the Heimdall RuleSet yet.
 			r.Get("/admin/approver-team/members", rosterH.ListApprovers)
 			r.Post("/admin/approver-team/members", rosterH.AddApprover)
 			r.Delete("/admin/approver-team/members/{userID}", rosterH.RemoveApprover)

@@ -6,7 +6,7 @@
 Status: Proposal — for Architecture team review
 Related: [04-authorization-model.md](./04-authorization-model.md) (what FGA holds and which relation each route checks), [06-route-matrix.md](./06-route-matrix.md) (the per-route mapping), [02-target-architecture.md](./02-target-architecture.md)
 
-[04](./04-authorization-model.md) proposes the FGA model. This doc covers the edge that consumes it: how requests reach the service through the v2 API gateway, what Heimdall does per request, and the environment evidence required before traffic is enabled. Mentorship is gateway-only; there is no supported standalone Auth0 API path.
+[04](./04-authorization-model.md) proposes the FGA model. This doc covers the edge that consumes it: how requests reach the service through the v2 API gateway, what Heimdall does per request, and the environment evidence required before traffic is enabled. Mentorship is gateway-only in deployed environments; there is no supported standalone Auth0 API path. Local development may use the explicitly guarded mock-principal bypass for testing, but that bypass must never be configured in a deployed environment.
 
 > **Platform collection decision:** The earlier GW-2 service-owned collection
 > shape is superseded. Query Service holds all resource objects and serves

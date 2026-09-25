@@ -1368,6 +1368,10 @@ def seed_derived_state(cur) -> None:
                 'role', a.role,
                 'status', a.status,
                 'program_term_status', a.program_term_status,
+                'start_date_time', a.start_date_time,
+                'end_date_time', a.end_date_time,
+                'attendance_type', a.attendance_type,
+                'tasks_submitted', a.tasks_submitted,
                 'created_on', a.created_on,
                 'updated_on', a.updated_on
             )),

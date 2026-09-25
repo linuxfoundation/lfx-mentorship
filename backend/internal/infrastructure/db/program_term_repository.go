@@ -369,6 +369,9 @@ func (r *ProgramTermRepository) CloseWithBulkDecline(ctx context.Context, id str
 	}
 	rows.Close()
 	for _, application := range applications {
+		if err := syncAndEnqueueTasksWithApplicationState(ctx, tx, application); err != nil {
+			return nil, 0, fmt.Errorf("sync bulk-declined tasks: %w", err)
+		}
 		if err := enqueueApplicationMarker(ctx, tx, application, "update_access"); err != nil {
 			return nil, 0, err
 		}
