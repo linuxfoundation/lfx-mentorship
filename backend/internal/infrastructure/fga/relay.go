@@ -27,8 +27,8 @@ var (
 type Outbox interface {
 	Claim(ctx context.Context, limit int) ([]domain.FGAOutboxMarker, error)
 	Acknowledge(ctx context.Context, marker domain.FGAOutboxMarker) (bool, error)
-	Retry(ctx context.Context, marker domain.FGAOutboxMarker, nextAttemptAt time.Time, errText string) error
-	DeadLetter(ctx context.Context, marker domain.FGAOutboxMarker, errText string) error
+	Retry(ctx context.Context, marker domain.FGAOutboxMarker, nextAttemptAt time.Time, errText string) (bool, error)
+	DeadLetter(ctx context.Context, marker domain.FGAOutboxMarker, errText string) (bool, error)
 }
 
 // Builder reconstructs a fresh message from current source-of-truth state.
@@ -103,20 +103,8 @@ func (r *Relay) RunOnce(ctx context.Context) error {
 			buildErr = r.publisher.Publish(ctx, message)
 		}
 		if buildErr != nil {
-			var retryErr error
-			if marker.Attempts+1 >= r.maxAttempts {
-				retryErr = r.outbox.DeadLetter(ctx, marker, buildErr.Error())
-				if retryErr == nil {
-					relayDeadLettered.Add(1)
-				}
-			} else {
-				retryErr = r.outbox.Retry(ctx, marker, r.clock().Add(r.retryDelay), buildErr.Error())
-				if retryErr == nil {
-					relayRetried.Add(1)
-				}
-			}
 			firstErr = errors.Join(firstErr, buildErr)
-			if retryErr != nil {
+			if retryErr := r.recordFailure(ctx, marker, buildErr); retryErr != nil {
 				firstErr = errors.Join(firstErr, fmt.Errorf("retry marker %d: %w", marker.ID, retryErr))
 			}
 			continue
@@ -132,6 +120,29 @@ func (r *Relay) RunOnce(ctx context.Context) error {
 		}
 	}
 	return firstErr
+}
+
+// recordFailure retries or dead-letters a failed marker and counts only transitions that persisted.
+func (r *Relay) recordFailure(ctx context.Context, marker domain.FGAOutboxMarker, cause error) error {
+	if marker.Attempts+1 >= r.maxAttempts {
+		deadLettered, err := r.outbox.DeadLetter(ctx, marker, cause.Error())
+		if err != nil {
+			return err
+		}
+		if deadLettered {
+			relayDeadLettered.Add(1)
+			return nil
+		}
+		// A newer generation arrived while publishing; release it for a fresh attempt.
+	}
+	retried, err := r.outbox.Retry(ctx, marker, r.clock().Add(r.retryDelay), cause.Error())
+	if err != nil {
+		return err
+	}
+	if retried {
+		relayRetried.Add(1)
+	}
+	return nil
 }
 
 // Run polls the outbox until the context is cancelled.

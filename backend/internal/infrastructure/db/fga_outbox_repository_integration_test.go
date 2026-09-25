@@ -225,26 +225,6 @@ func TestIndexOutboxIntegration_ApplicationAndTaskLifecycle(t *testing.T) {
 	}
 }
 
-func TestProgramRepositoryIntegration_ListManagedByUser(t *testing.T) {
-	pool := integrationPool(t)
-	fixture := seedIntegrationFixture(t, pool)
-	ctx := context.Background()
-	if _, err := pool.Exec(ctx, `INSERT INTO programs (id, lf_project_uid, name, slug, status) VALUES ('00000000-0000-0000-0000-000000000013', '00000000-0000-0000-0000-000000000100', 'Inactive Program', 'inactive-program', 'published')`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES ('00000000-0000-0000-0000-000000000022', '00000000-0000-0000-0000-000000000013', $1, 'program_admin', 'withdrawn')`, fixture.UserID); err != nil {
-		t.Fatal(err)
-	}
-
-	programs, meta, err := NewProgramRepository(pool).ListManagedByUser(ctx, fixture.UserID, models.ProgramFilter{Limit: 10, Search: "fixture"})
-	if err != nil {
-		t.Fatalf("list managed programs: %v", err)
-	}
-	if len(programs) != 1 || programs[0].ID != fixture.ProgramID || meta.Total != 1 {
-		t.Fatalf("programs/meta = %#v/%#v; want fixture program and total 1", programs, meta)
-	}
-}
-
 func TestProgramIndexIntegration_RefreshesPublicStats(t *testing.T) {
 	pool := integrationPool(t)
 	fixture := seedIntegrationFixture(t, pool)
@@ -890,8 +870,8 @@ func TestFGAOutboxIntegration_DeadLetterPreservesFailure(t *testing.T) {
 	if err != nil || len(markers) != 1 {
 		t.Fatalf("claim: markers=%d err=%v", len(markers), err)
 	}
-	if err := repo.DeadLetter(ctx, markers[0], "permanent builder failure"); err != nil {
-		t.Fatalf("dead-letter: %v", err)
+	if deadLettered, err := repo.DeadLetter(ctx, markers[0], "permanent builder failure"); err != nil || !deadLettered {
+		t.Fatalf("dead-letter: dead_lettered=%v err=%v", deadLettered, err)
 	}
 	var state, lastError string
 	if err := pool.QueryRow(ctx, `SELECT state, last_error FROM fga_outbox WHERE id = $1`, markers[0].ID).Scan(&state, &lastError); err != nil {
@@ -914,6 +894,38 @@ func TestFGAOutboxIntegration_DeadLetterPreservesFailure(t *testing.T) {
 	}
 }
 
+func TestFGAOutboxIntegration_DeadLetterYieldsToNewerGeneration(t *testing.T) {
+	pool := integrationPool(t)
+	repo := NewFGAOutboxRepository(pool)
+	ctx := context.Background()
+	if err := repo.EnqueueObject(ctx, "mentorship_program", "program-racing", "update_access"); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	markers, err := repo.Claim(ctx, 1)
+	if err != nil || len(markers) != 1 {
+		t.Fatalf("claim: markers=%d err=%v", len(markers), err)
+	}
+	if err := repo.EnqueueObject(ctx, "mentorship_program", "program-racing", "update_access"); err != nil {
+		t.Fatalf("enqueue newer generation: %v", err)
+	}
+	if deadLettered, err := repo.DeadLetter(ctx, markers[0], "stale failure"); err != nil || deadLettered {
+		t.Fatalf("dead-letter over newer generation: dead_lettered=%v err=%v; want false", deadLettered, err)
+	}
+	if retried, err := repo.Retry(ctx, markers[0], time.Now(), "stale failure"); err != nil || !retried {
+		t.Fatalf("retry newer generation: retried=%v err=%v; want true", retried, err)
+	}
+	if retried, err := repo.Retry(ctx, markers[0], time.Now(), "stale failure"); err != nil || retried {
+		t.Fatalf("retry after release: retried=%v err=%v; want false", retried, err)
+	}
+	var state string
+	if err := pool.QueryRow(ctx, `SELECT state FROM fga_outbox WHERE id = $1`, markers[0].ID).Scan(&state); err != nil {
+		t.Fatalf("read marker: %v", err)
+	}
+	if state != "pending" {
+		t.Fatalf("state=%q; want pending", state)
+	}
+}
+
 func TestFGAOutboxIntegration_RequeueExactMembershipDeadLetter(t *testing.T) {
 	pool := integrationPool(t)
 	repo := NewFGAOutboxRepository(pool)
@@ -925,8 +937,8 @@ func TestFGAOutboxIntegration_RequeueExactMembershipDeadLetter(t *testing.T) {
 	if err != nil || len(markers) != 1 {
 		t.Fatalf("claim: markers=%d err=%v", len(markers), err)
 	}
-	if err := repo.DeadLetter(ctx, markers[0], "dependency unavailable"); err != nil {
-		t.Fatalf("dead-letter: %v", err)
+	if deadLettered, err := repo.DeadLetter(ctx, markers[0], "dependency unavailable"); err != nil || !deadLettered {
+		t.Fatalf("dead-letter: dead_lettered=%v err=%v", deadLettered, err)
 	}
 	if requeued, err := repo.RequeueDeadLetter(ctx, "mentorship_program", "program-1", "mentor", "other-user"); err != nil || requeued {
 		t.Fatalf("wrong member requeue: requeued=%v err=%v", requeued, err)

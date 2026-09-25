@@ -23,8 +23,11 @@ CREATE INDEX IF NOT EXISTS idx_programs_lf_project_slug
   ON programs(lf_project_slug)
   WHERE lf_project_slug IS NOT NULL;
 
+-- YYYY-MM-DD keeps lexical ORDER BY due_date chronological.
 ALTER TABLE tasks
-  ALTER COLUMN due_date TYPE TEXT USING due_date::text;
+  ALTER COLUMN due_date TYPE TEXT USING due_date::text,
+  ADD CONSTRAINT tasks_due_date_check
+    CHECK (due_date IS NULL OR due_date ~ '^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$');
 
 ALTER TABLE index_outbox
   ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

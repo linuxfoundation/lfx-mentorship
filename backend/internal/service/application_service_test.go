@@ -187,7 +187,6 @@ type stubProgRepo struct {
 	getByID           func(context.Context, string) (*models.Program, error)
 	getBySlug         func(context.Context, string) (*models.Program, error)
 	list              func(context.Context, models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error)
-	listManagedByUser func(context.Context, string, models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error)
 	managementSummary func(context.Context, string) (*models.ProgramManagementSummary, error)
 	nameAvailable     func(context.Context, string, string) (bool, error)
 	listCatalog       func(context.Context, models.ProgramFilter) ([]*models.ProgramCatalogItem, *models.PaginationMeta, error)
@@ -218,12 +217,6 @@ func (m *stubProgRepo) GetBySlug(ctx context.Context, slug string) (*models.Prog
 func (m *stubProgRepo) List(ctx context.Context, f models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error) {
 	if m.list != nil {
 		return m.list(ctx, f)
-	}
-	return nil, &models.PaginationMeta{}, nil
-}
-func (m *stubProgRepo) ListManagedByUser(ctx context.Context, userID string, f models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error) {
-	if m.listManagedByUser != nil {
-		return m.listManagedByUser(ctx, userID, f)
 	}
 	return nil, &models.PaginationMeta{}, nil
 }

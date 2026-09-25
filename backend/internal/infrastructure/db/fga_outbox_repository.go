@@ -204,7 +204,8 @@ func (r *FGAOutboxRepository) Acknowledge(ctx context.Context, marker domain.FGA
 }
 
 // Retry returns a claimed marker to pending without overwriting a newer generation.
-func (r *FGAOutboxRepository) Retry(ctx context.Context, marker domain.FGAOutboxMarker, nextAttemptAt time.Time, errText string) error {
+// It reports false when the claim was lost and nothing changed.
+func (r *FGAOutboxRepository) Retry(ctx context.Context, marker domain.FGAOutboxMarker, nextAttemptAt time.Time, errText string) (bool, error) {
 	const query = `
 		UPDATE fga_outbox
 		SET state = 'pending', claimed_generation = NULL, claimed_at = NULL,
@@ -212,15 +213,17 @@ func (r *FGAOutboxRepository) Retry(ctx context.Context, marker domain.FGAOutbox
 		    updated_on = NOW()
 		WHERE id = $1 AND state = 'in_flight' AND claimed_generation = $2
 		  AND claimed_at IS NOT DISTINCT FROM $5`
-	if _, err := r.pool.Exec(ctx, query, marker.ID, marker.Generation, nextAttemptAt, errText, marker.ClaimedAt); err != nil {
-		return fmt.Errorf("retry FGA outbox marker: %w", err)
+	command, err := r.pool.Exec(ctx, query, marker.ID, marker.Generation, nextAttemptAt, errText, marker.ClaimedAt)
+	if err != nil {
+		return false, fmt.Errorf("retry FGA outbox marker: %w", err)
 	}
-	return nil
+	return command.RowsAffected() == 1, nil
 }
 
 // DeadLetter stops retrying a marker after the configured attempt limit while
-// preserving the marker and failure details for operator inspection.
-func (r *FGAOutboxRepository) DeadLetter(ctx context.Context, marker domain.FGAOutboxMarker, errText string) error {
+// preserving the marker and failure details for operator inspection. It reports
+// false when the claim was lost or a newer generation arrived.
+func (r *FGAOutboxRepository) DeadLetter(ctx context.Context, marker domain.FGAOutboxMarker, errText string) (bool, error) {
 	const query = `
 		UPDATE fga_outbox
 		SET state = 'dead_letter', claimed_generation = NULL, claimed_at = NULL,
@@ -228,10 +231,11 @@ func (r *FGAOutboxRepository) DeadLetter(ctx context.Context, marker domain.FGAO
 		WHERE id = $1 AND state = 'in_flight' AND claimed_generation = $2
 		  AND generation = $2
 		  AND claimed_at IS NOT DISTINCT FROM $4`
-	if _, err := r.pool.Exec(ctx, query, marker.ID, marker.Generation, errText, marker.ClaimedAt); err != nil {
-		return fmt.Errorf("dead-letter FGA outbox marker: %w", err)
+	command, err := r.pool.Exec(ctx, query, marker.ID, marker.Generation, errText, marker.ClaimedAt)
+	if err != nil {
+		return false, fmt.Errorf("dead-letter FGA outbox marker: %w", err)
 	}
-	return nil
+	return command.RowsAffected() == 1, nil
 }
 
 // RequeueDeadLetter returns one exact retained marker to the normal relay path.

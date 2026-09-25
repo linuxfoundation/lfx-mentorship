@@ -1671,7 +1671,8 @@ Tasks represent units of work assigned to a mentee. They are either:
 **`status` lifecycle**: `incomplete → in_progress → submitted → complete`
 
 **`due_date`** is an ISO 8601 date string (`YYYY-MM-DD`) for compatibility with
-legacy task data. Consumers performing date arithmetic should parse it as a
+legacy task data. Writes with any other format are rejected with `400`.
+Consumers performing date arithmetic should parse it as a
 date rather than comparing it to a PostgreSQL timestamp directly.
 
 Backward reset to `incomplete` is always possible (by a reviewer only).

@@ -5,6 +5,7 @@ package service_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -98,6 +99,27 @@ func TestProgramService_CreateEnrollment_NormalizesSkills(t *testing.T) {
 	}
 	if captured.Program.ProjectSlug == nil || *captured.Program.ProjectSlug != "program-project" || captured.Program.ProjectName == nil || *captured.Program.ProjectName != "Program Project" || captured.Program.ProjectLogoURL != nil {
 		t.Fatalf("project metadata=%v %v %v", captured.Program.ProjectSlug, captured.Program.ProjectName, captured.Program.ProjectLogoURL)
+	}
+}
+
+func TestProgramService_CreateEnrollment_RejectsNonISOPrerequisiteDueDate(t *testing.T) {
+	projectUID := "00000000-0000-0000-0000-000000000001"
+	start := time.Now().Add(24 * time.Hour)
+	termEnd := start.Add(24 * time.Hour)
+	applicationStart := time.Now()
+	applicationEnd := start.Add(-time.Hour)
+	svc := newProgramSvc(&stubProgRepo{createEnrollment: func(context.Context, models.ProgramEnrollmentInput) (*models.Program, error) {
+		t.Fatal("repository must not be called")
+		return nil, nil
+	}}, &stubTermRepo{}, &stubAppRepo{})
+	_, err := svc.CreateEnrollment(context.Background(), models.ProgramEnrollmentInput{
+		Program:       models.ProgramCreateInput{ProjectUID: &projectUID, Name: "Program", Slug: "program"},
+		Skills:        []string{"Go"},
+		Terms:         []models.ProgramTermCreateInput{{Name: "Term", StartDateTime: &start, EndDateTime: &termEnd, ApplicationStartDate: &applicationStart, ApplicationEndDate: &applicationEnd}},
+		Prerequisites: json.RawMessage(`[{"name":"PR","description":"Open a PR","required":true,"dueDate":"tomorrow"}]`),
+	})
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("expected invalid due date input, got %v", err)
 	}
 }
 
