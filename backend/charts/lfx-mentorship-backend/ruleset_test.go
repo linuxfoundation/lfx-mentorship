@@ -118,3 +118,40 @@ func TestManagementReadsRequireManagerAuthorization(t *testing.T) {
 		}
 	}
 }
+
+func TestMentorModuleRoutesAreCoveredByHeimdall(t *testing.T) {
+	contents, err := os.ReadFile("templates/ruleset.yaml")
+	if err != nil {
+		t.Fatalf("read RuleSet: %v", err)
+	}
+	ruleset := string(contents)
+	for _, route := range []string{
+		"/mentorship/v1/me/profiles",
+		"/mentorship/v1/me/profiles/:profileType",
+		"/mentorship/v1/me/applications",
+		"/mentorship/v1/mentor-invites/:token/accept",
+		"/mentorship/v1/mentor-invites/:token/decline",
+		"/mentorship/v1/programs/:programID/terms/:id/applications",
+		"/mentorship/v1/applications/:id/withdraw",
+		"/mentorship/v1/applications/:id/note",
+		"/mentorship/v1/applications/:id/tasks",
+		"/mentorship/v1/tasks/:id/review",
+	} {
+		if !strings.Contains(ruleset, route) {
+			t.Errorf("RuleSet is missing mentor module route %q", route)
+		}
+	}
+
+	for _, required := range []string{
+		"id: rule:lfx:lfx-mentorship-backend:mentor-invites",
+		"id: rule:lfx:lfx-mentorship-backend:term-application-create",
+		"id: rule:lfx:lfx-mentorship-backend:applications-mentee",
+		"id: rule:lfx:lfx-mentorship-backend:applications-reviewer",
+		"id: rule:lfx:lfx-mentorship-backend:application-reviewer-fields",
+		"id: rule:lfx:lfx-mentorship-backend:tasks-manager",
+	} {
+		if !strings.Contains(ruleset, required) {
+			t.Errorf("RuleSet is missing mentor module authorization group %q", required)
+		}
+	}
+}
