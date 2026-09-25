@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 )
@@ -47,20 +48,15 @@ func (s *outboxStub) MarkRetry(_ context.Context, record domain.IndexOutboxRecor
 type publisherStub struct {
 	subject string
 	data    []byte
-	reply   string
 	err     error
 }
 
-func (s *publisherStub) RequestWithContext(_ context.Context, subject string, data []byte) (*nats.Msg, error) {
-	s.subject, s.data = subject, data
+func (s *publisherStub) PublishMsg(_ context.Context, msg *nats.Msg, _ ...jetstream.PublishOpt) (*jetstream.PubAck, error) {
+	s.subject, s.data = msg.Subject, msg.Data
 	if s.err != nil {
 		return nil, s.err
 	}
-	reply := s.reply
-	if reply == "" {
-		reply = indexerAck
-	}
-	return &nats.Msg{Data: []byte(reply)}, nil
+	return &jetstream.PubAck{}, nil
 }
 
 func TestRelayRunOncePublishesDelete(t *testing.T) {
@@ -88,19 +84,18 @@ func TestRelayRunOnceRetriesPublishFailure(t *testing.T) {
 	}
 }
 
-func TestRelayRunOnceRetriesWhenIndexerRejectsMessage(t *testing.T) {
-	outbox := &outboxStub{records: []domain.IndexOutboxRecord{{ID: "1", ObjectType: "mentorship_program", Action: "updated"}}, markSentAcknowledged: true, markRetryAcknowledged: true}
-	err := NewRelay(outbox, &publisherStub{reply: "ERROR: error processing indexing message"}, 1, testToken).RunOnce(context.Background())
-	if err == nil || outbox.retried != "1" || outbox.sent != "" {
-		t.Fatalf("err=%v retried=%q sent=%q; want retry and no mark-sent", err, outbox.retried, outbox.sent)
-	}
-}
-
 func TestRelayRunOnceRetriesWhenIndexerHasNoResponders(t *testing.T) {
 	outbox := &outboxStub{records: []domain.IndexOutboxRecord{{ID: "1", ObjectType: "mentorship_program", Action: "updated"}}, markSentAcknowledged: true, markRetryAcknowledged: true}
 	err := NewRelay(outbox, &publisherStub{err: nats.ErrNoResponders}, 1, testToken).RunOnce(context.Background())
 	if !errors.Is(err, nats.ErrNoResponders) || outbox.retried != "1" || outbox.sent != "" {
 		t.Fatalf("err=%v retried=%q sent=%q; want a retried record", err, outbox.retried, outbox.sent)
+	}
+}
+
+func TestRelayPublishAcceptsJetStreamPublishAcknowledgement(t *testing.T) {
+	relay := NewRelay(&outboxStub{}, &publisherStub{}, 1, testToken)
+	if err := relay.publishAndConfirm(context.Background(), "lfx.index.mentorship_program", []byte(`{}`)); err != nil {
+		t.Fatalf("publishAndConfirm: %v", err)
 	}
 }
 

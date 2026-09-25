@@ -120,7 +120,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		indexOutbox := db.NewIndexOutboxRepository(pool)
 		indexOutbox.SetMaxAttempts(cfg.Indexer.MaxAttempts)
 		indexOutbox.SetRetryDelay(cfg.Indexer.RetryDelay)
-		indexRelay := indexer.NewRelay(indexOutbox, natsConn, cfg.FGA.RelayBatch, cfg.Indexer.ServiceToken)
+		indexRelay := indexer.NewRelay(indexOutbox, js, cfg.FGA.RelayBatch, cfg.Indexer.ServiceToken)
 		indexRelay.SetLogger(logger)
 		go indexRelay.Run(relayCtx, cfg.FGA.RelayInterval)
 	}

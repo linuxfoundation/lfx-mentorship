@@ -14,12 +14,10 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 )
-
-// indexerAck is the reply lfx-v2-indexer-service sends once a message is indexed.
-const indexerAck = "OK"
 
 const defaultReplyTimeout = 10 * time.Second
 
@@ -41,7 +39,7 @@ type Envelope struct {
 
 type Relay struct {
 	outbox        domain.IndexOutboxRepository
-	conn          requester
+	conn          publisher
 	batch         int
 	replyTimeout  time.Duration
 	logger        *slog.Logger
@@ -55,12 +53,12 @@ func (r *Relay) SetLogger(logger *slog.Logger) {
 	}
 }
 
-type requester interface {
-	RequestWithContext(ctx context.Context, subject string, data []byte) (*nats.Msg, error)
+type publisher interface {
+	PublishMsg(ctx context.Context, msg *nats.Msg, opts ...jetstream.PublishOpt) (*jetstream.PubAck, error)
 }
 
 // NewRelay stamps serviceToken on every message; without one it idles, since the indexer drops unauthenticated messages.
-func NewRelay(outbox domain.IndexOutboxRepository, conn requester, batch int, serviceToken string) *Relay {
+func NewRelay(outbox domain.IndexOutboxRepository, conn publisher, batch int, serviceToken string) *Relay {
 	if batch <= 0 {
 		batch = 50
 	}
@@ -164,16 +162,12 @@ func (r *Relay) RunOnce(ctx context.Context) error {
 	return firstErr
 }
 
-// publishAndConfirm counts only the indexer's OK reply as delivery.
+// publishAndConfirm counts only a JetStream publish acknowledgement as delivery.
 func (r *Relay) publishAndConfirm(ctx context.Context, subject string, payload []byte) error {
 	ctx, cancel := context.WithTimeout(ctx, r.replyTimeout)
 	defer cancel()
-	reply, err := r.conn.RequestWithContext(ctx, subject, payload)
-	if err != nil {
-		return fmt.Errorf("indexer request: %w", err)
-	}
-	if body := strings.TrimSpace(string(reply.Data)); body != indexerAck {
-		return fmt.Errorf("indexer rejected message: %.200s", body)
+	if _, err := r.conn.PublishMsg(ctx, &nats.Msg{Subject: subject, Data: payload}); err != nil {
+		return fmt.Errorf("indexer publish: %w", err)
 	}
 	return nil
 }
