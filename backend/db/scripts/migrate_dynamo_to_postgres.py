@@ -1302,6 +1302,9 @@ def seed_derived_state(cur) -> None:
                 jsonb_strip_nulls(jsonb_build_object(
                     'id', id,
                     'project_uid', lf_project_uid,
+                    'project_slug', lf_project_slug,
+                    'project_name', lf_project_name,
+                    'project_logo_url', lf_project_logo_url,
                     'name', name,
                     'slug', slug,
                     'status', status,

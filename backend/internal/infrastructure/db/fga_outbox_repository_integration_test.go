@@ -58,7 +58,7 @@ func seedIntegrationFixture(t *testing.T, pool *pgxpool.Pool) integrationFixture
 	if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name) VALUES ($1, 'fixture-user', 'Fixture User')`, fixture.UserID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO programs (id, project_uid, name, slug, status) VALUES ($1, '00000000-0000-0000-0000-000000000099', 'Fixture Program', 'fixture-program', 'published')`, fixture.ProgramID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO programs (id, lf_project_uid, name, slug, status) VALUES ($1, '00000000-0000-0000-0000-000000000099', 'Fixture Program', 'fixture-program', 'published')`, fixture.ProgramID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES ('00000000-0000-0000-0000-000000000020', $1, $2, 'program_admin', 'active')`, fixture.ProgramID, fixture.UserID); err != nil {
@@ -229,7 +229,7 @@ func TestProgramRepositoryIntegration_ListManagedByUser(t *testing.T) {
 	pool := integrationPool(t)
 	fixture := seedIntegrationFixture(t, pool)
 	ctx := context.Background()
-	if _, err := pool.Exec(ctx, `INSERT INTO programs (id, project_uid, name, slug, status) VALUES ('00000000-0000-0000-0000-000000000013', '00000000-0000-0000-0000-000000000100', 'Inactive Program', 'inactive-program', 'published')`); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO programs (id, lf_project_uid, name, slug, status) VALUES ('00000000-0000-0000-0000-000000000013', '00000000-0000-0000-0000-000000000100', 'Inactive Program', 'inactive-program', 'published')`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES ('00000000-0000-0000-0000-000000000022', '00000000-0000-0000-0000-000000000013', $1, 'program_admin', 'withdrawn')`, fixture.UserID); err != nil {
