@@ -50,6 +50,60 @@ func TestIndexOutboxIntegration_StaleClaimDeadLettersAtLimit(t *testing.T) {
 	}
 }
 
+func TestFGAOutboxIntegration_StaleSameGenerationDeadLettersAtLimit(t *testing.T) {
+	pool := integrationPool(t)
+	repo := NewFGAOutboxRepository(pool)
+	repo.SetMaxAttempts(1)
+	ctx := context.Background()
+	if err := repo.EnqueueObject(ctx, "mentorship_task", "task-stale", "update_access"); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	if markers, err := repo.Claim(ctx, 1); err != nil || len(markers) != 1 {
+		t.Fatalf("claim: markers=%d err=%v", len(markers), err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE fga_outbox SET claimed_at = NOW() - INTERVAL '6 minutes'`); err != nil {
+		t.Fatalf("age claim: %v", err)
+	}
+	if markers, err := repo.Claim(ctx, 1); err != nil || len(markers) != 0 {
+		t.Fatalf("exhausted claim: markers=%d err=%v", len(markers), err)
+	}
+	var state, lastError string
+	var attempts int
+	if err := pool.QueryRow(ctx, `SELECT state, attempts, last_error FROM fga_outbox`).Scan(&state, &attempts, &lastError); err != nil {
+		t.Fatalf("read marker: %v", err)
+	}
+	if state != "dead_letter" || attempts != 1 || lastError == "" {
+		t.Fatalf("state=%q attempts=%d last_error=%q; want dead_letter, 1, and an error", state, attempts, lastError)
+	}
+}
+
+func TestFGAOutboxIntegration_StaleNewerGenerationIsReclaimedAtLimit(t *testing.T) {
+	pool := integrationPool(t)
+	repo := NewFGAOutboxRepository(pool)
+	repo.SetMaxAttempts(1)
+	ctx := context.Background()
+	if err := repo.EnqueueObject(ctx, "mentorship_task", "task-newer", "update_access"); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	first, err := repo.Claim(ctx, 1)
+	if err != nil || len(first) != 1 {
+		t.Fatalf("claim: markers=%d err=%v", len(first), err)
+	}
+	if err := repo.EnqueueObject(ctx, "mentorship_task", "task-newer", "update_access"); err != nil {
+		t.Fatalf("enqueue newer generation: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE fga_outbox SET claimed_at = NOW() - INTERVAL '6 minutes'`); err != nil {
+		t.Fatalf("age claim: %v", err)
+	}
+	reclaimed, err := repo.Claim(ctx, 1)
+	if err != nil || len(reclaimed) != 1 {
+		t.Fatalf("reclaim newer generation: markers=%d err=%v", len(reclaimed), err)
+	}
+	if reclaimed[0].Generation <= first[0].Generation || reclaimed[0].Attempts != 0 {
+		t.Fatalf("reclaimed generation=%d attempts=%d; want generation > %d and attempts 0", reclaimed[0].Generation, reclaimed[0].Attempts, first[0].Generation)
+	}
+}
+
 func TestProgramTermIntegration_CloseReopenSynchronizesProjections(t *testing.T) {
 	pool := integrationPool(t)
 	fixture := seedIntegrationFixture(t, pool)

@@ -6,6 +6,7 @@ package db
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -88,23 +89,33 @@ func (r *FGAOutboxRepository) Claim(ctx context.Context, limit int) ([]domain.FG
 	if limit <= 0 {
 		return []domain.FGAOutboxMarker{}, nil
 	}
-	const query = `
+	var deadLettered int
+	if err := r.pool.QueryRow(ctx, `
 		WITH stale_dead AS (
 			UPDATE fga_outbox
 			SET state = 'dead_letter', claimed_generation = NULL, claimed_at = NULL,
-			    last_error = 'relay crashed while in flight', updated_on = NOW()
+			    attempts = attempts + 1, last_error = 'relay crashed while in flight',
+			    updated_on = NOW()
 			WHERE state = 'in_flight'
 			  AND claimed_at <= NOW() - INTERVAL '5 minutes'
 			  AND generation = claimed_generation
-			  AND attempts + 1 >= $2
+			  AND attempts + 1 >= $1
 			RETURNING id
-		), lockable AS (
+		)
+		SELECT COUNT(*) FROM stale_dead`, r.maxAttempts).Scan(&deadLettered); err != nil {
+		return nil, fmt.Errorf("dead-letter stale FGA outbox markers: %w", err)
+	}
+	if deadLettered > 0 {
+		slog.Default().WarnContext(ctx, "dead-lettered stale FGA outbox markers", "count", deadLettered)
+	}
+	const query = `
+		WITH lockable AS (
 			SELECT pending.id, pending.object_type, pending.object_uid
 			FROM fga_outbox AS pending
 			WHERE ((pending.state = 'pending' AND pending.next_attempt_at <= NOW())
 			   OR (pending.state = 'in_flight'
 			       AND pending.claimed_at <= NOW() - INTERVAL '5 minutes'
-			       AND pending.attempts + 1 < $2))
+			       AND (pending.generation > pending.claimed_generation OR pending.attempts + 1 < $2)))
 			  AND NOT EXISTS (
 				SELECT 1 FROM fga_outbox AS active
 				WHERE active.object_type = pending.object_type
@@ -127,7 +138,10 @@ func (r *FGAOutboxRepository) Claim(ctx context.Context, limit int) ([]domain.FG
 		UPDATE fga_outbox AS outbox
 		SET state = 'in_flight', claimed_generation = outbox.generation,
 		    claimed_at = NOW(), next_attempt_at = NOW() + INTERVAL '5 minutes',
-		    attempts = CASE WHEN outbox.state = 'in_flight' THEN outbox.attempts + 1 ELSE outbox.attempts END,
+		    attempts = CASE
+		                   WHEN outbox.state = 'in_flight' AND outbox.generation = outbox.claimed_generation THEN outbox.attempts + 1
+		                   ELSE outbox.attempts
+		               END,
 		    updated_on = NOW()
 		FROM candidates
 		WHERE outbox.id = candidates.id
