@@ -385,11 +385,7 @@ func (r *ProgramTermRepository) CloseWithBulkDecline(ctx context.Context, id str
 	if err := syncApplicationsWithTermState(ctx, tx, id, closed); err != nil {
 		return nil, 0, err
 	}
-	var programID string
-	if err := tx.QueryRow(ctx, `SELECT program_id FROM program_terms WHERE id = $1`, id).Scan(&programID); err != nil {
-		return nil, 0, fmt.Errorf("resolve closed term program for index refresh: %w", err)
-	}
-	if err := enqueueProgramIndexByID(ctx, tx, programID); err != nil {
+	if err := enqueueProgramIndexByID(ctx, tx, updated.ProgramID); err != nil {
 		return nil, 0, err
 	}
 	if err := tx.Commit(ctx); err != nil {

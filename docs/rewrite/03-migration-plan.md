@@ -8,14 +8,13 @@ Related: [01-current-system.md](./01-current-system.md), [02-target-architecture
 
 Proposal-level plan, modeled on the Crowdfunding cutover ([lfx-crowdfunding/backend/docs/rewrite/05-migration-plan.md](https://github.com/linuxfoundation/lfx-crowdfunding/blob/main/backend/docs/rewrite/05-migration-plan.md)). Detailed runbooks are an implementation-phase deliverable.
 
-## Development migration reset
+## Development migration
 
-The current development deployment resets the disposable Mentorship database
-before applying the consolidated version-1 schema. Do not run this reset against
-an environment containing data: export the database, drop and recreate the
-Mentorship schema, run `cmd/migrate`, and re-import through the migration
-scripts. Deployed environments require an approved backup and cutover window
-before using this reset procedure.
+Development and deployed environments apply migration 003 normally through the
+Helm migration hook after versions 001 and 002. A schema reset is only a local
+fallback for disposable databases; do not use it against an environment with
+data. For a reset, export the database, recreate the Mentorship schema, run
+`cmd/migrate`, and re-import through the migration scripts.
 
 ## Data volume & risk
 

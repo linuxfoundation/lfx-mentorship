@@ -132,9 +132,7 @@ def main() -> None:
         term_id = row.get("programTermId")
         assignee_id = row.get("assigneeId") or str(uuid.uuid5(NAMESPACE, f"task-assignee:{row['id']}"))
         candidates = mentee_users_by_term.get(term_id, [])
-        if term_id and candidates and assignee_id not in candidates:
-            task_application_repairs.append((row["id"], candidates[0]))
-        elif term_id and not candidates and (term_id, assignee_id) not in existing_application_keys:
+        if term_id and (not candidates or assignee_id not in candidates) and (term_id, assignee_id) not in existing_application_keys:
             require_user(assignee_id, "mentee")
             application_repairs.append(
                 {

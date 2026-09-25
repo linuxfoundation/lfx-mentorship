@@ -130,10 +130,10 @@ func enqueueApplicationIndex(ctx context.Context, tx pgx.Tx, application *models
 }
 
 func enqueueTaskIndex(ctx context.Context, tx pgx.Tx, task *models.Task, action string) error {
-	applicationID := ""
-	if task.ApplicationID != nil {
-		applicationID = *task.ApplicationID
+	if task.ApplicationID == nil || *task.ApplicationID == "" {
+		return nil
 	}
+	applicationID := *task.ApplicationID
 	name, category := "", ""
 	if task.Name != nil {
 		name = *task.Name

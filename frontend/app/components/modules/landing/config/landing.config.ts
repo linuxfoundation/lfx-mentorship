@@ -95,7 +95,7 @@ export const LANDING_BENEFITS: LandingBenefit[] = [
     icon: 'user-tie',
     title: 'A named mentor',
     description:
-	  'You work with an experienced project contributor who scopes your tasks and reviews everything you submit.',
+      'You work with an experienced project contributor who scopes your tasks and reviews everything you submit.',
   },
   {
     icon: 'code-branch',
