@@ -162,6 +162,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	r.Use(chimiddleware.Recoverer)
 	r.Use(otelhttp.NewMiddleware("mentorship-api"))
 	r.Use(chimiddleware.Timeout(time.Duration(float64(cfg.Server.WriteTimeout) * 0.8)))
+	r.Use(handler.IndexMetadata)
 
 	// Health probes
 	r.Get("/livez", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })

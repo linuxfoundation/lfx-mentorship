@@ -87,6 +87,13 @@ func TestNewTaskIndexDocument(t *testing.T) {
 	}
 }
 
+func TestNewTaskIndexConfigIncludesApplicationParent(t *testing.T) {
+	config := NewTaskIndexConfig("task-1", "app-1", "user-1", "Task", "prerequisite", "pending")
+	if got, want := config["parent_refs"], []string{"mentorship_application:app-1"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("parent_refs = %v, want %v", got, want)
+	}
+}
+
 func stringPointer(value string) *string {
 	return &value
 }

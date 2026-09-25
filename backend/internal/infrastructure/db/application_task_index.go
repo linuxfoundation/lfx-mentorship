@@ -108,6 +108,7 @@ func NewTaskIndexConfig(taskID, applicationID, assigneeID, name, category, statu
 		"access_check_relation":  "auditor",
 		"history_check_object":   "mentorship_application:" + applicationID,
 		"history_check_relation": "auditor",
+		"parent_refs":            []string{"mentorship_application:" + applicationID},
 		"sort_name":              name,
 		"name_and_aliases":       []string{name, category},
 		"public":                 false,
