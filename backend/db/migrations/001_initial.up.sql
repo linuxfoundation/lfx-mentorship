@@ -190,6 +190,8 @@ CREATE TABLE IF NOT EXISTS applications (
   tasks_submitted      BOOLEAN     DEFAULT false,
   admin_notified       BOOLEAN     DEFAULT false,
   attendance_type      VARCHAR(20),                                 -- full_time | part_time (required on accept)
+  evaluation           TEXT,
+  reviewer_note        TEXT,
   created_on           TIMESTAMPTZ DEFAULT NOW(),
   updated_on           TIMESTAMPTZ DEFAULT NOW(),
   CONSTRAINT applications_role_check       CHECK (role   IN ('mentor', 'mentee')),
@@ -352,9 +354,6 @@ CREATE INDEX IF NOT EXISTS idx_fga_outbox_claimable
 CREATE INDEX IF NOT EXISTS idx_fga_outbox_object_serialization
   ON fga_outbox(object_type, object_uid, id);
 
-ALTER TABLE applications ADD COLUMN IF NOT EXISTS evaluation TEXT;
-ALTER TABLE applications ADD COLUMN IF NOT EXISTS reviewer_note TEXT;
-
 ALTER TABLE tasks
   DROP CONSTRAINT IF EXISTS tasks_application_id_fkey;
 
@@ -372,6 +371,7 @@ CREATE TABLE IF NOT EXISTS index_outbox (
   indexing_config JSONB,
   state           TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'in_flight', 'sent', 'dead_letter')),
   generation      BIGINT NOT NULL DEFAULT 1,
+  claimed_at      TIMESTAMPTZ,
   claimed_generation BIGINT,
   attempts        INTEGER NOT NULL DEFAULT 0,
   next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -384,9 +384,6 @@ CREATE INDEX IF NOT EXISTS idx_index_outbox_pending
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_index_outbox_object
   ON index_outbox(object_type, object_uid);
-
-ALTER TABLE index_outbox
-  ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;
 
 ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_status_check;
 
