@@ -709,10 +709,11 @@ def migrate_program_members(
     members: list,
     known_program_ids: set,
     known_user_ids: set,
-) -> None:
+) -> list:
     """Upsert program_members from jobspring-prod-project-members."""
     log.info("Migrating program_members (%d rows) ...", len(members))
     member_rows = []
+    term_scoped_members = []
     skipped = 0
 
     for m in members:
@@ -739,12 +740,7 @@ def migrate_program_members(
         raw_member_type = (m.get("memberType") or "").strip().lower()
         raw_status = (m.get("status") or "").strip().lower() or None
         if raw_member_type in {"apprentice", "mentee"}:
-            log.info(
-                "SKIPPED_TERM_SCOPED_MEMBER member_id=%s program_id=%s user_id=%s",
-                mid,
-                pid,
-                uid,
-            )
+            term_scoped_members.append((mid, pid, uid, raw_status))
             skipped += 1
             continue
         member_type = _MEMBER_TYPE_MAP.get(raw_member_type)
@@ -808,6 +804,7 @@ def migrate_program_members(
         page_size=500,
     )
     log.info("  → %d program_members upserted, %d skipped", len(member_rows), skipped)
+    return term_scoped_members
 
 
 # ---------------------------------------------------------------------------
@@ -884,11 +881,17 @@ def migrate_mentees(
         if prev is None:
             best[key] = row
         else:
-            prev_pri = _STATUS_PRIORITY.get(prev[4], -1)
-            row_pri  = _STATUS_PRIORITY.get(row[4], -1)
-            prev_ts  = prev[12] or 0
-            row_ts   = row[12] or 0
-            if row_pri > prev_pri or (row_pri == prev_pri and row_ts > prev_ts):
+            prev_sort = (
+                _STATUS_PRIORITY.get(prev[4], -1),
+                prev[12].timestamp() if prev[12] is not None else float("-inf"),
+                prev[0],
+            )
+            row_sort = (
+                _STATUS_PRIORITY.get(row[4], -1),
+                row[12].timestamp() if row[12] is not None else float("-inf"),
+                row[0],
+            )
+            if row_sort > prev_sort:
                 best[key] = row
     app_rows = list(best.values())
 
@@ -919,6 +922,36 @@ def migrate_mentees(
     application_index = {(row[0], row[1]): row[2] for row in cur.fetchall()}
 
     return application_index
+
+
+def reconcile_term_scoped_members(cur, term_scoped_members: list) -> None:
+    """Report legacy mentee aliases that have no canonical term application."""
+    cur.execute(
+        """
+        SELECT program_terms.program_id::text, applications.user_id::text
+        FROM applications
+        JOIN program_terms ON program_terms.id = applications.program_term_id
+        WHERE applications.role = 'mentee'
+        """
+    )
+    canonical_members = {(program_id, user_id) for program_id, user_id in cur.fetchall()}
+    unmatched = []
+    for member_id, program_id, user_id, status in term_scoped_members:
+        if (program_id, user_id) not in canonical_members:
+            unmatched.append((member_id, program_id, user_id, status))
+    for member_id, program_id, user_id, status in unmatched:
+        log.warning(
+            "UNMAPPED_TERM_SCOPED_MEMBER member_id=%s program_id=%s user_id=%s status=%s",
+            member_id,
+            program_id,
+            user_id,
+            status,
+        )
+    log.info(
+        "  → %d term-scoped member rows reconciled, %d unmatched",
+        len(term_scoped_members) - len(unmatched),
+        len(unmatched),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1166,14 +1199,14 @@ def seed_derived_state(cur) -> None:
             FROM seed
             ON CONFLICT (object_type, object_uid) WHERE marker_kind = 'object'
             DO UPDATE SET
-                desired_operation = 'update_access',
-                generation = fga_outbox.generation + 1,
-                state = CASE WHEN fga_outbox.state = 'in_flight' THEN 'in_flight' ELSE 'pending' END,
+                desired_operation = CASE WHEN fga_outbox.state = 'dead_letter' THEN fga_outbox.desired_operation ELSE 'update_access' END,
+                generation = CASE WHEN fga_outbox.state = 'dead_letter' THEN fga_outbox.generation ELSE fga_outbox.generation + 1 END,
+                state = CASE WHEN fga_outbox.state IN ('in_flight', 'dead_letter') THEN fga_outbox.state ELSE 'pending' END,
                 claimed_generation = CASE WHEN fga_outbox.state = 'in_flight' THEN fga_outbox.claimed_generation ELSE NULL END,
                 claimed_at = CASE WHEN fga_outbox.state = 'in_flight' THEN fga_outbox.claimed_at ELSE NULL END,
-                attempts = 0,
-                next_attempt_at = NOW(),
-                last_error = NULL,
+                attempts = CASE WHEN fga_outbox.state = 'dead_letter' THEN fga_outbox.attempts ELSE 0 END,
+                next_attempt_at = CASE WHEN fga_outbox.state = 'dead_letter' THEN fga_outbox.next_attempt_at ELSE NOW() END,
+                last_error = CASE WHEN fga_outbox.state = 'dead_letter' THEN fga_outbox.last_error ELSE NULL END,
                 updated_on = NOW()
             RETURNING object_type
             """
@@ -1206,13 +1239,13 @@ def seed_derived_state(cur) -> None:
                 WHERE marker_kind = 'membership'
             DO UPDATE SET
                 desired_operation = 'sync',
-                generation = fga_outbox.generation + 1,
-                state = CASE WHEN fga_outbox.state = 'in_flight' THEN 'in_flight' ELSE 'pending' END,
+                generation = CASE WHEN fga_outbox.state = 'dead_letter' THEN fga_outbox.generation ELSE fga_outbox.generation + 1 END,
+                state = CASE WHEN fga_outbox.state IN ('in_flight', 'dead_letter') THEN fga_outbox.state ELSE 'pending' END,
                 claimed_generation = CASE WHEN fga_outbox.state = 'in_flight' THEN fga_outbox.claimed_generation ELSE NULL END,
                 claimed_at = CASE WHEN fga_outbox.state = 'in_flight' THEN fga_outbox.claimed_at ELSE NULL END,
-                attempts = 0,
-                next_attempt_at = NOW(),
-                last_error = NULL,
+                attempts = CASE WHEN fga_outbox.state = 'dead_letter' THEN fga_outbox.attempts ELSE 0 END,
+                next_attempt_at = CASE WHEN fga_outbox.state = 'dead_letter' THEN fga_outbox.next_attempt_at ELSE NOW() END,
+                last_error = CASE WHEN fga_outbox.state = 'dead_letter' THEN fga_outbox.last_error ELSE NULL END,
                 updated_on = NOW()
             RETURNING id
             """
@@ -1240,6 +1273,8 @@ def seed_derived_state(cur) -> None:
                 )),
                 jsonb_build_object(
                     'object_id', id,
+                        'object_ref', 'mentorship_program:' || id::text,
+                        'object_type', 'mentorship_program',
                     'access_check_object', 'mentorship_program:' || id::text,
                     'access_check_relation', 'viewer',
                     'history_check_object', 'mentorship_program:' || id::text,
@@ -1261,12 +1296,13 @@ def seed_derived_state(cur) -> None:
                 headers = EXCLUDED.headers,
                 data = EXCLUDED.data,
                 indexing_config = EXCLUDED.indexing_config,
-                generation = index_outbox.generation + 1,
-                state = CASE WHEN index_outbox.state = 'in_flight' THEN 'in_flight' ELSE 'pending' END,
+                generation = CASE WHEN index_outbox.state = 'dead_letter' THEN index_outbox.generation ELSE index_outbox.generation + 1 END,
+                state = CASE WHEN index_outbox.state IN ('in_flight', 'dead_letter') THEN index_outbox.state ELSE 'pending' END,
                 claimed_generation = CASE WHEN index_outbox.state = 'in_flight' THEN index_outbox.claimed_generation ELSE NULL END,
                 claimed_at = CASE WHEN index_outbox.state = 'in_flight' THEN index_outbox.claimed_at ELSE NULL END,
-                attempts = 0,
-                sent_on = NULL
+                attempts = CASE WHEN index_outbox.state = 'dead_letter' THEN index_outbox.attempts ELSE 0 END,
+                next_attempt_at = CASE WHEN index_outbox.state = 'dead_letter' THEN index_outbox.next_attempt_at ELSE NOW() END,
+                sent_on = CASE WHEN index_outbox.state = 'dead_letter' THEN index_outbox.sent_on ELSE NULL END
             RETURNING object_uid
             """
     )
@@ -1303,8 +1339,9 @@ def main() -> None:
                 profile_map       = migrate_user_profiles(cur, profiles_raw, known_user_ids)
                 known_program_ids = migrate_programs(cur, projects_raw, known_user_ids)
                 known_term_ids    = migrate_program_terms(cur, terms_raw, known_program_ids)
-                migrate_program_members(cur, members_raw, known_program_ids, known_user_ids)
+                term_scoped_members = migrate_program_members(cur, members_raw, known_program_ids, known_user_ids)
                 application_index = migrate_mentees(cur, mentees_raw, known_term_ids, known_user_ids)
+                reconcile_term_scoped_members(cur, term_scoped_members)
                 migrate_tasks(cur, tasks_raw, application_index, known_term_ids, known_user_ids)
                 seed_derived_state(cur)
 

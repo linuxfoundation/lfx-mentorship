@@ -30,12 +30,12 @@ func (s *outboxStub) MarkSent(_ context.Context, record domain.IndexOutboxRecord
 	}
 	return true, nil
 }
-func (s *outboxStub) MarkRetry(_ context.Context, record domain.IndexOutboxRecord) (bool, error) {
+func (s *outboxStub) MarkRetry(_ context.Context, record domain.IndexOutboxRecord) (bool, bool, error) {
 	s.retried = record.ID
 	if !s.markRetryAcknowledged {
-		return false, nil
+		return false, false, nil
 	}
-	return true, nil
+	return true, false, nil
 }
 
 type publisherStub struct {
@@ -71,6 +71,36 @@ func TestRelayRunOnceRetriesPublishFailure(t *testing.T) {
 	outbox := &outboxStub{records: []domain.IndexOutboxRecord{{ID: "1", ObjectType: "mentorship_program", Action: "updated"}}, markSentAcknowledged: true, markRetryAcknowledged: true}
 	if err := NewRelay(outbox, &publisherStub{err: errors.New("down")}, 1).RunOnce(context.Background()); err == nil || outbox.retried != "1" {
 		t.Fatalf("err=%v retried=%q", err, outbox.retried)
+	}
+}
+
+func TestRelaySetAuthorizationOverridesStoredHeaderAndPreservesActor(t *testing.T) {
+	outbox := &outboxStub{
+		records: []domain.IndexOutboxRecord{{
+			ID:         "1",
+			ObjectType: "mentorship_program",
+			Action:     "updated",
+			Headers:    json.RawMessage(`{"authorization":"present","x-on-behalf-of":"alice"}`),
+		}},
+		markSentAcknowledged:  true,
+		markRetryAcknowledged: true,
+	}
+	publisher := &publisherStub{}
+	relay := NewRelay(outbox, publisher, 1)
+	relay.SetAuthorization("Bearer machine-token")
+	if err := relay.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var envelope Envelope
+	if err := json.Unmarshal(publisher.data, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	var headers map[string]string
+	if err := json.Unmarshal(envelope.Headers, &headers); err != nil {
+		t.Fatal(err)
+	}
+	if headers["authorization"] != "Bearer machine-token" || headers["x-on-behalf-of"] != "alice" {
+		t.Fatalf("headers=%v", headers)
 	}
 }
 

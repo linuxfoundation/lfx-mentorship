@@ -12,6 +12,17 @@ Positions carried over from the follow-up Architecture call are marked inline: t
 
 > **Implementation note:** This proposal originally included periodic service-side reconciliation jobs and membership tombstones. Those mechanisms were not retained. The implemented platform pattern is transition-driven full-state or precise membership publishing through the transactional outbox and NATS relay; backfill or repair is an explicit operator action, not a shipped periodic reconciler.
 
+> **Gateway qualification:** Approver-roster storage and tuple emission are
+> implemented, but roster administration remains an unresolved platform
+> authority decision. Its routes are intentionally absent from the Heimdall
+> RuleSet until platform owners name an LF-staff OpenFGA relation; the backend
+> `manage:mentorship:approvers` scope remains defense in depth and is not treated
+> as edge authorization. Internal metrics are cluster-local and are likewise
+> absent from the shared gateway. Service-owned top-level collections are an
+> anti-pattern, not a cutover exception: every Mentorship resource object must
+> be indexed for Query Service, and caller-owned initiative views use
+> `filter_grants=direct` with an explicit resource `type`.
+
 A second Architecture review then validated a standalone OpenFGA model (`model.fga` + `tuples.yaml` + `tests.yaml`, checked with the `fga` CLI) built from this proposal. Three of its outcomes supersede the first draft and are folded in below: program **approval is a global team-membership check**, not a per-program relation (AQ-5, resolved); the project-level `mentorship_program_admin` relation grants **management of every program in the project**, not only creation; and the task's FGA parent is the **application**, completing one inheritance chain project → program → application → task. The standalone model has since been revised again post-review — `super_admin` dropped as redundant with project `writer`, approval moved to a standalone global approver type, and the `mentorship_` prefix applied to all four owned types. The mapping table after the sketch is written against that revision, and marks which of this doc's corrections it has already absorbed. Its `can_*` vocabulary maps onto the platform's relation idiom there.
 
 ## Principle

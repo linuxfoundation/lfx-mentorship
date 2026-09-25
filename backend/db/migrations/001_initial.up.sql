@@ -370,12 +370,13 @@ CREATE TABLE IF NOT EXISTS index_outbox (
   generation      BIGINT NOT NULL DEFAULT 1,
   claimed_generation BIGINT,
   attempts        INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   created_on      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   sent_on         TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS idx_index_outbox_pending
-  ON index_outbox(created_on) WHERE state = 'pending';
+  ON index_outbox(next_attempt_at, created_on) WHERE state = 'pending';
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_index_outbox_object
   ON index_outbox(object_type, object_uid);

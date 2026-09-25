@@ -11,6 +11,7 @@ The resource ID is the program UUID.
 | Field | Value |
 | --- | --- |
 | `object_type` | `mentorship_program` |
+| `object_ref` | `mentorship_program:{program UUID}` |
 | `access_check_object` | `mentorship_program:{program UUID}` |
 | `access_check_relation` | `viewer` |
 | `public` | `true` only when program status is `published` |
@@ -26,9 +27,17 @@ The Query Service uses the access-check fields to include direct and inherited
 program viewers, including Project Service's `mentorship_program_admin` tuples.
 
 The DynamoDB importer queues one current-state snapshot for every program in
-`index_outbox`; the normal index relay publishes those snapshots. After fixing
-the cause of a dead-lettered record, an operator can requeue one exact record
-without publishing outside the relay:
+`index_outbox`; the normal index relay publishes those snapshots. Stored
+authorization is redacted, while `x-on-behalf-of` is retained. At publish time
+the relay obtains a cached client-credentials token and replaces the redacted
+authorization value, allowing the indexer to authenticate the service and
+attribute the initiating user.
+
+Failed publishes increment attempts once, wait for `INDEX_RELAY_RETRY_DELAY`,
+and dead-letter after `INDEX_RELAY_MAX_ATTEMPTS`. A newer generation arriving
+during a failed publish is requeued immediately. After fixing the cause of a
+dead-lettered record, an operator can requeue one exact record without
+publishing outside the relay:
 
 ```bash
 /app/outbox-repair \

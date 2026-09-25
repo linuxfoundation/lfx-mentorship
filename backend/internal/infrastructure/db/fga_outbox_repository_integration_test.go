@@ -11,6 +11,7 @@ import (
 	"os"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
@@ -117,10 +118,29 @@ func TestIndexOutboxIntegration_ClaimRetryAndSent(t *testing.T) {
 	if err != nil || len(claimed) != 1 {
 		t.Fatalf("claim records=%d err=%v", len(claimed), err)
 	}
-	if acknowledged, err := repo.MarkRetry(ctx, claimed[0]); err != nil {
+	claimedID := claimed[0].ID
+	if acknowledged, deadLettered, err := repo.MarkRetry(ctx, claimed[0]); err != nil {
 		t.Fatalf("retry: %v", err)
 	} else if !acknowledged {
 		t.Fatal("retry acknowledgement missing")
+	} else if deadLettered {
+		t.Fatal("first failure unexpectedly dead-lettered")
+	}
+	var state string
+	var attempts int
+	var nextAttemptAt time.Time
+	if err := pool.QueryRow(ctx, `SELECT state, attempts, next_attempt_at FROM index_outbox WHERE id = $1`, claimed[0].ID).Scan(&state, &attempts, &nextAttemptAt); err != nil {
+		t.Fatal(err)
+	}
+	if state != "pending" || attempts != 1 || !nextAttemptAt.After(time.Now()) {
+		t.Fatalf("state=%q attempts=%d next_attempt_at=%s; want pending, 1, and future retry", state, attempts, nextAttemptAt)
+	}
+	claimed, err = repo.Claim(ctx, 1)
+	if err != nil || len(claimed) != 0 {
+		t.Fatalf("claim before retry delay: records=%d err=%v", len(claimed), err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE index_outbox SET next_attempt_at = NOW() WHERE id = $1`, claimedID); err != nil {
+		t.Fatal(err)
 	}
 	claimed, err = repo.Claim(ctx, 1)
 	if err != nil || len(claimed) != 1 {
@@ -131,7 +151,6 @@ func TestIndexOutboxIntegration_ClaimRetryAndSent(t *testing.T) {
 	} else if !acknowledged {
 		t.Fatal("sent acknowledgement missing")
 	}
-	var state string
 	if err := pool.QueryRow(ctx, `SELECT state FROM index_outbox WHERE id = $1`, claimed[0].ID).Scan(&state); err != nil {
 		t.Fatal(err)
 	}
@@ -144,6 +163,44 @@ func TestIndexOutboxIntegration_ClaimRetryAndSent(t *testing.T) {
 	}
 	if headerAuth != "present" {
 		t.Fatalf("authorization header=%q; want present", headerAuth)
+	}
+}
+
+func TestIndexOutboxIntegration_MarkRetryRequeuesNewerGeneration(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	repo := NewIndexOutboxRepository(pool)
+	ctx := context.Background()
+	record := domain.IndexOutboxRecord{
+		ObjectType:     "mentorship_program",
+		ObjectUID:      fixture.ProgramID,
+		Action:         "updated",
+		Data:           []byte(`{"id":"` + fixture.ProgramID + `","name":"before"}`),
+		IndexingConfig: []byte(`{"object_id":"` + fixture.ProgramID + `"}`),
+	}
+	if err := repo.Enqueue(ctx, record); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	claimed, err := repo.Claim(ctx, 1)
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim records=%d err=%v", len(claimed), err)
+	}
+	record.Data = []byte(`{"id":"` + fixture.ProgramID + `","name":"after"}`)
+	if err := repo.Enqueue(ctx, record); err != nil {
+		t.Fatalf("enqueue newer generation: %v", err)
+	}
+	if acknowledged, deadLettered, err := repo.MarkRetry(ctx, claimed[0]); err != nil || !acknowledged || deadLettered {
+		t.Fatalf("mark retry: acknowledged=%v dead_lettered=%v err=%v", acknowledged, deadLettered, err)
+	}
+	var state string
+	var attempts int
+	var generation int64
+	var claimedGeneration *int64
+	if err := pool.QueryRow(ctx, `SELECT state, attempts, generation, claimed_generation FROM index_outbox WHERE id = $1`, claimed[0].ID).Scan(&state, &attempts, &generation, &claimedGeneration); err != nil {
+		t.Fatal(err)
+	}
+	if state != "pending" || attempts != 0 || generation != 2 || claimedGeneration != nil {
+		t.Fatalf("state=%q attempts=%d generation=%d claimed_generation=%v", state, attempts, generation, claimedGeneration)
 	}
 }
 
@@ -166,8 +223,8 @@ func TestIndexOutboxIntegration_RequeueDeadLetter(t *testing.T) {
 	if err != nil || len(claimed) != 1 {
 		t.Fatalf("claim records=%d err=%v", len(claimed), err)
 	}
-	if acknowledged, err := repo.MarkRetry(ctx, claimed[0]); err != nil || !acknowledged {
-		t.Fatalf("dead-letter record: acknowledged=%v err=%v", acknowledged, err)
+	if acknowledged, deadLettered, err := repo.MarkRetry(ctx, claimed[0]); err != nil || !acknowledged || !deadLettered {
+		t.Fatalf("dead-letter record: acknowledged=%v dead_lettered=%v err=%v", acknowledged, deadLettered, err)
 	}
 	requeued, err := repo.RequeueDeadLetter(ctx, record.ObjectType, record.ObjectUID)
 	if err != nil || !requeued {

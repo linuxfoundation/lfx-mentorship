@@ -244,6 +244,8 @@ creates a broken or bypassable deployment:
 - Gateway traffic without the relay and seed reaches a backend whose protected
   objects have no FGA tuples.
 - Frontend traffic left on the interim backend host bypasses the shared gateway.
+- Service-owned top-level collections bypass Query Service's standard access
+   filtering and direct-grant query pattern.
 
 These values must be reviewed as one environment change, not copied separately
 across releases.
@@ -258,6 +260,8 @@ across releases.
 5. The frontend/BFF points at the shared gateway URL and requests the gateway
    audience.
 6. Direct interim-host access is disabled or otherwise prevented at cutover.
+7. All resource collections are served by Query Service; caller-owned views use
+   `filter_grants=direct` with an explicit resource `type`.
 
 ### Dual-gateway topology decision
 

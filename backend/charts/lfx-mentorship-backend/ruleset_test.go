@@ -18,10 +18,29 @@ func TestRuleSetDoesNotContainRetiredRoutesOrBroadProgramMethods(t *testing.T) {
 	for _, retired := range []string{
 		"/mentorship/v1/me/:profileType",
 		"/mentorship/v1/program-terms/:id",
+		"/mentorship/v1/internal/metrics",
+		"/mentorship/v1/admin/approver-team/members",
+		"- path: /mentorship/v1/programs/catalog",
+		"- path: /mentorship/v1/mentors",
+		"- path: /mentorship/v1/mentees",
+		"- path: /mentorship/v1/summary",
+		"- path: /mentorship/v1/funding-stats/total",
 	} {
 		if strings.Contains(ruleset, retired) {
 			t.Errorf("RuleSet contains retired route %q", retired)
 		}
+	}
+	resolverStart := strings.Index(ruleset, "id: rule:lfx:lfx-mentorship-backend:public-resolver")
+	if resolverStart < 0 {
+		t.Fatal("RuleSet is missing the public resolver rule")
+	}
+	resolverEnd := strings.Index(ruleset[resolverStart:], "\n    - id:")
+	if resolverEnd < 0 {
+		t.Fatal("RuleSet public resolver rule has no following rule boundary")
+	}
+	resolverBlock := ruleset[resolverStart : resolverStart+resolverEnd]
+	if strings.Count(resolverBlock, "- path:") != 1 || !strings.Contains(resolverBlock, "- path: /mentorship/v1/programs/resolve/:id") {
+		t.Fatalf("public resolver rule contains unexpected routes:\n%s", resolverBlock)
 	}
 	if strings.Contains(ruleset, "methods: [PATCH, POST, DELETE]") {
 		t.Fatal("RuleSet contains broad program mutation methods")

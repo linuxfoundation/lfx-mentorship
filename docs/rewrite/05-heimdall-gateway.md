@@ -8,6 +8,13 @@ Related: [04-authorization-model.md](./04-authorization-model.md) (what FGA hold
 
 [04](./04-authorization-model.md) proposes the FGA model. This doc covers the edge that consumes it: how requests reach the service through the v2 API gateway, what Heimdall does per request, and the environment evidence required before traffic is enabled. Mentorship is gateway-only; there is no supported standalone Auth0 API path.
 
+> **Platform collection decision:** The earlier GW-2 service-owned collection
+> shape is superseded. Query Service holds all resource objects and serves
+> collections. Caller-owned initiative views use
+> `GET /v1/resources?type=<resource-type>&filter_grants=direct`; identity comes
+> from the bearer token. The Mentorship RuleSet retains only the public
+> slug-to-UID resolver and UID-addressed resource routes.
+
 ## Today vs target
 
 | Surface | Gateway-only deployment |

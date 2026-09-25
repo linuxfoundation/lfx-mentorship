@@ -28,8 +28,6 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
-const indexerAuthorizationHeader = "Bearer lfx-mentorship-backend"
-
 // Server wraps the Chi router and all service dependencies.
 type Server struct {
 	router      *chi.Mux
@@ -119,10 +117,11 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		relayCtx, relayCancel = context.WithCancel(ctx)
 		go relay.Run(relayCtx, cfg.FGA.RelayInterval)
 		indexOutbox := db.NewIndexOutboxRepository(pool)
-		indexOutbox.SetMaxAttempts(cfg.FGA.RelayMaxAttempts)
+		indexOutbox.SetMaxAttempts(cfg.Indexer.MaxAttempts)
+		indexOutbox.SetRetryDelay(cfg.Indexer.RetryDelay)
 		indexRelay := indexer.NewRelay(indexOutbox, natsConn, cfg.FGA.RelayBatch)
 		indexRelay.SetLogger(logger)
-		indexRelay.SetAuthorization(indexerAuthorizationHeader)
+		indexRelay.SetAuthorizationProvider(indexer.NewManagedAuthorizationProvider(nil, cfg.Indexer.TokenURL, cfg.Indexer.ClientID, cfg.Indexer.ClientSecret, cfg.Indexer.Audience, cfg.Indexer.Scope))
 		go indexRelay.Run(relayCtx, cfg.FGA.RelayInterval)
 	}
 
@@ -172,6 +171,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		}
 		w.WriteHeader(http.StatusOK)
 	})
+	r.Handle("/internal/metrics", expvar.Handler())
 
 	var requireGatewayPrincipal func(http.Handler) http.Handler
 	routes := func(r chi.Router) {
@@ -325,13 +325,6 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	}
 	r.Route("/mentorship/v1", func(r chi.Router) {
 		r.Use(jwtAuth.GatewayMiddleware)
-		r.Get("/internal/metrics", func(w http.ResponseWriter, req *http.Request) {
-			if !auth.HasScope(req.Context(), auth.ScopeReadMetrics()) {
-				http.Error(w, "forbidden", http.StatusForbidden)
-				return
-			}
-			expvar.Handler().ServeHTTP(w, req)
-		})
 		routes(r)
 	})
 
