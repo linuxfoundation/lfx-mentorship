@@ -20,6 +20,7 @@ type Config struct {
 	Database     DatabaseConfig
 	JWT          JWTConfig
 	FGA          FGAConfig
+	Indexer      IndexerConfig
 	Crowdfunding CrowdfundingConfig
 	OTel         OTelConfig
 	Local        LocalConfig
@@ -52,16 +53,22 @@ type JWTConfig struct {
 
 // FGAConfig configures the optional transactional outbox relay.
 type FGAConfig struct {
-	NATSURL             string
-	IndexerTokenURL     string
-	IndexerClientID     string
-	IndexerClientSecret string
-	IndexerAudience     string
-	IndexerScope        string
-	RelayBatch          int
-	RelayInterval       time.Duration
-	RelayRetryDelay     time.Duration
-	RelayMaxAttempts    int
+	NATSURL          string
+	RelayBatch       int
+	RelayInterval    time.Duration
+	RelayRetryDelay  time.Duration
+	RelayMaxAttempts int
+}
+
+// IndexerConfig configures authenticated index publishing and retry behavior.
+type IndexerConfig struct {
+	TokenURL     string
+	ClientID     string
+	ClientSecret string
+	Audience     string
+	Scope        string
+	RetryDelay   time.Duration
+	MaxAttempts  int
 }
 
 // CrowdfundingConfig holds outbound crowdfunding API and M2M auth settings.
@@ -153,6 +160,17 @@ func loadConfig() (*Config, error) {
 			return nil, fmt.Errorf("FGA_RELAY_RETRY_DELAY: must be a positive duration")
 		}
 	}
+	indexRetryDelay := time.Minute
+	if v := os.Getenv("INDEX_RELAY_RETRY_DELAY"); v != "" {
+		indexRetryDelay, err = time.ParseDuration(v)
+		if err != nil || indexRetryDelay <= 0 {
+			return nil, fmt.Errorf("INDEX_RELAY_RETRY_DELAY: must be a positive duration")
+		}
+	}
+	indexMaxAttempts, err := parseInt(getEnv("INDEX_RELAY_MAX_ATTEMPTS", "10"))
+	if err != nil || indexMaxAttempts <= 0 {
+		return nil, fmt.Errorf("INDEX_RELAY_MAX_ATTEMPTS: must be a positive integer")
+	}
 	indexerTokenURL := os.Getenv("FGA_INDEXER_TOKEN_URL")
 	indexerClientID := os.Getenv("INDEXER_CLIENT_ID")
 	indexerClientSecret := os.Getenv("INDEXER_CLIENT_SECRET")
@@ -160,7 +178,6 @@ func loadConfig() (*Config, error) {
 	if os.Getenv("FGA_NATS_URL") != "" && (indexerTokenURL == "" || indexerClientID == "" || indexerClientSecret == "" || indexerAudience == "") {
 		return nil, fmt.Errorf("FGA_INDEXER_TOKEN_URL, INDEXER_CLIENT_ID, INDEXER_CLIENT_SECRET, and FGA_INDEXER_AUDIENCE are required when FGA_NATS_URL is configured")
 	}
-
 	crowdfundingTimeout := 10 * time.Second
 	if v := os.Getenv("CROWDFUNDING_TIMEOUT"); v != "" {
 		d, err := time.ParseDuration(v)
@@ -193,16 +210,20 @@ func loadConfig() (*Config, error) {
 			HeimdallIssuer:   heimdallIssuer,
 		},
 		FGA: FGAConfig{
-			NATSURL:             os.Getenv("FGA_NATS_URL"),
-			IndexerTokenURL:     indexerTokenURL,
-			IndexerClientID:     indexerClientID,
-			IndexerClientSecret: indexerClientSecret,
-			IndexerAudience:     indexerAudience,
-			IndexerScope:        getEnv("FGA_INDEXER_SCOPE", "access:query"),
-			RelayBatch:          relayBatch,
-			RelayInterval:       relayInterval,
-			RelayRetryDelay:     relayRetryDelay,
-			RelayMaxAttempts:    relayMaxAttempts,
+			NATSURL:          os.Getenv("FGA_NATS_URL"),
+			RelayBatch:       relayBatch,
+			RelayInterval:    relayInterval,
+			RelayRetryDelay:  relayRetryDelay,
+			RelayMaxAttempts: relayMaxAttempts,
+		},
+		Indexer: IndexerConfig{
+			TokenURL:     indexerTokenURL,
+			ClientID:     indexerClientID,
+			ClientSecret: indexerClientSecret,
+			Audience:     indexerAudience,
+			Scope:        getEnv("FGA_INDEXER_SCOPE", "access:query"),
+			RetryDelay:   indexRetryDelay,
+			MaxAttempts:  indexMaxAttempts,
 		},
 		Crowdfunding: CrowdfundingConfig{
 			BaseURL:      strings.TrimRight(os.Getenv("CROWDFUNDING_BASE_URL"), "/"),

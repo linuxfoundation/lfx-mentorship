@@ -149,6 +149,22 @@ func (r *UserProfileRepository) List(ctx context.Context, filter models.UserProf
 func (r *UserProfileRepository) Create(ctx context.Context, input models.UserProfileCreateInput) (*models.UserProfile, error) {
 	ctx, span := userProfileTracer.Start(ctx, "db.user_profiles.Create")
 	defer span.End()
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin create user profile transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))`, input.UserID, input.ProfileType); err != nil {
+		return nil, fmt.Errorf("lock user profile by user/type: %w", err)
+	}
+	var existing int
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM user_profiles WHERE user_id = $1 AND profile_type = $2`, input.UserID, input.ProfileType).Scan(&existing); err != nil {
+		return nil, fmt.Errorf("count existing user profiles: %w", err)
+	}
+	// Only mentee profiles are unique per user (FR-025); mentors may hold several.
+	if models.UserProfileType(input.ProfileType) == models.UserProfileTypeMentee && existing > 0 {
+		return nil, fmt.Errorf("%w: %s profile already exists for user", domain.ErrConflict, input.ProfileType)
+	}
 
 	const q = `
 		INSERT INTO user_profiles (
@@ -158,7 +174,7 @@ func (r *UserProfileRepository) Create(ctx context.Context, input models.UserPro
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
 		RETURNING` + userProfileCols
 
-	p, err := scanUserProfile(r.pool.QueryRow(ctx, q,
+	p, err := scanUserProfile(tx.QueryRow(ctx, q,
 		input.ID, input.UserID, input.ProfileType, input.Slug, input.FirstName, input.LastName,
 		input.Email, input.Phone, input.LogoURL, input.Introduction, input.TermsAndConditions,
 		input.NumberOfProjects, input.Address, input.Demographics, input.Socioeconomics,
@@ -167,6 +183,9 @@ func (r *UserProfileRepository) Create(ctx context.Context, input models.UserPro
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("create user profile: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit create user profile transaction: %w", err)
 	}
 	return p, nil
 }

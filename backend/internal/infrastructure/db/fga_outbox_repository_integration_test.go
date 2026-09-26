@@ -7,10 +7,12 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
@@ -56,7 +58,7 @@ func seedIntegrationFixture(t *testing.T, pool *pgxpool.Pool) integrationFixture
 	if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name) VALUES ($1, 'fixture-user', 'Fixture User')`, fixture.UserID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO programs (id, project_uid, name, slug, status) VALUES ($1, '00000000-0000-0000-0000-000000000099', 'Fixture Program', 'fixture-program', 'published')`, fixture.ProgramID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO programs (id, lf_project_uid, name, slug, status) VALUES ($1, '00000000-0000-0000-0000-000000000099', 'Fixture Program', 'fixture-program', 'published')`, fixture.ProgramID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES ('00000000-0000-0000-0000-000000000020', $1, $2, 'program_admin', 'active')`, fixture.ProgramID, fixture.UserID); err != nil {
@@ -117,10 +119,29 @@ func TestIndexOutboxIntegration_ClaimRetryAndSent(t *testing.T) {
 	if err != nil || len(claimed) != 1 {
 		t.Fatalf("claim records=%d err=%v", len(claimed), err)
 	}
-	if acknowledged, err := repo.MarkRetry(ctx, claimed[0]); err != nil {
+	claimedID := claimed[0].ID
+	if acknowledged, deadLettered, err := repo.MarkRetry(ctx, claimed[0]); err != nil {
 		t.Fatalf("retry: %v", err)
 	} else if !acknowledged {
 		t.Fatal("retry acknowledgement missing")
+	} else if deadLettered {
+		t.Fatal("first failure unexpectedly dead-lettered")
+	}
+	var state string
+	var attempts int
+	var nextAttemptAt time.Time
+	if err := pool.QueryRow(ctx, `SELECT state, attempts, next_attempt_at FROM index_outbox WHERE id = $1`, claimed[0].ID).Scan(&state, &attempts, &nextAttemptAt); err != nil {
+		t.Fatal(err)
+	}
+	if state != "pending" || attempts != 1 || !nextAttemptAt.After(time.Now()) {
+		t.Fatalf("state=%q attempts=%d next_attempt_at=%s; want pending, 1, and future retry", state, attempts, nextAttemptAt)
+	}
+	claimed, err = repo.Claim(ctx, 1)
+	if err != nil || len(claimed) != 0 {
+		t.Fatalf("claim before retry delay: records=%d err=%v", len(claimed), err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE index_outbox SET next_attempt_at = NOW() WHERE id = $1`, claimedID); err != nil {
+		t.Fatal(err)
 	}
 	claimed, err = repo.Claim(ctx, 1)
 	if err != nil || len(claimed) != 1 {
@@ -131,7 +152,6 @@ func TestIndexOutboxIntegration_ClaimRetryAndSent(t *testing.T) {
 	} else if !acknowledged {
 		t.Fatal("sent acknowledgement missing")
 	}
-	var state string
 	if err := pool.QueryRow(ctx, `SELECT state FROM index_outbox WHERE id = $1`, claimed[0].ID).Scan(&state); err != nil {
 		t.Fatal(err)
 	}
@@ -144,6 +164,376 @@ func TestIndexOutboxIntegration_ClaimRetryAndSent(t *testing.T) {
 	}
 	if headerAuth != "present" {
 		t.Fatalf("authorization header=%q; want present", headerAuth)
+	}
+}
+
+func TestIndexOutboxIntegration_ApplicationAndTaskLifecycle(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+	applicationID := "00000000-0000-0000-0000-000000000030"
+	taskID := "00000000-0000-0000-0000-000000000031"
+
+	application, err := NewApplicationRepository(pool).Create(ctx, fixture.OpenTerm, models.ApplicationCreateInput{
+		ID:     applicationID,
+		UserID: fixture.UserID,
+		Role:   models.ApplicationRoleMentee,
+		Status: models.ApplicationStatusPending,
+	})
+	if err != nil {
+		t.Fatalf("create application: %v", err)
+	}
+
+	var applicationAction string
+	var applicationConfig []byte
+	if err := pool.QueryRow(ctx, `SELECT action, indexing_config FROM index_outbox WHERE object_type = 'mentorship_application' AND object_uid = $1`, application.ID).Scan(&applicationAction, &applicationConfig); err != nil {
+		t.Fatalf("read application index record: %v", err)
+	}
+	var applicationConfigMap map[string]any
+	if err := json.Unmarshal(applicationConfig, &applicationConfigMap); err != nil {
+		t.Fatalf("decode application index config: %v", err)
+	}
+	if applicationAction != "created" || applicationConfigMap["object_ref"] != nil || applicationConfigMap["access_check_relation"] != "auditor" || applicationConfigMap["parent_refs"] == nil {
+		t.Fatalf("application index action/config = %q/%v", applicationAction, applicationConfigMap)
+	}
+
+	name := "First task"
+	category := models.TaskCategoryPrerequisite
+	programTermID := fixture.OpenTerm
+	if _, err := NewTaskRepository(pool).Create(ctx, application.ID, models.TaskCreateInput{
+		ID:            taskID,
+		ProgramTermID: &programTermID,
+		AssigneeID:    fixture.UserID,
+		Name:          &name,
+		Category:      &category,
+		Status:        models.TaskStatusInProgress,
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	var taskAction string
+	var taskConfig []byte
+	if err := pool.QueryRow(ctx, `SELECT action, indexing_config FROM index_outbox WHERE object_type = 'mentorship_task' AND object_uid = $1`, taskID).Scan(&taskAction, &taskConfig); err != nil {
+		t.Fatalf("read task index record: %v", err)
+	}
+	var taskConfigMap map[string]any
+	if err := json.Unmarshal(taskConfig, &taskConfigMap); err != nil {
+		t.Fatalf("decode task index config: %v", err)
+	}
+	if taskAction != "created" || taskConfigMap["object_ref"] != nil || taskConfigMap["history_check_object"] != "mentorship_application:"+applicationID {
+		t.Fatalf("task index action/config = %q/%v", taskAction, taskConfigMap)
+	}
+}
+
+func TestProgramIndexIntegration_RefreshesPublicStats(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+
+	mentorID := "00000000-0000-0000-0000-000000000002"
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name) VALUES ($1, 'fixture-mentor', 'Fixture Mentor')`, mentorID); err != nil {
+		t.Fatal(err)
+	}
+	graduatedUserID := "00000000-0000-0000-0000-000000000003"
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name) VALUES ($1, 'fixture-graduated', 'Fixture Graduated')`, graduatedUserID); err != nil {
+		t.Fatal(err)
+	}
+	active := models.ProgramMemberStatusActive
+	if _, err := NewProgramMemberRepository(pool).Create(ctx, fixture.ProgramID, models.ProgramMemberCreateInput{
+		ID:         "00000000-0000-0000-0000-000000000021",
+		UserID:     mentorID,
+		MemberType: models.MemberTypeMentor,
+		Status:     &active,
+	}); err != nil {
+		t.Fatalf("create mentor membership: %v", err)
+	}
+
+	applicationRepo := NewApplicationRepository(pool)
+	acceptedApplication, err := applicationRepo.Create(ctx, fixture.OpenTerm, models.ApplicationCreateInput{
+		ID:     "00000000-0000-0000-0000-000000000040",
+		UserID: fixture.UserID,
+		Role:   models.ApplicationRoleMentee,
+		Status: models.ApplicationStatusPending,
+	})
+	if err != nil {
+		t.Fatalf("create accepted application: %v", err)
+	}
+	accepted := models.ApplicationStatusAccepted
+	if _, err := applicationRepo.Update(ctx, acceptedApplication.ID, models.ApplicationUpdateInput{Status: &accepted}); err != nil {
+		t.Fatalf("accept application: %v", err)
+	}
+
+	graduatedApplication, err := applicationRepo.Create(ctx, fixture.OpenTerm, models.ApplicationCreateInput{
+		ID:     "00000000-0000-0000-0000-000000000041",
+		UserID: graduatedUserID,
+		Role:   models.ApplicationRoleMentee,
+		Status: models.ApplicationStatusPending,
+	})
+	if err != nil {
+		t.Fatalf("create graduated application: %v", err)
+	}
+	if _, err := applicationRepo.Update(ctx, graduatedApplication.ID, models.ApplicationUpdateInput{Status: &accepted}); err != nil {
+		t.Fatalf("accept graduated application: %v", err)
+	}
+	graduated := models.ApplicationStatusGraduated
+	if _, err := applicationRepo.Update(ctx, graduatedApplication.ID, models.ApplicationUpdateInput{Status: &graduated}); err != nil {
+		t.Fatalf("graduate application: %v", err)
+	}
+
+	var data []byte
+	if err := pool.QueryRow(ctx, `SELECT data FROM index_outbox WHERE object_type = 'mentorship_program' AND object_uid = $1`, fixture.ProgramID).Scan(&data); err != nil {
+		t.Fatalf("read program index snapshot: %v", err)
+	}
+	var document struct {
+		Stats models.ProgramHeaderStats `json:"stats"`
+	}
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatalf("decode program index snapshot: %v", err)
+	}
+	if document.Stats.Mentors != 1 || document.Stats.Mentees != 1 || document.Stats.Graduated != 1 {
+		t.Fatalf("program stats = %+v; want mentors=1 mentees=1 graduated=1", document.Stats)
+	}
+}
+
+func TestApplicationRepositoryIntegration_UpdateRefreshesTaskStateAndIndex(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+
+	applicationID := "00000000-0000-0000-0000-000000000080"
+	application, err := NewApplicationRepository(pool).Create(ctx, fixture.OpenTerm, models.ApplicationCreateInput{
+		ID:     applicationID,
+		UserID: fixture.UserID,
+		Role:   models.ApplicationRoleMentee,
+		Status: models.ApplicationStatusPending,
+	})
+	if err != nil {
+		t.Fatalf("create application: %v", err)
+	}
+
+	taskID := "00000000-0000-0000-0000-000000000081"
+	name := "Status follower"
+	category := models.TaskCategoryPrerequisite
+	programTermID := fixture.OpenTerm
+	if _, err := NewTaskRepository(pool).Create(ctx, application.ID, models.TaskCreateInput{
+		ID:            taskID,
+		ProgramTermID: &programTermID,
+		AssigneeID:    fixture.UserID,
+		Name:          &name,
+		Category:      &category,
+		Status:        models.TaskStatusIncomplete,
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	accepted := models.ApplicationStatusAccepted
+	if _, err := NewApplicationRepository(pool).Update(ctx, application.ID, models.ApplicationUpdateInput{Status: &accepted}); err != nil {
+		t.Fatalf("update application: %v", err)
+	}
+
+	var taskApplicationStatus models.ApplicationStatus
+	if err := pool.QueryRow(ctx, `SELECT application_status FROM tasks WHERE id = $1`, taskID).Scan(&taskApplicationStatus); err != nil {
+		t.Fatalf("read task application_status: %v", err)
+	}
+	if taskApplicationStatus != models.ApplicationStatusAccepted {
+		t.Fatalf("task application_status=%q; want %q", taskApplicationStatus, models.ApplicationStatusAccepted)
+	}
+
+	var action string
+	if err := pool.QueryRow(ctx, `SELECT action FROM index_outbox WHERE object_type = 'mentorship_task' AND object_uid = $1`, taskID).Scan(&action); err != nil {
+		t.Fatalf("read task index action: %v", err)
+	}
+	if action != "updated" {
+		t.Fatalf("task index action=%q; want updated", action)
+	}
+}
+
+func TestApplicationTaskIntegration_CreateSnapshotsCanonicalLifecycleState(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+
+	application, err := NewApplicationRepository(pool).Create(ctx, fixture.OpenTerm, models.ApplicationCreateInput{
+		ID:     "00000000-0000-0000-0000-000000000082",
+		UserID: fixture.UserID,
+		Role:   models.ApplicationRoleMentee,
+		Status: models.ApplicationStatusPending,
+	})
+	if err != nil {
+		t.Fatalf("create application: %v", err)
+	}
+	if application.ProgramTermStatus == nil || *application.ProgramTermStatus != models.ProgramTermStatusOpen {
+		t.Fatalf("application program_term_status=%v; want open", application.ProgramTermStatus)
+	}
+	accepted := models.ApplicationStatusAccepted
+	if _, err := NewApplicationRepository(pool).Update(ctx, application.ID, models.ApplicationUpdateInput{Status: &accepted}); err != nil {
+		t.Fatalf("accept application: %v", err)
+	}
+
+	taskID := "00000000-0000-0000-0000-000000000083"
+	name := "Created after acceptance"
+	programTermID := fixture.OpenTerm
+	task, err := NewTaskRepository(pool).Create(ctx, application.ID, models.TaskCreateInput{
+		ID:            taskID,
+		ProgramTermID: &programTermID,
+		AssigneeID:    fixture.UserID,
+		Name:          &name,
+		Status:        models.TaskStatusIncomplete,
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	if task.ApplicationStatus == nil || *task.ApplicationStatus != models.ApplicationStatusAccepted || task.ProgramTermStatus == nil || *task.ProgramTermStatus != models.ProgramTermStatusOpen {
+		t.Fatalf("task lifecycle=%v/%v; want accepted/open", task.ApplicationStatus, task.ProgramTermStatus)
+	}
+
+	type lifecycle struct {
+		ApplicationStatus models.ApplicationStatus `json:"application_status"`
+		ProgramTermStatus models.ProgramTermStatus `json:"program_term_status"`
+	}
+	snapshot := func(objectType, objectID string) lifecycle {
+		t.Helper()
+		var data []byte
+		if err := pool.QueryRow(ctx, `SELECT data FROM index_outbox WHERE object_type = $1 AND object_uid = $2`, objectType, objectID).Scan(&data); err != nil {
+			t.Fatalf("read %s index snapshot: %v", objectType, err)
+		}
+		var document lifecycle
+		if err := json.Unmarshal(data, &document); err != nil {
+			t.Fatalf("decode %s index snapshot: %v", objectType, err)
+		}
+		return document
+	}
+	if got := snapshot("mentorship_application", application.ID); got.ProgramTermStatus != models.ProgramTermStatusOpen {
+		t.Fatalf("application snapshot program_term_status=%q; want open", got.ProgramTermStatus)
+	}
+	if got := snapshot("mentorship_task", taskID); got.ApplicationStatus != models.ApplicationStatusAccepted || got.ProgramTermStatus != models.ProgramTermStatusOpen {
+		t.Fatalf("task snapshot lifecycle=%+v; want accepted/open", got)
+	}
+}
+
+func TestProgramRepositoryIntegration_DeleteEnqueuesChildIndexDeletes(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+
+	applicationID := "00000000-0000-0000-0000-000000000082"
+	application, err := NewApplicationRepository(pool).Create(ctx, fixture.OpenTerm, models.ApplicationCreateInput{
+		ID:     applicationID,
+		UserID: fixture.UserID,
+		Role:   models.ApplicationRoleMentee,
+		Status: models.ApplicationStatusPending,
+	})
+	if err != nil {
+		t.Fatalf("create application: %v", err)
+	}
+
+	taskID := "00000000-0000-0000-0000-000000000083"
+	name := "To be deleted with program"
+	category := models.TaskCategoryPrerequisite
+	programTermID := fixture.OpenTerm
+	if _, err := NewTaskRepository(pool).Create(ctx, application.ID, models.TaskCreateInput{
+		ID:            taskID,
+		ProgramTermID: &programTermID,
+		AssigneeID:    fixture.UserID,
+		Name:          &name,
+		Category:      &category,
+		Status:        models.TaskStatusIncomplete,
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	if err := NewProgramRepository(pool).Delete(ctx, fixture.ProgramID); err != nil {
+		t.Fatalf("delete program: %v", err)
+	}
+
+	var applicationAction string
+	if err := pool.QueryRow(ctx, `SELECT action FROM index_outbox WHERE object_type = 'mentorship_application' AND object_uid = $1`, applicationID).Scan(&applicationAction); err != nil {
+		t.Fatalf("read application index delete action: %v", err)
+	}
+	if applicationAction != "deleted" {
+		t.Fatalf("application index action=%q; want deleted", applicationAction)
+	}
+
+	var taskAction string
+	if err := pool.QueryRow(ctx, `SELECT action FROM index_outbox WHERE object_type = 'mentorship_task' AND object_uid = $1`, taskID).Scan(&taskAction); err != nil {
+		t.Fatalf("read task index delete action: %v", err)
+	}
+	if taskAction != "deleted" {
+		t.Fatalf("task index action=%q; want deleted", taskAction)
+	}
+}
+
+func TestIndexOutboxIntegration_MarkRetryRequeuesNewerGeneration(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	repo := NewIndexOutboxRepository(pool)
+	ctx := context.Background()
+	record := domain.IndexOutboxRecord{
+		ObjectType:     "mentorship_program",
+		ObjectUID:      fixture.ProgramID,
+		Action:         "updated",
+		Data:           []byte(`{"id":"` + fixture.ProgramID + `","name":"before"}`),
+		IndexingConfig: []byte(`{"object_id":"` + fixture.ProgramID + `"}`),
+	}
+	if err := repo.Enqueue(ctx, record); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	claimed, err := repo.Claim(ctx, 1)
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim records=%d err=%v", len(claimed), err)
+	}
+	record.Data = []byte(`{"id":"` + fixture.ProgramID + `","name":"after"}`)
+	if err := repo.Enqueue(ctx, record); err != nil {
+		t.Fatalf("enqueue newer generation: %v", err)
+	}
+	if acknowledged, deadLettered, err := repo.MarkRetry(ctx, claimed[0]); err != nil || !acknowledged || deadLettered {
+		t.Fatalf("mark retry: acknowledged=%v dead_lettered=%v err=%v", acknowledged, deadLettered, err)
+	}
+	var state string
+	var attempts int
+	var generation int64
+	var claimedGeneration *int64
+	if err := pool.QueryRow(ctx, `SELECT state, attempts, generation, claimed_generation FROM index_outbox WHERE id = $1`, claimed[0].ID).Scan(&state, &attempts, &generation, &claimedGeneration); err != nil {
+		t.Fatal(err)
+	}
+	if state != "pending" || attempts != 0 || generation != 2 || claimedGeneration != nil {
+		t.Fatalf("state=%q attempts=%d generation=%d claimed_generation=%v", state, attempts, generation, claimedGeneration)
+	}
+}
+
+func TestIndexOutboxIntegration_RequeueDeadLetter(t *testing.T) {
+	pool := integrationPool(t)
+	repo := NewIndexOutboxRepository(pool)
+	repo.SetMaxAttempts(1)
+	ctx := context.Background()
+	record := domain.IndexOutboxRecord{
+		ObjectType:     "mentorship_program",
+		ObjectUID:      "00000000-0000-0000-0000-000000000010",
+		Action:         "updated",
+		Data:           []byte(`{"id":"00000000-0000-0000-0000-000000000010"}`),
+		IndexingConfig: []byte(`{"object_id":"00000000-0000-0000-0000-000000000010"}`),
+	}
+	if err := repo.Enqueue(ctx, record); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	claimed, err := repo.Claim(ctx, 1)
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim records=%d err=%v", len(claimed), err)
+	}
+	if acknowledged, deadLettered, err := repo.MarkRetry(ctx, claimed[0]); err != nil || !acknowledged || !deadLettered {
+		t.Fatalf("dead-letter record: acknowledged=%v dead_lettered=%v err=%v", acknowledged, deadLettered, err)
+	}
+	requeued, err := repo.RequeueDeadLetter(ctx, record.ObjectType, record.ObjectUID)
+	if err != nil || !requeued {
+		t.Fatalf("requeue dead-letter: requeued=%v err=%v", requeued, err)
+	}
+	var state string
+	var attempts int
+	if err := pool.QueryRow(ctx, `SELECT state, attempts FROM index_outbox WHERE object_type = $1 AND object_uid = $2`, record.ObjectType, record.ObjectUID).Scan(&state, &attempts); err != nil {
+		t.Fatal(err)
+	}
+	if state != "pending" || attempts != 0 {
+		t.Fatalf("state=%q attempts=%d; want pending and 0", state, attempts)
 	}
 }
 
@@ -241,19 +631,19 @@ func TestProgramTermDeleteIntegration_BlocksWhenApplicationsExist(t *testing.T) 
 	}
 }
 
-func TestUserProfileUpsertByUserAndTypeConflictsOnLegacyDuplicates(t *testing.T) {
+func TestUserProfileCreateAndUpsertOnExistingProfile(t *testing.T) {
 	pool := integrationPool(t)
 	fixture := seedIntegrationFixture(t, pool)
 	ctx := context.Background()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO user_profiles (id, user_id, profile_type, slug, first_name, last_name, terms_and_conditions)
 		VALUES
-			('00000000-0000-0000-0000-000000000060', $1, 'mentor', 'mentor-one', 'One', 'User', true),
-			('00000000-0000-0000-0000-000000000061', $1, 'mentor', 'mentor-two', 'Two', 'User', true)
+			('00000000-0000-0000-0000-000000000060', $1, 'mentor', 'mentor-one', 'One', 'User', true)
 	`, fixture.UserID); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := NewUserProfileRepository(pool).UpsertByUserAndType(ctx, models.UserProfileCreateInput{
+	repo := NewUserProfileRepository(pool)
+	updated, inserted, err := repo.UpsertByUserAndType(ctx, models.UserProfileCreateInput{
 		ID:                 "00000000-0000-0000-0000-000000000062",
 		UserID:             fixture.UserID,
 		ProfileType:        "mentor",
@@ -262,8 +652,43 @@ func TestUserProfileUpsertByUserAndTypeConflictsOnLegacyDuplicates(t *testing.T)
 		LastName:           stringPtr("User"),
 		TermsAndConditions: true,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inserted || updated.ID != "00000000-0000-0000-0000-000000000060" || updated.Slug == nil || *updated.Slug != "mentor-canonical" || updated.FirstName == nil || *updated.FirstName != "Canonical" {
+		t.Fatalf("updated=%+v inserted=%v; want existing profile updated", updated, inserted)
+	}
+
+	if _, err := repo.Create(ctx, models.UserProfileCreateInput{
+		ID:                 "00000000-0000-0000-0000-000000000061",
+		UserID:             fixture.UserID,
+		ProfileType:        "mentor",
+		Slug:               stringPtr("mentor-second"),
+		FirstName:          stringPtr("Second"),
+		LastName:           stringPtr("User"),
+		TermsAndConditions: true,
+	}); err != nil {
+		t.Fatalf("create second mentor profile: %v; want success", err)
+	}
+
+	if _, err := repo.Create(ctx, models.UserProfileCreateInput{
+		ID:                 "00000000-0000-0000-0000-000000000063",
+		UserID:             fixture.UserID,
+		ProfileType:        "mentee",
+		Slug:               stringPtr("mentee-one"),
+		TermsAndConditions: true,
+	}); err != nil {
+		t.Fatalf("create first mentee profile: %v", err)
+	}
+	_, err = repo.Create(ctx, models.UserProfileCreateInput{
+		ID:                 "00000000-0000-0000-0000-000000000064",
+		UserID:             fixture.UserID,
+		ProfileType:        "mentee",
+		Slug:               stringPtr("mentee-duplicate"),
+		TermsAndConditions: true,
+	})
 	if !errors.Is(err, domain.ErrConflict) {
-		t.Fatalf("upsert error=%v; want ErrConflict", err)
+		t.Fatalf("create duplicate mentee error=%v; want ErrConflict", err)
 	}
 }
 
@@ -337,6 +762,37 @@ func TestEnrollmentIntegration_RollsBackWhenSkillInsertFails(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("program persisted after rollback: %d", count)
+	}
+}
+
+func TestEnrollmentIntegration_PersistsProjectMetadataInIndexSnapshot(t *testing.T) {
+	pool := integrationPool(t)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name) VALUES ('00000000-0000-0000-0000-000000000060', 'enroll-admin', 'Enroll Admin')`); err != nil {
+		t.Fatal(err)
+	}
+	projectUID, projectSlug, projectName, projectLogo := "00000000-0000-0000-0000-000000000099", "enroll-project", "Enroll Project", "https://example.com/logo.svg"
+	program, err := NewProgramRepository(pool).CreateEnrollment(ctx, models.ProgramEnrollmentInput{Program: models.ProgramCreateInput{ID: "00000000-0000-0000-0000-000000000061", CreatorUserID: "00000000-0000-0000-0000-000000000060", ProjectUID: &projectUID, ProjectSlug: &projectSlug, ProjectName: &projectName, ProjectLogoURL: &projectLogo, Name: "Enroll", Slug: "enroll", Status: models.ProgramStatusDraft}, Skills: []string{"Go"}})
+	if err != nil {
+		t.Fatalf("create enrollment: %v", err)
+	}
+	if program.ProjectSlug == nil || *program.ProjectSlug != projectSlug || program.ProjectName == nil || *program.ProjectName != projectName {
+		t.Fatalf("returned project metadata = %v %v", program.ProjectSlug, program.ProjectName)
+	}
+	var data []byte
+	if err := pool.QueryRow(ctx, `SELECT data FROM index_outbox WHERE object_type = 'mentorship_program' AND object_uid = $1`, program.ID).Scan(&data); err != nil {
+		t.Fatalf("read program index snapshot: %v", err)
+	}
+	var document struct {
+		ProjectSlug    string `json:"project_slug"`
+		ProjectName    string `json:"project_name"`
+		ProjectLogoURL string `json:"project_logo_url"`
+	}
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatalf("decode program index snapshot: %v", err)
+	}
+	if document.ProjectSlug != projectSlug || document.ProjectName != projectName || document.ProjectLogoURL != projectLogo {
+		t.Fatalf("program index project metadata = %+v", document)
 	}
 }
 
@@ -414,8 +870,8 @@ func TestFGAOutboxIntegration_DeadLetterPreservesFailure(t *testing.T) {
 	if err != nil || len(markers) != 1 {
 		t.Fatalf("claim: markers=%d err=%v", len(markers), err)
 	}
-	if err := repo.DeadLetter(ctx, markers[0], "permanent builder failure"); err != nil {
-		t.Fatalf("dead-letter: %v", err)
+	if deadLettered, err := repo.DeadLetter(ctx, markers[0], "permanent builder failure"); err != nil || !deadLettered {
+		t.Fatalf("dead-letter: dead_lettered=%v err=%v", deadLettered, err)
 	}
 	var state, lastError string
 	if err := pool.QueryRow(ctx, `SELECT state, last_error FROM fga_outbox WHERE id = $1`, markers[0].ID).Scan(&state, &lastError); err != nil {
@@ -424,31 +880,71 @@ func TestFGAOutboxIntegration_DeadLetterPreservesFailure(t *testing.T) {
 	if state != "dead_letter" || lastError != "permanent builder failure" {
 		t.Fatalf("state=%q last_error=%q; want dead_letter and preserved error", state, lastError)
 	}
+	requeued, err := repo.RequeueDeadLetter(ctx, "mentorship_application", "application-1", "", "")
+	if err != nil || !requeued {
+		t.Fatalf("requeue dead-letter: requeued=%v err=%v", requeued, err)
+	}
+	var attempts int
+	var clearedError *string
+	if err := pool.QueryRow(ctx, `SELECT state, attempts, last_error FROM fga_outbox WHERE id = $1`, markers[0].ID).Scan(&state, &attempts, &clearedError); err != nil {
+		t.Fatalf("read requeued marker: %v", err)
+	}
+	if state != "pending" || attempts != 0 || clearedError != nil {
+		t.Fatalf("state=%q attempts=%d last_error=%v; want pending, 0, and nil", state, attempts, clearedError)
+	}
 }
 
-func TestFGAOutboxIntegration_ReplayDeadLetter(t *testing.T) {
+func TestFGAOutboxIntegration_DeadLetterYieldsToNewerGeneration(t *testing.T) {
 	pool := integrationPool(t)
 	repo := NewFGAOutboxRepository(pool)
 	ctx := context.Background()
-	if err := repo.EnqueueObject(ctx, "mentorship_program", "program-replay", "update_access"); err != nil {
+	if err := repo.EnqueueObject(ctx, "mentorship_program", "program-racing", "update_access"); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
 	markers, err := repo.Claim(ctx, 1)
 	if err != nil || len(markers) != 1 {
 		t.Fatalf("claim: markers=%d err=%v", len(markers), err)
 	}
-	if err := repo.DeadLetter(ctx, markers[0], "permanent failure"); err != nil {
-		t.Fatalf("dead-letter: %v", err)
+	if err := repo.EnqueueObject(ctx, "mentorship_program", "program-racing", "update_access"); err != nil {
+		t.Fatalf("enqueue newer generation: %v", err)
 	}
-	if err := repo.ReplayDeadLetter(ctx, markers[0].ID); err != nil {
-		t.Fatalf("replay: %v", err)
+	if deadLettered, err := repo.DeadLetter(ctx, markers[0], "stale failure"); err != nil || deadLettered {
+		t.Fatalf("dead-letter over newer generation: dead_lettered=%v err=%v; want false", deadLettered, err)
 	}
-	fresh, err := repo.Claim(ctx, 1)
-	if err != nil || len(fresh) != 1 {
-		t.Fatalf("claim replayed marker: markers=%d err=%v", len(fresh), err)
+	if retried, err := repo.Retry(ctx, markers[0], time.Now(), "stale failure"); err != nil || !retried {
+		t.Fatalf("retry newer generation: retried=%v err=%v; want true", retried, err)
 	}
-	if fresh[0].ID != markers[0].ID || fresh[0].Attempts != 0 {
-		t.Fatalf("replayed marker = %+v; want original ID and zero attempts", fresh[0])
+	if retried, err := repo.Retry(ctx, markers[0], time.Now(), "stale failure"); err != nil || retried {
+		t.Fatalf("retry after release: retried=%v err=%v; want false", retried, err)
+	}
+	var state string
+	if err := pool.QueryRow(ctx, `SELECT state FROM fga_outbox WHERE id = $1`, markers[0].ID).Scan(&state); err != nil {
+		t.Fatalf("read marker: %v", err)
+	}
+	if state != "pending" {
+		t.Fatalf("state=%q; want pending", state)
+	}
+}
+
+func TestFGAOutboxIntegration_RequeueExactMembershipDeadLetter(t *testing.T) {
+	pool := integrationPool(t)
+	repo := NewFGAOutboxRepository(pool)
+	ctx := context.Background()
+	if err := repo.EnqueueMembershipRemoval(ctx, "mentorship_program", "program-1", "mentor", "fixture-user"); err != nil {
+		t.Fatalf("enqueue removal: %v", err)
+	}
+	markers, err := repo.Claim(ctx, 1)
+	if err != nil || len(markers) != 1 {
+		t.Fatalf("claim: markers=%d err=%v", len(markers), err)
+	}
+	if deadLettered, err := repo.DeadLetter(ctx, markers[0], "dependency unavailable"); err != nil || !deadLettered {
+		t.Fatalf("dead-letter: dead_lettered=%v err=%v", deadLettered, err)
+	}
+	if requeued, err := repo.RequeueDeadLetter(ctx, "mentorship_program", "program-1", "mentor", "other-user"); err != nil || requeued {
+		t.Fatalf("wrong member requeue: requeued=%v err=%v", requeued, err)
+	}
+	if requeued, err := repo.RequeueDeadLetter(ctx, "mentorship_program", "program-1", "mentor", "fixture-user"); err != nil || !requeued {
+		t.Fatalf("exact member requeue: requeued=%v err=%v", requeued, err)
 	}
 }
 
@@ -482,69 +978,5 @@ func TestFGAOutboxIntegration_AcknowledgeHandlesNullClaimedAt(t *testing.T) {
 	}
 	if remaining != 0 {
 		t.Fatalf("remaining markers = %d; want 0", remaining)
-	}
-}
-
-func TestFGAOutboxIntegration_ReconcileObjectPreservesDeadLetterState(t *testing.T) {
-	pool := integrationPool(t)
-	repo := NewFGAOutboxRepository(pool)
-	ctx := context.Background()
-
-	if err := repo.EnqueueObject(ctx, "mentorship_program", "program-dead-reconcile", "update_access"); err != nil {
-		t.Fatalf("enqueue: %v", err)
-	}
-	markers, err := repo.Claim(ctx, 1)
-	if err != nil || len(markers) != 1 {
-		t.Fatalf("claim: markers=%d err=%v", len(markers), err)
-	}
-	if err := repo.DeadLetter(ctx, markers[0], "builder failure"); err != nil {
-		t.Fatalf("dead-letter: %v", err)
-	}
-
-	if err := repo.ReconcileObject(ctx, "mentorship_program", "program-dead-reconcile", "update_access"); err != nil {
-		t.Fatalf("reconcile object: %v", err)
-	}
-
-	var state, lastError string
-	if err := pool.QueryRow(ctx, `SELECT state, last_error FROM fga_outbox WHERE id = $1`, markers[0].ID).Scan(&state, &lastError); err != nil {
-		t.Fatalf("read reconciled marker: %v", err)
-	}
-	if state != "dead_letter" {
-		t.Fatalf("state = %q; want dead_letter", state)
-	}
-	if lastError != "builder failure" {
-		t.Fatalf("last_error = %q; want builder failure", lastError)
-	}
-}
-
-func TestFGAOutboxIntegration_ReconcileMembershipPreservesDeadLetterState(t *testing.T) {
-	pool := integrationPool(t)
-	repo := NewFGAOutboxRepository(pool)
-	ctx := context.Background()
-
-	if err := repo.EnqueueMembership(ctx, "mentorship_program", "program-dead-membership", "mentor", "alice"); err != nil {
-		t.Fatalf("enqueue membership: %v", err)
-	}
-	markers, err := repo.Claim(ctx, 1)
-	if err != nil || len(markers) != 1 {
-		t.Fatalf("claim: markers=%d err=%v", len(markers), err)
-	}
-	if err := repo.DeadLetter(ctx, markers[0], "membership builder failure"); err != nil {
-		t.Fatalf("dead-letter: %v", err)
-	}
-
-	if err := repo.ReconcileMembership(ctx, "mentorship_program", "program-dead-membership", "mentor", "alice"); err != nil {
-		t.Fatalf("reconcile membership: %v", err)
-	}
-
-	var state, lastError string
-	if err := pool.QueryRow(ctx, `SELECT state, last_error FROM fga_outbox WHERE id = $1`, markers[0].ID).Scan(&state, &lastError); err != nil {
-		t.Fatalf("read reconciled membership marker: %v", err)
-	}
-	if state != "dead_letter" {
-		t.Fatalf("state = %q; want dead_letter", state)
-	}
-	if lastError != "membership builder failure" {
-		t.Fatalf("last_error = %q; want membership builder failure", lastError)
 	}
 }

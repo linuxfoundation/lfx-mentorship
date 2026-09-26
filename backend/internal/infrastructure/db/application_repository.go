@@ -298,7 +298,7 @@ func (r *ApplicationRepository) CreateWithTasks(ctx context.Context, programTerm
 		RETURNING ` + applicationCols
 
 	a, err := scanApplication(tx.QueryRow(ctx, q,
-		input.ID, programTermID, input.UserID, input.Role, input.Status, input.ProgramTermStatus,
+		input.ID, programTermID, input.UserID, input.Role, input.Status, term.Status,
 		input.StartDateTime, input.EndDateTime, input.AttendanceType,
 	))
 	if err != nil {
@@ -306,6 +306,16 @@ func (r *ApplicationRepository) CreateWithTasks(ctx context.Context, programTerm
 		return nil, fmt.Errorf("create application: %w", err)
 	}
 	if err := enqueueApplicationMarker(ctx, tx, a, "update_access"); err != nil {
+		return nil, err
+	}
+	if err := enqueueApplicationIndex(ctx, tx, a, "created"); err != nil {
+		return nil, err
+	}
+	var programID string
+	if err := tx.QueryRow(ctx, `SELECT program_id FROM program_terms WHERE id = $1`, programTermID).Scan(&programID); err != nil {
+		return nil, fmt.Errorf("resolve application program for index refresh: %w", err)
+	}
+	if err := enqueueProgramIndexByID(ctx, tx, programID); err != nil {
 		return nil, err
 	}
 	if err := insertApplicationTasks(ctx, tx, a, tasks); err != nil {
@@ -327,6 +337,15 @@ func (r *ApplicationRepository) ReapplyWithTasks(ctx context.Context, oldID, pro
 		return nil, fmt.Errorf("begin reapply transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	var programID string
+	var termStatus models.ProgramTermStatus
+	err = tx.QueryRow(ctx, `SELECT program_id, status FROM program_terms WHERE id = $1 FOR UPDATE`, programTermID).Scan(&programID, &termStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrProgramTermNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("lock program term for reapply: %w", err)
+	}
 	var taskIDs []string
 	rows, err := tx.Query(ctx, `SELECT id FROM tasks WHERE application_id = $1`, oldID)
 	if err != nil {
@@ -345,19 +364,31 @@ func (r *ApplicationRepository) ReapplyWithTasks(ctx context.Context, oldID, pro
 		return nil, fmt.Errorf("delete withdrawn application: %w", err)
 	}
 	const q = `INSERT INTO applications (id, program_term_id, user_id, role, status, program_term_status, start_date_time, end_date_time, attendance_type) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING ` + applicationCols
-	a, err := scanApplication(tx.QueryRow(ctx, q, input.ID, programTermID, input.UserID, input.Role, input.Status, input.ProgramTermStatus, input.StartDateTime, input.EndDateTime, input.AttendanceType))
+	a, err := scanApplication(tx.QueryRow(ctx, q, input.ID, programTermID, input.UserID, input.Role, input.Status, termStatus, input.StartDateTime, input.EndDateTime, input.AttendanceType))
 	if err != nil {
 		return nil, fmt.Errorf("create replacement application: %w", err)
 	}
 	if err := enqueueObjectDeleteMarker(ctx, tx, "mentorship_application", oldID); err != nil {
 		return nil, err
 	}
+	if err := enqueueIndexDelete(ctx, tx, "mentorship_application", oldID); err != nil {
+		return nil, err
+	}
 	for _, taskID := range taskIDs {
 		if err := enqueueObjectDeleteMarker(ctx, tx, "mentorship_task", taskID); err != nil {
 			return nil, err
 		}
+		if err := enqueueIndexDelete(ctx, tx, "mentorship_task", taskID); err != nil {
+			return nil, err
+		}
 	}
 	if err := enqueueApplicationMarker(ctx, tx, a, "update_access"); err != nil {
+		return nil, err
+	}
+	if err := enqueueApplicationIndex(ctx, tx, a, "created"); err != nil {
+		return nil, err
+	}
+	if err := enqueueProgramIndexByID(ctx, tx, programID); err != nil {
 		return nil, err
 	}
 	if err := insertApplicationTasks(ctx, tx, a, tasks); err != nil {
@@ -390,6 +421,13 @@ func insertApplicationTasks(ctx context.Context, tx pgx.Tx, application *models.
 				name = *created.Name
 			}
 			return fmt.Errorf("enqueue prerequisite task %q: %w", name, err)
+		}
+		if err := enqueueTaskIndex(ctx, tx, created, "created"); err != nil {
+			name := ""
+			if created.Name != nil {
+				name = *created.Name
+			}
+			return fmt.Errorf("enqueue prerequisite task index %q: %w", name, err)
 		}
 	}
 	return nil
@@ -446,13 +484,110 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 			return nil, err
 		}
 	}
+	updatedTasks, err := syncTasksWithApplicationState(ctx, tx, a)
+	if err != nil {
+		return nil, err
+	}
 	if err := enqueueApplicationMarker(ctx, tx, a, "update_access"); err != nil {
+		return nil, err
+	}
+	if err := enqueueApplicationIndex(ctx, tx, a, "updated"); err != nil {
+		return nil, err
+	}
+	for _, task := range updatedTasks {
+		if err := enqueueTaskIndex(ctx, tx, task, "updated"); err != nil {
+			return nil, fmt.Errorf("enqueue task index for application update: %w", err)
+		}
+	}
+	var programID string
+	if err := tx.QueryRow(ctx, `SELECT program_id FROM program_terms WHERE id = $1`, a.ProgramTermID).Scan(&programID); err != nil {
+		return nil, fmt.Errorf("resolve application program for index refresh: %w", err)
+	}
+	if err := enqueueProgramIndexByID(ctx, tx, programID); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit update application transaction: %w", err)
 	}
 	return a, nil
+}
+
+func syncTasksWithApplicationState(ctx context.Context, tx pgx.Tx, application *models.Application) ([]*models.Task, error) {
+	rows, err := tx.Query(ctx, `
+		UPDATE tasks
+		SET application_status = $2,
+		    program_term_status = $3,
+		    updated_on = NOW()
+		WHERE application_id = $1
+		RETURNING `+taskCols, application.ID, application.Status, application.ProgramTermStatus)
+	if err != nil {
+		return nil, fmt.Errorf("sync tasks for application update: %w", err)
+	}
+	defer rows.Close()
+
+	updatedTasks := make([]*models.Task, 0)
+	for rows.Next() {
+		task, scanErr := scanTask(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("scan synced task for application update: %w", scanErr)
+		}
+		updatedTasks = append(updatedTasks, task)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate synced tasks for application update: %w", err)
+	}
+	return updatedTasks, nil
+}
+
+func syncAndEnqueueTasksWithApplicationState(ctx context.Context, tx pgx.Tx, application *models.Application) error {
+	updatedTasks, err := syncTasksWithApplicationState(ctx, tx, application)
+	if err != nil {
+		return err
+	}
+	for _, task := range updatedTasks {
+		if err := enqueueTaskIndex(ctx, tx, task, "updated"); err != nil {
+			return fmt.Errorf("enqueue task index for application update: %w", err)
+		}
+	}
+	return nil
+}
+
+func syncApplicationsWithTermState(ctx context.Context, tx pgx.Tx, termID string, termStatus models.ProgramTermStatus) error {
+	rows, err := tx.Query(ctx, `
+		UPDATE applications
+		SET program_term_status = $2, updated_on = NOW()
+		WHERE program_term_id = $1
+		RETURNING `+applicationCols, termID, termStatus)
+	if err != nil {
+		return fmt.Errorf("sync applications for term update: %w", err)
+	}
+	defer rows.Close()
+
+	applications := make([]*models.Application, 0)
+	for rows.Next() {
+		application, scanErr := scanApplication(rows)
+		if scanErr != nil {
+			return fmt.Errorf("scan application for term update: %w", scanErr)
+		}
+		applications = append(applications, application)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate applications for term update: %w", err)
+	}
+	rows.Close()
+
+	for _, application := range applications {
+		if err := enqueueApplicationMarker(ctx, tx, application, "update_access"); err != nil {
+			return err
+		}
+		if err := enqueueApplicationIndex(ctx, tx, application, "updated"); err != nil {
+			return err
+		}
+		if err := syncAndEnqueueTasksWithApplicationState(ctx, tx, application); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func ensureAcceptedMentorMembership(ctx context.Context, tx pgx.Tx, application *models.Application) error {
@@ -523,8 +658,21 @@ func (r *ApplicationRepository) Delete(ctx context.Context, id string) error {
 	if err := enqueueObjectDeleteMarker(ctx, tx, "mentorship_application", current.ID); err != nil {
 		return err
 	}
+	if err := enqueueIndexDelete(ctx, tx, "mentorship_application", current.ID); err != nil {
+		return err
+	}
+	var programID string
+	if err := tx.QueryRow(ctx, `SELECT program_id FROM program_terms WHERE id = $1`, current.ProgramTermID).Scan(&programID); err != nil {
+		return fmt.Errorf("resolve deleted application program for index refresh: %w", err)
+	}
+	if err := enqueueProgramIndexByID(ctx, tx, programID); err != nil {
+		return err
+	}
 	for _, taskID := range taskIDs {
 		if err := enqueueObjectDeleteMarker(ctx, tx, "mentorship_task", taskID); err != nil {
+			return err
+		}
+		if err := enqueueIndexDelete(ctx, tx, "mentorship_task", taskID); err != nil {
 			return err
 		}
 	}
@@ -678,9 +826,22 @@ func (r *ApplicationRepository) BulkDeclineByTerm(ctx context.Context, termID st
 	}
 	rows.Close()
 	for _, application := range applications {
+		if err := syncAndEnqueueTasksWithApplicationState(ctx, tx, application); err != nil {
+			return 0, fmt.Errorf("sync bulk-declined tasks: %w", err)
+		}
 		if err := enqueueApplicationMarker(ctx, tx, application, "update_access"); err != nil {
 			return 0, err
 		}
+		if err := enqueueApplicationIndex(ctx, tx, application, "updated"); err != nil {
+			return 0, err
+		}
+	}
+	var programID string
+	if err := tx.QueryRow(ctx, `SELECT program_id FROM program_terms WHERE id = $1`, termID).Scan(&programID); err != nil {
+		return 0, fmt.Errorf("resolve bulk-declined program for index refresh: %w", err)
+	}
+	if err := enqueueProgramIndexByID(ctx, tx, programID); err != nil {
+		return 0, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("commit bulk decline transaction: %w", err)

@@ -14,7 +14,7 @@ Related: [04-authorization-model.md](./04-authorization-model.md) (what FGA hold
 
 | Column | Meaning |
 | --- | --- |
-| **Auth** | `anonymous` — no token required (Heimdall's `anonymous_authenticator`). `required` — a valid OIDC token. `optional` — currently `optionalJWT`; see the note on visibility below |
+| **Auth** | `anonymous` — no token required (Heimdall's `anonymous_authenticator`). `required` — a valid OIDC token. `optional` — formerly `optionalJWT`, now removed; see the note on visibility below |
 | **Object** | What Heimdall interpolates into the `openfga_check`. `—` means no check |
 | **Relation** | The relation checked on that object. Names resolve **per type**: `manager` on `mentorship_program` is `writer or mentor`, but `manager` on `mentorship_application` is `writer from mentorship_program` (admins only). Every rule must name the type as well as the relation |
 | **Service must also** | The residue the edge cannot express — enforced in the service, not at the gateway |
@@ -33,15 +33,15 @@ Three rules govern the whole table, and each is a place a RuleSet can be wrong w
 
 ## Public catalog reads
 
-Per [05](./05-heimdall-gateway.md) GW-2, the split is by route *shape*: a collection route has no object UID to check, so it gets `allow_all` and keeps the service's existing `status = published` filter; an ID-addressed read keeps the wildcard check.
+The [05](./05-heimdall-gateway.md) platform collection decision supersedes the GW-2 collection shape: Query Service serves every resource collection, so the RuleSet carries no Mentorship collection route. What remains is the public slug→UID resolver, directory profile reads, and UID-addressed reads, which keep the wildcard `viewer` check.
 
 | Route | Auth | Object | Relation | Service must also |
 | --- | --- | --- | --- | --- |
-| `GET /v1/programs` | anonymous | — | `allow_all` | Keep the published-status filter — it is the only thing scoping this list |
-| `GET /v1/programs/catalog` | anonymous | — | `allow_all` | As above |
+| ~~`GET /v1/programs`, `/v1/programs/catalog`~~ | — | — | — | **Retired** — served by Query Service. Do not add a RuleSet rule for them |
 | `GET /v1/programs/resolve/{id}` | anonymous | — | `allow_all` | **The slug→UID resolver, and the one route that must accept a slug.** Rule 1 depends on it existing. It must not leak non-public programs: resolve only to UIDs the caller could read anyway |
 | `GET /v1/programs/{uid}` | anonymous | `mentorship_program:{uid}` | `viewer` | — |
 | `GET /v1/programs/{uid}/catalog` | anonymous | `mentorship_program:{uid}` | `viewer` | — |
+| `GET /v1/programs/{uid}/header` | anonymous | `mentorship_program:{uid}` | `viewer` | — |
 | `GET /v1/programs/{uid}/skills` | anonymous | `mentorship_program:{uid}` | `viewer` | — |
 | `GET /v1/programs/{uid}/mentees` | anonymous | `mentorship_program:{uid}` | `viewer` | Keep the accepted/graduated filter — `viewer` admits the public, so the *set* of mentees returned is a payload decision, not an access one |
 | `GET /v1/programs/{uid}/members` | anonymous | `mentorship_program:{uid}` | `viewer` | Keep the email redaction ([05](./05-heimdall-gateway.md) GW-9, fixed in [linuxfoundation/lfx-mentorship#144](https://github.com/linuxfoundation/lfx-mentorship/pull/144)) — withheld from every caller this route admits, so redaction is correct here and a route split would be wrong |
@@ -49,10 +49,10 @@ Per [05](./05-heimdall-gateway.md) GW-2, the split is by route *shape*: a collec
 | `GET /v1/programs/{uid}/terms` | anonymous | `mentorship_program:{uid}` | `viewer` | — |
 | `GET /v1/programs/{uid}/transactions` | anonymous | `mentorship_program:{uid}` | `viewer` | — |
 | `GET /v1/programs/{uid}/sponsors` | anonymous | `mentorship_program:{uid}` | `viewer` | — |
-| `GET /v1/mentees`, `/v1/mentees/summary`, `/v1/mentors`, `/v1/mentors/summary`, `/v1/summary`, `/v1/funding-stats/total` | anonymous | — | `allow_all` | Aggregate/collection reads with no object UID. Keep whatever published-scope filter each already applies |
+| ~~`GET /v1/mentees`, `/v1/mentees/summary`, `/v1/mentors`, `/v1/mentors/summary`, `/v1/summary`, `/v1/funding-stats/total`~~ | — | — | — | **Retired** — collection and aggregate reads are served by Query Service. Do not add a RuleSet rule for them. **Interim:** the service still registers `/mentees/summary` and `/mentors/summary` for the pre-cutover BFF, and the single-segment `/mentees/:id` and `/mentors/:id` profile rule matches them, so both stay reachable through the gateway as public aggregates until the handlers are removed with the BFF's move to Query Service |
 | `GET /v1/mentees/{id}`, `/v1/mentors/{id}` | anonymous | — | `allow_all` | These are directory profiles, not model types. Nothing in the model keys on them, so there is no check to make — the service must return only publicly-listable records |
 
-**The `optional` authenticator disappears.** Six routes use `optionalJWT` today (`resolve`, `{id}`, `mentees`, `transactions`, `sponsors`) solely so `resolveVisibleProgram` can let a `hidden` program's owner still fetch it. Behind Heimdall that is a relation, not a token check: `viewer` is `[user:*] or auditor`, and the owner holds `writer` → `manager` → `auditor`. So the rule is `oidc` **then** `anonymous_authenticator` — an anonymous caller fails the wildcard only when the program is not public, and the owner passes via `auditor`. The service's `hidden`-owner special case then has nothing left to do, provided the archived/hidden transitions re-emit `update_access` **without** `public` as [04 §lifecycle](./04-authorization-model.md) requires. If that emission is missed, a hidden program stays publicly readable and this row is the leak.
+**The `optional` authenticator disappears.** Five routes used `optionalJWT` (`resolve`, `{id}`, `mentees`, `transactions`, `sponsors`), and the service no longer registers it; it existed solely so `resolveVisibleProgram` can let a `hidden` program's owner still fetch it. Behind Heimdall that is a relation, not a token check: `viewer` is `[user:*] or auditor`, and the owner holds `writer` → `manager` → `auditor`. So the rule is `oidc` **then** `anonymous_authenticator` — an anonymous caller fails the wildcard only when the program is not public, and the owner passes via `auditor`. The service's `hidden`-owner special case then has nothing left to do, provided the archived/hidden transitions re-emit `update_access` **without** `public` as [04 §lifecycle](./04-authorization-model.md) requires. If that emission is missed, a hidden program stays publicly readable and this row is the leak.
 
 ## Invite routes
 
