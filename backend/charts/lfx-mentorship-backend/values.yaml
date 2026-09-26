@@ -67,6 +67,14 @@ heimdall:
 openfga:
   enabled: false
 
+# Opt-in: restricts backend ingress to the shared gateway so in-cluster callers cannot bypass the RuleSet.
+networkPolicy:
+  enabled: false
+  # Namespace of the Traefik pods that forward gateway traffic; defaults to traefik.gateway.namespace.
+  gatewayNamespace: ""
+  # Extra NetworkPolicyPeer entries, e.g. the BFF or the /internal/metrics scraper.
+  extraIngressFrom: []
+
 ingress:
   enabled: false
   className: ""
