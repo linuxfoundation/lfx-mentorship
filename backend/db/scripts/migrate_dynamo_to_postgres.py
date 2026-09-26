@@ -40,7 +40,9 @@ Key notes
 - DynamoDB user-profile type for mentees maps to Postgres profile_type "mentee".
 - tasks.application_id is resolved post-scan by matching (program_term_id, assignee_id)
   against inserted applications. Tasks with no match are written to
-  quarantined_tasks for repair; tasks.application_id is NOT NULL.
+  quarantined_tasks for repair; tasks.application_id is NOT NULL. A task that was
+  live from an earlier run is removed with FGA delete_access and index deleted
+  markers, so its tuples and search document are retracted.
 - All INSERTs use ON CONFLICT … DO UPDATE (idempotent; safe to re-run).
 
 Usage
@@ -1120,11 +1122,39 @@ def migrate_tasks(
             page_size=500,
         )
     if quarantined:
-        psycopg2.extras.execute_batch(
-            cur,
-            "DELETE FROM tasks WHERE id = %s",
-            [(row[0],) for row in quarantined],
-            page_size=500,
+        # A task imported live earlier was already published, so retract it through both relays.
+        cur.execute(
+            """
+            WITH removed AS (
+                DELETE FROM tasks WHERE id = ANY(%s::uuid[]) RETURNING id
+            ), fga AS (
+                INSERT INTO fga_outbox (marker_kind, object_type, object_uid, desired_operation)
+                SELECT 'object', 'mentorship_task', id::text, 'delete_access' FROM removed
+                ON CONFLICT (object_type, object_uid) WHERE marker_kind = 'object'
+                DO UPDATE SET desired_operation = EXCLUDED.desired_operation,
+                              generation = fga_outbox.generation + 1,
+                              state = CASE WHEN fga_outbox.state = 'in_flight' THEN 'in_flight' ELSE 'pending' END,
+                              claimed_generation = CASE WHEN fga_outbox.state = 'in_flight' THEN fga_outbox.claimed_generation ELSE NULL END,
+                              claimed_at = CASE WHEN fga_outbox.state = 'in_flight' THEN fga_outbox.claimed_at ELSE NULL END,
+                              attempts = 0, next_attempt_at = NOW(), last_error = NULL,
+                              updated_on = NOW()
+            )
+            INSERT INTO index_outbox (object_type, object_uid, action, headers)
+            SELECT 'mentorship_task', id, 'deleted', '{}'::jsonb FROM removed
+            ON CONFLICT (object_type, object_uid) DO UPDATE SET
+                action = 'deleted',
+                headers = EXCLUDED.headers,
+                data = NULL,
+                indexing_config = NULL,
+                generation = index_outbox.generation + 1,
+                state = CASE WHEN index_outbox.state = 'in_flight' THEN 'in_flight' ELSE 'pending' END,
+                claimed_generation = CASE WHEN index_outbox.state = 'in_flight' THEN index_outbox.claimed_generation ELSE NULL END,
+                claimed_at = CASE WHEN index_outbox.state = 'in_flight' THEN index_outbox.claimed_at ELSE NULL END,
+                attempts = 0,
+                next_attempt_at = NOW(),
+                sent_on = NULL
+            """,
+            ([row[0] for row in quarantined],),
         )
         psycopg2.extras.execute_batch(
             cur,
