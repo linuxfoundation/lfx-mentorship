@@ -268,6 +268,9 @@ These are Helm values, not process environment variables:
 | `lfx.domain` | Environment domain used to form `lfx-api.{domain}` |
 | `traefik.gateway.name` | Shared gateway name |
 | `traefik.gateway.namespace` | Shared gateway namespace |
+| `networkPolicy.enabled` | Opt-in; restricts backend ingress to the gateway namespace |
+| `networkPolicy.gatewayNamespace` | Namespace of the Traefik pods, when it differs from `traefik.gateway.namespace` |
+| `networkPolicy.extraIngressFrom` | Extra `NetworkPolicyPeer` entries, such as the BFF or the `/internal/metrics` scraper |
 | `secretName` | Existing externally managed Kubernetes Secret |
 | `createPlaceholderSecret` | `false` outside local clusters |
 | `allowLocalAuthBypass` | Always `false` in deployed environments |
