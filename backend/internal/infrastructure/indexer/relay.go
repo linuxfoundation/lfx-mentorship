@@ -19,7 +19,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 )
 
-const defaultReplyTimeout = 10 * time.Second
+const defaultPublishTimeout = 10 * time.Second
 
 var (
 	indexRelayClaimed       = expvar.NewInt("index_relay_claimed")
@@ -38,13 +38,13 @@ type Envelope struct {
 }
 
 type Relay struct {
-	outbox        domain.IndexOutboxRepository
-	conn          publisher
-	batch         int
-	replyTimeout  time.Duration
-	logger        *slog.Logger
-	authorization string
-	warnOnce      sync.Once
+	outbox         domain.IndexOutboxRepository
+	conn           publisher
+	batch          int
+	publishTimeout time.Duration
+	logger         *slog.Logger
+	authorization  string
+	warnOnce       sync.Once
 }
 
 func (r *Relay) SetLogger(logger *slog.Logger) {
@@ -63,12 +63,12 @@ func NewRelay(outbox domain.IndexOutboxRepository, conn publisher, batch int, se
 		batch = 50
 	}
 	return &Relay{
-		outbox:        outbox,
-		conn:          conn,
-		batch:         batch,
-		replyTimeout:  defaultReplyTimeout,
-		logger:        slog.Default(),
-		authorization: bearer(serviceToken),
+		outbox:         outbox,
+		conn:           conn,
+		batch:          batch,
+		publishTimeout: defaultPublishTimeout,
+		logger:         slog.Default(),
+		authorization:  bearer(serviceToken),
 	}
 }
 
@@ -164,7 +164,7 @@ func (r *Relay) RunOnce(ctx context.Context) error {
 
 // publishAndConfirm counts only a JetStream publish acknowledgement as delivery.
 func (r *Relay) publishAndConfirm(ctx context.Context, subject string, payload []byte) error {
-	ctx, cancel := context.WithTimeout(ctx, r.replyTimeout)
+	ctx, cancel := context.WithTimeout(ctx, r.publishTimeout)
 	defer cancel()
 	if _, err := r.conn.PublishMsg(ctx, &nats.Msg{Subject: subject, Data: payload}); err != nil {
 		return fmt.Errorf("indexer publish: %w", err)

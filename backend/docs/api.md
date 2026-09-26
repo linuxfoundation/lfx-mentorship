@@ -980,7 +980,7 @@ Fetch a program by UUID or slug.
 
 Resolve a program UUID or slug to the canonical program UUID.
 
-> Only `published` programs resolve for anonymous callers. A non-published program resolves only for its LFID owner or an active Program Admin; everyone else receives `404`.
+> Only `published` programs resolve, except for the program's LFID owner; everyone else receives `404`.
 
 **Response** `200`
 ```json

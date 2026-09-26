@@ -23,7 +23,6 @@ import (
 type programService interface {
 	GetByID(ctx context.Context, id string) (*models.Program, error)
 	GetBySlug(ctx context.Context, slug string) (*models.Program, error)
-	IsActiveProgramAdmin(ctx context.Context, programID, userID string) (bool, error)
 	List(ctx context.Context, filter models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error)
 	GetEnrollmentTemplate(ctx context.Context, programID string) (*models.ProgramEnrollmentTemplate, error)
 	GetManagementSummary(ctx context.Context, programID string) (*models.ProgramManagementSummary, error)
@@ -362,28 +361,15 @@ func (h *ProgramHandler) Decision(w http.ResponseWriter, r *http.Request) {
 
 // ResolveID handles GET /v1/programs/resolve/{id}.
 // It resolves either a UUID or slug to the canonical program UUID. The route is
-// allow_all, so only published programs resolve for anyone but the program's
-// owner or an active Program Admin.
+// allow_all, so only published programs resolve for anyone but the owner.
 func (h *ProgramHandler) ResolveID(w http.ResponseWriter, r *http.Request) {
 	program, ok := lookupProgram(w, r, h.svc)
 	if !ok {
 		return
 	}
 	if program.Status != models.ProgramStatusPublished && !isProgramOwner(r, program) {
-		principal := auth.PrincipalFromContext(r.Context())
-		if principal == nil || principal.UserID == "_anonymous" {
-			Error(w, domain.ErrProgramNotFound)
-			return
-		}
-		isAdmin, err := h.svc.IsActiveProgramAdmin(r.Context(), program.ID, principal.UserID)
-		if err != nil {
-			Error(w, err)
-			return
-		}
-		if !isAdmin {
-			Error(w, domain.ErrProgramNotFound)
-			return
-		}
+		Error(w, domain.ErrProgramNotFound)
+		return
 	}
 	JSON(w, http.StatusOK, map[string]string{"id": program.ID})
 }

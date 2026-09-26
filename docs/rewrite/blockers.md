@@ -256,8 +256,7 @@ across releases.
 2. The chart renders the intended Middleware, HTTPRoute, RuleSet, and relay
    configuration.
 3. The backend can validate a real Heimdall PS256 token from the cluster JWKS.
-4. FGA relay JetStream publish acknowledgements and index relay `OK` replies
-   from the indexer are observed.
+4. FGA and index relay JetStream publish acknowledgements are observed.
 5. The frontend/BFF points at the shared gateway URL and requests the gateway
    audience.
 6. Direct interim-host access is disabled or otherwise prevented at cutover.

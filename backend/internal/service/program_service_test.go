@@ -123,30 +123,6 @@ func TestProgramService_CreateEnrollment_RejectsNonISOPrerequisiteDueDate(t *tes
 	}
 }
 
-func TestProgramService_IsActiveProgramAdmin(t *testing.T) {
-	lookupErr := errors.New("db down")
-	members := &stubMemberRepo{findActiveAdmin: func(_ context.Context, programID, userID string) (*models.ProgramMember, error) {
-		switch userID {
-		case "admin":
-			return &models.ProgramMember{ProgramID: programID, UserID: userID}, nil
-		case "broken":
-			return nil, lookupErr
-		}
-		return nil, domain.ErrProgramMemberNotFound
-	}}
-	svc := service.NewProgramService(&stubProgRepo{}, &stubTermRepo{}, &stubAppRepo{}, members)
-
-	if ok, err := svc.IsActiveProgramAdmin(context.Background(), "p1", "admin"); err != nil || !ok {
-		t.Fatalf("admin: ok=%v err=%v", ok, err)
-	}
-	if ok, err := svc.IsActiveProgramAdmin(context.Background(), "p1", "stranger"); err != nil || ok {
-		t.Fatalf("stranger: ok=%v err=%v", ok, err)
-	}
-	if _, err := svc.IsActiveProgramAdmin(context.Background(), "p1", "broken"); !errors.Is(err, lookupErr) {
-		t.Fatalf("broken: err=%v; want wrapped lookup error", err)
-	}
-}
-
 func TestProgramService_CreateEnrollment_RejectsUnsafeURL(t *testing.T) {
 	projectUID := "00000000-0000-0000-0000-000000000001"
 	unsafe := "javascript:alert(1)"

@@ -50,8 +50,9 @@ discarded before it reaches the outbox. At publish time the relay stamps
 lfx-v2-campaign-service pattern. Without the token the relay idles and rows stay
 pending.
 
-Each record is sent as a NATS request, and only the indexer's `OK` reply marks
-it sent. A timeout or `ERROR:` reply counts as a failed publish.
+A record is marked sent once JetStream acknowledges the publish. The indexer
+consumes a durable stream and NAKs messages it fails to process, so redelivery
+after the handoff belongs to the stream, not the outbox.
 
 Failed publishes increment attempts once, wait for `INDEX_RELAY_RETRY_DELAY`,
 and dead-letter after `INDEX_RELAY_MAX_ATTEMPTS`. A newer generation arriving

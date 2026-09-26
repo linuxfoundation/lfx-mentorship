@@ -119,9 +119,6 @@ requiring them would block the documented local bypass flow
 {{- if not .Values.openfga.enabled }}
 {{- fail "values.yaml: heimdall.enabled requires openfga.enabled=true" }}
 {{- end }}
-{{- if not .Values.networkPolicy.enabled }}
-{{- fail "values.yaml: heimdall.enabled requires networkPolicy.enabled=true so in-cluster callers cannot bypass the RuleSet" }}
-{{- end }}
 {{- end }}
 {{- if or .Values.heimdall.enabled .Values.heimdall.addMiddleware }}
 {{- range $value := list .Values.lfx.domain .Values.traefik.gateway.name .Values.traefik.gateway.namespace .Values.heimdall.url }}

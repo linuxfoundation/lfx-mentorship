@@ -29,14 +29,6 @@ type stubProgramSvc struct {
 	deleteSkill                func(context.Context, string, string, string) error
 	getCategorizedTransactions func(context.Context, string, string, bool, int, int) (*models.ProgramCategorizedTransactions, error)
 	getProgramSponsors         func(context.Context, string, string, bool, bool) ([]models.ProgramSponsor, error)
-	isActiveProgramAdmin       func(context.Context, string, string) (bool, error)
-}
-
-func (s *stubProgramSvc) IsActiveProgramAdmin(ctx context.Context, programID, userID string) (bool, error) {
-	if s.isActiveProgramAdmin != nil {
-		return s.isActiveProgramAdmin(ctx, programID, userID)
-	}
-	return false, nil
 }
 
 func (s *stubProgramSvc) GetByID(ctx context.Context, id string) (*models.Program, error) {
@@ -459,49 +451,20 @@ func TestProgramHandler_ResolveID_DraftReturns404ToAnonymous(t *testing.T) {
 	}
 }
 
-func TestProgramHandler_ResolveID_DraftResolvesForActiveProgramAdmin(t *testing.T) {
-	var checked string
+func TestProgramHandler_ResolveID_DraftReturns404ToAuthenticatedNonOwner(t *testing.T) {
+	owner := "owner"
 	h := handler.NewProgramHandler(&stubProgramSvc{
 		getBySlug: func(_ context.Context, slug string) (*models.Program, error) {
-			return &models.Program{ID: "draft-uuid", Slug: slug, Status: models.ProgramStatusDraft}, nil
-		},
-		isActiveProgramAdmin: func(_ context.Context, programID, userID string) (bool, error) {
-			checked = programID + "/" + userID
-			return userID == "creator", nil
-		},
-	})
-
-	for userID, want := range map[string]int{"creator": http.StatusOK, "stranger": http.StatusNotFound} {
-		r := httptest.NewRequest(http.MethodGet, "/v1/programs/resolve/my-draft", nil)
-		r = requestWithChiParam(r, "id", "my-draft")
-		r = r.WithContext(auth.ContextWithPrincipal(r.Context(), &models.Principal{UserID: userID, Username: userID}))
-		w := httptest.NewRecorder()
-		h.ResolveID(w, r)
-		if w.Code != want {
-			t.Errorf("%s: got %d; want %d", userID, w.Code, want)
-		}
-		if checked != "draft-uuid/"+userID {
-			t.Errorf("%s: admin check = %q; want the resolved program UID", userID, checked)
-		}
-	}
-}
-
-func TestProgramHandler_ResolveID_AdminLookupErrorPropagates(t *testing.T) {
-	h := handler.NewProgramHandler(&stubProgramSvc{
-		getBySlug: func(_ context.Context, slug string) (*models.Program, error) {
-			return &models.Program{ID: "draft-uuid", Slug: slug, Status: models.ProgramStatusSubmitted}, nil
-		},
-		isActiveProgramAdmin: func(context.Context, string, string) (bool, error) {
-			return false, errors.New("db down")
+			return &models.Program{ID: "draft-uuid", Slug: slug, Status: models.ProgramStatusDraft, LFID: &owner}, nil
 		},
 	})
 	r := httptest.NewRequest(http.MethodGet, "/v1/programs/resolve/my-draft", nil)
 	r = requestWithChiParam(r, "id", "my-draft")
-	r = r.WithContext(auth.ContextWithPrincipal(r.Context(), &models.Principal{UserID: "creator"}))
+	r = r.WithContext(auth.ContextWithPrincipal(r.Context(), &models.Principal{UserID: "someone", Username: "someone"}))
 	w := httptest.NewRecorder()
 	h.ResolveID(w, r)
-	if w.Code != http.StatusInternalServerError {
-		t.Fatalf("got %d; want 500", w.Code)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("got %d; want 404", w.Code)
 	}
 }
 

@@ -84,7 +84,7 @@ func TestRelayRunOnceRetriesPublishFailure(t *testing.T) {
 	}
 }
 
-func TestRelayRunOnceRetriesWhenIndexerHasNoResponders(t *testing.T) {
+func TestRelayRunOnceRetriesWhenPublishIsNotAcknowledged(t *testing.T) {
 	outbox := &outboxStub{records: []domain.IndexOutboxRecord{{ID: "1", ObjectType: "mentorship_program", Action: "updated"}}, markSentAcknowledged: true, markRetryAcknowledged: true}
 	err := NewRelay(outbox, &publisherStub{err: nats.ErrNoResponders}, 1, testToken).RunOnce(context.Background())
 	if !errors.Is(err, nats.ErrNoResponders) || outbox.retried != "1" || outbox.sent != "" {

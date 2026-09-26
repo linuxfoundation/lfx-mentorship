@@ -23,7 +23,7 @@ For the detailed relation model and route-by-route decisions, see the
 | Shared-gateway HTTPRoute and Middleware | **Implemented in chart** | Rendered successfully with live-shaped dev values; environment activation is pending |
 | FGA transactional outbox | **Implemented and tested** | Generation-guarded claim, retry, acknowledgement, and dead-letter behavior |
 | FGA NATS/JetStream relay | **Implemented and dev-validated** | A program marker was acknowledged and its tuple was verified in the live `lfx-core` store |
-| Index relay authentication and retry | **Implemented and tested** | Service-token stamping, indexer `OK` acknowledgement, delayed single-count retries, generation guards, and relay metrics |
+| Index relay authentication and retry | **Implemented and tested** | Service-token stamping, JetStream publish acknowledgement, delayed single-count retries, generation guards, and relay metrics |
 | Program/application/task tuple lifecycle | **Implemented** | Full-state updates, precise membership changes, and hard-delete messages use fga-sync subjects |
 | Approver-team membership lifecycle | **Partially implemented** | PostgreSQL storage and precise markers exist; administration stays off the gateway until a platform staff relation is approved |
 | Initial FGA and index seeding | **Implemented in importer** | Environment seed still needs to be run after all reported data gaps are resolved or quarantined |
@@ -248,8 +248,9 @@ required components must be present.
 
 The index relay shares `FGA_NATS_URL` and stamps `INDEXER_SERVICE_TOKEN` over the
 redacted stored authorization placeholder, as lfx-v2-campaign-service does. It
-sends each record as a NATS request and marks it sent only on the indexer's
-`OK` reply. Client-supplied `x-on-behalf-of` metadata is discarded; index
+marks a record sent once JetStream acknowledges the publish; the indexer
+consumes a durable stream and NAKs messages it fails to process. Client-supplied
+`x-on-behalf-of` metadata is discarded; index
 records currently carry no actor attribution because the request metadata
 middleware runs before the validated Heimdall principal is available.
 
@@ -267,18 +268,13 @@ These are Helm values, not process environment variables:
 | `lfx.domain` | Environment domain used to form `lfx-api.{domain}` |
 | `traefik.gateway.name` | Shared gateway name |
 | `traefik.gateway.namespace` | Shared gateway namespace |
-| `networkPolicy.enabled` | `true`; restricts backend ingress to the gateway namespace. Required with `heimdall.enabled` |
-| `networkPolicy.gatewayNamespace` | Namespace of the Traefik pods, when it differs from `traefik.gateway.namespace` |
-| `networkPolicy.extraIngressFrom` | Extra `NetworkPolicyPeer` entries, such as the `/internal/metrics` scraper or the pre-cutover BFF |
 | `secretName` | Existing externally managed Kubernetes Secret |
 | `createPlaceholderSecret` | `false` outside local clusters |
 | `allowLocalAuthBypass` | Always `false` in deployed environments |
 
 The chart refuses partial Heimdall activation. JWT settings must be supplied as
-a complete trio; gateway/domain values, Middleware, OpenFGA gate, NetworkPolicy,
-and NATS must also be present. The NetworkPolicy matters because a request with
-no `Authorization` header is served as the gateway's anonymous principal, so any
-pod that could reach the Service directly would skip the RuleSet's checks.
+a complete trio; gateway/domain values, Middleware, OpenFGA gate, and NATS must
+also be present.
 
 ### Local-Only Authentication Bypass
 
