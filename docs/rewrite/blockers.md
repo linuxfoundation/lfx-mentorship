@@ -181,9 +181,9 @@ stale access.
 Before tuple emission is treated as complete:
 
 - Every program has a non-null canonical `project_uid`.
-- Every task has a non-null application parent.
-- `tasks.application_id` uses `NOT NULL` and `ON DELETE CASCADE` after orphan
-  repair.
+- Every task has a non-null application parent (enforced by migration 004;
+  parentless rows are held in `quarantined_tasks`).
+- `tasks.application_id` uses `NOT NULL` and `ON DELETE CASCADE`.
 - Every nested route verifies its child belongs to the path parent.
 - Every emitted object ID is a canonical UID, never a slug.
 - Every human principal used in a tuple resolves to an LFID.
@@ -256,7 +256,7 @@ across releases.
 2. The chart renders the intended Middleware, HTTPRoute, RuleSet, and relay
    configuration.
 3. The backend can validate a real Heimdall PS256 token from the cluster JWKS.
-4. NATS JetStream publish acknowledgements are observed.
+4. FGA and index relay JetStream publish acknowledgements are observed.
 5. The frontend/BFF points at the shared gateway URL and requests the gateway
    audience.
 6. Direct interim-host access is disabled or otherwise prevented at cutover.
