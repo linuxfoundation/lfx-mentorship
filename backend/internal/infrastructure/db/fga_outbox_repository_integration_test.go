@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
@@ -757,6 +758,16 @@ func TestProgramApplicationsIntegration_ReturnsTaskCounts(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].TasksTotal != 2 || rows[0].TasksSubmitted != 1 {
 		t.Fatalf("rows=%+v", rows)
+	}
+}
+
+func TestTaskIntegration_ApplicationParentIsRequired(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	_, err := pool.Exec(context.Background(), `INSERT INTO tasks (id, program_term_id, assignee_id, status) VALUES ('00000000-0000-0000-0000-000000000090', $1, $2, 'incomplete')`, fixture.OpenTerm, fixture.UserID)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23502" || pgErr.ColumnName != "application_id" {
+		t.Fatalf("insert without application: err=%v; want not_null_violation on application_id", err)
 	}
 }
 

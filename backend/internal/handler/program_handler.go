@@ -132,8 +132,27 @@ type programLookup interface {
 // enforces FR-009: a hidden program is a 404 for everyone but its owner. Every
 // public read of a program or of one of its sub-resources must go through
 // this, or a hidden program stays reachable to anyone holding its ID.
-func resolveVisibleProgram(w http.ResponseWriter, r *http.Request, svc programLookup, gatewayNonPublic ...bool) (*models.Program, bool) {
-	// On nested routes such as /programs/{programID}/terms/{id}, {id} names the child.
+func resolveVisibleProgram(w http.ResponseWriter, r *http.Request, svc programLookup) (*models.Program, bool) {
+	program, ok := lookupProgram(w, r, svc)
+	if !ok {
+		return nil, false
+	}
+	if program.Status != models.ProgramStatusPublished && program.Status != models.ProgramStatusDraft {
+		principal := auth.PrincipalFromContext(r.Context())
+		if auth.IsGatewayPrincipal(r.Context()) && principal != nil && principal.UserID != "_anonymous" {
+			return program, true
+		}
+		if !isProgramOwner(r, program) {
+			Error(w, domain.ErrProgramNotFound)
+			return nil, false
+		}
+	}
+	return program, true
+}
+
+// lookupProgram loads the program named by the {programID} path parameter, or
+// {id} on routes without one, which may be a UUID or a slug.
+func lookupProgram(w http.ResponseWriter, r *http.Request, svc programLookup) (*models.Program, bool) {
 	id := chi.URLParam(r, "programID")
 	if id == "" {
 		id = chi.URLParam(r, "id")
@@ -159,16 +178,6 @@ func resolveVisibleProgram(w http.ResponseWriter, r *http.Request, svc programLo
 		program, err = svc.GetBySlug(r.Context(), id)
 		if err != nil {
 			Error(w, err)
-			return nil, false
-		}
-	}
-	if program.Status != models.ProgramStatusPublished && program.Status != models.ProgramStatusDraft {
-		principal := auth.PrincipalFromContext(r.Context())
-		if (len(gatewayNonPublic) == 0 || gatewayNonPublic[0]) && auth.IsGatewayPrincipal(r.Context()) && principal != nil && principal.UserID != "_anonymous" {
-			return program, true
-		}
-		if !isProgramOwner(r, program) {
-			Error(w, domain.ErrProgramNotFound)
 			return nil, false
 		}
 	}
@@ -362,7 +371,7 @@ func (h *ProgramHandler) Decision(w http.ResponseWriter, r *http.Request) {
 // It resolves either a UUID or slug to the canonical program UUID. The route is
 // allow_all, so only published programs resolve for anyone but the owner.
 func (h *ProgramHandler) ResolveID(w http.ResponseWriter, r *http.Request) {
-	program, ok := resolveVisibleProgram(w, r, h.svc, false)
+	program, ok := lookupProgram(w, r, h.svc)
 	if !ok {
 		return
 	}

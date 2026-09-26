@@ -980,7 +980,7 @@ Fetch a program by UUID or slug.
 
 Resolve a program UUID or slug to the canonical program UUID.
 
-> Hidden program visibility matches `GET /v1/programs/{id}`: non-owners receive `404`.
+> Only `published` programs resolve, except for the program's LFID owner; everyone else receives `404`.
 
 **Response** `200`
 ```json
@@ -2182,10 +2182,7 @@ class ApiError extends Error {
 | `FGA_RELAY_INTERVAL` | No | `1s` | Relay polling interval |
 | `FGA_RELAY_RETRY_DELAY` | No | `1m` | FGA retry delay |
 | `FGA_RELAY_MAX_ATTEMPTS` | No | `10` | FGA attempts before dead letter |
-| `FGA_INDEXER_TOKEN_URL` | Required with `FGA_NATS_URL` | — | Indexer M2M token endpoint |
-| `FGA_INDEXER_AUDIENCE` | Required with `FGA_NATS_URL` | — | Indexer M2M audience |
-| `FGA_INDEXER_SCOPE` | No | `access:query` | Indexer M2M scope |
-| `INDEXER_CLIENT_ID`, `INDEXER_CLIENT_SECRET` | Required with `FGA_NATS_URL` | — | Indexer M2M credentials |
+| `INDEXER_SERVICE_TOKEN` | No | — | Service credential stamped on index messages; secret value |
 | `INDEX_RELAY_RETRY_DELAY` | No | `1m` | Index publish retry delay |
 | `INDEX_RELAY_MAX_ATTEMPTS` | No | `10` | Index attempts before dead letter |
 | `MENTOR_INVITE_SECRET` | Yes | — | HMAC secret for mentor invite tokens |
@@ -2193,7 +2190,6 @@ class ApiError extends Error {
 | `ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS` | No | `false` | Enable local dev JWT bypass |
 | `DISABLED_MOCK_LOCAL_PRINCIPAL` | No | — | Static user ID for bypass mode |
 
-For an environment upgrade, provision the indexer client ID and secret through
-Secrets Manager before enabling the relay. The token URL, audience, scope, and
-client credentials must describe the same M2M application; missing credentials
-fail startup validation rather than producing unauthenticated index publishes.
+Provision `INDEXER_SERVICE_TOKEN` in the backend Secret through Secrets Manager.
+Without it the index relay idles and leaves outbox rows pending rather than
+publishing messages the indexer would drop.

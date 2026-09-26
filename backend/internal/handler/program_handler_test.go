@@ -451,6 +451,23 @@ func TestProgramHandler_ResolveID_DraftReturns404ToAnonymous(t *testing.T) {
 	}
 }
 
+func TestProgramHandler_ResolveID_DraftReturns404ToAuthenticatedNonOwner(t *testing.T) {
+	owner := "owner"
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		getBySlug: func(_ context.Context, slug string) (*models.Program, error) {
+			return &models.Program{ID: "draft-uuid", Slug: slug, Status: models.ProgramStatusDraft, LFID: &owner}, nil
+		},
+	})
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/resolve/my-draft", nil)
+	r = requestWithChiParam(r, "id", "my-draft")
+	r = r.WithContext(auth.ContextWithPrincipal(r.Context(), &models.Principal{UserID: "someone", Username: "someone"}))
+	w := httptest.NewRecorder()
+	h.ResolveID(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("got %d; want 404", w.Code)
+	}
+}
+
 func TestProgramHandler_ResolveID_DraftResolvesForOwner(t *testing.T) {
 	owner := "owner"
 	h := handler.NewProgramHandler(&stubProgramSvc{
