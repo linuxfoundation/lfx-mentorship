@@ -114,37 +114,6 @@ func (h *ApplicationHandler) ListByProgramTerm(w http.ResponseWriter, r *http.Re
 	JSON(w, http.StatusOK, map[string]any{"data": apps, "meta": meta})
 }
 
-// ListByUser handles GET /v1/users/{userId}/applications — requires JWT.
-func (h *ApplicationHandler) ListByUser(w http.ResponseWriter, r *http.Request) {
-	principal := auth.PrincipalFromContext(r.Context())
-	if principal == nil {
-		Error(w, domain.ErrUnauthorized)
-		return
-	}
-
-	userID := chi.URLParam(r, "userId")
-	// Principle VII-1: reject IDOR — callers may only list their own applications.
-	if userID != principal.UserID {
-		Error(w, domain.ErrForbidden)
-		return
-	}
-	limit, offset, ok := parsePaginationParams(w, r)
-	if !ok {
-		return
-	}
-	apps, meta, err := h.svc.ListByUser(r.Context(), userID, models.ApplicationFilter{
-		Limit:  limit,
-		Offset: offset,
-		Status: r.URL.Query().Get("status"),
-		Role:   r.URL.Query().Get("role"),
-	})
-	if err != nil {
-		Error(w, err)
-		return
-	}
-	JSON(w, http.StatusOK, map[string]any{"data": apps, "meta": meta})
-}
-
 // ListByMe handles GET /v1/me/applications — requires JWT.
 func (h *ApplicationHandler) ListByMe(w http.ResponseWriter, r *http.Request) {
 	principal := auth.PrincipalFromContext(r.Context())
@@ -384,7 +353,9 @@ func (h *ApplicationHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &input) {
 		return
 	}
-	if input.Status != nil || input.TasksSubmitted != nil || input.AdminNotified != nil || input.Evaluation != nil || input.ReviewerNote != nil {
+	// The route admits the applicant, so it carries applicant-supplied content only.
+	if input.Status != nil || input.TasksSubmitted != nil || input.AdminNotified != nil || input.Evaluation != nil || input.ReviewerNote != nil ||
+		input.AttendanceType != nil || input.ProgramTermStatus != nil {
 		Error(w, fmt.Errorf("%w: protected application fields are handled by dedicated routes", domain.ErrInvalidInput))
 		return
 	}

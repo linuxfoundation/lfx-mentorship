@@ -631,6 +631,22 @@ func TestProgramTermDeleteIntegration_BlocksWhenApplicationsExist(t *testing.T) 
 	}
 }
 
+func TestProgramTermListIntegration_ExcludesDeletedTerms(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `UPDATE program_terms SET status = 'deleted' WHERE id = $1`, fixture.ClosedTerm); err != nil {
+		t.Fatal(err)
+	}
+	terms, meta, err := NewProgramTermRepository(pool).ListByProgram(ctx, fixture.ProgramID, models.ProgramTermFilter{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Total != 1 || len(terms) != 1 || terms[0].ID != fixture.OpenTerm {
+		t.Fatalf("terms=%v total=%d; want only the open term", terms, meta.Total)
+	}
+}
+
 func TestUserProfileCreateAndUpsertOnExistingProfile(t *testing.T) {
 	pool := integrationPool(t)
 	fixture := seedIntegrationFixture(t, pool)

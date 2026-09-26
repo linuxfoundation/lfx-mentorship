@@ -138,40 +138,33 @@ func newApplicationHandler(svc *stubApplicationSvc, termSvc ...*stubProgramTermS
 	return handler.NewApplicationHandler(svc)
 }
 
-// ── ListByUser ────────────────────────────────────────────────────────────────
+// ── ListByMe ──────────────────────────────────────────────────────────────────
 
-func TestApplicationHandler_ListByUser_NoPrincipal_Returns401(t *testing.T) {
-	h := newApplicationHandler(&stubApplicationSvc{})
-	r := httptest.NewRequest(http.MethodGet, "/users/user-1/applications", nil)
-	r = requestWithChiParam(r, "userId", "user-1")
-	w := httptest.NewRecorder()
-	h.ListByUser(w, r)
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("got %d; want 401", w.Code)
-	}
-}
-
-func TestApplicationHandler_ListByUser_IDOR_Returns403(t *testing.T) {
-	h := newApplicationHandler(&stubApplicationSvc{})
-	r := httptest.NewRequest(http.MethodGet, "/users/other-user/applications", nil)
-	r = requestWithPrincipal(r, "caller-user")
-	r = requestWithChiParam(r, "userId", "other-user") // different from principal
-	w := httptest.NewRecorder()
-	h.ListByUser(w, r)
-	if w.Code != http.StatusForbidden {
-		t.Errorf("got %d; want 403 (IDOR prevention)", w.Code)
-	}
-}
-
-func TestApplicationHandler_ListByUser_OwnData_Returns200(t *testing.T) {
-	h := newApplicationHandler(&stubApplicationSvc{})
-	r := httptest.NewRequest(http.MethodGet, "/users/user-1/applications", nil)
-	r = requestWithPrincipal(r, "user-1")
-	r = requestWithChiParam(r, "userId", "user-1") // same as principal
-	w := httptest.NewRecorder()
-	h.ListByUser(w, r)
-	if w.Code != http.StatusOK {
-		t.Errorf("got %d; want 200", w.Code)
+func TestApplicationHandler_Update_RejectsReviewerAndSystemFields(t *testing.T) {
+	h := newApplicationHandler(&stubApplicationSvc{
+		update: func(context.Context, string, models.ApplicationUpdateInput) (*models.Application, error) {
+			t.Fatal("update must not run for a protected field")
+			return nil, nil
+		},
+	})
+	for _, body := range []string{
+		`{"status":"accepted"}`,
+		`{"attendance_type":"full_time"}`,
+		`{"program_term_status":"open"}`,
+		`{"tasks_submitted":true}`,
+		`{"admin_notified":true}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPatch, "/v1/applications/app-1", bytes.NewBufferString(body))
+			r.Header.Set("Content-Type", "application/json")
+			r = requestWithPrincipal(r, "applicant")
+			r = requestWithChiParam(r, "id", "app-1")
+			w := httptest.NewRecorder()
+			h.Update(w, r)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("got %d; want 400", w.Code)
+			}
+		})
 	}
 }
 
