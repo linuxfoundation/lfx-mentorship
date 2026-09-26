@@ -39,7 +39,10 @@ Key notes
   "accepted" — applications.status has no "active" value.
 - DynamoDB user-profile type for mentees maps to Postgres profile_type "mentee".
 - tasks.application_id is resolved post-scan by matching (program_term_id, assignee_id)
-  against inserted applications. Tasks with no match get application_id=NULL.
+  against inserted applications. Tasks with no match are written to
+  quarantined_tasks for repair; tasks.application_id is NOT NULL. A task that was
+  live from an earlier run is removed with FGA delete_access and index deleted
+  markers, so its tuples and search document are retracted.
 - All INSERTs use ON CONFLICT … DO UPDATE (idempotent; safe to re-run).
 
 Usage
@@ -1011,8 +1014,8 @@ def migrate_tasks(
     """Upsert tasks; resolve application_id via (program_term_id, assignee_id)."""
     log.info("Migrating tasks (%d rows) ...", len(tasks))
     rows = []
+    quarantined = []
     skipped = 0
-    unresolved = 0
     unresolved_tasks = []
 
     for t in tasks:
@@ -1039,7 +1042,6 @@ def migrate_tasks(
 
         application_id = application_index.get((term_id, assignee_id)) if term_id else None
         if not application_id:
-            unresolved += 1
             unresolved_tasks.append((tid, term_id, assignee_id))
 
         # term_id FK must exist
@@ -1060,34 +1062,33 @@ def migrate_tasks(
         raw_category = (t.get("category") or "").strip() or None
         category = raw_category if raw_category in _VALID_TASK_CATEGORIES else None
 
-        rows.append(
-            (
-                tid,
-                application_id,
-                resolved_term_id,
-                assignee_id,
-                owner_id,
-                (t.get("name") or "").strip() or None,
-                (t.get("description") or "").strip() or None,
-                category,
-                status,
-                (t.get("applicationStatus") or "").strip() or None,
-                (t.get("programTermStatus") or "").strip() or None,
-                _as_bool(t.get("custom")),
-                (t.get("submitFile") or "").strip() or None,
-                (t.get("file") or "").strip() or None,
-                due_date,
-                (t.get("createdBy") or "").strip() or None,
-                _parse_ts(t.get("createdOn")),
-                _parse_ts(t.get("updatedOn")),
-            )
+        row = (
+            tid,
+            application_id,
+            resolved_term_id,
+            assignee_id,
+            owner_id,
+            (t.get("name") or "").strip() or None,
+            (t.get("description") or "").strip() or None,
+            category,
+            status,
+            (t.get("applicationStatus") or "").strip() or None,
+            (t.get("programTermStatus") or "").strip() or None,
+            _as_bool(t.get("custom")),
+            (t.get("submitFile") or "").strip() or None,
+            (t.get("file") or "").strip() or None,
+            due_date,
+            (t.get("createdBy") or "").strip() or None,
+            _parse_ts(t.get("createdOn")),
+            _parse_ts(t.get("updatedOn")),
         )
+        (rows if application_id else quarantined).append(row)
 
-    if unresolved:
+    if unresolved_tasks:
         log.warning(
-            "%d tasks could not be linked to an application and will be "
-            "imported without an authorization parent",
-            unresolved,
+            "%d tasks could not be linked to an application and are "
+            "quarantined in quarantined_tasks for repair",
+            len(unresolved_tasks),
         )
         for task_id, program_term_id, assignee_id in unresolved_tasks:
             log.warning(
@@ -1097,40 +1098,85 @@ def migrate_tasks(
                 assignee_id,
             )
 
-    psycopg2.extras.execute_batch(
-        cur,
-        """
-        INSERT INTO tasks
-          (id, application_id, program_term_id, assignee_id, owner_id, name,
-           description, category, status, application_status, program_term_status,
-           custom, submit_file, file, due_date, created_by, created_on, updated_on)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-        ON CONFLICT (id) DO UPDATE SET
-          application_id      = EXCLUDED.application_id,
-          program_term_id     = EXCLUDED.program_term_id,
-          assignee_id         = EXCLUDED.assignee_id,
-          owner_id            = EXCLUDED.owner_id,
-          name                = EXCLUDED.name,
-          description         = EXCLUDED.description,
-          category            = EXCLUDED.category,
-          status              = EXCLUDED.status,
-          application_status  = EXCLUDED.application_status,
-          program_term_status = EXCLUDED.program_term_status,
-          custom              = EXCLUDED.custom,
-          submit_file         = EXCLUDED.submit_file,
-          file                = EXCLUDED.file,
-          due_date            = EXCLUDED.due_date,
-          created_by          = EXCLUDED.created_by,
-          updated_on          = EXCLUDED.updated_on
-        """,
-        rows,
-        page_size=500,
+    columns = (
+        "id, application_id, program_term_id, assignee_id, owner_id, name, "
+        "description, category, status, application_status, program_term_status, "
+        "custom, submit_file, file, due_date, created_by, created_on, updated_on"
+    )
+    updates = ",\n          ".join(
+        f"{column} = EXCLUDED.{column}"
+        for column in (name.strip() for name in columns.split(","))
+        if column not in ("id", "created_on")
+    )
+    placeholders = ",".join(["%s"] * len(columns.split(",")))
+    if rows:
+        psycopg2.extras.execute_batch(
+            cur,
+            f"""
+            INSERT INTO tasks ({columns})
+            VALUES ({placeholders})
+            ON CONFLICT (id) DO UPDATE SET
+              {updates}
+            """,
+            rows,
+            page_size=500,
+        )
+    if quarantined:
+        # A task imported live earlier was already published, so retract it through both relays.
+        cur.execute(
+            """
+            WITH removed AS (
+                DELETE FROM tasks WHERE id = ANY(%s::uuid[]) RETURNING id
+            ), fga AS (
+                INSERT INTO fga_outbox (marker_kind, object_type, object_uid, desired_operation)
+                SELECT 'object', 'mentorship_task', id::text, 'delete_access' FROM removed
+                ON CONFLICT (object_type, object_uid) WHERE marker_kind = 'object'
+                DO UPDATE SET desired_operation = EXCLUDED.desired_operation,
+                              generation = fga_outbox.generation + 1,
+                              state = CASE WHEN fga_outbox.state = 'in_flight' THEN 'in_flight' ELSE 'pending' END,
+                              claimed_generation = CASE WHEN fga_outbox.state = 'in_flight' THEN fga_outbox.claimed_generation ELSE NULL END,
+                              claimed_at = CASE WHEN fga_outbox.state = 'in_flight' THEN fga_outbox.claimed_at ELSE NULL END,
+                              attempts = 0, next_attempt_at = NOW(), last_error = NULL,
+                              updated_on = NOW()
+            )
+            INSERT INTO index_outbox (object_type, object_uid, action, headers)
+            SELECT 'mentorship_task', id, 'deleted', '{}'::jsonb FROM removed
+            ON CONFLICT (object_type, object_uid) DO UPDATE SET
+                action = 'deleted',
+                headers = EXCLUDED.headers,
+                data = NULL,
+                indexing_config = NULL,
+                generation = index_outbox.generation + 1,
+                state = CASE WHEN index_outbox.state = 'in_flight' THEN 'in_flight' ELSE 'pending' END,
+                claimed_generation = CASE WHEN index_outbox.state = 'in_flight' THEN index_outbox.claimed_generation ELSE NULL END,
+                claimed_at = CASE WHEN index_outbox.state = 'in_flight' THEN index_outbox.claimed_at ELSE NULL END,
+                attempts = 0,
+                next_attempt_at = NOW(),
+                sent_on = NULL
+            """,
+            ([row[0] for row in quarantined],),
+        )
+        psycopg2.extras.execute_batch(
+            cur,
+            f"""
+            INSERT INTO quarantined_tasks ({columns}, quarantine_reason)
+            VALUES ({placeholders}, 'missing application_id')
+            ON CONFLICT (id) DO UPDATE SET
+              {updates},
+              quarantined_on = NOW()
+            """,
+            quarantined,
+            page_size=500,
+        )
+    # A task that now has a parent in tasks is never also held in quarantine.
+    cur.execute(
+        "DELETE FROM quarantined_tasks USING tasks WHERE quarantined_tasks.id = tasks.id"
     )
     log.info(
-        "  → %d tasks upserted, %d skipped, %d with unresolved application_id",
+        "  → %d tasks upserted, %d skipped, %d quarantined without an application",
         len(rows),
         skipped,
-        unresolved,
+        len(quarantined),
     )
 
 
