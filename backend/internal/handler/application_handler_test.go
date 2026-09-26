@@ -225,17 +225,20 @@ func TestApplicationHandler_BulkDeclineByTerm_NoPrincipal_Returns401(t *testing.
 func TestApplicationHandler_Create_UserIDBoundToPrincipal(t *testing.T) {
 	// Attacker tries to submit on behalf of "victim-user" by setting user_id in body.
 	var capturedUserID string
+	var capturedAttendance *models.AttendanceType
 	svc := &stubApplicationSvc{
 		create: func(_ context.Context, _ string, in models.ApplicationCreateInput) (*models.Application, error) {
 			capturedUserID = in.UserID
+			capturedAttendance = in.AttendanceType
 			return &models.Application{UserID: in.UserID, Role: in.Role, Status: "pending"}, nil
 		},
 	}
 	h := newApplicationHandler(svc)
 
 	body, _ := json.Marshal(map[string]string{
-		"user_id": "victim-user", // attacker sets a foreign user_id
-		"role":    "mentee",
+		"user_id":         "victim-user", // attacker sets a foreign user_id
+		"role":            "mentee",
+		"attendance_type": "full_time",
 	})
 	r := httptest.NewRequest(http.MethodPost, "/program-terms/term-1/applications", bytes.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
@@ -251,6 +254,9 @@ func TestApplicationHandler_Create_UserIDBoundToPrincipal(t *testing.T) {
 	// The principal's ID must always win, regardless of what the body said.
 	if capturedUserID != "caller-user" {
 		t.Errorf("service received UserID=%q; want %q (principal binding)", capturedUserID, "caller-user")
+	}
+	if capturedAttendance != nil {
+		t.Errorf("service received AttendanceType=%q; want nil (admin sets it on acceptance)", *capturedAttendance)
 	}
 }
 

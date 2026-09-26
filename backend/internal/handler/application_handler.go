@@ -331,6 +331,8 @@ func (h *ApplicationHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	// Principle VII-2: bind ownership to the authenticated principal, not the request body.
 	input.UserID = principal.UserID
+	// Attendance type is an admin decision made on acceptance.
+	input.AttendanceType = nil
 
 	app, err := h.svc.Create(r.Context(), programTermID, input)
 	if err != nil {

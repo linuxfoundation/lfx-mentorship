@@ -1215,7 +1215,7 @@ The `discovery_label` field is **computed on read** and not stored in the databa
 
 | Parameter | Values | Description |
 |---|---|---|
-| `status` | `open\|closed\|deleted` | Filter by status |
+| `status` | `open\|closed` | Filter by status; any other value returns `400`. Deleted terms are never listed |
 | `limit` / `offset` | — | Pagination |
 
 **Response** `200`
@@ -1547,6 +1547,9 @@ Submit an application to a term.
   "role":    "mentee"    // required; "mentor" | "mentee"
 }
 ```
+
+`user_id` is always taken from the caller, and `attendance_type` is ignored; a
+Program Admin sets it on acceptance.
 
 **Response** `201` → `<Application>`  
 **Errors** `400`, `401`, `409` (duplicate / blocked reapplication), `422` (window closed, term not open)
