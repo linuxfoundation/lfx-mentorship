@@ -60,12 +60,15 @@ func (s *ProgramTermService) GetByProgramAndID(ctx context.Context, programID, i
 	return t, nil
 }
 
-// ListByProgram returns paginated terms for a program.
+// ListByProgram returns paginated, non-deleted terms for a program.
 func (s *ProgramTermService) ListByProgram(ctx context.Context, programID string, filter models.ProgramTermFilter) ([]*models.ProgramTerm, *models.PaginationMeta, error) {
 	ctx, span := programTermSvcTracer.Start(ctx, "ProgramTermService.ListByProgram")
 	defer span.End()
 	span.SetAttributes(attribute.String("program.id", programID))
 
+	if status := models.ProgramTermStatus(filter.Status); status != "" && (!status.IsValid() || status == models.ProgramTermStatusDeleted) {
+		return nil, nil, fmt.Errorf("%w: status must be open or closed", domain.ErrInvalidInput)
+	}
 	terms, meta, err := s.repo.ListByProgram(ctx, programID, filter)
 	if err != nil {
 		span.RecordError(err)

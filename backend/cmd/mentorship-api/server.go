@@ -129,7 +129,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	userH := handler.NewUserHandler(userSvc)
 	userProfileH := handler.NewUserProfileHandler(userProfileSvc)
 	programH := handler.NewProgramHandler(programSvc)
-	programTermH := handler.NewProgramTermHandler(programTermSvc)
+	programTermH := handler.NewProgramTermHandler(programTermSvc, programSvc)
 	programMemberH := handler.NewProgramMemberHandler(programMemberSvc, programSvc)
 	applicationH := handler.NewApplicationHandler(applicationSvc, programTermSvc)
 	taskH := handler.NewTaskHandler(taskSvc, programTermSvc)
