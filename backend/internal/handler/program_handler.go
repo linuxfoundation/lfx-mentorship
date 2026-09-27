@@ -127,11 +127,11 @@ type programLookup interface {
 	GetBySlug(ctx context.Context, slug string) (*models.Program, error)
 }
 
-// resolveVisibleProgram loads the program named by the {id} path parameter,
-// which may be a UUID or a slug, and enforces FR-009: a hidden program is a
-// 404 for everyone but its owner. Every public read of a program or of one of
-// its sub-resources must go through this, or a hidden program stays reachable
-// to anyone holding its ID.
+// resolveVisibleProgram loads the program named by the {programID} path
+// parameter, or {id} on routes without one, which may be a UUID or a slug, and
+// enforces FR-009: a hidden program is a 404 for everyone but its owner. Every
+// public read of a program or of one of its sub-resources must go through
+// this, or a hidden program stays reachable to anyone holding its ID.
 func resolveVisibleProgram(w http.ResponseWriter, r *http.Request, svc programLookup) (*models.Program, bool) {
 	program, ok := lookupProgram(w, r, svc)
 	if !ok {
@@ -150,9 +150,13 @@ func resolveVisibleProgram(w http.ResponseWriter, r *http.Request, svc programLo
 	return program, true
 }
 
-// lookupProgram loads the program named by the {id} path parameter, which may be a UUID or a slug.
+// lookupProgram loads the program named by the {programID} path parameter, or
+// {id} on routes without one, which may be a UUID or a slug.
 func lookupProgram(w http.ResponseWriter, r *http.Request, svc programLookup) (*models.Program, bool) {
-	id := chi.URLParam(r, "id")
+	id := chi.URLParam(r, "programID")
+	if id == "" {
+		id = chi.URLParam(r, "id")
+	}
 	var (
 		program *models.Program
 		err     error
@@ -297,7 +301,11 @@ func (h *ProgramHandler) GetManagementSummary(w http.ResponseWriter, r *http.Req
 }
 
 func (h *ProgramHandler) GetHeaderProjection(w http.ResponseWriter, r *http.Request) {
-	projection, err := h.svc.GetHeaderProjection(r.Context(), chi.URLParam(r, "id"))
+	program, ok := resolveVisibleProgram(w, r, h.svc)
+	if !ok {
+		return
+	}
+	projection, err := h.svc.GetHeaderProjection(r.Context(), program.ID)
 	if err != nil {
 		Error(w, err)
 		return
@@ -486,8 +494,11 @@ func (h *ProgramHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 // ListSkills handles GET /v1/programs/{id}/skills.
 func (h *ProgramHandler) ListSkills(w http.ResponseWriter, r *http.Request) {
-	programID := chi.URLParam(r, "id")
-	skills, err := h.svc.ListSkills(r.Context(), programID)
+	program, ok := resolveVisibleProgram(w, r, h.svc)
+	if !ok {
+		return
+	}
+	skills, err := h.svc.ListSkills(r.Context(), program.ID)
 	if err != nil {
 		Error(w, err)
 		return
@@ -535,8 +546,11 @@ func (h *ProgramHandler) DeleteSkill(w http.ResponseWriter, r *http.Request) {
 
 // GetFundingStats handles GET /v1/programs/{id}/funding-stats.
 func (h *ProgramHandler) GetFundingStats(w http.ResponseWriter, r *http.Request) {
-	programID := chi.URLParam(r, "id")
-	stats, err := h.svc.GetFundingStats(r.Context(), programID)
+	program, ok := resolveVisibleProgram(w, r, h.svc)
+	if !ok {
+		return
+	}
+	stats, err := h.svc.GetFundingStats(r.Context(), program.ID)
 	if err != nil {
 		Error(w, err)
 		return

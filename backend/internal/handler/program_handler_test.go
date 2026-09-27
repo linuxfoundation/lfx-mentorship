@@ -610,6 +610,35 @@ func TestProgramHandler_GetProgramSponsors_HiddenReturns404(t *testing.T) {
 	}
 }
 
+func TestProgramHandler_PublicSubResources_HiddenReturns404(t *testing.T) {
+	lfid := "owner"
+	svc := &stubProgramSvc{
+		getBySlug: func(_ context.Context, id string) (*models.Program, error) {
+			return &models.Program{ID: id, Slug: id, Status: models.ProgramStatusHidden, LFID: &lfid}, nil
+		},
+		listSkills: func(context.Context, string) ([]*models.ProgramSkill, error) {
+			t.Fatal("skills must not be read for a hidden program")
+			return nil, nil
+		},
+	}
+	h := handler.NewProgramHandler(svc)
+	for name, serve := range map[string]http.HandlerFunc{
+		"skills":        h.ListSkills,
+		"funding-stats": h.GetFundingStats,
+		"header":        h.GetHeaderProjection,
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "/v1/programs/p1/"+name, nil)
+			r = requestWithChiParam(r, "id", "p1")
+			w := httptest.NewRecorder()
+			serve(w, r)
+			if w.Code != http.StatusNotFound {
+				t.Fatalf("got %d; want 404", w.Code)
+			}
+		})
+	}
+}
+
 func TestProgramHandler_DeleteSkill_RejectsSkillOutsideProgram(t *testing.T) {
 	deleteCalled := false
 	h := handler.NewProgramHandler(&stubProgramSvc{

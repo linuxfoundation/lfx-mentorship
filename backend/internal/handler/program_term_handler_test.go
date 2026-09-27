@@ -63,7 +63,7 @@ func TestProgramTermHandler_GetByID_UsesProgramScope(t *testing.T) {
 			gotTermID = termID
 			return &models.ProgramTerm{ID: termID, ProgramID: programID, Name: "Spring", CreatedOn: time.Now()}, nil
 		},
-	})
+	}, &stubProgramSvc{})
 
 	r := httptest.NewRequest(http.MethodGet, "/v1/programs/prog-1/terms/term-1", nil)
 	rctx := chi.NewRouteContext()
@@ -79,5 +79,58 @@ func TestProgramTermHandler_GetByID_UsesProgramScope(t *testing.T) {
 	}
 	if gotProgramID != "prog-1" || gotTermID != "term-1" {
 		t.Fatalf("wrong scope: got program=%q term=%q", gotProgramID, gotTermID)
+	}
+}
+
+func TestProgramTermHandler_GetByID_DeletedTermReturns404(t *testing.T) {
+	h := handler.NewProgramTermHandler(&stubProgramTermSvc{
+		getByProgramAndID: func(_ context.Context, programID, termID string) (*models.ProgramTerm, error) {
+			return &models.ProgramTerm{ID: termID, ProgramID: programID, Status: models.ProgramTermStatusDeleted}, nil
+		},
+	}, &stubProgramSvc{})
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/prog-1/terms/term-1", nil)
+	r = requestWithChiParam(r, "programID", "prog-1")
+	r = requestWithChiParam(r, "termID", "term-1")
+	w := httptest.NewRecorder()
+	h.GetByID(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("got %d; want 404", w.Code)
+	}
+}
+
+func TestProgramTermHandler_PublicReads_HiddenProgramReturns404(t *testing.T) {
+	lfid := "owner"
+	programs := &stubProgramSvc{
+		getBySlug: func(_ context.Context, id string) (*models.Program, error) {
+			return &models.Program{ID: id, Slug: id, Status: models.ProgramStatusHidden, LFID: &lfid}, nil
+		},
+	}
+	h := handler.NewProgramTermHandler(&stubProgramTermSvc{
+		getByProgramAndID: func(context.Context, string, string) (*models.ProgramTerm, error) {
+			t.Fatal("term must not be read for a hidden program")
+			return nil, nil
+		},
+	}, programs)
+
+	list := httptest.NewRequest(http.MethodGet, "/v1/programs/prog-1/terms", nil)
+	list = requestWithChiParam(list, "id", "prog-1")
+	get := httptest.NewRequest(http.MethodGet, "/v1/programs/prog-1/terms/term-1", nil)
+	get = requestWithChiParam(get, "programID", "prog-1")
+	get = requestWithChiParam(get, "termID", "term-1")
+
+	for name, tc := range map[string]struct {
+		serve http.HandlerFunc
+		req   *http.Request
+	}{
+		"list": {h.ListByProgram, list},
+		"get":  {h.GetByID, get},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			tc.serve(w, tc.req)
+			if w.Code != http.StatusNotFound {
+				t.Fatalf("got %d; want 404", w.Code)
+			}
+		})
 	}
 }

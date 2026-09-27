@@ -1215,7 +1215,7 @@ The `discovery_label` field is **computed on read** and not stored in the databa
 
 | Parameter | Values | Description |
 |---|---|---|
-| `status` | `open\|closed\|deleted` | Filter by status |
+| `status` | `open\|closed` | Filter by status; any other value returns `400`. Deleted terms are never listed |
 | `limit` / `offset` | — | Pagination |
 
 **Response** `200`
@@ -1548,6 +1548,9 @@ Submit an application to a term.
 }
 ```
 
+`user_id` is always taken from the caller, and `attendance_type` is ignored; a
+Program Admin sets it on acceptance.
+
 **Response** `201` → `<Application>`  
 **Errors** `400`, `401`, `409` (duplicate / blocked reapplication), `422` (window closed, term not open)
 
@@ -1555,30 +1558,25 @@ Submit an application to a term.
 
 #### `PATCH /v1/applications/{id}` 🔒
 
-Transition an application's status or update fields.
+Update applicant-supplied application content. The gateway admits the applicant
+and Program Admins (`writer` on the application).
 
 **Request body** (all optional)
 ```json
 {
-  "status":          "accepted",
-  "attendance_type": "full_time",
   "start_date_time": "2026-03-01T00:00:00Z",
   "end_date_time":   "2026-06-30T23:59:59Z"
 }
 ```
 
-**Key rules**:
-
-| Transition | Rule |
-|---|---|
-| Any status → `accepted` | `attendance_type` must be supplied (`full_time` or `part_time`) |
-| `pending` → `withdrawn` | Only the applicant (`actor_id == user_id`) may self-withdraw |
-| All others | Enforced by state machine; invalid transitions return `409` |
-
-When status is set to `accepted`, `NotifyMenteeAccepted` is triggered.
+`status`, `attendance_type`, `program_term_status`, `tasks_submitted`,
+`admin_notified`, `evaluation` and `reviewer_note` are rejected with `400`.
+Status and attendance type change through `PATCH /v1/applications/{id}/status`;
+withdrawal, evaluation and the reviewer note have their own routes; the rest are
+maintained by the service.
 
 **Response** `200` → `<Application>`  
-**Errors** `400`, `401`, `403` (wrong actor for withdrawal), `404`, `409`
+**Errors** `400`, `401`, `404`
 
 ---
 
