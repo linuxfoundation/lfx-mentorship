@@ -70,6 +70,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # A migration on main has already run on dev (CLAUDE.md, Deployment).
+      # HEAD is the PR merge commit, so this diff is exactly the PR's changes.
+      - name: Check merged migrations are unchanged
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          changed=$(git diff --name-status --diff-filter=MDR "$BASE_SHA" HEAD -- 'backend/db/migrations/*.sql')
+          if [ -n "$changed" ]; then
+            echo "Migrations already on main were changed; add a new numbered migration instead:"
+            echo "$changed"
+            exit 1
+          fi
+
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
