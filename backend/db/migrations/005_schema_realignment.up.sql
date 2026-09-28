@@ -74,6 +74,12 @@ ALTER TABLE index_outbox
   ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   ADD COLUMN IF NOT EXISTS last_error TEXT;
 
+-- The pre-#175 relay set in_flight without recording a claim. The current
+-- relay recovers stale claims by claimed_at, so these rows would never be sent.
+UPDATE index_outbox
+SET state = 'pending'
+WHERE state = 'in_flight' AND claimed_at IS NULL;
+
 -- The outbox holds one row per object; older rows for the same object are
 -- superseded by the newest.
 DELETE FROM index_outbox AS stale
