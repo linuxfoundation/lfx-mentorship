@@ -10,10 +10,10 @@ Proposal-level plan, modeled on the Crowdfunding cutover ([lfx-crowdfunding/back
 
 ## Development migration
 
-Development and deployed environments apply migration 003 normally through the
-Helm migration hook after versions 001 and 002. A schema reset is only a local
-fallback for disposable databases; do not use it against an environment with
-data. For a reset, export the database, recreate the Mentorship schema, run
+Development and deployed environments apply the migrations in
+`backend/db/migrations` through the Helm migration hook. A schema reset is only
+a local fallback for disposable databases; do not use it against an environment
+with data. For a reset, export the database, recreate the Mentorship schema, run
 `cmd/migrate`, and re-import through the migration scripts.
 
 ## Data volume & risk

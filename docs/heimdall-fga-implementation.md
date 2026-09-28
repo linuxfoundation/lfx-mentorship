@@ -424,7 +424,7 @@ Not yet validated end to end:
 
 - [ ] Resolve every missing program `project_uid` or explicitly quarantine the
   program from gateway-backed workflows.
-- [ ] Repair or accept the tasks migration 004 moves into `quarantined_tasks`.
+- [ ] Repair or accept the tasks the import moves into `quarantined_tasks`.
 - [ ] Resolve all missing LFIDs reported for members, applicants, assignees, and
   approvers.
 - [ ] Resolve historical ambiguous mentor rows; do not turn pending invitations

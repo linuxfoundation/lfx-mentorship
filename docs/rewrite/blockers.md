@@ -181,8 +181,8 @@ stale access.
 Before tuple emission is treated as complete:
 
 - Every program has a non-null canonical `project_uid`.
-- Every task has a non-null application parent (enforced by migration 004;
-  parentless rows are held in `quarantined_tasks`).
+- Every task has a non-null application parent (enforced by the schema; the
+  import holds parentless rows in `quarantined_tasks`).
 - `tasks.application_id` uses `NOT NULL` and `ON DELETE CASCADE`.
 - Every nested route verifies its child belongs to the path parent.
 - Every emitted object ID is a canonical UID, never a slug.
