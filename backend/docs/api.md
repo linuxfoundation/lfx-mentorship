@@ -1543,13 +1543,12 @@ Submit an application to a term.
 **Request body**
 ```json
 {
-  "user_id": "uuid",     // required
-  "role":    "mentee"    // required; "mentor" | "mentee"
+  "role": "mentee"    // required; "mentor" | "mentee"
 }
 ```
 
-`user_id` is always taken from the caller, and `attendance_type` is ignored; a
-Program Admin sets it on acceptance.
+The applicant is always the caller. `attendance_type` is ignored; a Program
+Admin sets it on acceptance.
 
 **Response** `201` → `<Application>`  
 **Errors** `400`, `401`, `409` (duplicate / blocked reapplication), `422` (window closed, term not open)
@@ -1576,7 +1575,7 @@ withdrawal, evaluation and the reviewer note have their own routes; the rest are
 maintained by the service.
 
 **Response** `200` → `<Application>`  
-**Errors** `400`, `401`, `404`
+**Errors** `400`, `401`, `403` (not a `writer` on the application), `404`
 
 ---
 
@@ -2039,11 +2038,11 @@ When all prerequisite tasks reach `submitted`/`complete`, the application's `tas
 GET /v1/program-terms/{termId}/applications?status=pending
 
 # Accept
-PATCH /v1/applications/{id}
+PATCH /v1/applications/{id}/status
 Body: { "status": "accepted", "attendance_type": "full_time" }
 
 # Decline
-PATCH /v1/applications/{id}
+PATCH /v1/applications/{id}/status
 Body: { "status": "declined" }
 
 # Bulk decline all pending
