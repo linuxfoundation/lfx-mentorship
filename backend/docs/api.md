@@ -2013,7 +2013,7 @@ Foundations and stipend totals are not on this endpoint yet — keep those as st
 3. Submit the application:
    ```
    POST /v1/program-terms/{termId}/applications
-   Body: { "user_id": "<uid>", "role": "mentee" }
+   Body: { "role": "mentee" }
    ```
 4. Poll / display the returned `status` and `tasks_submitted` flag.
 
