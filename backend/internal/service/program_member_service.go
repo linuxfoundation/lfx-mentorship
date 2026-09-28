@@ -100,6 +100,10 @@ func (s *ProgramMemberService) ListByProgram(ctx context.Context, programID stri
 	return members, meta, nil
 }
 
+func (s *ProgramMemberService) ListMentorManagement(ctx context.Context, programID string, filter models.ProgramMemberFilter) ([]*models.ProgramMentorManagementRow, *models.PaginationMeta, error) {
+	return s.repo.ListMentorManagement(ctx, programID, filter)
+}
+
 // Create validates input and adds a member to a program.
 // When member_type is "mentor", the member is created with status "invited" and
 // a time-limited invite token is sent via the notifier.

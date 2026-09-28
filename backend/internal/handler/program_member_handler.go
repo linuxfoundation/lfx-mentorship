@@ -16,9 +16,27 @@ import (
 type programMemberService interface {
 	GetByID(ctx context.Context, id string) (*models.ProgramMember, error)
 	ListByProgram(ctx context.Context, programID string, filter models.ProgramMemberFilter) ([]*models.ProgramMember, *models.PaginationMeta, error)
+	ListMentorManagement(ctx context.Context, programID string, filter models.ProgramMemberFilter) ([]*models.ProgramMentorManagementRow, *models.PaginationMeta, error)
 	Create(ctx context.Context, programID string, input models.ProgramMemberCreateInput) (*models.ProgramMember, error)
 	Update(ctx context.Context, programID, id string, input models.ProgramMemberUpdateInput, actorID string) (*models.ProgramMember, error)
 	Delete(ctx context.Context, programID, id, actorID string) error
+}
+
+func (h *ProgramMemberHandler) ListMentorManagement(w http.ResponseWriter, r *http.Request) {
+	if auth.PrincipalFromContext(r.Context()) == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	limit, offset, ok := parsePaginationParams(w, r)
+	if !ok {
+		return
+	}
+	rows, meta, err := h.svc.ListMentorManagement(r.Context(), chi.URLParam(r, "id"), models.ProgramMemberFilter{Limit: limit, Offset: offset, Status: r.URL.Query().Get("status"), Search: r.URL.Query().Get("search")})
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]any{"data": rows, "meta": meta})
 }
 
 // ProgramMemberHandler holds Chi handlers for program members and admins.

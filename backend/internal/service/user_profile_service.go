@@ -74,35 +74,11 @@ func (s *UserProfileService) Create(ctx context.Context, input models.UserProfil
 	ctx, span := userProfileSvcTracer.Start(ctx, "UserProfileService.Create")
 	defer span.End()
 
+	if err := s.validateCreateInput(ctx, input, true); err != nil {
+		return nil, err
+	}
 	if input.ID == "" {
 		input.ID = uuid.New().String()
-	}
-	if input.UserID == "" {
-		return nil, fmt.Errorf("%w: user_id is required", domain.ErrInvalidInput)
-	}
-	if input.ProfileType == "" {
-		return nil, fmt.Errorf("%w: profile_type is required", domain.ErrInvalidInput)
-	}
-	if input.ProfileType != "mentor" && input.ProfileType != "mentee" {
-		return nil, fmt.Errorf("%w: profile_type must be mentor or mentee", domain.ErrInvalidInput)
-	}
-
-	// Eligibility gate for mentee profiles (FR-014).
-	if input.ProfileType == "mentee" {
-		if !input.AgeEligible {
-			return nil, fmt.Errorf("%w: age eligibility must be confirmed", domain.ErrIneligible)
-		}
-		if !input.WorkEligible {
-			return nil, fmt.Errorf("%w: work eligibility must be confirmed", domain.ErrIneligible)
-		}
-		count, err := s.repo.CountActiveMenteeProfiles(ctx, input.UserID)
-		if err != nil {
-			span.RecordError(err)
-			return nil, fmt.Errorf("check mentee eligibility: %w", err)
-		}
-		if count > 0 {
-			return nil, fmt.Errorf("%w: user already has an active mentee profile", domain.ErrIneligible)
-		}
 	}
 
 	p, err := s.repo.Create(ctx, input)
@@ -111,6 +87,55 @@ func (s *UserProfileService) Create(ctx context.Context, input models.UserProfil
 		return nil, fmt.Errorf("create user profile: %w", err)
 	}
 	return p, nil
+}
+
+// Upsert atomically creates or replaces a profile for one user and profile type.
+func (s *UserProfileService) Upsert(ctx context.Context, input models.UserProfileCreateInput) (*models.UserProfile, bool, error) {
+	ctx, span := userProfileSvcTracer.Start(ctx, "UserProfileService.Upsert")
+	defer span.End()
+	if err := s.validateCreateInput(ctx, input, false); err != nil {
+		return nil, false, err
+	}
+	if input.ID == "" {
+		input.ID = uuid.New().String()
+	}
+	p, inserted, err := s.repo.UpsertByUserAndType(ctx, input)
+	if err != nil {
+		span.RecordError(err)
+		return nil, false, fmt.Errorf("upsert user profile: %w", err)
+	}
+	return p, inserted, nil
+}
+
+func (s *UserProfileService) validateCreateInput(ctx context.Context, input models.UserProfileCreateInput, enforceUnique bool) error {
+	if input.UserID == "" {
+		return fmt.Errorf("%w: user_id is required", domain.ErrInvalidInput)
+	}
+	if input.ProfileType == "" {
+		return fmt.Errorf("%w: profile_type is required", domain.ErrInvalidInput)
+	}
+	if input.ProfileType != "mentor" && input.ProfileType != "mentee" {
+		return fmt.Errorf("%w: profile_type must be mentor or mentee", domain.ErrInvalidInput)
+	}
+	if input.ProfileType == "mentee" {
+		if !input.AgeEligible {
+			return fmt.Errorf("%w: age eligibility must be confirmed", domain.ErrIneligible)
+		}
+		if !input.WorkEligible {
+			return fmt.Errorf("%w: work eligibility must be confirmed", domain.ErrIneligible)
+		}
+		if !enforceUnique {
+			return nil
+		}
+		count, err := s.repo.CountActiveMenteeProfiles(ctx, input.UserID)
+		if err != nil {
+			return fmt.Errorf("check mentee eligibility: %w", err)
+		}
+		if count > 0 {
+			return fmt.Errorf("%w: user already has an active mentee profile", domain.ErrIneligible)
+		}
+	}
+	return nil
 }
 
 // Update applies changes to the user profile with the given ID.

@@ -72,11 +72,6 @@ func (r *RosterRepository) add(ctx context.Context, userID string) (*models.Rost
 		return nil, domain.ErrUserNotFound
 	}
 	m.ObjectUID = "global"
-	if _, err := tx.Exec(ctx, `DELETE FROM fga_membership_tombstones WHERE object_type = $1 AND object_uid = $2 AND relation = $3 AND username = $4`, func() string {
-		return "mentorship_approver_team"
-	}(), m.ObjectUID, "member", m.LFID); err != nil {
-		return nil, fmt.Errorf("clear roster tombstone: %w", err)
-	}
 	if _, err := tx.Exec(ctx, `INSERT INTO fga_outbox (marker_kind, object_type, object_uid, relation, username, desired_operation) VALUES ('membership', 'mentorship_approver_team', 'global', 'member', $1, 'sync') ON CONFLICT (object_type, object_uid, relation, username) WHERE marker_kind = 'membership' DO UPDATE SET desired_operation = 'sync', generation = fga_outbox.generation + 1, state = CASE WHEN fga_outbox.state = 'in_flight' THEN 'in_flight' ELSE 'pending' END, claimed_generation = CASE WHEN fga_outbox.state = 'in_flight' THEN fga_outbox.claimed_generation ELSE NULL END, claimed_at = CASE WHEN fga_outbox.state = 'in_flight' THEN fga_outbox.claimed_at ELSE NULL END, attempts = 0, next_attempt_at = NOW(), last_error = NULL, updated_on = NOW()`, m.LFID); err != nil {
 		return nil, fmt.Errorf("enqueue roster marker: %w", err)
 	}
@@ -102,9 +97,6 @@ func (r *RosterRepository) remove(ctx context.Context, query, userID string) err
 	var lfid string
 	if err := tx.QueryRow(ctx, `SELECT lfid FROM users WHERE id = $1`, userID).Scan(&lfid); err != nil {
 		return fmt.Errorf("resolve roster LFID: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `INSERT INTO fga_membership_tombstones (object_type, object_uid, relation, username) VALUES ('mentorship_approver_team','global','member',$1) ON CONFLICT (object_type, object_uid, relation, username) DO UPDATE SET deleted_on = NOW(), last_reconciled_on = NULL`, lfid); err != nil {
-		return err
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO fga_outbox (marker_kind, object_type, object_uid, relation, username, desired_operation) VALUES ('membership', 'mentorship_approver_team', 'global', 'member', $1, 'remove') ON CONFLICT (object_type, object_uid, relation, username) WHERE marker_kind = 'membership' DO UPDATE SET desired_operation = 'remove', generation = fga_outbox.generation + 1, state = CASE WHEN fga_outbox.state = 'in_flight' THEN 'in_flight' ELSE 'pending' END, claimed_generation = CASE WHEN fga_outbox.state = 'in_flight' THEN fga_outbox.claimed_generation ELSE NULL END, claimed_at = CASE WHEN fga_outbox.state = 'in_flight' THEN fga_outbox.claimed_at ELSE NULL END, attempts = 0, next_attempt_at = NOW(), last_error = NULL, updated_on = NOW()`, lfid); err != nil {
 		return fmt.Errorf("enqueue roster removal marker: %w", err)

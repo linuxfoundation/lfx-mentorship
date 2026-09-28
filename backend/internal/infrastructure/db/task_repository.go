@@ -152,17 +152,31 @@ func (r *TaskRepository) Create(ctx context.Context, applicationID string, input
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// Share-lock the parent so a concurrent application update re-syncs this task after commit.
+	var applicationStatus models.ApplicationStatus
+	var termStatus models.ProgramTermStatus
+	err = tx.QueryRow(ctx, `
+		SELECT a.status, pt.status
+		FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id
+		WHERE a.id = $1 FOR SHARE OF a`, applicationID).Scan(&applicationStatus, &termStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrApplicationNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("resolve task parent application: %w", err)
+	}
+
 	const q = `
 		INSERT INTO tasks (
 			id, application_id, program_term_id, assignee_id, owner_id,
-			name, description, category, status, custom,
+			name, description, category, status, application_status, program_term_status, custom,
 			submit_file, due_date, created_by
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 		RETURNING ` + taskCols
 
 	t, err := scanTask(tx.QueryRow(ctx, q,
 		input.ID, applicationID, input.ProgramTermID, input.AssigneeID, input.OwnerID,
-		input.Name, input.Description, input.Category, input.Status, input.Custom,
+		input.Name, input.Description, input.Category, input.Status, applicationStatus, termStatus, input.Custom,
 		input.SubmitFile, input.DueDate, input.CreatedBy,
 	))
 	if err != nil {
@@ -170,6 +184,9 @@ func (r *TaskRepository) Create(ctx context.Context, applicationID string, input
 		return nil, fmt.Errorf("create task: %w", err)
 	}
 	if err := enqueueTaskMarker(ctx, tx, t, "update_access"); err != nil {
+		return nil, err
+	}
+	if err := enqueueTaskIndex(ctx, tx, t, "created"); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -219,6 +236,9 @@ func (r *TaskRepository) Update(ctx context.Context, id string, input models.Tas
 	if err := enqueueTaskMarker(ctx, tx, t, "update_access"); err != nil {
 		return nil, err
 	}
+	if err := enqueueTaskIndex(ctx, tx, t, "updated"); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit update task transaction: %w", err)
 	}
@@ -253,6 +273,9 @@ func (r *TaskRepository) Delete(ctx context.Context, id string) error {
 	if err := enqueueTaskMarker(ctx, tx, current, "delete_access"); err != nil {
 		return err
 	}
+	if err := enqueueIndexDelete(ctx, tx, "mentorship_task", current.ID); err != nil {
+		return err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit delete task transaction: %w", err)
 	}
@@ -276,7 +299,11 @@ func enqueueTaskMarker(ctx context.Context, tx pgx.Tx, task *models.Task, operat
 		return nil
 	}
 	if task.ApplicationID == nil || *task.ApplicationID == "" {
-		return fmt.Errorf("task %s has no application parent", task.ID)
+		operation = "delete_access"
+		if _, err := tx.Exec(ctx, q, task.ID, operation); err != nil {
+			return fmt.Errorf("enqueue task FGA marker: %w", err)
+		}
+		return nil
 	}
 	var lfid string
 	const lookup = `

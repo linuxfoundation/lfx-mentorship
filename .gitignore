@@ -19,6 +19,8 @@ megalinter-reports/
 settings.json
 # Dependencies
 node_modules/
+**/.venv/
+**/venv/
 
 # Build output
 dist/

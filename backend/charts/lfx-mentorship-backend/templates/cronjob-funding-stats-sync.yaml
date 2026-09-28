@@ -15,12 +15,16 @@ spec:
   successfulJobsHistoryLimit: {{ .Values.fundingStatsSyncCronJob.successfulJobsHistoryLimit }}
   failedJobsHistoryLimit: {{ .Values.fundingStatsSyncCronJob.failedJobsHistoryLimit }}
   jobTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "lfx-v2-mentorship-service.name" . }}
     spec:
       activeDeadlineSeconds: {{ .Values.fundingStatsSyncCronJob.activeDeadlineSeconds }}
       backoffLimit: {{ .Values.fundingStatsSyncCronJob.backoffLimit }}
       template:
         metadata:
           labels:
+            app.kubernetes.io/name: {{ include "lfx-v2-mentorship-service.name" . }}
             app.kubernetes.io/component: program-funding-stats-sync
         spec:
           restartPolicy: OnFailure

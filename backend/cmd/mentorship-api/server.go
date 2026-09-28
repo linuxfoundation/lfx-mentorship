@@ -21,6 +21,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/clients"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/db"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/fga"
+	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/indexer"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/service"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
@@ -106,6 +107,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			return nil, fmt.Errorf("FGA JetStream client: %w", jsErr)
 		}
 		outbox := db.NewFGAOutboxRepository(pool)
+		outbox.SetMaxAttempts(cfg.FGA.RelayMaxAttempts)
 		approverRepo := db.NewApproverRepository(pool)
 		builder := fga.NewDatabaseBuilder(programRepo, programMemberRepo, userRepo, programTermRepo, applicationRepo, taskRepo, approverRepo)
 		publisher := fga.NewJetStreamPublisher(js)
@@ -115,13 +117,19 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		var relayCtx context.Context
 		relayCtx, relayCancel = context.WithCancel(ctx)
 		go relay.Run(relayCtx, cfg.FGA.RelayInterval)
+		indexOutbox := db.NewIndexOutboxRepository(pool)
+		indexOutbox.SetMaxAttempts(cfg.Indexer.MaxAttempts)
+		indexOutbox.SetRetryDelay(cfg.Indexer.RetryDelay)
+		indexRelay := indexer.NewRelay(indexOutbox, js, cfg.FGA.RelayBatch, cfg.Indexer.ServiceToken)
+		indexRelay.SetLogger(logger)
+		go indexRelay.Run(relayCtx, cfg.FGA.RelayInterval)
 	}
 
 	// Handlers
 	userH := handler.NewUserHandler(userSvc)
 	userProfileH := handler.NewUserProfileHandler(userProfileSvc)
 	programH := handler.NewProgramHandler(programSvc)
-	programTermH := handler.NewProgramTermHandler(programTermSvc)
+	programTermH := handler.NewProgramTermHandler(programTermSvc, programSvc)
 	programMemberH := handler.NewProgramMemberHandler(programMemberSvc, programSvc)
 	applicationH := handler.NewApplicationHandler(applicationSvc, programTermSvc)
 	taskH := handler.NewTaskHandler(taskSvc, programTermSvc)
@@ -163,17 +171,20 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		}
 		w.WriteHeader(http.StatusOK)
 	})
+	r.Handle("/internal/metrics", expvar.Handler())
 
 	var requireGatewayPrincipal func(http.Handler) http.Handler
 	routes := func(r chi.Router) {
-		optionalJWT := func(next http.Handler) http.Handler { return next }
 		// ── Public endpoints ─────────────────────────────────────────────────
+		r.With(requireGatewayPrincipal).Get("/programs/name-availability", programH.NameAvailable)
 		r.Get("/programs", programH.List)
 		r.Get("/programs/catalog", programH.ListCatalog)
-		r.With(optionalJWT).Get("/programs/resolve/{id}", programH.ResolveID)
-		r.With(optionalJWT).Get("/programs/{id}", programH.GetByID)
+		r.Get("/programs/resolve/{id}", programH.ResolveID)
+		r.Get("/programs/{id}", programH.GetByID)
+		r.Get("/programs/{id}/header", programH.GetHeaderProjection)
+		r.Get("/programs/{id}/management-summary", programH.GetManagementSummary)
 		r.Get("/programs/{id}/catalog", programH.GetCatalog)
-		r.With(optionalJWT).Get("/programs/{id}/mentees", programH.ListCatalogMentees)
+		r.Get("/programs/{id}/mentees", programH.ListCatalogMentees)
 		r.Get("/programs/{id}/skills", programH.ListSkills)
 
 		r.Get("/mentees", menteeH.List)
@@ -185,16 +196,20 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		r.Get("/summary", platformSummaryH.Get)
 		r.Get("/funding-stats/total", fundingStatsH.GetTotal)
 		r.Get("/programs/{id}/funding-stats", programH.GetFundingStats)
-		r.With(optionalJWT).Get("/programs/{id}/transactions", programH.GetCategorizedTransactions)
-		r.With(optionalJWT).Get("/programs/{id}/sponsors", programH.GetProgramSponsors)
+		r.Get("/programs/{id}/transactions", programH.GetCategorizedTransactions)
+		r.Get("/programs/{id}/sponsors", programH.GetProgramSponsors)
 		r.Get("/programs/{id}/terms", programTermH.ListByProgram)
+		r.Get("/programs/{id}/term-management", programTermH.ListManagementByProgram)
 		r.Get("/programs/{id}/members", programMemberH.List)
+		r.Get("/programs/{id}/member-management", programMemberH.ListMentorManagement)
 
 		r.Get("/programs/{programID}/terms/{termID}", programTermH.GetByID)
 
 		// ── Authenticated endpoints ────────────────────────────────────────
 		r.Group(func(r chi.Router) {
 			r.Use(requireGatewayPrincipal)
+
+			r.Get("/programs/{id}/enroll-template", programH.GetEnrollmentTemplate)
 
 			// Mentor invite — both the invite token and signed principal are required.
 			r.Post("/mentor-invites/{token}/accept", mentorInviteH.AcceptInvite)
@@ -211,6 +226,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			r.Get("/me/profiles", userProfileH.ListMe)
 			r.Get("/me/profiles/{profileType}", userProfileH.GetMeByType)
 			r.Post("/me/profiles", userProfileH.Create)
+			r.Put("/me/profiles/{profileType}", userProfileH.PutMeByType)
 			r.Patch("/me/profiles/{profileType}", userProfileH.UpdateMeByType)
 			r.Delete("/me/profiles/{profileType}", userProfileH.DeleteMeByType)
 			r.Patch("/me/profiles/by-id/{id}", userProfileH.UpdateMeByID)
@@ -233,10 +249,13 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			// Program terms
 			r.Post("/programs/{id}/terms", programTermH.Create)
 			r.Patch("/programs/{programID}/terms/{termID}", programTermH.Update)
+			r.Post("/programs/{programID}/terms/{termID}/close", programTermH.Close)
+			r.Post("/programs/{programID}/terms/{termID}/reopen", programTermH.Reopen)
 			r.Delete("/programs/{programID}/terms/{termID}", programTermH.Delete)
 
 			// Applications
 			r.Get("/programs/{programID}/terms/{id}/applications", applicationH.ListByProgramTerm)
+			r.Get("/programs/{id}/applications", applicationH.ListByProgram)
 			r.Get("/applications/{id}", applicationH.GetByID)
 			r.Post("/programs/{programID}/terms/{id}/applications", applicationH.Create)
 			r.Patch("/applications/{id}", applicationH.Update)
@@ -262,7 +281,8 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			r.Patch("/tasks/{id}/review", taskH.UpdateReview)
 			r.Delete("/tasks/{id}", taskH.Delete)
 
-			// Platform-authorized authorization roster management.
+			// These cluster-local platform-management routes use backend scope checks;
+			// they are intentionally not exposed through the Heimdall RuleSet yet.
 			r.Get("/admin/approver-team/members", rosterH.ListApprovers)
 			r.Post("/admin/approver-team/members", rosterH.AddApprover)
 			r.Delete("/admin/approver-team/members/{userID}", rosterH.RemoveApprover)
@@ -305,13 +325,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	}
 	r.Route("/mentorship/v1", func(r chi.Router) {
 		r.Use(jwtAuth.GatewayMiddleware)
-		r.Get("/internal/metrics", func(w http.ResponseWriter, req *http.Request) {
-			if !auth.HasScope(req.Context(), auth.ScopeReadMetrics()) {
-				http.Error(w, "forbidden", http.StatusForbidden)
-				return
-			}
-			expvar.Handler().ServeHTTP(w, req)
-		})
+		r.Use(handler.IndexMetadata)
 		routes(r)
 	})
 

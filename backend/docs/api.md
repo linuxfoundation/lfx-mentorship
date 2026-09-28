@@ -1,5 +1,11 @@
 # LFX Mentorship API — Developer Reference
 
+## Status Mapping
+
+Program creation persists the canonical backend status `draft`. BFF consumers
+map `draft` and `submitted` to their pending-review display state; this API does
+not expose a separate persisted `pending` program status.
+
 **Base URL**: `https://lfx-api.<environment>/mentorship/v1` through the Heimdall gateway.
 **Content-Type**: `application/json` for all request and response bodies  
 **Module**: `github.com/linuxfoundation/lfx-v2-mentorship-service`
@@ -13,6 +19,8 @@ The gateway-authorized API uses canonical resource paths:
 
 - Self-service user and profile mutations use `/me` and `/me/profiles`.
 - User application reads use `/me/applications`.
+- Program-admin collection reads use Query Service
+  `/query/resources?v=1&type=mentorship_program&filter_grants=direct`.
 - Term-scoped routes use `/programs/{programUID}/terms/{termID}`.
 - Profile records with duplicate profile types use `/me/profiles/by-id/{id}`.
 - Application lifecycle operations are split into dedicated status, withdrawal,
@@ -26,14 +34,21 @@ the gateway contract. Program slugs must first be resolved through
 
 ### Authorization roster management
 
-These platform-management routes require the corresponding OAuth scope:
+These cluster-local platform-management routes retain backend scope checks as
+defense in depth:
 
 - `GET/POST /admin/approver-team/members` requires
   `manage:mentorship:approvers`.
 - `DELETE /admin/approver-team/members/{userID}` requires the same scope.
 
 Global approver changes are persisted with their FGA membership marker
-transactionally, and removals are retained as tombstones for reconciliation.
+transactionally. The outbox relay publishes precise membership additions and
+removals directly to the platform FGA stream.
+
+These routes are intentionally absent from the Heimdall RuleSet until platform
+owners approve an edge relation for LF-staff roster administration. A backend
+scope is not an edge authorization decision and Heimdall does not synthesize
+these scopes unless a rule explicitly configures them.
 
 For local PostgreSQL-backed outbox tests, start `docker compose up -d`, create
 an isolated `mentorship_test` database, and run:
@@ -965,7 +980,7 @@ Fetch a program by UUID or slug.
 
 Resolve a program UUID or slug to the canonical program UUID.
 
-> Hidden program visibility matches `GET /v1/programs/{id}`: non-owners receive `404`.
+> Only `published` programs resolve, except for the program's LFID owner; everyone else receives `404`.
 
 **Response** `200`
 ```json
@@ -977,24 +992,32 @@ Resolve a program UUID or slug to the canonical program UUID.
 
 #### `POST /v1/programs` 🔒
 
-Create a program. New programs start in `draft` status.
+Create a program with its first terms, skills, and prerequisites in one transaction. New programs start in `draft` status and the slug is derived from `name`.
+
+The caller resolves the LF project from Project Service and passes its UID, slug, name, and logo. They are persisted with the program and feed its search index snapshot (`project_slug`, `project_name`, `project_logo_url`).
 
 **Request body**
 ```json
 {
-  "name":        "CNCF Mentorship 2026",  // required; must be unique
-  "slug":        "cncf-mentorship-2026",  // required; must be unique
-  "description": "...",
-  "logo_url":    "https://...",
-  "website_url": "https://...",
-  "repo_link":   "https://github.com/cncf/mentorship",
-  "code_of_conduct": "https://...",
-  "lfid":        "alice",
-  "cii_project_id": "12345",
-  "is_paid":     true,
-  "task_templates": [
-    { "name": "Contribution PR", "description": "...", "submitFile": null, "dueDate": null }
-  ]
+  "projectId":        "7cad5a8d-19d0-41a4-81a6-043453daf9ee", // required; Project Service UUID
+  "projectSlug":      "cncf",                                 // required
+  "projectName":      "Cloud Native Computing Foundation",   // required
+  "projectLogoUrl":   "https://...",                          // optional; http(s)
+  "name":             "CNCF Mentorship 2026",                 // required; must be unique
+  "description":      "...",
+  "repositoryUrl":    "https://github.com/cncf/mentorship",
+  "websiteUrl":       "https://...",
+  "codeOfConductUrl": "https://...",
+  "ciiProjectId":     "12345",
+  "skills":           ["Go"],                                 // required; at least one
+  "terms": [                                                  // required; 1–4 terms
+    { "name": "Spring 2026", "startDate": "2026-03-01", "endDate": "2026-05-31",
+      "applicationStartDate": "2026-01-15", "applicationEndDate": "2026-02-15" }
+  ],
+  "prerequisites": [
+    { "name": "Contribution PR", "description": "...", "required": true, "requireFile": false, "dueDate": null }
+  ],
+  "termsAccepted":    true                                    // required; must be true
 }
 ```
 
@@ -1192,7 +1215,7 @@ The `discovery_label` field is **computed on read** and not stored in the databa
 
 | Parameter | Values | Description |
 |---|---|---|
-| `status` | `open\|closed\|deleted` | Filter by status |
+| `status` | `open\|closed` | Filter by status; any other value returns `400`. Deleted terms are never listed |
 | `limit` / `offset` | — | Pagination |
 
 **Response** `200`
@@ -1520,10 +1543,12 @@ Submit an application to a term.
 **Request body**
 ```json
 {
-  "user_id": "uuid",     // required
-  "role":    "mentee"    // required; "mentor" | "mentee"
+  "role": "mentee"    // required; "mentor" | "mentee"
 }
 ```
+
+The applicant is always the caller. `attendance_type` is ignored; a Program
+Admin sets it on acceptance.
 
 **Response** `201` → `<Application>`  
 **Errors** `400`, `401`, `409` (duplicate / blocked reapplication), `422` (window closed, term not open)
@@ -1532,30 +1557,25 @@ Submit an application to a term.
 
 #### `PATCH /v1/applications/{id}` 🔒
 
-Transition an application's status or update fields.
+Update applicant-supplied application content. The gateway admits the applicant
+and Program Admins (`writer` on the application).
 
 **Request body** (all optional)
 ```json
 {
-  "status":          "accepted",
-  "attendance_type": "full_time",
   "start_date_time": "2026-03-01T00:00:00Z",
   "end_date_time":   "2026-06-30T23:59:59Z"
 }
 ```
 
-**Key rules**:
-
-| Transition | Rule |
-|---|---|
-| Any status → `accepted` | `attendance_type` must be supplied (`full_time` or `part_time`) |
-| `pending` → `withdrawn` | Only the applicant (`actor_id == user_id`) may self-withdraw |
-| All others | Enforced by state machine; invalid transitions return `409` |
-
-When status is set to `accepted`, `NotifyMenteeAccepted` is triggered.
+`status`, `attendance_type`, `program_term_status`, `tasks_submitted`,
+`admin_notified`, `evaluation` and `reviewer_note` are rejected with `400`.
+Status and attendance type change through `PATCH /v1/applications/{id}/status`;
+withdrawal, evaluation and the reviewer note have their own routes; the rest are
+maintained by the service.
 
 **Response** `200` → `<Application>`  
-**Errors** `400`, `401`, `403` (wrong actor for withdrawal), `404`, `409`
+**Errors** `400`, `401`, `403` (not a `writer` on the application), `404`
 
 ---
 
@@ -1646,6 +1666,11 @@ Tasks represent units of work assigned to a mentee. They are either:
 **`category` values**: `prerequisite`, `non_prerequisite`
 
 **`status` lifecycle**: `incomplete → in_progress → submitted → complete`
+
+**`due_date`** is an ISO 8601 date string (`YYYY-MM-DD`) for compatibility with
+legacy task data. Writes with any other format are rejected with `400`.
+Consumers performing date arithmetic should parse it as a
+date rather than comparing it to a PostgreSQL timestamp directly.
 
 Backward reset to `incomplete` is always possible (by a reviewer only).
 
@@ -1988,7 +2013,7 @@ Foundations and stipend totals are not on this endpoint yet — keep those as st
 3. Submit the application:
    ```
    POST /v1/program-terms/{termId}/applications
-   Body: { "user_id": "<uid>", "role": "mentee" }
+   Body: { "role": "mentee" }
    ```
 4. Poll / display the returned `status` and `tasks_submitted` flag.
 
@@ -2013,11 +2038,11 @@ When all prerequisite tasks reach `submitted`/`complete`, the application's `tas
 GET /v1/program-terms/{termId}/applications?status=pending
 
 # Accept
-PATCH /v1/applications/{id}
+PATCH /v1/applications/{id}/status
 Body: { "status": "accepted", "attendance_type": "full_time" }
 
 # Decline
-PATCH /v1/applications/{id}
+PATCH /v1/applications/{id}/status
 Body: { "status": "declined" }
 
 # Bulk decline all pending
@@ -2142,13 +2167,28 @@ class ApiError extends Error {
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `PORT` | No | `8080` | HTTP listen port |
-| `PG_DSN` | Yes | — | PostgreSQL connection string |
+| `DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` | Yes in deployments | — | Discrete PostgreSQL connection settings |
+| `DB_PORT` | No | `5432` | PostgreSQL port |
+| `DB_SSLMODE` | No | `require` | PostgreSQL TLS mode |
+| `DATABASE_DSN` | Local/CI alternative | — | Used only when discrete `DB_*` values are absent |
 | `DB_MAX_CONNS` | No | `10` | pgxpool max connections |
 | `DB_MIN_CONNS` | No | `2` | pgxpool min connections |
 | `HEIMDALL_JWKS_URL` | Yes | — | Heimdall JWKS endpoint |
 | `HEIMDALL_JWT_AUDIENCE` | Yes | — | Expected JWT `aud` claim |
 | `HEIMDALL_JWT_ISSUER` | Yes | — | Expected JWT `iss` claim |
-| `INVITE_SECRET` | Yes | — | HMAC secret for mentor invite tokens |
-| `OTEL_ENDPOINT` | No | — | OpenTelemetry collector endpoint |
+| `FGA_NATS_URL` | Yes for relays | — | Shared NATS URL for FGA and index publishing |
+| `FGA_RELAY_BATCH_SIZE` | No | `50` | FGA/index claim batch size |
+| `FGA_RELAY_INTERVAL` | No | `1s` | Relay polling interval |
+| `FGA_RELAY_RETRY_DELAY` | No | `1m` | FGA retry delay |
+| `FGA_RELAY_MAX_ATTEMPTS` | No | `10` | FGA attempts before dead letter |
+| `INDEXER_SERVICE_TOKEN` | No | — | Service credential stamped on index messages; secret value |
+| `INDEX_RELAY_RETRY_DELAY` | No | `1m` | Index publish retry delay |
+| `INDEX_RELAY_MAX_ATTEMPTS` | No | `10` | Index attempts before dead letter |
+| `MENTOR_INVITE_SECRET` | Yes | — | HMAC secret for mentor invite tokens |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | — | OpenTelemetry collector endpoint |
 | `ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS` | No | `false` | Enable local dev JWT bypass |
 | `DISABLED_MOCK_LOCAL_PRINCIPAL` | No | — | Static user ID for bypass mode |
+
+Provision `INDEXER_SERVICE_TOKEN` in the backend Secret through Secrets Manager.
+Without it the index relay idles and leaves outbox rows pending rather than
+publishing messages the indexer would drop.

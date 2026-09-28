@@ -20,6 +20,7 @@ type Config struct {
 	Database     DatabaseConfig
 	JWT          JWTConfig
 	FGA          FGAConfig
+	Indexer      IndexerConfig
 	Crowdfunding CrowdfundingConfig
 	OTel         OTelConfig
 	Local        LocalConfig
@@ -57,6 +58,14 @@ type FGAConfig struct {
 	RelayInterval    time.Duration
 	RelayRetryDelay  time.Duration
 	RelayMaxAttempts int
+}
+
+// IndexerConfig configures authenticated index publishing and retry behavior.
+type IndexerConfig struct {
+	// ServiceToken is stamped on every index message; without it the relay idles.
+	ServiceToken string
+	RetryDelay   time.Duration
+	MaxAttempts  int
 }
 
 // CrowdfundingConfig holds outbound crowdfunding API and M2M auth settings.
@@ -148,7 +157,17 @@ func loadConfig() (*Config, error) {
 			return nil, fmt.Errorf("FGA_RELAY_RETRY_DELAY: must be a positive duration")
 		}
 	}
-
+	indexRetryDelay := time.Minute
+	if v := os.Getenv("INDEX_RELAY_RETRY_DELAY"); v != "" {
+		indexRetryDelay, err = time.ParseDuration(v)
+		if err != nil || indexRetryDelay <= 0 {
+			return nil, fmt.Errorf("INDEX_RELAY_RETRY_DELAY: must be a positive duration")
+		}
+	}
+	indexMaxAttempts, err := parseInt(getEnv("INDEX_RELAY_MAX_ATTEMPTS", "10"))
+	if err != nil || indexMaxAttempts <= 0 {
+		return nil, fmt.Errorf("INDEX_RELAY_MAX_ATTEMPTS: must be a positive integer")
+	}
 	crowdfundingTimeout := 10 * time.Second
 	if v := os.Getenv("CROWDFUNDING_TIMEOUT"); v != "" {
 		d, err := time.ParseDuration(v)
@@ -186,6 +205,11 @@ func loadConfig() (*Config, error) {
 			RelayInterval:    relayInterval,
 			RelayRetryDelay:  relayRetryDelay,
 			RelayMaxAttempts: relayMaxAttempts,
+		},
+		Indexer: IndexerConfig{
+			ServiceToken: os.Getenv("INDEXER_SERVICE_TOKEN"),
+			RetryDelay:   indexRetryDelay,
+			MaxAttempts:  indexMaxAttempts,
 		},
 		Crowdfunding: CrowdfundingConfig{
 			BaseURL:      strings.TrimRight(os.Getenv("CROWDFUNDING_BASE_URL"), "/"),

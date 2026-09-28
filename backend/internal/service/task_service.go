@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
@@ -17,6 +18,17 @@ import (
 )
 
 var taskSvcTracer = otel.Tracer("tasks-service")
+
+// validateDueDate enforces the YYYY-MM-DD task due-date contract.
+func validateDueDate(value *string) error {
+	if value == nil {
+		return nil
+	}
+	if _, err := time.Parse(time.DateOnly, *value); err != nil {
+		return fmt.Errorf("%w: due date must be a YYYY-MM-DD date", domain.ErrInvalidInput)
+	}
+	return nil
+}
 
 // TaskService orchestrates task reads and writes.
 type TaskService struct {
@@ -164,6 +176,9 @@ func (s *TaskService) Create(ctx context.Context, applicationID string, input mo
 	if input.Category != nil && !input.Category.IsValid() {
 		return nil, fmt.Errorf("%w: invalid category %q", domain.ErrInvalidInput, *input.Category)
 	}
+	if err := validateDueDate(input.DueDate); err != nil {
+		return nil, err
+	}
 	input.ID = uuid.New().String()
 
 	t, err := s.repo.Create(ctx, applicationID, input)
@@ -194,6 +209,9 @@ func (s *TaskService) Update(ctx context.Context, id string, input models.TaskUp
 	}
 	if input.Category != nil && !input.Category.IsValid() {
 		return nil, fmt.Errorf("%w: invalid category %q", domain.ErrInvalidInput, *input.Category)
+	}
+	if err := validateDueDate(input.DueDate); err != nil {
+		return nil, err
 	}
 
 	// FR-033: enforce state transitions and actor permissions when ActorID is known.

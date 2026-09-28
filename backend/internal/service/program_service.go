@@ -5,8 +5,10 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -22,6 +24,16 @@ import (
 )
 
 var programSvcTracer = otel.Tracer("programs-service")
+
+const maxEnrollmentTerms = 4
+
+type enrollmentPrerequisite struct {
+	Name        string  `json:"name"`
+	Description *string `json:"description"`
+	Required    bool    `json:"required"`
+	RequireFile bool    `json:"requireFile"`
+	DueDate     *string `json:"dueDate"`
+}
 
 // ProgramService orchestrates program reads and writes.
 type ProgramService struct {
@@ -92,6 +104,44 @@ func (s *ProgramService) List(ctx context.Context, filter models.ProgramFilter) 
 		return nil, nil, fmt.Errorf("list programs: %w", err)
 	}
 	return programs, meta, nil
+}
+
+func (s *ProgramService) GetEnrollmentTemplate(ctx context.Context, programID string) (*models.ProgramEnrollmentTemplate, error) {
+	template, err := s.repo.GetEnrollmentTemplate(ctx, programID)
+	if err != nil {
+		return nil, fmt.Errorf("get enrollment template: %w", err)
+	}
+	return template, nil
+}
+
+// GetManagementSummary returns administrative tab counts for one program.
+func (s *ProgramService) GetManagementSummary(ctx context.Context, programID string) (*models.ProgramManagementSummary, error) {
+	program, err := s.repo.GetByID(ctx, programID)
+	if err != nil {
+		return nil, fmt.Errorf("get program for management summary: %w", err)
+	}
+	summary, err := s.repo.GetManagementSummary(ctx, programID)
+	if err != nil {
+		return nil, fmt.Errorf("get program management summary: %w", err)
+	}
+	if program.Status != models.ProgramStatusPublished {
+		summary.Mentees = 0
+		summary.PastMentees = 0
+		summary.Applicants = 0
+	}
+	return summary, nil
+}
+
+func (s *ProgramService) GetHeaderProjection(ctx context.Context, programID string) (*models.ProgramHeaderProjection, error) {
+	return s.repo.GetHeaderProjection(ctx, programID)
+}
+
+func (s *ProgramService) NameAvailable(ctx context.Context, name, excludeProgramID string) (bool, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false, fmt.Errorf("%w: name is required", domain.ErrInvalidInput)
+	}
+	return s.repo.NameAvailable(ctx, name, excludeProgramID)
 }
 
 func applyCatalogLabels(items []*models.ProgramCatalogItem, now time.Time) {
@@ -203,6 +253,9 @@ func (s *ProgramService) Create(ctx context.Context, input models.ProgramCreateI
 	}
 	canonicalProjectUID := projectUID.String()
 	input.ProjectUID = &canonicalProjectUID
+	if err := normalizeProjectMetadata(&input); err != nil {
+		return nil, err
+	}
 	input.Status = models.ProgramStatusDraft // programs always start as draft
 	input.ID = uuid.New().String()
 
@@ -212,6 +265,143 @@ func (s *ProgramService) Create(ctx context.Context, input models.ProgramCreateI
 		return nil, fmt.Errorf("create program: %w", err)
 	}
 	return p, nil
+}
+
+func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.ProgramEnrollmentInput) (*models.Program, error) {
+	if len(input.Terms) == 0 {
+		return nil, fmt.Errorf("%w: at least one term is required", domain.ErrInvalidInput)
+	}
+	if len(input.Terms) > maxEnrollmentTerms {
+		return nil, fmt.Errorf("%w: at most %d terms are allowed", domain.ErrInvalidInput, maxEnrollmentTerms)
+	}
+	normalizedSkills := make([]string, 0, len(input.Skills))
+	seenSkills := make(map[string]struct{}, len(input.Skills))
+	for _, skill := range input.Skills {
+		skill = strings.TrimSpace(skill)
+		if skill == "" {
+			continue
+		}
+		if _, exists := seenSkills[strings.ToLower(skill)]; exists {
+			continue
+		}
+		seenSkills[strings.ToLower(skill)] = struct{}{}
+		normalizedSkills = append(normalizedSkills, skill)
+	}
+	input.Skills = normalizedSkills
+	if len(input.Skills) == 0 {
+		return nil, fmt.Errorf("%w: at least one skill is required", domain.ErrInvalidInput)
+	}
+	for _, term := range input.Terms {
+		if strings.TrimSpace(term.Name) == "" {
+			return nil, fmt.Errorf("%w: term name is required", domain.ErrInvalidInput)
+		}
+		if term.Status != "" && term.Status != models.ProgramTermStatusOpen {
+			return nil, fmt.Errorf("%w: enrollment terms must be open", domain.ErrInvalidInput)
+		}
+		if term.StartDateTime == nil || term.EndDateTime == nil || !term.EndDateTime.After(*term.StartDateTime) {
+			return nil, fmt.Errorf("%w: term end date must be after start date", domain.ErrInvalidInput)
+		}
+		if term.ApplicationStartDate == nil || term.ApplicationEndDate == nil || !term.ApplicationEndDate.After(*term.ApplicationStartDate) || !term.ApplicationEndDate.Before(*term.StartDateTime) {
+			return nil, fmt.Errorf("%w: application window must end after it starts and before the term", domain.ErrInvalidInput)
+		}
+	}
+	if len(input.Prerequisites) > 0 {
+		var prerequisites []enrollmentPrerequisite
+		if err := json.Unmarshal(input.Prerequisites, &prerequisites); err != nil {
+			return nil, fmt.Errorf("%w: prerequisites must be valid JSON", domain.ErrInvalidInput)
+		}
+		for _, prerequisite := range prerequisites {
+			if !prerequisite.Required {
+				continue
+			}
+			if strings.TrimSpace(prerequisite.Name) == "" || prerequisite.Description == nil || strings.TrimSpace(*prerequisite.Description) == "" {
+				return nil, fmt.Errorf("%w: prerequisite name and description are required", domain.ErrInvalidInput)
+			}
+			if err := validateDueDate(prerequisite.DueDate); err != nil {
+				return nil, err
+			}
+		}
+		templates := make([]taskTemplate, 0, len(prerequisites))
+		for _, prerequisite := range prerequisites {
+			if !prerequisite.Required {
+				continue
+			}
+			var submitFile *string
+			if prerequisite.RequireFile {
+				value := "required"
+				submitFile = &value
+			}
+			templates = append(templates, taskTemplate{Name: prerequisite.Name, Description: prerequisite.Description, SubmitFile: submitFile, DueDate: prerequisite.DueDate})
+		}
+		input.Prerequisites, _ = json.Marshal(templates)
+	}
+	if strings.TrimSpace(input.Program.Name) == "" {
+		return nil, fmt.Errorf("%w: name is required", domain.ErrInvalidInput)
+	}
+	available, err := s.repo.NameAvailable(ctx, input.Program.Name, "")
+	if err != nil {
+		return nil, fmt.Errorf("check program name availability: %w", err)
+	}
+	if !available {
+		return nil, fmt.Errorf("%w: program name is already in use", domain.ErrConflict)
+	}
+	for _, value := range []*string{input.Program.RepoLink, input.Program.WebsiteURL, input.Program.CodeOfConduct, input.Program.ProjectLogoURL} {
+		if value == nil || strings.TrimSpace(*value) == "" {
+			continue
+		}
+		parsed, err := url.ParseRequestURI(*value)
+		if err != nil || parsed.Host == "" {
+			return nil, fmt.Errorf("%w: invalid URL", domain.ErrInvalidInput)
+		}
+		scheme := strings.ToLower(parsed.Scheme)
+		if scheme != "http" && scheme != "https" {
+			return nil, fmt.Errorf("%w: invalid URL", domain.ErrInvalidInput)
+		}
+	}
+	if strings.TrimSpace(input.Program.Slug) == "" {
+		return nil, fmt.Errorf("%w: slug is required", domain.ErrInvalidInput)
+	}
+	if input.Program.ProjectUID == nil || strings.TrimSpace(*input.Program.ProjectUID) == "" {
+		return nil, fmt.Errorf("%w: project_uid is required", domain.ErrInvalidInput)
+	}
+	projectUID, err := uuid.Parse(strings.TrimSpace(*input.Program.ProjectUID))
+	if err != nil {
+		return nil, fmt.Errorf("%w: projectId must be the canonical Project Service UUID", domain.ErrInvalidInput)
+	}
+	canonicalProjectUID := projectUID.String()
+	input.Program.ProjectUID = &canonicalProjectUID
+	if err := normalizeProjectMetadata(&input.Program); err != nil {
+		return nil, err
+	}
+	input.Program.Status = models.ProgramStatusDraft
+	input.Program.ID = uuid.New().String()
+	return s.repo.CreateEnrollment(ctx, input)
+}
+
+// normalizeProjectMetadata trims the Project Service slug, name, and logo the
+// caller resolved alongside project_uid. The program index snapshot is derived
+// from the persisted row, so slug and name must be present at creation.
+func normalizeProjectMetadata(input *models.ProgramCreateInput) error {
+	trim := func(value *string) *string {
+		if value == nil {
+			return nil
+		}
+		trimmed := strings.TrimSpace(*value)
+		if trimmed == "" {
+			return nil
+		}
+		return &trimmed
+	}
+	input.ProjectSlug = trim(input.ProjectSlug)
+	input.ProjectName = trim(input.ProjectName)
+	input.ProjectLogoURL = trim(input.ProjectLogoURL)
+	if input.ProjectSlug == nil {
+		return fmt.Errorf("%w: project_slug is required", domain.ErrInvalidInput)
+	}
+	if input.ProjectName == nil {
+		return fmt.Errorf("%w: project_name is required", domain.ErrInvalidInput)
+	}
+	return nil
 }
 
 // Update validates and applies changes to the program with the given ID.
