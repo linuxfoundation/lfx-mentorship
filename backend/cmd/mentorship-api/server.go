@@ -73,13 +73,8 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	programSvc := service.NewProgramService(programRepo, programTermRepo, applicationRepo, programMemberRepo)
 	if cfg.Crowdfunding.IsConfigured() {
 		programSvc.SetCrowdfundingClient(clients.NewCrowdfundingClient(clients.CrowdfundingConfig{
-			BaseURL:      cfg.Crowdfunding.BaseURL,
-			TokenURL:     cfg.Crowdfunding.TokenURL,
-			ClientID:     cfg.Crowdfunding.ClientID,
-			ClientSecret: cfg.Crowdfunding.ClientSecret,
-			Audience:     cfg.Crowdfunding.Audience,
-			Scope:        cfg.Crowdfunding.Scope,
-			Timeout:      cfg.Crowdfunding.Timeout,
+			BaseURL: cfg.Crowdfunding.BaseURL,
+			Timeout: cfg.Crowdfunding.Timeout,
 		}))
 	}
 	programTermSvc := service.NewProgramTermService(programTermRepo, applicationRepo)

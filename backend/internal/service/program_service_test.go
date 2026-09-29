@@ -352,6 +352,7 @@ func TestProgramService_ListCatalog_PassesSkillFilter(t *testing.T) {
 	}
 	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
 	if _, _, err := svc.ListCatalog(context.Background(), models.ProgramFilter{
+		Status:          string(models.ProgramStatusDraft),
 		Skill:           "  Go  ",
 		DiscoveryStatus: "acceptance",
 		SortBy:          "name_desc",

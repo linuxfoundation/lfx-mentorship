@@ -68,20 +68,15 @@ type IndexerConfig struct {
 	MaxAttempts  int
 }
 
-// CrowdfundingConfig holds outbound crowdfunding API and M2M auth settings.
+// CrowdfundingConfig holds outbound crowdfunding API settings.
 type CrowdfundingConfig struct {
-	BaseURL      string
-	TokenURL     string
-	ClientID     string
-	ClientSecret string
-	Audience     string
-	Scope        string
-	Timeout      time.Duration
+	BaseURL string
+	Timeout time.Duration
 }
 
-// IsConfigured reports whether all required crowdfunding client settings are present.
+// IsConfigured reports whether the crowdfunding client has a base URL.
 func (c CrowdfundingConfig) IsConfigured() bool {
-	return c.BaseURL != "" && c.TokenURL != "" && c.ClientID != "" && c.ClientSecret != "" && c.Audience != ""
+	return c.BaseURL != ""
 }
 
 // OTelConfig holds OpenTelemetry settings.
@@ -212,13 +207,8 @@ func loadConfig() (*Config, error) {
 			MaxAttempts:  indexMaxAttempts,
 		},
 		Crowdfunding: CrowdfundingConfig{
-			BaseURL:      strings.TrimRight(os.Getenv("CROWDFUNDING_BASE_URL"), "/"),
-			TokenURL:     os.Getenv("CROWDFUNDING_TOKEN_URL"),
-			ClientID:     os.Getenv("CROWDFUNDING_CLIENT_ID"),
-			ClientSecret: os.Getenv("CROWDFUNDING_CLIENT_SECRET"),
-			Audience:     os.Getenv("CROWDFUNDING_AUDIENCE"),
-			Scope:        getEnv("CROWDFUNDING_SCOPE", "access:manage"),
-			Timeout:      crowdfundingTimeout,
+			BaseURL: strings.TrimRight(os.Getenv("CROWDFUNDING_BASE_URL"), "/"),
+			Timeout: crowdfundingTimeout,
 		},
 		OTel: OTelConfig{
 			ServiceName:    getEnv("OTEL_SERVICE_NAME", "lfx-mentorship-api"),
