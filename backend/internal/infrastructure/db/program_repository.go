@@ -257,7 +257,7 @@ func (r *ProgramRepository) List(ctx context.Context, filter models.ProgramFilte
 
 // GetEnrollmentTemplate returns enrollment fields for a gateway-authorized program.
 func (r *ProgramRepository) GetEnrollmentTemplate(ctx context.Context, programID string) (*models.ProgramEnrollmentTemplate, error) {
-	q := `SELECT ` + programSelectCols + ` FROM programs WHERE programs.id = $1`
+	q := `SELECT` + programSelectCols + programsWithFundingFrom + ` WHERE programs.id = $1`
 	program, err := scanProgram(r.pool.QueryRow(ctx, q, programID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrProgramNotFound
