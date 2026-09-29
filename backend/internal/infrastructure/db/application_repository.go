@@ -230,7 +230,7 @@ func (r *ApplicationRepository) ListByUser(ctx context.Context, userID string, f
 	listQ := `SELECT a.id, a.program_term_id, a.user_id, a.role, a.status, a.program_term_status,
 		a.start_date_time, a.end_date_time, a.tasks_submitted, a.admin_notified, a.attendance_type,
 		a.evaluation, a.reviewer_note, a.created_on, a.updated_on,
-		p.id, p.name, p.slug, p.logo_url, pt.id, pt.name, pt.status, pt.start_date_time, pt.end_date_time, pt.application_start_date, pt.application_end_date
+		p.id, p.name, p.slug, p.logo_url, p.lf_project_name, pt.id, pt.name, pt.status, pt.start_date_time, pt.end_date_time, pt.application_start_date, pt.application_end_date
 		FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id JOIN programs p ON p.id = pt.program_id` + where +
 		fmt.Sprintf(` ORDER BY a.created_on DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
 
@@ -249,7 +249,7 @@ func (r *ApplicationRepository) ListByUser(ctx context.Context, userID string, f
 		err := rows.Scan(&a.ID, &a.ProgramTermID, &a.UserID, &a.Role, &a.Status, &a.ProgramTermStatus,
 			&a.StartDateTime, &a.EndDateTime, &a.TasksSubmitted, &a.AdminNotified, &a.AttendanceType,
 			&a.Evaluation, &a.ReviewerNote, &a.CreatedOn, &a.UpdatedOn,
-			&program.ID, &program.Name, &program.Slug, &program.LogoURL,
+			&program.ID, &program.Name, &program.Slug, &program.LogoURL, &program.ProjectName,
 			&term.ID, &term.Name, &term.Status, &term.StartDate, &term.EndDate, &term.ApplicationStartDate, &term.ApplicationEndDate)
 		if err != nil {
 			span.RecordError(err)
