@@ -167,7 +167,7 @@ The service publishes the standard fga-sync operations:
   `status = published`, so the collection returns only data every caller may see.
 - The public program list, mentor and mentee directories, and the summary and
   funding-total aggregates stay service-owned on the same anonymous `allow_all`
-  shape. They return display fields and counts only, so every caller may see them.
+  shape. They return public display fields, counts, and aggregate totals only, so every caller may see them.
 
 ### Caller-Owned Collections
 
