@@ -11,8 +11,9 @@ metadata:
 spec:
   rules:
     # Slug resolution must happen before an object-level FGA check. Top-level
-    # resource collections are served by Query Service and are absent here;
-    # nested views remain checked against their path parent.
+    # resource collections are served by Query Service and are absent here,
+    # except the public program catalog below; nested views remain checked
+    # against their path parent.
     - id: rule:lfx:lfx-mentorship-backend:public-resolver
       allow_encoded_slashes: "off"
       match:
