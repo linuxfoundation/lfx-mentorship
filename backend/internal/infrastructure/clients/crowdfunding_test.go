@@ -24,6 +24,9 @@ func TestCrowdfundingClient_GetCategorizedTransactions_UsesGatewayPathAnonymousl
 		if got := r.Header.Get("Authorization"); got != "" {
 			t.Fatalf("Authorization = %q; want no credentials on the public route", got)
 		}
+		if got := r.URL.Query().Get("type"); got != "donations" {
+			t.Fatalf("type = %q; want donations (required with categoryType)", got)
+		}
 		if got := r.URL.Query().Get("categoryType"); got != "mentorship" {
 			t.Fatalf("categoryType = %q; want mentorship", got)
 		}
