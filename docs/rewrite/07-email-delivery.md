@@ -37,14 +37,14 @@ The full research is in the comments on [linuxfoundation/lfx-self-serve#2188](ht
 | **No send retry** | A refused send is lost unless the caller re-publishes. Mentorship does not in v1. |
 | **Accepted is not delivered** | A success reply means SES accepted the message. Bounces arrive later on `lfx.email-service.email_failed` ([email-service#29](https://github.com/linuxfoundation/lfx-v2-email-service/pull/29)), a core-NATS publish. See [Bounces](#bounces). |
 | No attachments, CC, or BCC | Nothing on the checklist needs them. One message per recipient. |
-| Non-prod recipient allowlist | Dev and staging deliver only to `linuxfoundation.org`. A blocked recipient gets an **empty success reply**, not an error — test with `linuxfoundation.org` addresses, including the staff inboxes. |
+| Non-prod recipient allowlist | Dev and staging deliver only to `linuxfoundation.org`. A blocked recipient gets a normal success reply with empty `email_id` and `group_id`, not an error — treat it as sent, and test with `linuxfoundation.org` addresses, including the staff inboxes. |
 | Headers | The relay strips CR/LF and encodes the subject, so no header sanitiser is needed here. |
 
 ## Parity checklist
 
 02 promises "same email notifications" as legacy. This table is what that means. Source: every `Send*` method under jobspring [`backend/email/`](https://github.com/linuxfoundation/jobspring/tree/main/backend/email) and its call sites on `main` as of 2026-09-29. A template counts as **live** when at least one call site is not commented out. Legacy copy is a content starting point, not a contract.
 
-Status column: **hook** — a `Notifier` method exists but delivers nothing yet; **none** — the rewrite transition exists with no `Notifier` call; **cron** — needs a scheduled job; **done** — template and send shipped. Update the column as rows ship.
+Status column: **hook** — a `Notifier` method exists but delivers nothing yet; **none** — the rewrite transition exists with no `Notifier` call, unless the row says the transition is missing; **cron** — needs a scheduled job; **done** — template and send shipped. Update the column as rows ship.
 
 | Legacy template | To | Rewrite trigger | Status |
 | --- | --- | --- | --- |
@@ -61,10 +61,10 @@ Status column: **hook** — a `Notifier` method exists but delivers nothing yet;
 | `mentor-admin-declined` | mentor | Program Admin declines a mentor (member `→ declined`) | hook: `NotifyMentorDeclined` from `Update` — called before the write today; move it after `repo.Update` so a failed write sends nothing |
 | `admin-new-mentor-request` | active Program Admins | mentor applies to a program (application with role `mentor`) | none |
 | `admin-mentor-withdrew-request` | active Program Admins | mentor application `→ withdrawn` | none |
-| `admin-mentor-removed-project` | active Program Admins | active mentor leaves (member `active → withdrawn`) | none |
+| `admin-mentor-removed-project` | active Program Admins | active mentor leaves (member `active → withdrawn`) | none — transition missing: only a Program Admin can withdraw a member today, so mentors need a way to leave |
 | **Mentee applications** | | | |
 | `mentee-application-received` | mentee | application created with role `mentee`; lists the prerequisite tasks | none |
-| `admin-review-mentee-application` | active Program Admins | last prerequisite task submitted | hook: `NotifyAdminTasksSubmitted` — fires today only when every prerequisite is `complete`; the count must also include `submitted` |
+| `admin-review-mentee-application` | active Program Admins | last prerequisite task submitted | hook: `NotifyAdminTasksSubmitted` — fires today only when every prerequisite is `complete`; the count must also include `submitted`, and the hook must fire only when `tasks_submitted` first turns true, or every later review re-sends it |
 | `mentee-mentorship-accepted` | mentee | application `→ accepted` | hook: `NotifyMenteeAccepted` |
 | `hr-mentee-accepted` | LF staff HR inbox and the Program Admin | application `→ accepted`; carries attendance type and term dates | none — same event as the row above; the `attendanceType` argument exists for it |
 | `mentee-application-declined` | mentee | application `→ declined` | none |
