@@ -145,10 +145,12 @@ config:
   INDEX_RELAY_RETRY_DELAY: "1m"
   INDEX_RELAY_MAX_ATTEMPTS: "10"
   LEDGER_BASE_URL: ""
+  # Crowdfunding is reached through the LFX v2 gateway: BASE_URL is
+  # https://lfx-api.<domain>/crowdfunding and AUDIENCE is the gateway audience.
   CROWDFUNDING_BASE_URL: ""
   CROWDFUNDING_TOKEN_URL: ""
   CROWDFUNDING_AUDIENCE: ""
-  CROWDFUNDING_SCOPE: "access:manage"
+  CROWDFUNDING_SCOPE: "access:api"
   OTEL_EXPORTER_OTLP_ENDPOINT: ""
   OTEL_SERVICE_NAME: "lfx-mentorship-backend"
 

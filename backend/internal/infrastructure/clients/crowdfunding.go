@@ -19,7 +19,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
 )
 
-const defaultCrowdfundingScope = "access:manage"
+const defaultCrowdfundingScope = "access:api"
 
 // CrowdfundingConfig holds outbound crowdfunding API and M2M auth settings.
 type CrowdfundingConfig struct {
@@ -90,7 +90,8 @@ func (c *crowdfundingHTTPClient) GetCategorizedTransactions(ctx context.Context,
 		q.Set("offset", fmt.Sprintf("%d", offset))
 	}
 
-	endpoint := fmt.Sprintf("%s/v1/initiatives/%s/transactions?%s", c.baseURL, url.PathEscape(initiativeID), q.Encode())
+	// BaseURL is the gateway prefix, e.g. https://lfx-api.<domain>/crowdfunding; the gateway routes carry no version segment.
+	endpoint := fmt.Sprintf("%s/initiatives/%s/transactions?%s", c.baseURL, url.PathEscape(initiativeID), q.Encode())
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create crowdfunding transactions request: %w", err)
