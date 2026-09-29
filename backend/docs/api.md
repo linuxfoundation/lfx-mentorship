@@ -630,6 +630,8 @@ Paginated public catalog of programs with nested skills, terms, and active mento
 
 Always returns `status = published` programs. Draft, hidden, and other statuses are omitted.
 
+Through the gateway this is the one service-owned collection route: Heimdall authenticates optionally and applies `allow_all`, so the published pin in the service is the only filter.
+
 **Response** `200`
 ```json
 {

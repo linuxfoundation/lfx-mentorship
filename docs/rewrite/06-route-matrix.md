@@ -33,11 +33,12 @@ Three rules govern the whole table, and each is a place a RuleSet can be wrong w
 
 ## Public catalog reads
 
-The [05](./05-heimdall-gateway.md) platform collection decision supersedes the GW-2 collection shape: Query Service serves every resource collection, so the RuleSet carries no Mentorship collection route. What remains is the public slug→UID resolver, directory profile reads, and UID-addressed reads, which keep the wildcard `viewer` check.
+The [05](./05-heimdall-gateway.md) platform collection decision supersedes the GW-2 collection shape: Query Service serves resource collections, so the RuleSet carries one Mentorship collection route only — the public catalog, whose joined response the index cannot serve. What remains beside it is the public slug→UID resolver, directory profile reads, and UID-addressed reads, which keep the wildcard `viewer` check.
 
 | Route | Auth | Object | Relation | Service must also |
 | --- | --- | --- | --- | --- |
-| ~~`GET /v1/programs`, `/v1/programs/catalog`~~ | — | — | — | **Retired** — served by Query Service. Do not add a RuleSet rule for them |
+| ~~`GET /v1/programs`~~ | — | — | — | **Retired** — served by Query Service. Do not add a RuleSet rule for it |
+| `GET /v1/programs/catalog` | anonymous | — | `allow_all` | **Pin `status = published` in the service**, whatever the caller sends — the edge performs no object check. Nested terms, skills, and mentors must stay public fields |
 | `GET /v1/programs/resolve/{id}` | anonymous | — | `allow_all` | **The slug→UID resolver, and the one route that must accept a slug.** Rule 1 depends on it existing. It must not leak non-public programs: resolve only to UIDs the caller could read anyway |
 | `GET /v1/programs/{uid}` | anonymous | `mentorship_program:{uid}` | `viewer` | — |
 | `GET /v1/programs/{uid}/catalog` | anonymous | `mentorship_program:{uid}` | `viewer` | — |

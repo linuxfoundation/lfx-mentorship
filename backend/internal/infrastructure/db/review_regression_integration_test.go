@@ -142,6 +142,29 @@ func TestProgramTermIntegration_CloseReopenSynchronizesProjections(t *testing.T)
 	assertTermProjectionStatus(t, pool, fixture.OpenTerm, "open")
 }
 
+func TestProgramIntegration_EnrollmentTemplateReadsFundingStats(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `INSERT INTO program_funding_stats (program_id, amount_raised) VALUES ($1, 1234.5)`, fixture.ProgramID); err != nil {
+		t.Fatalf("insert funding stats: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO program_skills (program_id, skill) VALUES ($1, 'Go')`, fixture.ProgramID); err != nil {
+		t.Fatalf("insert skill: %v", err)
+	}
+
+	template, err := NewProgramRepository(pool).GetEnrollmentTemplate(ctx, fixture.ProgramID)
+	if err != nil {
+		t.Fatalf("GetEnrollmentTemplate: %v", err)
+	}
+	if template.Program.AmountRaised != 1234.5 {
+		t.Errorf("amount_raised = %v, want 1234.5 from program_funding_stats", template.Program.AmountRaised)
+	}
+	if len(template.Skills) != 1 || template.Skills[0] != "Go" {
+		t.Errorf("skills = %v, want [Go]", template.Skills)
+	}
+}
+
 func assertTermProjectionStatus(t *testing.T, pool *pgxpool.Pool, termID, want string) {
 	t.Helper()
 	var applicationStatus, taskStatus, indexedStatus string

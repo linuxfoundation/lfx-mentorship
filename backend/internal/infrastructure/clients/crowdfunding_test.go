@@ -26,6 +26,12 @@ func TestCrowdfundingClient_GetCategorizedTransactions_UsesM2MTokenAndQuery(t *t
 		if r.PostForm.Get("grant_type") != "client_credentials" {
 			t.Fatalf("grant_type = %q; want client_credentials", r.PostForm.Get("grant_type"))
 		}
+		if got := r.PostForm.Get("audience"); got != "https://lfx-api.example/" {
+			t.Fatalf("audience = %q; want the gateway audience", got)
+		}
+		if got := r.PostForm.Get("scope"); got != "access:api" {
+			t.Fatalf("scope = %q; want default access:api", got)
+		}
 		atomic.AddInt32(&tokenCalls, 1)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"access_token":"test-token","expires_in":3600}`))
@@ -33,6 +39,9 @@ func TestCrowdfundingClient_GetCategorizedTransactions_UsesM2MTokenAndQuery(t *t
 	defer tokenServer.Close()
 
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/crowdfunding/initiatives/initiative-1/transactions" {
+			t.Fatalf("path = %q; want the gateway route without a version segment", r.URL.Path)
+		}
 		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
 			t.Fatalf("Authorization = %q; want Bearer test-token", got)
 		}
@@ -54,12 +63,11 @@ func TestCrowdfundingClient_GetCategorizedTransactions_UsesM2MTokenAndQuery(t *t
 	defer apiServer.Close()
 
 	client := NewCrowdfundingClient(CrowdfundingConfig{
-		BaseURL:      apiServer.URL,
+		BaseURL:      apiServer.URL + "/crowdfunding/",
 		TokenURL:     tokenServer.URL,
 		ClientID:     "id",
 		ClientSecret: "secret",
-		Audience:     "https://api.example",
-		Scope:        "access:manage",
+		Audience:     "https://lfx-api.example/",
 		Timeout:      2 * time.Second,
 	})
 

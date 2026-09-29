@@ -19,7 +19,9 @@ Positions carried over from the follow-up Architecture call are marked inline: t
 > `manage:mentorship:approvers` scope remains defense in depth and is not treated
 > as edge authorization. Internal metrics are cluster-local and are likewise
 > absent from the shared gateway. Service-owned top-level collections are an
-> anti-pattern, not a cutover exception: every Mentorship resource object must
+> anti-pattern, not a cutover exception — apart from the public program catalog,
+> an anonymous `allow_all` read pinned to published programs (see
+> [05](./05-heimdall-gateway.md) GW-2): every Mentorship resource object must
 > be indexed for Query Service, and caller-owned initiative views use
 > `filter_grants=direct` with an explicit resource `type`.
 
