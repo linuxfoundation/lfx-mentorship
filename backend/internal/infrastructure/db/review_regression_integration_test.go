@@ -165,6 +165,27 @@ func TestProgramIntegration_EnrollmentTemplateReadsFundingStats(t *testing.T) {
 	}
 }
 
+func TestProgramIntegration_FundingTotalsCountOnlyPublishedPrograms(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	hiddenID := "00000000-0000-0000-0000-000000000501"
+	if _, err := pool.Exec(ctx, `INSERT INTO programs (id, lf_project_uid, name, slug, status) VALUES ($1, '00000000-0000-0000-0000-000000000099', 'Hidden Program', 'hidden-program', 'hidden')`, hiddenID); err != nil {
+		t.Fatalf("insert hidden program: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO program_funding_stats (program_id, amount_raised, amount_spent) VALUES ($1, 100, 40), ($2, 9000, 7000)`, fixture.ProgramID, hiddenID); err != nil {
+		t.Fatalf("insert funding stats: %v", err)
+	}
+
+	raised, spent, err := NewProgramRepository(pool).GetFundingTotals(ctx)
+	if err != nil {
+		t.Fatalf("GetFundingTotals: %v", err)
+	}
+	if raised != 100 || spent != 40 {
+		t.Errorf("totals = raised %v, spent %v; want 100, 40 (the hidden program must not be counted)", raised, spent)
+	}
+}
+
 func TestApplicationRepositoryIntegration_ListByUserReturnsProjectName(t *testing.T) {
 	pool := integrationPool(t)
 	fixture := seedIntegrationFixture(t, pool)
