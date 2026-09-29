@@ -5,45 +5,24 @@ package clients
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 )
 
-func TestCrowdfundingClient_GetCategorizedTransactions_UsesM2MTokenAndQuery(t *testing.T) {
+func TestCrowdfundingClient_GetCategorizedTransactions_UsesGatewayPathAnonymously(t *testing.T) {
 	t.Parallel()
-
-	var tokenCalls int32
-	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Fatalf("method = %s; want POST", r.Method)
-		}
-		if err := r.ParseForm(); err != nil {
-			t.Fatalf("ParseForm: %v", err)
-		}
-		if r.PostForm.Get("grant_type") != "client_credentials" {
-			t.Fatalf("grant_type = %q; want client_credentials", r.PostForm.Get("grant_type"))
-		}
-		if got := r.PostForm.Get("audience"); got != "https://lfx-api.example/" {
-			t.Fatalf("audience = %q; want the gateway audience", got)
-		}
-		if got := r.PostForm.Get("scope"); got != "access:api" {
-			t.Fatalf("scope = %q; want default access:api", got)
-		}
-		atomic.AddInt32(&tokenCalls, 1)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"access_token":"test-token","expires_in":3600}`))
-	}))
-	defer tokenServer.Close()
 
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/crowdfunding/initiatives/initiative-1/transactions" {
 			t.Fatalf("path = %q; want the gateway route without a version segment", r.URL.Path)
 		}
-		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
-			t.Fatalf("Authorization = %q; want Bearer test-token", got)
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Fatalf("Authorization = %q; want no credentials on the public route", got)
 		}
 		if got := r.URL.Query().Get("categoryType"); got != "mentorship" {
 			t.Fatalf("categoryType = %q; want mentorship", got)
@@ -63,67 +42,36 @@ func TestCrowdfundingClient_GetCategorizedTransactions_UsesM2MTokenAndQuery(t *t
 	defer apiServer.Close()
 
 	client := NewCrowdfundingClient(CrowdfundingConfig{
-		BaseURL:      apiServer.URL + "/crowdfunding/",
-		TokenURL:     tokenServer.URL,
-		ClientID:     "id",
-		ClientSecret: "secret",
-		Audience:     "https://lfx-api.example/",
-		Timeout:      2 * time.Second,
+		BaseURL: apiServer.URL + "/crowdfunding/",
+		Timeout: 2 * time.Second,
 	})
 
 	if _, err := client.GetCategorizedTransactions(context.Background(), "initiative-1", "mentorship", true, 20, 5); err != nil {
 		t.Fatalf("GetCategorizedTransactions: %v", err)
 	}
-	if atomic.LoadInt32(&tokenCalls) != 1 {
-		t.Fatalf("tokenCalls = %d; want 1", tokenCalls)
-	}
 }
 
-func TestCrowdfundingClient_CachesToken(t *testing.T) {
+func TestCrowdfundingClient_GetCategorizedTransactions_NonOKIsUpstreamUnavailable(t *testing.T) {
 	t.Parallel()
 
-	var tokenCalls int32
-	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		atomic.AddInt32(&tokenCalls, 1)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"access_token":"cached-token","expires_in":3600}`))
-	}))
-	defer tokenServer.Close()
-
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"individual_transactions":[],"organization_transactions":[],"total_count":0,"limit":10,"offset":0}`))
+		http.Error(w, "not found", http.StatusNotFound)
 	}))
 	defer apiServer.Close()
 
 	client := NewCrowdfundingClient(CrowdfundingConfig{
-		BaseURL:      apiServer.URL,
-		TokenURL:     tokenServer.URL,
-		ClientID:     "id",
-		ClientSecret: "secret",
-		Audience:     "https://api.example",
-		Timeout:      2 * time.Second,
+		BaseURL: apiServer.URL,
+		Timeout: 2 * time.Second,
 	})
 
-	if _, err := client.GetCategorizedTransactions(context.Background(), "initiative-1", "mentorship", false, 10, 0); err != nil {
-		t.Fatalf("first call: %v", err)
-	}
-	if _, err := client.GetCategorizedTransactions(context.Background(), "initiative-1", "mentorship", false, 10, 0); err != nil {
-		t.Fatalf("second call: %v", err)
-	}
-	if atomic.LoadInt32(&tokenCalls) != 1 {
-		t.Fatalf("tokenCalls = %d; want 1", tokenCalls)
+	_, err := client.GetCategorizedTransactions(context.Background(), "initiative-1", "", false, 10, 0)
+	if !errors.Is(err, domain.ErrUpstreamUnavailable) {
+		t.Fatalf("err = %v; want ErrUpstreamUnavailable", err)
 	}
 }
 
 func TestCrowdfundingClient_GetCategorizedTransactions_FallbackDataArray(t *testing.T) {
 	t.Parallel()
-
-	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"access_token":"test-token","expires_in":3600}`))
-	}))
-	defer tokenServer.Close()
 
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -140,12 +88,8 @@ func TestCrowdfundingClient_GetCategorizedTransactions_FallbackDataArray(t *test
 	defer apiServer.Close()
 
 	client := NewCrowdfundingClient(CrowdfundingConfig{
-		BaseURL:      apiServer.URL,
-		TokenURL:     tokenServer.URL,
-		ClientID:     "id",
-		ClientSecret: "secret",
-		Audience:     "https://api.example",
-		Timeout:      2 * time.Second,
+		BaseURL: apiServer.URL,
+		Timeout: 2 * time.Second,
 	})
 
 	out, err := client.GetCategorizedTransactions(context.Background(), "initiative-1", "mentorship", false, 10, 0)
