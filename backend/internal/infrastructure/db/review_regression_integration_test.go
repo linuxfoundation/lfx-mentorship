@@ -165,6 +165,37 @@ func TestProgramIntegration_EnrollmentTemplateReadsFundingStats(t *testing.T) {
 	}
 }
 
+func TestApplicationRepositoryIntegration_ListByUserReturnsProjectName(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	projectName, logoURL := "Fixture Project", "https://example.com/program.svg"
+	if _, err := pool.Exec(ctx, `UPDATE programs SET lf_project_name = $2, logo_url = $3 WHERE id = $1`, fixture.ProgramID, projectName, logoURL); err != nil {
+		t.Fatalf("set program project metadata: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ('00000000-0000-0000-0000-000000000070', $1, $2, 'mentee', 'pending')`, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatalf("insert application: %v", err)
+	}
+
+	apps, _, err := NewApplicationRepository(pool).ListByUser(ctx, fixture.UserID, models.ApplicationFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListByUser: %v", err)
+	}
+	if len(apps) != 1 || apps[0].Program == nil || apps[0].Term == nil {
+		t.Fatalf("apps = %+v, want one application with program and term", apps)
+	}
+	program := apps[0].Program
+	if program.ProjectName == nil || *program.ProjectName != projectName {
+		t.Errorf("program.project_name = %v, want %q", program.ProjectName, projectName)
+	}
+	if program.LogoURL == nil || *program.LogoURL != logoURL {
+		t.Errorf("program.logo_url = %v, want %q", program.LogoURL, logoURL)
+	}
+	if apps[0].Term.ID != fixture.OpenTerm {
+		t.Errorf("term.id = %q, want %q", apps[0].Term.ID, fixture.OpenTerm)
+	}
+}
+
 func assertTermProjectionStatus(t *testing.T, pool *pgxpool.Pool, termID, want string) {
 	t.Helper()
 	var applicationStatus, taskStatus, indexedStatus string
