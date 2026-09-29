@@ -145,12 +145,9 @@ config:
   INDEX_RELAY_RETRY_DELAY: "1m"
   INDEX_RELAY_MAX_ATTEMPTS: "10"
   LEDGER_BASE_URL: ""
-  # Crowdfunding is reached through the LFX v2 gateway: BASE_URL is
-  # https://lfx-api.<domain>/crowdfunding and AUDIENCE is the gateway audience.
+  # Crowdfunding is reached through the LFX v2 gateway at
+  # https://lfx-api.<domain>/crowdfunding; the transactions route is public.
   CROWDFUNDING_BASE_URL: ""
-  CROWDFUNDING_TOKEN_URL: ""
-  CROWDFUNDING_AUDIENCE: ""
-  CROWDFUNDING_SCOPE: "access:api"
   OTEL_EXPORTER_OTLP_ENDPOINT: ""
   OTEL_SERVICE_NAME: "lfx-mentorship-backend"
 
@@ -173,8 +170,6 @@ env: []
 #   assembling a DSN string, so a password containing a backslash or a space is
 #   not altered in transit.
 #   LEDGER_API_KEY — bearer token for Ledger service API
-#   CROWDFUNDING_CLIENT_ID — Auth0 M2M client ID for crowdfunding API
-#   CROWDFUNDING_CLIENT_SECRET — Auth0 M2M client secret for crowdfunding API
 #   INDEXER_SERVICE_TOKEN — service credential stamped on index messages.
 #     Optional: without it the index relay idles and outbox rows stay pending.
 #   MENTOR_INVITE_SECRET — HMAC secret for signing mentor invite tokens.
