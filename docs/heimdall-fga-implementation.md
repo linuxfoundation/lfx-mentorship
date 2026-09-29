@@ -95,11 +95,13 @@ flowchart LR
    decision.
 
 Anonymous object reads still pass through OpenFGA. Published programs carry
-`viewer@user:*`; unpublished programs do not. Resource collections do not pass
+`viewer@user:*`; unpublished programs do not. Caller-owned collections do not pass
 through the Mentorship RuleSet: callers use Query Service `GET /query/resources?v=1`,
-which applies access filtering over indexed objects. The one exception is the
-public `GET /programs/catalog`, an anonymous `allow_all` route whose service
-pins `status = published`.
+which applies access filtering over indexed objects. Public collections are the
+exception: `GET /programs`, `/programs/catalog`, `/mentors`, `/mentees`, their
+summaries, `/summary`, and `/funding-stats/total` are anonymous `allow_all`
+routes whose services return only published programs and publicly listable
+profiles.
 
 ### Write and Derived-State Path
 
@@ -163,13 +165,14 @@ The service publishes the standard fga-sync operations:
   filters, accepting-first sort, and nested terms, skills, and mentors need
   relational joins the program index does not carry. The service pins
   `status = published`, so the collection returns only data every caller may see.
+- The public program list, mentor and mentee directories, and the summary and
+  funding-total aggregates stay service-owned on the same anonymous `allow_all`
+  shape. They return display fields and counts only, so every caller may see them.
 
-### Transitional Collection Gap
+### Caller-Owned Collections
 
-Service-owned top-level program, mentor, mentee, and summary collections remain in the
-backend for migration compatibility, but they are not an accepted v2 exception
-and are absent from the shared-gateway RuleSet. The public program catalog is the
-exception listed above. Query Service must hold all Mentorship resource objects
+Caller-owned collections — a user's programs, applications, and tasks — are
+served by Query Service. Query Service must hold all Mentorship resource objects
 before cutover.
 
 Nested views such as a program's terms or members may remain service-owned when
@@ -196,8 +199,8 @@ metadata.
 - A competing Mentorship-owned project-admin roster.
 - Empty-relation membership removals that can delete unrelated grants.
 - Authentication bypass in any deployed environment.
-- Service-owned top-level resource collections at gateway cutover, other than
-  the public program catalog.
+- Service-owned caller-owned collections at gateway cutover; public collections
+  are the only service-owned top-level collections.
 
 ## Implementation Map
 
@@ -461,15 +464,9 @@ Not yet validated end to end:
   access-check metadata, and the fields required by their collection views.
   Runtime lifecycle writes and importer seed upserts use the same
   generation-guarded index outbox.
-- [ ] Define Query Service resource projections for mentor/mentee directories
-  and replace service-owned summary aggregation with Query Service count/group
-  queries where supported.
-- [ ] Move all top-level collection consumers except the public program catalog
-  to `GET /query/resources?v=1`.
+- [ ] Move caller-owned collection consumers to `GET /query/resources?v=1`.
 - [ ] Use `filter_grants=direct` with an explicit `type` for caller-owned
   initiative views; forward the caller bearer token rather than a user ID.
-- [ ] Remove or retire the superseded Mentorship collection endpoints after all
-  frontend/BFF consumers have moved.
 
 ### 3. Deploy Relays and Seed Derived State
 
