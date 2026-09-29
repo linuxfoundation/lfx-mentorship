@@ -1107,7 +1107,7 @@ Remove a skill tag.
 
 #### `GET /v1/funding-stats/total` 🔓
 
-Returns the total amount raised and spent across all program funding stats.
+Returns the total amount raised and spent across published programs.
 
 **Response** `200`
 
