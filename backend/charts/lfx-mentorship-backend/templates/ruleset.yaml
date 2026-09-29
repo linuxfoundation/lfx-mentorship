@@ -45,6 +45,24 @@ spec:
             values:
               aud: {{ .Values.app.audience | quote }}
 
+    # The one service-owned collection: the catalog joins terms, skills, and mentors
+    # that Query Service does not index. No object UID to check; the service pins
+    # status = published. More specific than /programs/:id, so it wins regardless of order.
+    - id: rule:lfx:lfx-mentorship-backend:programs-catalog-public
+      allow_encoded_slashes: "off"
+      match:
+        methods: [GET]
+        routes:
+          - path: /mentorship/v1/programs/catalog
+      execute:
+        - authenticator: oidc
+        - authenticator: anonymous_authenticator
+        - authorizer: allow_all
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
     # Public program object reads.
     - id: rule:lfx:lfx-mentorship-backend:programs-public
       allow_encoded_slashes: "off"

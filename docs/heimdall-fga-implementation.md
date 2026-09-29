@@ -97,7 +97,9 @@ flowchart LR
 Anonymous object reads still pass through OpenFGA. Published programs carry
 `viewer@user:*`; unpublished programs do not. Resource collections do not pass
 through the Mentorship RuleSet: callers use Query Service `GET /query/resources?v=1`,
-which applies access filtering over indexed objects.
+which applies access filtering over indexed objects. The one exception is the
+public `GET /programs/catalog`, an anonymous `allow_all` route whose service
+pins `status = published`.
 
 ### Write and Derived-State Path
 
@@ -156,13 +158,19 @@ The service publishes the standard fga-sync operations:
   user row. This is self-scoping, not an arbitrary resource authorization path.
 - Mentor invite acceptance retains its signed-token ownership check because no
   FGA invite object is created.
+- The public program catalog (`GET /programs/catalog`) stays service-owned and
+  routed through the RuleSet as anonymous `allow_all`. Its skill and term-status
+  filters, accepting-first sort, and nested terms, skills, and mentors need
+  relational joins the program index does not carry. The service pins
+  `status = published`, so the collection returns only data every caller may see.
 
 ### Transitional Collection Gap
 
 Service-owned top-level program, mentor, mentee, and summary collections remain in the
 backend for migration compatibility, but they are not an accepted v2 exception
-and are absent from the shared-gateway RuleSet. Query Service must hold all
-Mentorship resource objects before cutover.
+and are absent from the shared-gateway RuleSet. The public program catalog is the
+exception listed above. Query Service must hold all Mentorship resource objects
+before cutover.
 
 Nested views such as a program's terms or members may remain service-owned when
 every returned item shares the path parent's permission; Heimdall checks that
@@ -188,7 +196,8 @@ metadata.
 - A competing Mentorship-owned project-admin roster.
 - Empty-relation membership removals that can delete unrelated grants.
 - Authentication bypass in any deployed environment.
-- Service-owned top-level resource collections at gateway cutover.
+- Service-owned top-level resource collections at gateway cutover, other than
+  the public program catalog.
 
 ## Implementation Map
 
@@ -455,7 +464,8 @@ Not yet validated end to end:
 - [ ] Define Query Service resource projections for mentor/mentee directories
   and replace service-owned summary aggregation with Query Service count/group
   queries where supported.
-- [ ] Move all top-level collection consumers to `GET /query/resources?v=1`.
+- [ ] Move all top-level collection consumers except the public program catalog
+  to `GET /query/resources?v=1`.
 - [ ] Use `filter_grants=direct` with an explicit `type` for caller-owned
   initiative views; forward the caller bearer token rather than a user ID.
 - [ ] Remove or retire the superseded Mentorship collection endpoints after all
@@ -528,7 +538,8 @@ true:
 6. authenticated, anonymous, denied, cross-program, revocation, and deletion
    smokes pass;
 7. clients use the shared gateway; and
-8. resource collections are served by Query Service; and
+8. resource collections other than the public program catalog are served by
+   Query Service; and
 9. direct bypass routes are disabled.
 
 Until then, keep `heimdall.enabled=false` in environment values.

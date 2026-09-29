@@ -31,7 +31,6 @@ func TestRuleSetDoesNotContainRetiredRoutesOrBroadProgramMethods(t *testing.T) {
 	}
 	// Query Service owns these collections; the matching detail routes stay in the RuleSet.
 	for _, collection := range []string{
-		"- path: /mentorship/v1/programs/catalog",
 		"- path: /mentorship/v1/mentors",
 		"- path: /mentorship/v1/mentees",
 		"- path: /mentorship/v1/summary",
@@ -76,6 +75,38 @@ func TestRuleSetDoesNotContainRetiredRoutesOrBroadProgramMethods(t *testing.T) {
 	} {
 		if !strings.Contains(ruleset, required) {
 			t.Errorf("RuleSet is missing required authorization mapping %q", required)
+		}
+	}
+}
+
+func TestPublicCatalogRuleIsAnonymousReadOnly(t *testing.T) {
+	contents, err := os.ReadFile("templates/ruleset.yaml")
+	if err != nil {
+		t.Fatalf("read RuleSet: %v", err)
+	}
+	ruleset := string(contents)
+	start := strings.Index(ruleset, "id: rule:lfx:lfx-mentorship-backend:programs-catalog-public")
+	if start < 0 {
+		t.Fatal("RuleSet is missing the public catalog rule")
+	}
+	end := strings.Index(ruleset[start:], "\n    - id:")
+	if end < 0 {
+		t.Fatal("RuleSet public catalog rule has no following rule boundary")
+	}
+	block := ruleset[start : start+end]
+	if strings.Count(block, "- path:") != 1 || !strings.Contains(block, "- path: /mentorship/v1/programs/catalog\n") {
+		t.Fatalf("public catalog rule must cover only the catalog collection:\n%s", block)
+	}
+	if !strings.Contains(block, "methods: [GET]") {
+		t.Error("public catalog rule must be GET-only")
+	}
+	for _, required := range []string{
+		"- authenticator: anonymous_authenticator",
+		"- authorizer: allow_all",
+		"- finalizer: create_jwt",
+	} {
+		if !strings.Contains(block, required) {
+			t.Errorf("public catalog rule is missing %q", required)
 		}
 	}
 }
