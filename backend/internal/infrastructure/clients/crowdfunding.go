@@ -45,6 +45,8 @@ func NewCrowdfundingClient(cfg CrowdfundingConfig) CrowdfundingClient {
 func (c *crowdfundingHTTPClient) GetCategorizedTransactions(ctx context.Context, initiativeID, categoryType string, subscriptionOnly bool, limit, offset int) (*models.ProgramCategorizedTransactions, error) {
 	q := url.Values{}
 	if strings.TrimSpace(categoryType) != "" {
+		// Crowdfunding rejects categoryType unless the query is scoped to donations.
+		q.Set("type", "donations")
 		q.Set("categoryType", categoryType)
 	}
 	if subscriptionOnly {
