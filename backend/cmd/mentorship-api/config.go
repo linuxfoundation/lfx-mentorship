@@ -217,7 +217,7 @@ func loadConfig() (*Config, error) {
 			ClientID:     os.Getenv("CROWDFUNDING_CLIENT_ID"),
 			ClientSecret: os.Getenv("CROWDFUNDING_CLIENT_SECRET"),
 			Audience:     os.Getenv("CROWDFUNDING_AUDIENCE"),
-			Scope:        getEnv("CROWDFUNDING_SCOPE", "access:manage"),
+			Scope:        getEnv("CROWDFUNDING_SCOPE", "access:api"),
 			Timeout:      crowdfundingTimeout,
 		},
 		OTel: OTelConfig{
