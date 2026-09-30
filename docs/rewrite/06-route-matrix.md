@@ -146,15 +146,15 @@ Handler mechanics are the platform baseline ([lfx-object-store-design](https://g
 
 | Route | Auth | Object | Relation | Service must also |
 | --- | --- | --- | --- | --- |
-| `POST /v1/programs/{uid}/logo-upload` | required | `mentorship_program:{uid}` | `writer` | Public class. Image allowlist, **SVG excluded**, 2 MB. New key, conditional row update, delete the previous key unless it is a foreign URL ([02 §stored value and delivery](./02-target-architecture.md#stored-value-and-delivery)). Returns the stored CDN URL as `public_url` |
-| `DELETE /v1/programs/{uid}/logo` | required | `mentorship_program:{uid}` | `writer` | Null the column; `DeleteObject` the key ([02 §deleting the bytes](./02-target-architecture.md#deleting-the-bytes)) |
+| `POST /v1/programs/{uid}/logo-upload` | required | `mentorship_program:{uid}` | `writer` | Public class. Image allowlist, **SVG excluded**, 2 MB. New key, conditional row update, previous key queued for deletion unless it is a foreign URL ([02 §stored value and delivery](./02-target-architecture.md#stored-value-and-delivery)). Returns the stored CDN URL as `public_url` |
+| `DELETE /v1/programs/{uid}/logo` | required | `mentorship_program:{uid}` | `writer` | Null the column; queue the key for deletion ([02 §deleting the bytes](./02-target-architecture.md#deleting-the-bytes)) |
 | `GET /v1/programs/{uid}/logo-download` | anonymous | `mentorship_program:{uid}` | `viewer` | Public class. Same relation as `GET /v1/programs/{uid}`, which already returns `logo_url` |
 | `POST /v1/me/profiles/by-id/{id}/logo-upload` | required | — | `allow_all` | Public class, self-scoped: **no object to check** — the handler verifies the profile's `user_id` is the principal (rule 3). Image allowlist, **SVG excluded**, 2 MB. Also sets `users.avatar_url` to the new URL ([02 §file classes](./02-target-architecture.md#file-classes)) |
-| `DELETE /v1/me/profiles/by-id/{id}/logo` | required | — | `allow_all` | Same ownership check. Null the column, and `users.avatar_url` if it holds the same URL; `DeleteObject` the key |
+| `DELETE /v1/me/profiles/by-id/{id}/logo` | required | — | `allow_all` | Same ownership check. Null the column, and `users.avatar_url` if it holds the same URL; queue the key for deletion |
 | `GET /v1/user-profiles/{id}/logo-download` | anonymous | — | `allow_all` | Public class. Directory profiles have no model type (RM-2), so the service serves this only for publicly-listable profiles |
 | `POST /v1/tasks/{uid}/file-upload` | required | `mentorship_task:{uid}` | `assignee` | **Private class.** PDF/doc allowlist, 20 MB. Only before review closes — a state rule, service-side. Pairs with `PATCH /v1/tasks/{uid}/submission` |
 | `GET /v1/tasks/{uid}/file-download` | required | `mentorship_task:{uid}` | `auditor` | Admits the assignee and the reviewers. Filename is the key minus its `{uuid}-` prefix ([02 §stored value and delivery](./02-target-architecture.md#stored-value-and-delivery)). **This route, not `tasks.file`, is what the program-admin mentee listing returns per task** |
-| `DELETE /v1/tasks/{uid}/file` | required | `mentorship_task:{uid}` | `assignee` | Only before review closes. Null the column and `DeleteObject` the key |
+| `DELETE /v1/tasks/{uid}/file` | required | `mentorship_task:{uid}` | `assignee` | Only before review closes. Null the column and queue the key for deletion |
 
 Three things to note.
 
