@@ -102,7 +102,7 @@ self-request; all transitions are tracked correctly.
 
 - [x] T020 [US2] Create `backend/internal/infrastructure/auth/invite_token.go`: `GenerateInviteToken(programID, userID string, ttl time.Duration) (string, error)` and `ValidateInviteToken(token, secret string) (programID, userID string, error)` using the existing JWT library
 - [x] T021 [US2] Update `ProgramMemberService.Create` in `backend/internal/service/program_member_service.go` to call `GenerateInviteToken` and `Notifier.NotifyMentorInvited` when `status = invited`; accept `requested` as a valid initial status for self-requests
-- [x] T022 [US2] Add decline notification call in `ProgramMemberService.Update` in `backend/internal/service/program_member_service.go`: when `to = declined` (from `invited` or `requested`), call `Notifier.NotifyMentorDeclined`
+- [x] T022 [US2] Add decline notification call in `ProgramMemberService.Update` in `backend/internal/service/program_member_service.go`: when `requested → declined`, call `Notifier.NotifyMentorDeclined` (revoking an invite, `invited → declined`, sends nothing)
 - [x] T023 [US2] Create `backend/internal/handler/mentor_invite_handler.go` with `MentorInviteHandler` struct and `Accept(w, r)` / `Decline(w, r)` methods; parse JWT token from path param, call `ProgramMemberService.AcceptInvite` / `DeclineInvite`
 - [x] T024 [US2] Add `AcceptInvite(ctx, token string)` and `DeclineInvite(ctx, token string)` to `ProgramMemberService` in `backend/internal/service/program_member_service.go`
 - [x] T025 [US2] Register routes `POST /v1/mentor-invites/{token}/accept` and `POST /v1/mentor-invites/{token}/decline` as **public** (no auth middleware) in `backend/cmd/mentorship-api/server.go`
