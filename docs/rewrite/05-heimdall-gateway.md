@@ -181,6 +181,6 @@ those values; there is no standalone Mentorship API path to leave active.
 
 The interim public-roster gaps are now closed in the backend: `ProgramMemberHandler.List`
 requires `program.status = published`, pins `member_type = mentor` and
-`status = active`, and strips email addresses. The corresponding RuleSet route
+`status = approved`, and strips email addresses. The corresponding RuleSet route
 is implemented in the chart. Live gateway activation and anonymous/denied smoke
 coverage remain cutover evidence, not additional handler work.

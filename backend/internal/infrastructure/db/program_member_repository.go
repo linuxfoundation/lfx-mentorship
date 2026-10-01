@@ -110,7 +110,7 @@ func (r *ProgramMemberRepository) findActiveMembership(ctx context.Context, prog
 	defer span.End()
 	span.SetAttributes(attribute.String("db.program_id", programID), attribute.String("db.user_id", userID))
 
-	q := `SELECT ` + programMemberCols + ` FROM program_members WHERE program_id = $1 AND user_id = $2 AND status = 'active' AND ` + rolePredicate + ` ORDER BY created_on DESC LIMIT 1`
+	q := `SELECT ` + programMemberCols + ` FROM program_members WHERE program_id = $1 AND user_id = $2 AND status = 'approved' AND ` + rolePredicate + ` ORDER BY created_on DESC LIMIT 1`
 	m, err := scanProgramMember(r.pool.QueryRow(ctx, q, programID, userID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrProgramMemberNotFound
@@ -306,7 +306,7 @@ func (r *ProgramMemberRepository) Create(ctx context.Context, programID string, 
 		span.RecordError(err)
 		return nil, fmt.Errorf("create program member: %w", err)
 	}
-	if isActiveMember(m) {
+	if isApprovedMember(m) {
 		if err := enqueueMemberMarker(ctx, tx, m, "put"); err != nil {
 			return nil, err
 		}
@@ -382,9 +382,9 @@ func (r *ProgramMemberRepository) update(ctx context.Context, id string, input m
 	if err != nil {
 		return nil, fmt.Errorf("update program member: %w", err)
 	}
-	if isActiveMember(current) || isActiveMember(m) {
+	if isApprovedMember(current) || isApprovedMember(m) {
 		op := "remove"
-		if isActiveMember(m) {
+		if isApprovedMember(m) {
 			op = "put"
 		}
 		if err := enqueueMemberMarker(ctx, tx, m, op); err != nil {
@@ -427,7 +427,7 @@ func (r *ProgramMemberRepository) Delete(ctx context.Context, id string) error {
 	if cmd.RowsAffected() == 0 {
 		return domain.ErrProgramMemberNotFound
 	}
-	if isActiveMember(current) {
+	if isApprovedMember(current) {
 		if err := enqueueMemberMarker(ctx, tx, current, "remove"); err != nil {
 			return err
 		}
@@ -443,8 +443,8 @@ func (r *ProgramMemberRepository) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-func isActiveMember(member *models.ProgramMember) bool {
-	return member != nil && member.Status != nil && *member.Status == models.ProgramMemberStatusActive
+func isApprovedMember(member *models.ProgramMember) bool {
+	return member != nil && member.Status != nil && *member.Status == models.ProgramMemberStatusApproved
 }
 
 func enqueueMemberMarker(ctx context.Context, tx pgx.Tx, member *models.ProgramMember, operation string) error {

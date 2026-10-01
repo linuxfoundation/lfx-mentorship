@@ -73,9 +73,9 @@ func (s *stubProgramMemberSvc) WithdrawMine(ctx context.Context, id, userID stri
 	return nil
 }
 
-// The public roster is active members only, and the caller must not be able to
+// The public roster is approved members only, and the caller must not be able to
 // widen it by asking for another status.
-func TestProgramMemberHandler_List_PinsActiveStatus(t *testing.T) {
+func TestProgramMemberHandler_List_PinsApprovedStatus(t *testing.T) {
 	var captured models.ProgramMemberFilter
 	h := handler.NewProgramMemberHandler(&stubProgramMemberSvc{
 		listByProgram: func(_ context.Context, _ string, f models.ProgramMemberFilter) ([]*models.ProgramMember, *models.PaginationMeta, error) {
@@ -91,8 +91,8 @@ func TestProgramMemberHandler_List_PinsActiveStatus(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("got %d; want 200", w.Code)
 	}
-	if captured.Status != string(models.ProgramMemberStatusActive) {
-		t.Errorf("Status = %q; want %q", captured.Status, models.ProgramMemberStatusActive)
+	if captured.Status != string(models.ProgramMemberStatusApproved) {
+		t.Errorf("Status = %q; want %q", captured.Status, models.ProgramMemberStatusApproved)
 	}
 	if captured.MemberType != string(models.MemberTypeMentor) {
 		t.Errorf("MemberType = %q; want %q", captured.MemberType, models.MemberTypeMentor)
@@ -131,7 +131,7 @@ func TestProgramMemberHandler_List_HidesUnpublishedProgram(t *testing.T) {
 // member's email address, even though the service returns it.
 func TestProgramMemberHandler_List_OmitsEmail(t *testing.T) {
 	email := "admin@example.com"
-	status := models.ProgramMemberStatusActive
+	status := models.ProgramMemberStatusApproved
 	h := handler.NewProgramMemberHandler(&stubProgramMemberSvc{
 		listByProgram: func(context.Context, string, models.ProgramMemberFilter) ([]*models.ProgramMember, *models.PaginationMeta, error) {
 			return []*models.ProgramMember{{
@@ -183,7 +183,7 @@ func TestProgramMemberHandler_Update_RejectsMemberFromDifferentProgram(t *testin
 			return nil, domain.ErrProgramMemberNotFound
 		},
 	}, &stubProgramSvc{})
-	body := strings.NewReader(`{"status":"active"}`)
+	body := strings.NewReader(`{"status":"approved"}`)
 	r := httptest.NewRequest(http.MethodPatch, "/v1/programs/p1/members/m1", body)
 	r = requestWithPrincipal(r, "admin-1")
 	r = requestWithChiParam(r, "id", "p1")

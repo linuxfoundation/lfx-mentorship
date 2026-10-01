@@ -56,7 +56,7 @@ Status column: **hook** — a `Notifier` method exists but delivers nothing yet;
 | `admin-project-edited-notification` | Program Admin | Program Admin edits a program that is not `rejected` | none |
 | **Mentors** | | | |
 | `mentor-project-invite` | invited mentor | mentor added to a program (`invited`) | hook: `NotifyMentorInvited` — signature changes with 08 |
-| `admin-mentor-accepted` | active Program Admins | mentor accepts the invite (`invited → active`) | none — 08 adds `NotifyMentorAccepted` |
+| `admin-mentor-accepted` | active Program Admins | mentor accepts the invite (`invited → approved`) | none — 08 adds `NotifyMentorAccepted` |
 | `admin-mentor-declined` | active Program Admins | mentor declines the invite (`invited → declined`) | hook: `NotifyMentorDeclined` from `DeclineInvite` — needs its own method, see below |
 | `mentor-admin-declined` | mentor | Program Admin declines a mentor (member `→ declined`) | hook: `NotifyMentorDeclined` from `Update` — called before the write today; move it after `repo.Update` so a failed write sends nothing |
 | `admin-new-mentor-request` | active Program Admins | mentor applies to a program (application with role `mentor`) | none |
