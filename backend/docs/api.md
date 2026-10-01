@@ -19,6 +19,7 @@ The gateway-authorized API uses canonical resource paths:
 
 - Self-service user and profile mutations use `/me` and `/me/profiles`.
 - User application reads use `/me/applications`.
+- Mentor self-service program requests use `/me/program-memberships`.
 - Program-admin collection reads use Query Service
   `/query/resources?v=1&type=mentorship_program&filter_grants=direct`.
 - Term-scoped routes use `/programs/{programUID}/terms/{termID}`.
@@ -143,7 +144,7 @@ real JWT. **Never set these in production.**
 |---|---|
 | 🔓 | No JWT required |
 | 🔒 | `Authorization: Bearer <token>` required |
-| 🪙 | Signed invite token in request body (no JWT) |
+| 🪙 | Signed invite token in the path, plus `Authorization: Bearer <token>` for the invited user |
 
 ---
 
@@ -1324,7 +1325,7 @@ Tracks the relationship between a user and a program as either `program_admin` o
 | `pending` | Manual hold set by program_admin |
 | `active` | Member is confirmed and participating |
 | `declined` | Invitation or request was declined |
-| `withdrawn` | Removed from the program |
+| `withdrawn` | Removed from the program, or the mentor withdrew their own request |
 
 ### Endpoints
 
@@ -1365,6 +1366,9 @@ Add a member to a program.
 
 **Self-request flow** (`member_type = "mentor"`, `status = "requested"` explicitly supplied):
 - Record is created with `status = "requested"`.
+- No invite email is sent: `NotifyMentorInvited` fires only for `invited` rows.
+  Mentors requesting for themselves should use
+  `POST /v1/me/program-memberships`.
 
 **Program Admin flow** (`member_type = "program_admin"`):
 - Record is created with `status = "active"`.
@@ -1396,61 +1400,143 @@ Update a member's status or email.
 }
 ```
 
-When `status = "declined"` is set via this endpoint, `NotifyMentorDeclined` is triggered.
+When this endpoint moves a mentor's request to `declined` (`requested → declined`), `NotifyMentorDeclined` is triggered. Revoking an invite (`invited → declined`) sends no email.
+
+A mentor's request belongs to the mentor: only they can create it or withdraw
+it, through the [mentor self-service](#mentor-self-service) routes. A program
+admin approves a request (`active`), declines it (`declined`), or deletes it.
+This endpoint therefore refuses `requested`/`pending` → `withdrawn` and
+`withdrawn` → `requested` with `409`.
 
 **Response** `200` → `<ProgramMember>`  
-**Errors** `400`, `403`, `404`
+**Errors** `400`, `403`, `404`, `409` (transition not allowed)
 
 ---
 
 #### `DELETE /v1/programs/{id}/members/{memberId}` 🔒
 
-> **FR-022**: This endpoint does **not** delete the record. It sets `status = "withdrawn"` and returns `204`.
+Deletes the member row, in any status, and returns `204`. Removing an active
+member also removes their OpenFGA relation.
 
 **Response** `204`  
 **Errors** `403`, `404`
 
 ---
 
+### Mentor self-service
+
+These routes let a signed-in user ask to mentor a program and track or withdraw
+that request. The gateway requires only a signed-in user (`oidc`), with no
+OpenFGA program relation: the caller usually has no role on the program yet.
+The service scopes every read and write to the caller, taking the user from the
+principal and never from the request.
+
+#### ProgramMembership Object
+
+The caller's view of one of their own `program_members` rows. `email` is omitted.
+
+```json
+{
+  "id":           "uuid",
+  "program_id":   "uuid",
+  "program_name": "Example Program",
+  "member_type":  "mentor",
+  "status":       "requested",
+  "created_on":   "2026-01-01T00:00:00Z",
+  "updated_on":   "2026-01-01T00:00:00Z"
+}
+```
+
+#### `GET /v1/me/program-memberships` 🔒
+
+Lists the caller's program memberships in any status, newest first.
+
+**Query parameters**
+
+| Parameter | Values | Description |
+|---|---|---|
+| `member_type` | `program_admin\|mentor` | Filter by type |
+| `limit` / `offset` | — | Pagination |
+
+**Response** `200`
+```json
+{ "data": [<ProgramMembership>, ...], "meta": {...} }
+```
+
+**Errors** `400` (unknown `member_type`), `401`
+
+---
+
+#### `POST /v1/me/program-memberships` 🔒
+
+Requests to mentor a program. Creates a `mentor` row for the caller with
+`status = "requested"`. If the caller already has a `withdrawn` mentor row for
+the program, that row is reset to `requested` instead. No invite email is sent.
+
+**Request body**
+```json
+{ "program_id": "uuid" }
+```
+
+**Response** `201` → `<ProgramMember>`
+
+**Errors**
+
+| Status | When |
+|---|---|
+| `400` | `program_id` is not a UUID, or the program is a `draft` |
+| `401` | No signed-in user |
+| `404` | The program does not exist, or is not visible to every signed-in user (`submitted`, `rejected`, `archived`, `hidden`) |
+| `409` | The caller already has a mentor row in `invited`, `requested`, `pending`, `active`, or `declined`, or the row changed concurrently |
+
+---
+
+#### `POST /v1/me/program-memberships/{id}/withdraw` 🔒
+
+Withdraws the caller's own mentor request, moving it from `requested` or
+`pending` to `withdrawn`.
+
+**Response** `204`
+
+**Errors**
+
+| Status | When |
+|---|---|
+| `401` | No signed-in user |
+| `404` | No mentor row with this ID belongs to the caller. Rows owned by other users return `404`, not `403`, so IDs cannot be probed. |
+| `409` | The row is in any status other than `requested` or `pending`, including when it changed concurrently |
+
+---
+
 ## 11. Mentor Invite Tokens
 
-These endpoints are called from the tokenised link in an invite email. The signed token acts as the credential — no JWT is required.
+These endpoints are called by the LFX Self Serve page that the invite email links to (`/mentorship/mentor/invites?token=…`). Both need the signed token **and** the invited user's JWT: the token says which program and user it was issued for, and the caller must be that user.
 
 ### Token Format
 
-Tokens are HMAC-SHA256 signed strings encoding `programID:userID`. The signing secret is set via the `INVITE_SECRET` environment variable.
+`base64url(JSON {program_id, user_id, exp}) + "." + base64url(HMAC-SHA256 signature)`, valid for 7 days. The signing secret is set via the `MENTOR_INVITE_SECRET` environment variable. Tokens are not stored, so one stays usable until it expires or the member row leaves `invited`.
 
 ---
 
-#### `POST /v1/mentor-invites/accept` 🪙
+#### `POST /v1/mentor-invites/{token}/accept` 🪙
 
-Accept a mentor invitation.
+Accept a mentor invitation. No request body.
 
-**Request body**
-```json
-{ "token": "<signed-invite-token>" }
-```
-
-**Effect**: Sets the matching `program_members` record's `status` from `invited` to `active`.
+**Effect**: Sets the matching `program_members` record's `status` from `invited` to `active`, and emails the program's active Program Admins (`NotifyAdminMentorAccepted`).
 
 **Response** `200` → `<ProgramMember>`  
-**Errors** `400` (invalid/expired token or no pending invite found)
+**Errors** `400` (invalid or expired token, or no pending invite — including one already answered), `401` (no JWT), `403` (the token belongs to another user), `409` (the row changed concurrently)
 
 ---
 
-#### `POST /v1/mentor-invites/decline` 🪙
+#### `POST /v1/mentor-invites/{token}/decline` 🪙
 
-Decline a mentor invitation.
+Decline a mentor invitation. No request body.
 
-**Request body**
-```json
-{ "token": "<signed-invite-token>" }
-```
-
-**Effect**: Sets `status` to `declined` and triggers `NotifyMentorDeclined`.
+**Effect**: Sets `status` from `invited` to `declined`, and emails the program's active Program Admins (`NotifyAdminMentorDeclined`).
 
 **Response** `204`  
-**Errors** `400`
+**Errors** as for accept
 
 ---
 
@@ -1900,7 +1986,7 @@ incomplete ──► in_progress ──► submitted ──► complete
 | FR-014 | Reopen term only if end_date in the future | `ProgramTermService.Update` |
 | FR-016 | Apply only when term is open AND within window | `ApplicationService.Create` |
 | FR-017 | Discovery label derived from status + window | `ProgramTerm.DiscoveryLabel()` |
-| FR-022 | Member removal sets status=withdrawn (no hard delete) | `ProgramMemberHandler.Delete` |
+| FR-022 | Admin removal deletes the member row, in any status | `ProgramMemberHandler.Delete` |
 | FR-025 | One active mentee profile per user max | `UserProfileService.Create` |
 | FR-029 | New applications start at status=pending | `ApplicationService.Create` |
 | FR-030 | No reapplication from declined; withdrawn OK while window open | `ApplicationService.Create` |
@@ -2058,15 +2144,15 @@ POST /v1/programs/{programId}/members
 Body: { "user_id": "<mentorUserId>", "member_type": "mentor" }
 ```
 
-The system sends an email containing a link like:
+The system sends an email containing a link to LFX Self Serve like:
 ```
-https://mentorship.lfx.linuxfoundation.org/mentor-invite?token=<signed-token>
+https://app.lfx.dev/mentorship/mentor/invites?token=<signed-token>
 ```
 
-The frontend's invite landing page calls:
+The Self Serve invite page calls, as the signed-in mentor:
 ```
-POST /v1/mentor-invites/accept   Body: { "token": "<token>" }
-POST /v1/mentor-invites/decline  Body: { "token": "<token>" }
+POST /v1/mentor-invites/{token}/accept
+POST /v1/mentor-invites/{token}/decline
 ```
 
 #### Mentor Self-Request
@@ -2178,7 +2264,10 @@ class ApiError extends Error {
 | `HEIMDALL_JWKS_URL` | Yes | — | Heimdall JWKS endpoint |
 | `HEIMDALL_JWT_AUDIENCE` | Yes | — | Expected JWT `aud` claim |
 | `HEIMDALL_JWT_ISSUER` | Yes | — | Expected JWT `iss` claim |
-| `FGA_NATS_URL` | Yes for relays | — | Shared NATS URL for FGA and index publishing |
+| `FGA_NATS_URL` | Yes for relays | — | Shared NATS URL for FGA and index publishing, and notification email via lfx-v2-email-service |
+| `PUBLIC_SITE_URL` | When `FGA_NATS_URL` is set | — | Public Mentorship site that user-facing email links point at |
+| `SELF_SERVE_URL` | When `FGA_NATS_URL` is set | — | LFX Self Serve base URL for management links in email |
+| `EMAIL_HR_INBOX` | When `FGA_NATS_URL` is set | — | LF staff HR inbox sent every mentee acceptance |
 | `FGA_RELAY_BATCH_SIZE` | No | `50` | FGA/index claim batch size |
 | `FGA_RELAY_INTERVAL` | No | `1s` | Relay polling interval |
 | `FGA_RELAY_RETRY_DELAY` | No | `1m` | FGA retry delay |

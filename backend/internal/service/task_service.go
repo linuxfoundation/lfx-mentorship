@@ -15,6 +15,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/auth"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 var taskSvcTracer = otel.Tracer("tasks-service")
@@ -192,7 +193,8 @@ func (s *TaskService) Create(ctx context.Context, applicationID string, input mo
 // Update applies changes to a task.
 // Permission rules:
 //   - Only the task's assignee may mark it complete/submitted.
-//   - When all prerequisite tasks for the application are complete, the admin is notified.
+//   - When every prerequisite task is submitted or complete, the application is flagged
+//     tasks_submitted and program admins are notified the first time only.
 func (s *TaskService) Update(ctx context.Context, id string, input models.TaskUpdateInput) (*models.Task, error) {
 	ctx, span := taskSvcTracer.Start(ctx, "TaskService.Update")
 	defer span.End()
@@ -271,18 +273,25 @@ func (s *TaskService) Update(ctx context.Context, id string, input models.TaskUp
 		return nil, fmt.Errorf("update task: %w", err)
 	}
 
-	// tasks_submitted side-effect (FR-034): if all prerequisite tasks are now
-	// submitted or complete, mark the application and notify the admin.
+	// tasks_submitted side-effect (FR-034).
 	if input.Status != nil && (*input.Status == models.TaskStatusComplete || *input.Status == models.TaskStatusSubmitted) && t.ApplicationID != nil {
-		total, complete, countErr := s.repo.CountPrerequisiteTasksByApplication(ctx, *t.ApplicationID)
-		if countErr == nil && total > 0 && total == complete {
-			trueBool := true
-			_, _ = s.appRepo.Update(ctx, *t.ApplicationID, models.ApplicationUpdateInput{TasksSubmitted: &trueBool})
-			s.notifier.NotifyAdminTasksSubmitted(ctx, *t.ApplicationID)
-		}
+		s.markTasksSubmitted(ctx, *t.ApplicationID)
 	}
 
 	return t, nil
+}
+
+// markTasksSubmitted flags the application once every prerequisite task is submitted or
+// complete, notifying program admins only on the first flip so later reviews do not re-send.
+func (s *TaskService) markTasksSubmitted(ctx context.Context, applicationID string) {
+	flipped, err := s.appRepo.MarkTasksSubmitted(ctx, applicationID)
+	if err != nil {
+		trace.SpanFromContext(ctx).RecordError(err)
+		return
+	}
+	if flipped {
+		s.notifier.NotifyAdminTasksSubmitted(ctx, applicationID)
+	}
 }
 
 // assertReviewer verifies that actorID holds an active mentor or program_admin role

@@ -1007,3 +1007,70 @@ func TestFGAOutboxIntegration_AcknowledgeHandlesNullClaimedAt(t *testing.T) {
 		t.Fatalf("remaining markers = %d; want 0", remaining)
 	}
 }
+
+func TestProgramMemberIntegration_SelfRequestListAndLookup(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	repo := NewProgramMemberRepository(pool)
+
+	requested := models.ProgramMemberStatusRequested
+	if _, err := repo.Create(ctx, fixture.ProgramID, models.ProgramMemberCreateInput{
+		ID:         "00000000-0000-0000-0000-000000000022",
+		UserID:     fixture.UserID,
+		MemberType: models.MemberTypeMentor,
+		Status:     &requested,
+	}); err != nil {
+		t.Fatalf("create requested mentor row: %v", err)
+	}
+
+	mentor, err := repo.FindByProgramUserAndType(ctx, fixture.ProgramID, fixture.UserID, models.MemberTypeMentor)
+	if err != nil {
+		t.Fatalf("find mentor row: %v", err)
+	}
+	if mentor.ID != "00000000-0000-0000-0000-000000000022" || mentor.Status == nil || *mentor.Status != requested {
+		t.Fatalf("mentor row = %+v; want the requested row", mentor)
+	}
+	if _, err := repo.FindByProgramUserAndType(ctx, fixture.ProgramID, "00000000-0000-0000-0000-000000000099", models.MemberTypeMentor); !errors.Is(err, domain.ErrProgramMemberNotFound) {
+		t.Fatalf("find for another user: got %v; want ErrProgramMemberNotFound", err)
+	}
+
+	all, meta, err := repo.ListByUser(ctx, fixture.UserID, models.ProgramMemberFilter{})
+	if err != nil {
+		t.Fatalf("list all memberships: %v", err)
+	}
+	if meta.Total != 2 || len(all) != 2 {
+		t.Fatalf("got %d memberships (total %d); want the program_admin and mentor rows", len(all), meta.Total)
+	}
+
+	mentors, meta, err := repo.ListByUser(ctx, fixture.UserID, models.ProgramMemberFilter{MemberType: string(models.MemberTypeMentor)})
+	if err != nil {
+		t.Fatalf("list mentor memberships: %v", err)
+	}
+	if meta.Total != 1 || len(mentors) != 1 || mentors[0].ProgramName != "Fixture Program" || mentors[0].Status == nil || *mentors[0].Status != requested {
+		t.Fatalf("mentor memberships = %+v (total %d); want one requested row for Fixture Program", mentors, meta.Total)
+	}
+
+	// The transition applies only from the expected status.
+	if _, err := repo.UpdateIfStatus(ctx, mentor.ID, []models.ProgramMemberStatus{models.ProgramMemberStatusWithdrawn}, models.ProgramMemberUpdateInput{Status: &requested}); !errors.Is(err, domain.ErrInvalidStateTransition) {
+		t.Fatalf("transition from withdrawn on a requested row: got %v; want ErrInvalidStateTransition", err)
+	}
+	withdrawnStatus := models.ProgramMemberStatusWithdrawn
+	withdrawn, err := repo.UpdateIfStatus(ctx, mentor.ID, []models.ProgramMemberStatus{models.ProgramMemberStatusRequested}, models.ProgramMemberUpdateInput{Status: &withdrawnStatus})
+	if err != nil {
+		t.Fatalf("withdraw requested row: %v", err)
+	}
+	if withdrawn.Status == nil || *withdrawn.Status != models.ProgramMemberStatusWithdrawn {
+		t.Fatalf("status = %v; want withdrawn", withdrawn.Status)
+	}
+
+	// Neither a requested nor a withdrawn row grants anything, so neither may
+	// reach the FGA outbox.
+	var markers int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM fga_outbox WHERE marker_kind = 'membership' AND relation = 'mentor'`).Scan(&markers); err != nil {
+		t.Fatal(err)
+	}
+	if markers != 0 {
+		t.Fatalf("self-service mentor row enqueued %d FGA mentor markers; want 0", markers)
+	}
+}

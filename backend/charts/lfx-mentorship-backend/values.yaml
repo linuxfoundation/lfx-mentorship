@@ -144,6 +144,13 @@ config:
   FGA_RELAY_MAX_ATTEMPTS: "10"
   INDEX_RELAY_RETRY_DELAY: "1m"
   INDEX_RELAY_MAX_ATTEMPTS: "10"
+  # Notification email goes out via lfx-v2-email-service whenever FGA_NATS_URL is set; these are then required.
+  # Public Mentorship site, e.g. https://mentorship.lfx.linuxfoundation.org
+  PUBLIC_SITE_URL: ""
+  # LFX Self Serve, where management pages live, e.g. https://app.lfx.dev
+  SELF_SERVE_URL: ""
+  # LF staff HR inbox that receives every mentee acceptance.
+  EMAIL_HR_INBOX: ""
   LEDGER_BASE_URL: ""
   # Crowdfunding is reached through the LFX v2 gateway at
   # https://lfx-api.<domain>/crowdfunding; the transactions route is public.
