@@ -144,7 +144,7 @@ real JWT. **Never set these in production.**
 |---|---|
 | 🔓 | No JWT required |
 | 🔒 | `Authorization: Bearer <token>` required |
-| 🪙 | Signed invite token in request body (no JWT) |
+| 🪙 | Signed invite token in the path, plus `Authorization: Bearer <token>` for the invited user |
 
 ---
 
@@ -1510,43 +1510,33 @@ Withdraws the caller's own mentor request, moving it from `requested` or
 
 ## 11. Mentor Invite Tokens
 
-These endpoints are called from the tokenised link in an invite email. The signed token acts as the credential — no JWT is required.
+These endpoints are called by the LFX Self Serve page that the invite email links to (`/mentorship/mentor/invites?token=…`). Both need the signed token **and** the invited user's JWT: the token says which program and user it was issued for, and the caller must be that user.
 
 ### Token Format
 
-Tokens are HMAC-SHA256 signed strings encoding `programID:userID`. The signing secret is set via the `INVITE_SECRET` environment variable.
+`base64url(JSON {program_id, user_id, exp}) + "." + base64url(HMAC-SHA256 signature)`, valid for 7 days. The signing secret is set via the `MENTOR_INVITE_SECRET` environment variable. Tokens are not stored, so one stays usable until it expires or the member row leaves `invited`.
 
 ---
 
-#### `POST /v1/mentor-invites/accept` 🪙
+#### `POST /v1/mentor-invites/{token}/accept` 🪙
 
-Accept a mentor invitation.
+Accept a mentor invitation. No request body.
 
-**Request body**
-```json
-{ "token": "<signed-invite-token>" }
-```
-
-**Effect**: Sets the matching `program_members` record's `status` from `invited` to `active`.
+**Effect**: Sets the matching `program_members` record's `status` from `invited` to `active`, and emails the program's active Program Admins (`NotifyAdminMentorAccepted`).
 
 **Response** `200` → `<ProgramMember>`  
-**Errors** `400` (invalid/expired token or no pending invite found)
+**Errors** `400` (invalid or expired token, or no pending invite — including one already answered), `401` (no JWT), `403` (the token belongs to another user), `409` (the row changed concurrently)
 
 ---
 
-#### `POST /v1/mentor-invites/decline` 🪙
+#### `POST /v1/mentor-invites/{token}/decline` 🪙
 
-Decline a mentor invitation.
+Decline a mentor invitation. No request body.
 
-**Request body**
-```json
-{ "token": "<signed-invite-token>" }
-```
-
-**Effect**: Sets `status` to `declined` and triggers `NotifyMentorDeclined`.
+**Effect**: Sets `status` from `invited` to `declined`, and emails the program's active Program Admins (`NotifyAdminMentorDeclined`).
 
 **Response** `204`  
-**Errors** `400`
+**Errors** as for accept
 
 ---
 
