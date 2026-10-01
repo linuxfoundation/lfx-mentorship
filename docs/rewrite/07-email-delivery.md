@@ -61,7 +61,7 @@ Status column: **hook** — a `Notifier` method exists but delivers nothing yet;
 | `mentor-admin-declined` | mentor | Program Admin declines a mentor (member `→ declined`) | hook: `NotifyMentorDeclined` from `Update` — called before the write today; move it after `repo.Update` so a failed write sends nothing |
 | `admin-new-mentor-request` | active Program Admins | mentor applies to a program (application with role `mentor`) | none |
 | `admin-mentor-withdrew-request` | active Program Admins | mentor application `→ withdrawn` | none |
-| `admin-mentor-removed-project` | active Program Admins | active mentor leaves (member `active → withdrawn`) | none — transition missing: only a Program Admin can withdraw a member today, so mentors need a way to leave |
+| `admin-mentor-removed-project` | active Program Admins | active mentor leaves (member `approved → withdrawn`) | none — transition missing: only a Program Admin can withdraw a member today, so mentors need a way to leave |
 | **Mentee applications** | | | |
 | `mentee-application-received` | mentee | application created with role `mentee`; lists the prerequisite tasks | none |
 | `admin-review-mentee-application` | active Program Admins | last prerequisite task submitted | hook: `NotifyAdminTasksSubmitted` — fires today only when every prerequisite is `complete`; the count must also include `submitted`, and the hook must fire only when `tasks_submitted` first turns true, or every later review re-sends it |

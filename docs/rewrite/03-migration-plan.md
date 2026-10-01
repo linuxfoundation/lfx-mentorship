@@ -43,7 +43,7 @@ flowchart LR
 
   **The ETL now implements the safe portion of this partition explicitly.**
   Legacy `maintainer` rows map to `program_admin`; approved/accepted mentors map
-  to active mentor memberships; and term-scoped `apprentice`/`mentee` rows are
+  to `approved` mentor memberships; and term-scoped `apprentice`/`mentee` rows are
   skipped because `program-term-mentees` is their authoritative application
   source. Unknown member types and ambiguous pending/declined mentor rows are
   reported with their member, program, and user IDs instead of being converted
