@@ -124,10 +124,10 @@ type ProgramMemberRepository interface {
 	ListByUser(ctx context.Context, userID string, filter models.ProgramMemberFilter) ([]*models.ProgramMembership, *models.PaginationMeta, error)
 	Create(ctx context.Context, programID string, input models.ProgramMemberCreateInput) (*models.ProgramMember, error)
 	Update(ctx context.Context, id string, input models.ProgramMemberUpdateInput) (*models.ProgramMember, error)
-	// TransitionStatus sets the status only while the row is still in one of
+	// UpdateIfStatus applies input only while the row's status is still one of
 	// from, returning ErrInvalidStateTransition otherwise. The check and the
-	// write are atomic, so a concurrent change cannot be overwritten.
-	TransitionStatus(ctx context.Context, id string, from []models.ProgramMemberStatus, to models.ProgramMemberStatus) (*models.ProgramMember, error)
+	// write are atomic, so a status validated by the caller cannot go stale.
+	UpdateIfStatus(ctx context.Context, id string, from []models.ProgramMemberStatus, input models.ProgramMemberUpdateInput) (*models.ProgramMember, error)
 	Delete(ctx context.Context, id string) error
 }
 

@@ -334,14 +334,14 @@ func (r *ProgramMemberRepository) Update(ctx context.Context, id string, input m
 	return m, err
 }
 
-// TransitionStatus sets id's status to `to` only while it is still one of
-// from. The row is locked before the check, so a concurrent change cannot
-// slip in between the check and the write.
-func (r *ProgramMemberRepository) TransitionStatus(ctx context.Context, id string, from []models.ProgramMemberStatus, to models.ProgramMemberStatus) (*models.ProgramMember, error) {
-	ctx, span := programMemberTracer.Start(ctx, "db.program_members.TransitionStatus")
+// UpdateIfStatus applies input only while id's status is still one of from.
+// The row is locked before the check, so a concurrent change cannot slip in
+// between the check and the write.
+func (r *ProgramMemberRepository) UpdateIfStatus(ctx context.Context, id string, from []models.ProgramMemberStatus, input models.ProgramMemberUpdateInput) (*models.ProgramMember, error) {
+	ctx, span := programMemberTracer.Start(ctx, "db.program_members.UpdateIfStatus")
 	defer span.End()
-	span.SetAttributes(attribute.String("db.member_id", id), attribute.String("db.to_status", string(to)))
-	m, err := r.update(ctx, id, models.ProgramMemberUpdateInput{Status: &to}, from)
+	span.SetAttributes(attribute.String("db.member_id", id))
+	m, err := r.update(ctx, id, input, from)
 	if err != nil {
 		span.RecordError(err)
 	}

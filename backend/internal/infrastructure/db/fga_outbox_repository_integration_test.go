@@ -1052,10 +1052,11 @@ func TestProgramMemberIntegration_SelfRequestListAndLookup(t *testing.T) {
 	}
 
 	// The transition applies only from the expected status.
-	if _, err := repo.TransitionStatus(ctx, mentor.ID, []models.ProgramMemberStatus{models.ProgramMemberStatusWithdrawn}, requested); !errors.Is(err, domain.ErrInvalidStateTransition) {
+	if _, err := repo.UpdateIfStatus(ctx, mentor.ID, []models.ProgramMemberStatus{models.ProgramMemberStatusWithdrawn}, models.ProgramMemberUpdateInput{Status: &requested}); !errors.Is(err, domain.ErrInvalidStateTransition) {
 		t.Fatalf("transition from withdrawn on a requested row: got %v; want ErrInvalidStateTransition", err)
 	}
-	withdrawn, err := repo.TransitionStatus(ctx, mentor.ID, []models.ProgramMemberStatus{models.ProgramMemberStatusRequested}, models.ProgramMemberStatusWithdrawn)
+	withdrawnStatus := models.ProgramMemberStatusWithdrawn
+	withdrawn, err := repo.UpdateIfStatus(ctx, mentor.ID, []models.ProgramMemberStatus{models.ProgramMemberStatusRequested}, models.ProgramMemberUpdateInput{Status: &withdrawnStatus})
 	if err != nil {
 		t.Fatalf("withdraw requested row: %v", err)
 	}

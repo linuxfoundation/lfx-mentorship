@@ -24,7 +24,7 @@ type stubMemberRepo struct {
 	listByUser         func(context.Context, string, models.ProgramMemberFilter) ([]*models.ProgramMembership, *models.PaginationMeta, error)
 	create             func(context.Context, string, models.ProgramMemberCreateInput) (*models.ProgramMember, error)
 	update             func(context.Context, string, models.ProgramMemberUpdateInput) (*models.ProgramMember, error)
-	transitionStatus   func(context.Context, string, []models.ProgramMemberStatus, models.ProgramMemberStatus) (*models.ProgramMember, error)
+	updateIfStatus     func(context.Context, string, []models.ProgramMemberStatus, models.ProgramMemberUpdateInput) (*models.ProgramMember, error)
 	delete             func(context.Context, string) error
 }
 
@@ -106,11 +106,11 @@ func (m *stubMemberRepo) Update(ctx context.Context, id string, in models.Progra
 	}
 	return &models.ProgramMember{ID: id}, nil
 }
-func (m *stubMemberRepo) TransitionStatus(ctx context.Context, id string, from []models.ProgramMemberStatus, to models.ProgramMemberStatus) (*models.ProgramMember, error) {
-	if m.transitionStatus != nil {
-		return m.transitionStatus(ctx, id, from, to)
+func (m *stubMemberRepo) UpdateIfStatus(ctx context.Context, id string, from []models.ProgramMemberStatus, in models.ProgramMemberUpdateInput) (*models.ProgramMember, error) {
+	if m.updateIfStatus != nil {
+		return m.updateIfStatus(ctx, id, from, in)
 	}
-	return &models.ProgramMember{ID: id, Status: &to}, nil
+	return &models.ProgramMember{ID: id, Status: in.Status}, nil
 }
 func (m *stubMemberRepo) Delete(ctx context.Context, id string) error {
 	if m.delete != nil {

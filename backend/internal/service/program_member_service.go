@@ -258,7 +258,7 @@ func (s *ProgramMemberService) RequestMentorship(ctx context.Context, programID,
 		return nil, fmt.Errorf("%w: a mentor membership for this program is already %q", domain.ErrConflict, current)
 	}
 
-	m, err := s.repo.TransitionStatus(ctx, existing.ID, []models.ProgramMemberStatus{models.ProgramMemberStatusWithdrawn}, requested)
+	m, err := s.repo.UpdateIfStatus(ctx, existing.ID, []models.ProgramMemberStatus{models.ProgramMemberStatusWithdrawn}, models.ProgramMemberUpdateInput{Status: &requested})
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("reopen mentor request: %w", err)
@@ -297,7 +297,8 @@ func (s *ProgramMemberService) WithdrawMine(ctx context.Context, id, userID stri
 		return fmt.Errorf("%w: cannot withdraw a mentor membership that is %q", domain.ErrInvalidStateTransition, status)
 	}
 
-	if _, err := s.repo.TransitionStatus(ctx, id, selfWithdrawableStatuses, models.ProgramMemberStatusWithdrawn); err != nil {
+	withdrawn := models.ProgramMemberStatusWithdrawn
+	if _, err := s.repo.UpdateIfStatus(ctx, id, selfWithdrawableStatuses, models.ProgramMemberUpdateInput{Status: &withdrawn}); err != nil {
 		span.RecordError(err)
 		return fmt.Errorf("withdraw mentor membership: %w", err)
 	}
@@ -332,23 +333,31 @@ func (s *ProgramMemberService) Update(ctx context.Context, programID, id string,
 		return nil, domain.ErrProgramMemberNotFound
 	}
 
-	if input.Status != nil {
-		var currentStatus models.ProgramMemberStatus
-		if current.Status != nil {
-			currentStatus = *current.Status
+	if input.Status == nil {
+		m, err := s.repo.Update(ctx, id, input)
+		if err != nil {
+			span.RecordError(err)
+			return nil, fmt.Errorf("update program member: %w", err)
 		}
-		if !memberTransitions[currentStatus][*input.Status] {
-			return nil, fmt.Errorf("%w: cannot transition member from %q to %q", domain.ErrInvalidStateTransition, currentStatus, *input.Status)
-		}
-		if *input.Status == models.ProgramMemberStatusDeclined {
-			s.notifier.NotifyMentorDeclined(ctx, current.ProgramID, current.UserID)
-		}
+		return m, nil
 	}
 
-	m, err := s.repo.Update(ctx, id, input)
+	var currentStatus models.ProgramMemberStatus
+	if current.Status != nil {
+		currentStatus = *current.Status
+	}
+	if !memberTransitions[currentStatus][*input.Status] {
+		return nil, fmt.Errorf("%w: cannot transition member from %q to %q", domain.ErrInvalidStateTransition, currentStatus, *input.Status)
+	}
+	// The transition was validated against currentStatus, so the write must
+	// apply only while the row is still in it.
+	m, err := s.repo.UpdateIfStatus(ctx, id, []models.ProgramMemberStatus{currentStatus}, input)
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("update program member: %w", err)
+	}
+	if *input.Status == models.ProgramMemberStatusDeclined {
+		s.notifier.NotifyMentorDeclined(ctx, current.ProgramID, current.UserID)
 	}
 	return m, nil
 }
@@ -389,7 +398,7 @@ func (s *ProgramMemberService) AcceptInvite(ctx context.Context, token, actorID 
 	}
 
 	activeStatus := models.ProgramMemberStatusActive
-	m, err := s.repo.Update(ctx, memberID, models.ProgramMemberUpdateInput{Status: &activeStatus})
+	m, err := s.repo.UpdateIfStatus(ctx, memberID, []models.ProgramMemberStatus{models.ProgramMemberStatusInvited}, models.ProgramMemberUpdateInput{Status: &activeStatus})
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("accept invite: %w", err)
@@ -432,7 +441,7 @@ func (s *ProgramMemberService) DeclineInvite(ctx context.Context, token, actorID
 	}
 
 	declinedStatus := models.ProgramMemberStatusDeclined
-	if _, err := s.repo.Update(ctx, memberID, models.ProgramMemberUpdateInput{Status: &declinedStatus}); err != nil {
+	if _, err := s.repo.UpdateIfStatus(ctx, memberID, []models.ProgramMemberStatus{models.ProgramMemberStatusInvited}, models.ProgramMemberUpdateInput{Status: &declinedStatus}); err != nil {
 		span.RecordError(err)
 		return fmt.Errorf("decline invite: %w", err)
 	}
