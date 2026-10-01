@@ -24,6 +24,9 @@ func TestLoadEmailConfig(t *testing.T) {
 		"missing public site":         {nats: true, override: map[string]string{"PUBLIC_SITE_URL": ""}, wantErr: "PUBLIC_SITE_URL"},
 		"relative self serve":         {nats: true, override: map[string]string{"SELF_SERVE_URL": "app.example.org"}, wantErr: "SELF_SERVE_URL"},
 		"non-http scheme":             {nats: true, override: map[string]string{"PUBLIC_SITE_URL": "javascript://x"}, wantErr: "PUBLIC_SITE_URL"},
+		"query on base url":           {nats: true, override: map[string]string{"SELF_SERVE_URL": "https://app.example.org?tenant=x"}, wantErr: "SELF_SERVE_URL"},
+		"empty query on base url":     {nats: true, override: map[string]string{"SELF_SERVE_URL": "https://app.example.org?"}, wantErr: "SELF_SERVE_URL"},
+		"fragment on base url":        {nats: true, override: map[string]string{"PUBLIC_SITE_URL": "https://mentorship.example.org#top"}, wantErr: "PUBLIC_SITE_URL"},
 		"missing hr inbox":            {nats: true, override: map[string]string{"EMAIL_HR_INBOX": ""}, wantErr: "EMAIL_HR_INBOX"},
 		"display-name hr inbox":       {nats: true, override: map[string]string{"EMAIL_HR_INBOX": "HR <hr@linuxfoundation.org>"}, wantErr: "EMAIL_HR_INBOX"},
 	} {

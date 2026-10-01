@@ -252,8 +252,8 @@ func loadEmailConfig(natsConfigured bool) (EmailConfig, error) {
 		return cfg, nil
 	}
 	for _, kv := range [][2]string{{"PUBLIC_SITE_URL", cfg.PublicSiteURL}, {"SELF_SERVE_URL", cfg.SelfServeURL}} {
-		if u, err := url.Parse(kv[1]); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-			return EmailConfig{}, fmt.Errorf("%s must be an absolute http(s) URL when FGA_NATS_URL is set", kv[0])
+		if u, err := url.Parse(kv[1]); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+			return EmailConfig{}, fmt.Errorf("%s must be an absolute http(s) URL with no query or fragment when FGA_NATS_URL is set", kv[0])
 		}
 	}
 	if addr, err := mail.ParseAddress(cfg.HRInbox); err != nil || addr.Address != cfg.HRInbox {
