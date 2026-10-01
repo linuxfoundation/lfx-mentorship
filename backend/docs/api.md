@@ -2274,7 +2274,10 @@ class ApiError extends Error {
 | `HEIMDALL_JWKS_URL` | Yes | — | Heimdall JWKS endpoint |
 | `HEIMDALL_JWT_AUDIENCE` | Yes | — | Expected JWT `aud` claim |
 | `HEIMDALL_JWT_ISSUER` | Yes | — | Expected JWT `iss` claim |
-| `FGA_NATS_URL` | Yes for relays | — | Shared NATS URL for FGA and index publishing |
+| `FGA_NATS_URL` | Yes for relays | — | Shared NATS URL for FGA and index publishing, and notification email via lfx-v2-email-service |
+| `PUBLIC_SITE_URL` | When `FGA_NATS_URL` is set | — | Public Mentorship site that user-facing email links point at |
+| `SELF_SERVE_URL` | When `FGA_NATS_URL` is set | — | LFX Self Serve base URL for management links in email |
+| `EMAIL_HR_INBOX` | When `FGA_NATS_URL` is set | — | LF staff HR inbox sent every mentee acceptance |
 | `FGA_RELAY_BATCH_SIZE` | No | `50` | FGA/index claim batch size |
 | `FGA_RELAY_INTERVAL` | No | `1s` | Relay polling interval |
 | `FGA_RELAY_RETRY_DELAY` | No | `1m` | FGA retry delay |

@@ -126,6 +126,52 @@ func newTaskSvc(taskRepo *stubTaskRepo, appRepo *stubAppRepo, termRepo *stubTerm
 
 // ── task state machine ───────────────────────────────────────────────────────
 
+func TestTaskService_Update_LastPrerequisiteSubmitted_NotifiesOnFirstFlip(t *testing.T) {
+	for name, tc := range map[string]struct {
+		alreadyFlagged bool
+		done           int
+		wantNotify     int
+	}{
+		"first flip":                  {alreadyFlagged: false, done: 2, wantNotify: 1},
+		"already flagged":             {alreadyFlagged: true, done: 2, wantNotify: 0},
+		"prerequisites still pending": {alreadyFlagged: false, done: 1, wantNotify: 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			appID := "app-1"
+			var flagged bool
+			taskRepo := &stubTaskRepo{
+				getByID: func(_ context.Context, id string) (*models.Task, error) {
+					return &models.Task{ID: id, AssigneeID: "mentee-1", Status: "in_progress", ApplicationID: &appID}, nil
+				},
+				update: func(_ context.Context, id string, _ models.TaskUpdateInput) (*models.Task, error) {
+					return &models.Task{ID: id, Status: "submitted", ApplicationID: &appID}, nil
+				},
+				countPrerequisitesByApplication: func(context.Context, string) (int, int, error) {
+					return 2, tc.done, nil
+				},
+			}
+			appRepo := &stubAppRepo{
+				getByID: func(_ context.Context, id string) (*models.Application, error) {
+					return &models.Application{ID: id, TasksSubmitted: tc.alreadyFlagged}, nil
+				},
+				update: func(_ context.Context, id string, in models.ApplicationUpdateInput) (*models.Application, error) {
+					flagged = in.TasksSubmitted != nil && *in.TasksSubmitted
+					return &models.Application{ID: id}, nil
+				},
+			}
+			n := &stubNotifier{}
+			svc := service.NewTaskService(taskRepo, appRepo, &stubTermRepo{}, &stubMemberRepo{}, n)
+			next := models.TaskStatusSubmitted
+			if _, err := svc.Update(context.Background(), "task-1", models.TaskUpdateInput{Status: &next, ActorID: "mentee-1"}); err != nil {
+				t.Fatalf("Update: %v", err)
+			}
+			if n.tasksSubmittedCalls != tc.wantNotify || flagged != (tc.wantNotify == 1) {
+				t.Errorf("notify calls = %d, flagged = %v; want %d, %v", n.tasksSubmittedCalls, flagged, tc.wantNotify, tc.wantNotify == 1)
+			}
+		})
+	}
+}
+
 func TestTaskService_Update_Assignee_CanMarkInProgress(t *testing.T) {
 	appID := "app-1"
 	taskRepo := &stubTaskRepo{

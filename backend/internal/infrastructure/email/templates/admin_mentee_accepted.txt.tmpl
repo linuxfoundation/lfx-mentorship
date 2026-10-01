@@ -1,0 +1,19 @@
+{{- /* Copyright The Linux Foundation and each contributor to LFX. */ -}}
+{{- /* SPDX-License-Identifier: MIT */ -}}
+{{template "header" .}}{{.MenteeName}} has been accepted to the {{.ProgramName}} mentorship.
+{{if .HRNotice}}
+Please generate the acceptance letter and contract paperwork with the following details.
+{{end}}
+Mentorship Program: {{.ProgramName}}
+{{range .ProgramAdmins}}Program Admin: {{.}}
+{{end}}Mentee Name: {{.MenteeName}}
+{{with .MenteeEmail}}Mentee Email: {{.}}
+{{end}}{{with .MenteeCountry}}Mentee Country of Residence: {{.}}
+{{end}}{{with .TermName}}Term: {{.}}
+{{end}}{{with .TermPeriod}}Mentorship Period: {{.}}
+{{end}}{{with .AttendanceType}}Attendance Status: {{.}}
+{{end}}{{if .MenteeCountry}}
+Note: please save the mentee's country of residence for stipend amount verification.
+{{end}}
+Manage the program: {{.ManageURL}}
+{{template "footer" .}}

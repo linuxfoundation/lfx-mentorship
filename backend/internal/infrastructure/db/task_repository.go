@@ -323,8 +323,8 @@ func enqueueTaskMarker(ctx context.Context, tx pgx.Tx, task *models.Task, operat
 	return nil
 }
 
-// CountPrerequisiteTasksByApplication returns the total and complete prerequisite task counts.
-func (r *TaskRepository) CountPrerequisiteTasksByApplication(ctx context.Context, applicationID string) (total int, complete int, err error) {
+// CountPrerequisiteTasksByApplication returns the total prerequisite tasks and how many are submitted or complete.
+func (r *TaskRepository) CountPrerequisiteTasksByApplication(ctx context.Context, applicationID string) (total int, done int, err error) {
 	ctx, span := taskTracer.Start(ctx, "db.tasks.CountPrerequisiteTasksByApplication")
 	defer span.End()
 	span.SetAttributes(attribute.String("db.application_id", applicationID))
@@ -346,13 +346,13 @@ func (r *TaskRepository) CountPrerequisiteTasksByApplication(ctx context.Context
 			return 0, 0, fmt.Errorf("scan task status: %w", scanErr)
 		}
 		total++
-		if status == models.TaskStatusComplete {
-			complete++
+		if status == models.TaskStatusComplete || status == models.TaskStatusSubmitted {
+			done++
 		}
 	}
 	if rowsErr := rows.Err(); rowsErr != nil {
 		span.RecordError(rowsErr)
 		return 0, 0, fmt.Errorf("prerequisite task rows: %w", rowsErr)
 	}
-	return total, complete, nil
+	return total, done, nil
 }

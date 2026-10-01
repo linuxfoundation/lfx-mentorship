@@ -167,6 +167,6 @@ type TaskRepository interface {
 	Update(ctx context.Context, id string, input models.TaskUpdateInput) (*models.Task, error)
 	Delete(ctx context.Context, id string) error
 
-	// CountPrerequisiteTasksByApplication returns (total, complete) prerequisite task counts.
-	CountPrerequisiteTasksByApplication(ctx context.Context, applicationID string) (total int, complete int, err error)
+	// CountPrerequisiteTasksByApplication returns the total prerequisite tasks and how many are submitted or complete.
+	CountPrerequisiteTasksByApplication(ctx context.Context, applicationID string) (total int, done int, err error)
 }

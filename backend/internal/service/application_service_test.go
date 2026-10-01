@@ -359,14 +359,22 @@ func (m *stubTaskRepo) CountPrerequisiteTasksByApplication(ctx context.Context, 
 }
 
 type stubNotifier struct {
-	mentorInvitedCalls  int
-	mentorDeclinedCalls int
-	tasksSubmittedCalls int
-	menteeAcceptedCalls int
+	mentorInvitedCalls       int
+	mentorDeclinedCalls      int
+	adminMentorDeclinedCalls int
+	adminMentorAcceptedCalls int
+	tasksSubmittedCalls      int
+	menteeAcceptedCalls      int
 }
 
 func (n *stubNotifier) NotifyMentorInvited(_ context.Context, _, _, _ string) { n.mentorInvitedCalls++ }
 func (n *stubNotifier) NotifyMentorDeclined(_ context.Context, _, _ string)   { n.mentorDeclinedCalls++ }
+func (n *stubNotifier) NotifyAdminMentorDeclined(_ context.Context, _, _ string) {
+	n.adminMentorDeclinedCalls++
+}
+func (n *stubNotifier) NotifyAdminMentorAccepted(_ context.Context, _, _ string) {
+	n.adminMentorAcceptedCalls++
+}
 func (n *stubNotifier) NotifyAdminTasksSubmitted(_ context.Context, _ string) {
 	n.tasksSubmittedCalls++
 }

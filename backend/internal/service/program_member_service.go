@@ -403,6 +403,7 @@ func (s *ProgramMemberService) AcceptInvite(ctx context.Context, token, actorID 
 		span.RecordError(err)
 		return nil, fmt.Errorf("accept invite: %w", err)
 	}
+	s.notifier.NotifyAdminMentorAccepted(ctx, programID, userID)
 	return m, nil
 }
 
@@ -445,7 +446,7 @@ func (s *ProgramMemberService) DeclineInvite(ctx context.Context, token, actorID
 		span.RecordError(err)
 		return fmt.Errorf("decline invite: %w", err)
 	}
-	s.notifier.NotifyMentorDeclined(ctx, programID, userID)
+	s.notifier.NotifyAdminMentorDeclined(ctx, programID, userID)
 	return nil
 }
 

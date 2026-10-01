@@ -68,6 +68,18 @@ Two things this guard must get right, both learned from review:
 {{- end }}
 {{- end }}
 
+{{- /* Notification email: the binary requires these whenever NATS is set, bypass or not. */ -}}
+{{- if $.Values.config.FGA_NATS_URL }}
+{{- range $key := list "PUBLIC_SITE_URL" "SELF_SERVE_URL" }}
+{{- if not (regexMatch "^https?://[^/]+" (toString (get $.Values.config $key))) }}
+{{- fail (printf "values.yaml: config.%s must be an absolute http(s) URL when config.FGA_NATS_URL is set — notification email links point at it." $key) }}
+{{- end }}
+{{- end }}
+{{- if not (regexMatch "^[^@\\s<>]+@[^@\\s<>]+$" (toString $.Values.config.EMAIL_HR_INBOX)) }}
+{{- fail "values.yaml: config.EMAIL_HR_INBOX must be an email address when config.FGA_NATS_URL is set — every mentee acceptance is sent to it." }}
+{{- end }}
+{{- end }}
+
 {{/*
 Required runtime configuration. The binary exits at startup without these
 (the database connection variables and MENTOR_INVITE_SECRET are hard-required;
