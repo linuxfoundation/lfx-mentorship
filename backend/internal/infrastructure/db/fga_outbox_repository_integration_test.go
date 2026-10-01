@@ -1051,12 +1051,25 @@ func TestProgramMemberIntegration_SelfRequestListAndLookup(t *testing.T) {
 		t.Fatalf("mentor memberships = %+v (total %d); want one requested row for Fixture Program", mentors, meta.Total)
 	}
 
-	// A requested row grants nothing, so it must not reach the FGA outbox.
+	// The transition applies only from the expected status.
+	if _, err := repo.TransitionStatus(ctx, mentor.ID, []models.ProgramMemberStatus{models.ProgramMemberStatusWithdrawn}, requested); !errors.Is(err, domain.ErrInvalidStateTransition) {
+		t.Fatalf("transition from withdrawn on a requested row: got %v; want ErrInvalidStateTransition", err)
+	}
+	withdrawn, err := repo.TransitionStatus(ctx, mentor.ID, []models.ProgramMemberStatus{models.ProgramMemberStatusRequested}, models.ProgramMemberStatusWithdrawn)
+	if err != nil {
+		t.Fatalf("withdraw requested row: %v", err)
+	}
+	if withdrawn.Status == nil || *withdrawn.Status != models.ProgramMemberStatusWithdrawn {
+		t.Fatalf("status = %v; want withdrawn", withdrawn.Status)
+	}
+
+	// Neither a requested nor a withdrawn row grants anything, so neither may
+	// reach the FGA outbox.
 	var markers int
 	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM fga_outbox WHERE marker_kind = 'membership' AND relation = 'mentor'`).Scan(&markers); err != nil {
 		t.Fatal(err)
 	}
 	if markers != 0 {
-		t.Fatalf("requested mentor row enqueued %d FGA mentor markers; want 0", markers)
+		t.Fatalf("self-service mentor row enqueued %d FGA mentor markers; want 0", markers)
 	}
 }

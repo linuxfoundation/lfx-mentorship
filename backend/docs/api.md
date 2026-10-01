@@ -1481,10 +1481,10 @@ the program, that row is reset to `requested` instead. No invite email is sent.
 
 | Status | When |
 |---|---|
-| `400` | `program_id` is not a UUID, or the program is not published |
+| `400` | `program_id` is not a UUID, or the program is a `draft` |
 | `401` | No signed-in user |
-| `404` | The program does not exist or is hidden |
-| `409` | The caller already has a mentor row in `invited`, `requested`, `pending`, `active`, or `declined` |
+| `404` | The program does not exist, or is not visible to every signed-in user (`submitted`, `rejected`, `archived`, `hidden`) |
+| `409` | The caller already has a mentor row in `invited`, `requested`, `pending`, `active`, or `declined`, or the row changed concurrently |
 
 ---
 
@@ -1501,7 +1501,7 @@ Withdraws the caller's own mentor request, moving it from `requested` or
 |---|---|
 | `401` | No signed-in user |
 | `404` | No mentor row with this ID belongs to the caller. Rows owned by other users return `404`, not `403`, so IDs cannot be probed. |
-| `409` | The row is in any status other than `requested` or `pending` |
+| `409` | The row is in any status other than `requested` or `pending`, including when it changed concurrently |
 
 ---
 

@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/google/uuid"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
@@ -78,9 +79,9 @@ var memberTransitions = map[models.ProgramMemberStatus]map[models.ProgramMemberS
 
 // selfWithdrawableStatuses are the statuses a mentor may withdraw their own
 // row from. An active mentor is removed by a program admin, not by themselves.
-var selfWithdrawableStatuses = map[models.ProgramMemberStatus]bool{
-	models.ProgramMemberStatusRequested: true,
-	models.ProgramMemberStatusPending:   true,
+var selfWithdrawableStatuses = []models.ProgramMemberStatus{
+	models.ProgramMemberStatusRequested,
+	models.ProgramMemberStatusPending,
 }
 
 // GetByID returns the program member with the given ID.
@@ -257,7 +258,7 @@ func (s *ProgramMemberService) RequestMentorship(ctx context.Context, programID,
 		return nil, fmt.Errorf("%w: a mentor membership for this program is already %q", domain.ErrConflict, current)
 	}
 
-	m, err := s.repo.Update(ctx, existing.ID, models.ProgramMemberUpdateInput{Status: &requested})
+	m, err := s.repo.TransitionStatus(ctx, existing.ID, []models.ProgramMemberStatus{models.ProgramMemberStatusWithdrawn}, requested)
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("reopen mentor request: %w", err)
@@ -288,7 +289,7 @@ func (s *ProgramMemberService) WithdrawMine(ctx context.Context, id, userID stri
 	if current.UserID != userID || current.MemberType != models.MemberTypeMentor {
 		return domain.ErrProgramMemberNotFound
 	}
-	if current.Status == nil || !selfWithdrawableStatuses[*current.Status] {
+	if current.Status == nil || !slices.Contains(selfWithdrawableStatuses, *current.Status) {
 		var status models.ProgramMemberStatus
 		if current.Status != nil {
 			status = *current.Status
@@ -296,8 +297,7 @@ func (s *ProgramMemberService) WithdrawMine(ctx context.Context, id, userID stri
 		return fmt.Errorf("%w: cannot withdraw a mentor membership that is %q", domain.ErrInvalidStateTransition, status)
 	}
 
-	withdrawn := models.ProgramMemberStatusWithdrawn
-	if _, err := s.repo.Update(ctx, id, models.ProgramMemberUpdateInput{Status: &withdrawn}); err != nil {
+	if _, err := s.repo.TransitionStatus(ctx, id, selfWithdrawableStatuses, models.ProgramMemberStatusWithdrawn); err != nil {
 		span.RecordError(err)
 		return fmt.Errorf("withdraw mentor membership: %w", err)
 	}

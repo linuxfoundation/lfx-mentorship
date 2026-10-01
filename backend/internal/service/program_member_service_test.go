@@ -6,6 +6,7 @@ package service_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
@@ -420,6 +421,7 @@ func TestProgramMemberService_RequestMentorship_CreatesRequestedRowWithoutInvite
 func TestProgramMemberService_RequestMentorship_ReopensWithdrawnRow(t *testing.T) {
 	createCalled := false
 	var updatedID string
+	var gotFrom []models.ProgramMemberStatus
 	var updatedStatus models.ProgramMemberStatus
 	memberRepo := &stubMemberRepo{
 		findByUserAndType: func(_ context.Context, programID, userID string, mt models.MemberType) (*models.ProgramMember, error) {
@@ -432,9 +434,9 @@ func TestProgramMemberService_RequestMentorship_ReopensWithdrawnRow(t *testing.T
 			createCalled = true
 			return nil, nil
 		},
-		update: func(_ context.Context, id string, in models.ProgramMemberUpdateInput) (*models.ProgramMember, error) {
-			updatedID, updatedStatus = id, *in.Status
-			return &models.ProgramMember{ID: id, Status: in.Status}, nil
+		transitionStatus: func(_ context.Context, id string, from []models.ProgramMemberStatus, to models.ProgramMemberStatus) (*models.ProgramMember, error) {
+			updatedID, gotFrom, updatedStatus = id, from, to
+			return &models.ProgramMember{ID: id, Status: &to}, nil
 		},
 	}
 	n := &stubNotifier{}
@@ -446,7 +448,10 @@ func TestProgramMemberService_RequestMentorship_ReopensWithdrawnRow(t *testing.T
 		t.Error("a withdrawn row must be reopened, not duplicated")
 	}
 	if updatedID != "existing" || updatedStatus != models.ProgramMemberStatusRequested {
-		t.Errorf("Update(%q, %q); want (existing, requested)", updatedID, updatedStatus)
+		t.Errorf("TransitionStatus(%q, _, %q); want (existing, requested)", updatedID, updatedStatus)
+	}
+	if !slices.Equal(gotFrom, []models.ProgramMemberStatus{models.ProgramMemberStatusWithdrawn}) {
+		t.Errorf("from = %v; want only withdrawn, so a concurrent change is not overwritten", gotFrom)
 	}
 	if n.mentorInvitedCalls != 0 {
 		t.Errorf("NotifyMentorInvited called %d times; want 0", n.mentorInvitedCalls)
@@ -466,7 +471,7 @@ func TestProgramMemberService_RequestMentorship_ConflictsWithExistingRow(t *test
 				findByUserAndType: func(_ context.Context, _, _ string, mt models.MemberType) (*models.ProgramMember, error) {
 					return &models.ProgramMember{ID: "existing", MemberType: mt, Status: memberStatus(status)}, nil
 				},
-				update: func(context.Context, string, models.ProgramMemberUpdateInput) (*models.ProgramMember, error) {
+				transitionStatus: func(context.Context, string, []models.ProgramMemberStatus, models.ProgramMemberStatus) (*models.ProgramMember, error) {
 					t.Fatal("an existing non-withdrawn row must not be changed")
 					return nil, nil
 				},
@@ -547,14 +552,15 @@ func TestProgramMemberService_WithdrawMine_FromRequestedOrPending(t *testing.T) 
 		models.ProgramMemberStatusPending,
 	} {
 		t.Run(string(status), func(t *testing.T) {
+			var gotFrom []models.ProgramMemberStatus
 			var updatedStatus models.ProgramMemberStatus
 			memberRepo := &stubMemberRepo{
 				getByID: func(_ context.Context, id string) (*models.ProgramMember, error) {
 					return &models.ProgramMember{ID: id, UserID: "user-1", MemberType: models.MemberTypeMentor, Status: memberStatus(status)}, nil
 				},
-				update: func(_ context.Context, id string, in models.ProgramMemberUpdateInput) (*models.ProgramMember, error) {
-					updatedStatus = *in.Status
-					return &models.ProgramMember{ID: id, Status: in.Status}, nil
+				transitionStatus: func(_ context.Context, id string, from []models.ProgramMemberStatus, to models.ProgramMemberStatus) (*models.ProgramMember, error) {
+					gotFrom, updatedStatus = from, to
+					return &models.ProgramMember{ID: id, Status: &to}, nil
 				},
 			}
 			svc := newMemberSvc(memberRepo, &stubProgRepo{}, &stubNotifier{})
@@ -563,6 +569,9 @@ func TestProgramMemberService_WithdrawMine_FromRequestedOrPending(t *testing.T) 
 			}
 			if updatedStatus != models.ProgramMemberStatusWithdrawn {
 				t.Errorf("status = %q; want withdrawn", updatedStatus)
+			}
+			if !slices.Equal(gotFrom, []models.ProgramMemberStatus{models.ProgramMemberStatusRequested, models.ProgramMemberStatusPending}) {
+				t.Errorf("from = %v; want requested and pending only", gotFrom)
 			}
 		})
 	}
@@ -580,8 +589,8 @@ func TestProgramMemberService_WithdrawMine_OtherStatusesConflict(t *testing.T) {
 				getByID: func(_ context.Context, id string) (*models.ProgramMember, error) {
 					return &models.ProgramMember{ID: id, UserID: "user-1", MemberType: models.MemberTypeMentor, Status: memberStatus(status)}, nil
 				},
-				update: func(context.Context, string, models.ProgramMemberUpdateInput) (*models.ProgramMember, error) {
-					t.Fatal("repo.Update must not be called")
+				transitionStatus: func(context.Context, string, []models.ProgramMemberStatus, models.ProgramMemberStatus) (*models.ProgramMember, error) {
+					t.Fatal("repo.TransitionStatus must not be called")
 					return nil, nil
 				},
 			}
@@ -609,8 +618,8 @@ func TestProgramMemberService_WithdrawMine_NotCallersMentorRow(t *testing.T) {
 					m.Status = memberStatus(models.ProgramMemberStatusRequested)
 					return &m, nil
 				},
-				update: func(context.Context, string, models.ProgramMemberUpdateInput) (*models.ProgramMember, error) {
-					t.Fatal("repo.Update must not be called")
+				transitionStatus: func(context.Context, string, []models.ProgramMemberStatus, models.ProgramMemberStatus) (*models.ProgramMember, error) {
+					t.Fatal("repo.TransitionStatus must not be called")
 					return nil, nil
 				},
 			}
@@ -692,4 +701,36 @@ func TestProgramMemberService_Update_WithdrawnToRequestedRefused(t *testing.T) {
 	if !errors.Is(err, domain.ErrInvalidStateTransition) {
 		t.Errorf("expected ErrInvalidStateTransition for withdrawn→requested, got %v", err)
 	}
+}
+
+// An admin may change the row between the service's read and its write; the
+// repository's conditional transition then refuses, and the 409 surfaces.
+func TestProgramMemberService_SelfService_ConcurrentChangeConflicts(t *testing.T) {
+	lostRace := func(context.Context, string, []models.ProgramMemberStatus, models.ProgramMemberStatus) (*models.ProgramMember, error) {
+		return nil, domain.ErrInvalidStateTransition
+	}
+	t.Run("withdraw", func(t *testing.T) {
+		memberRepo := &stubMemberRepo{
+			getByID: func(_ context.Context, id string) (*models.ProgramMember, error) {
+				return &models.ProgramMember{ID: id, UserID: "user-1", MemberType: models.MemberTypeMentor, Status: memberStatus(models.ProgramMemberStatusRequested)}, nil
+			},
+			transitionStatus: lostRace,
+		}
+		svc := newMemberSvc(memberRepo, &stubProgRepo{}, &stubNotifier{})
+		if err := svc.WithdrawMine(context.Background(), selfMemberID, "user-1"); !errors.Is(err, domain.ErrInvalidStateTransition) {
+			t.Errorf("expected ErrInvalidStateTransition, got %v", err)
+		}
+	})
+	t.Run("reopen", func(t *testing.T) {
+		memberRepo := &stubMemberRepo{
+			findByUserAndType: func(_ context.Context, _, _ string, mt models.MemberType) (*models.ProgramMember, error) {
+				return &models.ProgramMember{ID: "existing", MemberType: mt, Status: memberStatus(models.ProgramMemberStatusWithdrawn)}, nil
+			},
+			transitionStatus: lostRace,
+		}
+		svc := newMemberSvc(memberRepo, publishedProgRepo(), &stubNotifier{})
+		if _, err := svc.RequestMentorship(context.Background(), selfProgramID, "user-1"); !errors.Is(err, domain.ErrInvalidStateTransition) {
+			t.Errorf("expected ErrInvalidStateTransition, got %v", err)
+		}
+	})
 }

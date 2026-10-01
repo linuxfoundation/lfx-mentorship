@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -326,18 +327,45 @@ func (r *ProgramMemberRepository) Update(ctx context.Context, id string, input m
 	ctx, span := programMemberTracer.Start(ctx, "db.program_members.Update")
 	defer span.End()
 	span.SetAttributes(attribute.String("db.member_id", id))
+	m, err := r.update(ctx, id, input, nil)
+	if err != nil {
+		span.RecordError(err)
+	}
+	return m, err
+}
+
+// TransitionStatus sets id's status to `to` only while it is still one of
+// from. The row is locked before the check, so a concurrent change cannot
+// slip in between the check and the write.
+func (r *ProgramMemberRepository) TransitionStatus(ctx context.Context, id string, from []models.ProgramMemberStatus, to models.ProgramMemberStatus) (*models.ProgramMember, error) {
+	ctx, span := programMemberTracer.Start(ctx, "db.program_members.TransitionStatus")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.member_id", id), attribute.String("db.to_status", string(to)))
+	m, err := r.update(ctx, id, models.ProgramMemberUpdateInput{Status: &to}, from)
+	if err != nil {
+		span.RecordError(err)
+	}
+	return m, err
+}
+
+// update applies input to the row and enqueues its FGA and index markers.
+// A non-empty from requires the locked row's status to be one of from.
+func (r *ProgramMemberRepository) update(ctx context.Context, id string, input models.ProgramMemberUpdateInput, from []models.ProgramMemberStatus) (*models.ProgramMember, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin update program member transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	current, err := scanProgramMember(tx.QueryRow(ctx, `SELECT `+programMemberCols+` FROM program_members WHERE id = $1`, id))
+	current, err := scanProgramMember(tx.QueryRow(ctx, `SELECT `+programMemberCols+` FROM program_members WHERE id = $1 FOR UPDATE`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrProgramMemberNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("load program member before update: %w", err)
+	}
+	if len(from) > 0 && (current.Status == nil || !slices.Contains(from, *current.Status)) {
+		return nil, fmt.Errorf("%w: program member status changed concurrently", domain.ErrInvalidStateTransition)
 	}
 
 	const q = `
@@ -352,7 +380,6 @@ func (r *ProgramMemberRepository) Update(ctx context.Context, id string, input m
 		return nil, domain.ErrProgramMemberNotFound
 	}
 	if err != nil {
-		span.RecordError(err)
 		return nil, fmt.Errorf("update program member: %w", err)
 	}
 	if isActiveMember(current) || isActiveMember(m) {

@@ -24,6 +24,7 @@ type stubMemberRepo struct {
 	listByUser         func(context.Context, string, models.ProgramMemberFilter) ([]*models.ProgramMembership, *models.PaginationMeta, error)
 	create             func(context.Context, string, models.ProgramMemberCreateInput) (*models.ProgramMember, error)
 	update             func(context.Context, string, models.ProgramMemberUpdateInput) (*models.ProgramMember, error)
+	transitionStatus   func(context.Context, string, []models.ProgramMemberStatus, models.ProgramMemberStatus) (*models.ProgramMember, error)
 	delete             func(context.Context, string) error
 }
 
@@ -104,6 +105,12 @@ func (m *stubMemberRepo) Update(ctx context.Context, id string, in models.Progra
 		return m.update(ctx, id, in)
 	}
 	return &models.ProgramMember{ID: id}, nil
+}
+func (m *stubMemberRepo) TransitionStatus(ctx context.Context, id string, from []models.ProgramMemberStatus, to models.ProgramMemberStatus) (*models.ProgramMember, error) {
+	if m.transitionStatus != nil {
+		return m.transitionStatus(ctx, id, from, to)
+	}
+	return &models.ProgramMember{ID: id, Status: &to}, nil
 }
 func (m *stubMemberRepo) Delete(ctx context.Context, id string) error {
 	if m.delete != nil {
