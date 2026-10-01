@@ -14,6 +14,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/handler"
+	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/auth"
 )
 
 type stubProgramSvc struct {
@@ -21,6 +22,8 @@ type stubProgramSvc struct {
 	getCatalog                 func(context.Context, string) (*models.ProgramCatalogItem, error)
 	getByID                    func(context.Context, string) (*models.Program, error)
 	getBySlug                  func(context.Context, string) (*models.Program, error)
+	getManagementSummary       func(context.Context, string) (*models.ProgramManagementSummary, error)
+	nameAvailable              func(context.Context, string, string) (bool, error)
 	listMentees                func(context.Context, string) ([]*models.ProgramCatalogMentee, error)
 	listSkills                 func(context.Context, string) ([]*models.ProgramSkill, error)
 	deleteSkill                func(context.Context, string, string, string) error
@@ -43,6 +46,24 @@ func (s *stubProgramSvc) GetBySlug(ctx context.Context, id string) (*models.Prog
 func (s *stubProgramSvc) List(context.Context, models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error) {
 	return []*models.Program{}, &models.PaginationMeta{}, nil
 }
+func (s *stubProgramSvc) GetEnrollmentTemplate(context.Context, string) (*models.ProgramEnrollmentTemplate, error) {
+	return &models.ProgramEnrollmentTemplate{}, nil
+}
+func (s *stubProgramSvc) GetManagementSummary(ctx context.Context, id string) (*models.ProgramManagementSummary, error) {
+	if s.getManagementSummary != nil {
+		return s.getManagementSummary(ctx, id)
+	}
+	return &models.ProgramManagementSummary{}, nil
+}
+func (s *stubProgramSvc) GetHeaderProjection(ctx context.Context, id string) (*models.ProgramHeaderProjection, error) {
+	return &models.ProgramHeaderProjection{Program: &models.Program{ID: id}}, nil
+}
+func (s *stubProgramSvc) NameAvailable(ctx context.Context, name, excludeProgramID string) (bool, error) {
+	if s.nameAvailable != nil {
+		return s.nameAvailable(ctx, name, excludeProgramID)
+	}
+	return true, nil
+}
 func (s *stubProgramSvc) ListCatalog(ctx context.Context, f models.ProgramFilter) ([]*models.ProgramCatalogItem, *models.PaginationMeta, error) {
 	if s.listCatalog != nil {
 		return s.listCatalog(ctx, f)
@@ -63,6 +84,9 @@ func (s *stubProgramSvc) ListCatalogMentees(ctx context.Context, id string) ([]*
 }
 func (s *stubProgramSvc) Create(context.Context, models.ProgramCreateInput) (*models.Program, error) {
 	return &models.Program{}, nil
+}
+func (s *stubProgramSvc) CreateEnrollment(ctx context.Context, input models.ProgramEnrollmentInput) (*models.Program, error) {
+	return s.Create(ctx, input.Program)
 }
 func (s *stubProgramSvc) Update(context.Context, string, models.ProgramUpdateInput) (*models.Program, error) {
 	return &models.Program{}, nil
@@ -412,8 +436,68 @@ func TestProgramHandler_ResolveID_HiddenReturns404(t *testing.T) {
 
 func TestProgramHandler_ResolveID_DraftReturns404ToAnonymous(t *testing.T) {
 	h := handler.NewProgramHandler(&stubProgramSvc{
+		getBySlug: func(_ context.Context, slug string) (*models.Program, error) {
+			return &models.Program{ID: "draft-uuid", Slug: slug, Status: models.ProgramStatusDraft}, nil
+		},
+	})
+
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/resolve/my-draft", nil)
+	r = requestWithChiParam(r, "id", "my-draft")
+	w := httptest.NewRecorder()
+	h.ResolveID(w, r)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("got %d; want 404", w.Code)
+	}
+}
+
+func TestProgramHandler_ResolveID_DraftReturns404ToAuthenticatedNonOwner(t *testing.T) {
+	owner := "owner"
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		getBySlug: func(_ context.Context, slug string) (*models.Program, error) {
+			return &models.Program{ID: "draft-uuid", Slug: slug, Status: models.ProgramStatusDraft, LFID: &owner}, nil
+		},
+	})
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/resolve/my-draft", nil)
+	r = requestWithChiParam(r, "id", "my-draft")
+	r = r.WithContext(auth.ContextWithPrincipal(r.Context(), &models.Principal{UserID: "someone", Username: "someone"}))
+	w := httptest.NewRecorder()
+	h.ResolveID(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("got %d; want 404", w.Code)
+	}
+}
+
+func TestProgramHandler_ResolveID_DraftResolvesForOwner(t *testing.T) {
+	owner := "owner"
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		getBySlug: func(_ context.Context, slug string) (*models.Program, error) {
+			return &models.Program{ID: "draft-uuid", Slug: slug, Status: models.ProgramStatusDraft, LFID: &owner}, nil
+		},
+	})
+
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/resolve/my-draft", nil)
+	r = requestWithChiParam(r, "id", "my-draft")
+	r = r.WithContext(auth.ContextWithPrincipal(r.Context(), &models.Principal{UserID: "owner-user", Username: owner}))
+	w := httptest.NewRecorder()
+	h.ResolveID(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d; want 200", w.Code)
+	}
+	var body map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["id"] != "draft-uuid" {
+		t.Fatalf("id = %q; want draft-uuid", body["id"])
+	}
+}
+
+func TestProgramHandler_ResolveID_SubmittedReturns404ToAnonymous(t *testing.T) {
+	h := handler.NewProgramHandler(&stubProgramSvc{
 		getBySlug: func(_ context.Context, id string) (*models.Program, error) {
-			return &models.Program{ID: id, Slug: id, Status: models.ProgramStatusDraft}, nil
+			return &models.Program{ID: id, Slug: id, Status: models.ProgramStatusSubmitted}, nil
 		},
 	})
 
@@ -424,6 +508,26 @@ func TestProgramHandler_ResolveID_DraftReturns404ToAnonymous(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("got %d; want 404", w.Code)
+	}
+}
+
+func TestProgramHandler_GetCatalog_DraftReturnsOK(t *testing.T) {
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		getCatalog: func(_ context.Context, id string) (*models.ProgramCatalogItem, error) {
+			return &models.ProgramCatalogItem{
+				Program: models.Program{ID: id, Name: "Draft Program", Status: models.ProgramStatusDraft},
+				Skills:  []string{},
+				Terms:   []models.ProgramCatalogTerm{},
+				Mentors: []models.ProgramCatalogMentor{},
+			}, nil
+		},
+	})
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/draft-1/catalog", nil)
+	r = requestWithChiParam(r, "id", "draft-1")
+	w := httptest.NewRecorder()
+	h.GetCatalog(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d; want 200", w.Code)
 	}
 }
 
@@ -503,6 +607,35 @@ func TestProgramHandler_GetProgramSponsors_HiddenReturns404(t *testing.T) {
 	h.GetProgramSponsors(w, r)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("got %d; want 404", w.Code)
+	}
+}
+
+func TestProgramHandler_PublicSubResources_HiddenReturns404(t *testing.T) {
+	lfid := "owner"
+	svc := &stubProgramSvc{
+		getBySlug: func(_ context.Context, id string) (*models.Program, error) {
+			return &models.Program{ID: id, Slug: id, Status: models.ProgramStatusHidden, LFID: &lfid}, nil
+		},
+		listSkills: func(context.Context, string) ([]*models.ProgramSkill, error) {
+			t.Fatal("skills must not be read for a hidden program")
+			return nil, nil
+		},
+	}
+	h := handler.NewProgramHandler(svc)
+	for name, serve := range map[string]http.HandlerFunc{
+		"skills":        h.ListSkills,
+		"funding-stats": h.GetFundingStats,
+		"header":        h.GetHeaderProjection,
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "/v1/programs/p1/"+name, nil)
+			r = requestWithChiParam(r, "id", "p1")
+			w := httptest.NewRecorder()
+			serve(w, r)
+			if w.Code != http.StatusNotFound {
+				t.Fatalf("got %d; want 404", w.Code)
+			}
+		})
 	}
 }
 

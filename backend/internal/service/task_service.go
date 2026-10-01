@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
@@ -14,9 +15,21 @@ import (
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/auth"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 var taskSvcTracer = otel.Tracer("tasks-service")
+
+// validateDueDate enforces the YYYY-MM-DD task due-date contract.
+func validateDueDate(value *string) error {
+	if value == nil {
+		return nil
+	}
+	if _, err := time.Parse(time.DateOnly, *value); err != nil {
+		return fmt.Errorf("%w: due date must be a YYYY-MM-DD date", domain.ErrInvalidInput)
+	}
+	return nil
+}
 
 // TaskService orchestrates task reads and writes.
 type TaskService struct {
@@ -164,6 +177,9 @@ func (s *TaskService) Create(ctx context.Context, applicationID string, input mo
 	if input.Category != nil && !input.Category.IsValid() {
 		return nil, fmt.Errorf("%w: invalid category %q", domain.ErrInvalidInput, *input.Category)
 	}
+	if err := validateDueDate(input.DueDate); err != nil {
+		return nil, err
+	}
 	input.ID = uuid.New().String()
 
 	t, err := s.repo.Create(ctx, applicationID, input)
@@ -177,7 +193,8 @@ func (s *TaskService) Create(ctx context.Context, applicationID string, input mo
 // Update applies changes to a task.
 // Permission rules:
 //   - Only the task's assignee may mark it complete/submitted.
-//   - When all prerequisite tasks for the application are complete, the admin is notified.
+//   - When every prerequisite task is submitted or complete, the application is flagged
+//     tasks_submitted and program admins are notified the first time only.
 func (s *TaskService) Update(ctx context.Context, id string, input models.TaskUpdateInput) (*models.Task, error) {
 	ctx, span := taskSvcTracer.Start(ctx, "TaskService.Update")
 	defer span.End()
@@ -194,6 +211,9 @@ func (s *TaskService) Update(ctx context.Context, id string, input models.TaskUp
 	}
 	if input.Category != nil && !input.Category.IsValid() {
 		return nil, fmt.Errorf("%w: invalid category %q", domain.ErrInvalidInput, *input.Category)
+	}
+	if err := validateDueDate(input.DueDate); err != nil {
+		return nil, err
 	}
 
 	// FR-033: enforce state transitions and actor permissions when ActorID is known.
@@ -253,18 +273,25 @@ func (s *TaskService) Update(ctx context.Context, id string, input models.TaskUp
 		return nil, fmt.Errorf("update task: %w", err)
 	}
 
-	// tasks_submitted side-effect (FR-034): if all prerequisite tasks are now
-	// submitted or complete, mark the application and notify the admin.
+	// tasks_submitted side-effect (FR-034).
 	if input.Status != nil && (*input.Status == models.TaskStatusComplete || *input.Status == models.TaskStatusSubmitted) && t.ApplicationID != nil {
-		total, complete, countErr := s.repo.CountPrerequisiteTasksByApplication(ctx, *t.ApplicationID)
-		if countErr == nil && total > 0 && total == complete {
-			trueBool := true
-			_, _ = s.appRepo.Update(ctx, *t.ApplicationID, models.ApplicationUpdateInput{TasksSubmitted: &trueBool})
-			s.notifier.NotifyAdminTasksSubmitted(ctx, *t.ApplicationID)
-		}
+		s.markTasksSubmitted(ctx, *t.ApplicationID)
 	}
 
 	return t, nil
+}
+
+// markTasksSubmitted flags the application once every prerequisite task is submitted or
+// complete, notifying program admins only on the first flip so later reviews do not re-send.
+func (s *TaskService) markTasksSubmitted(ctx context.Context, applicationID string) {
+	flipped, err := s.appRepo.MarkTasksSubmitted(ctx, applicationID)
+	if err != nil {
+		trace.SpanFromContext(ctx).RecordError(err)
+		return
+	}
+	if flipped {
+		s.notifier.NotifyAdminTasksSubmitted(ctx, applicationID)
+	}
 }
 
 // assertReviewer verifies that actorID holds an active mentor or program_admin role

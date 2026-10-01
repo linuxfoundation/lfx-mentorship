@@ -54,6 +54,30 @@ SPDX-License-Identifier: MIT
               {{ skill }}
             </lfx-tag>
           </div>
+          <div class="flex flex-wrap gap-2">
+            <a
+              v-if="program.ciiProjectId"
+              :href="`https://bestpractices.coreinfrastructure.org/projects/${program.ciiProjectId}`"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="inline-flex"
+            >
+              <img
+                :src="`https://bestpractices.coreinfrastructure.org/projects/${program.ciiProjectId}/badge`"
+                :alt="`CII Best Practices badge for project ${program.ciiProjectId}`"
+                class="h-5"
+              />
+            </a>
+            <a
+              v-if="safeCodeOfConductUrl"
+              :href="safeCodeOfConductUrl"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="inline-flex"
+            >
+              <span class="ml-1 text-xs text-brand-500 hover:underline">Code of Conduct</span>
+            </a>
+          </div>
 
           <div class="flex flex-wrap items-center gap-3 pt-1">
             <lfx-button
@@ -147,6 +171,18 @@ defineEmits<{
 }>();
 
 const statusConfig = computed(() => PROGRAM_STATUS_CONFIG[props.program.status]);
+
+const safeCodeOfConductUrl = computed(() => {
+  const url = props.program.codeOfConduct;
+  if (!url) return '';
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? url : '';
+  } catch {
+    return '';
+  }
+});
+
 const activeTerms = computed(() => props.program.activeTerms);
 const isAccepting = computed(() => activeTerms.value.length > 0);
 const displayTerms = computed(() => {

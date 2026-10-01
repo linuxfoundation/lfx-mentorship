@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -71,6 +72,25 @@ func (r *ProgramMemberRepository) FindByProgramAndUser(ctx context.Context, prog
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("find program member by program and user: %w", err)
+	}
+	return m, nil
+}
+
+// FindByProgramUserAndType returns the member row for a program, user and
+// member type — the table's unique key — or ErrProgramMemberNotFound.
+func (r *ProgramMemberRepository) FindByProgramUserAndType(ctx context.Context, programID, userID string, memberType models.MemberType) (*models.ProgramMember, error) {
+	ctx, span := programMemberTracer.Start(ctx, "db.program_members.FindByProgramUserAndType")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.program_id", programID), attribute.String("db.user_id", userID), attribute.String("db.member_type", string(memberType)))
+
+	q := `SELECT ` + programMemberCols + ` FROM program_members WHERE program_id = $1 AND user_id = $2 AND member_type = $3`
+	m, err := scanProgramMember(r.pool.QueryRow(ctx, q, programID, userID, memberType))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrProgramMemberNotFound
+	}
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("find program member by program, user and type: %w", err)
 	}
 	return m, nil
 }
@@ -164,6 +184,106 @@ func (r *ProgramMemberRepository) ListByProgram(ctx context.Context, programID s
 	return members, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, nil
 }
 
+func (r *ProgramMemberRepository) ListMentorManagement(ctx context.Context, programID string, filter models.ProgramMemberFilter) ([]*models.ProgramMentorManagementRow, *models.PaginationMeta, error) {
+	limit, offset := filter.Limit, filter.Offset
+	if limit <= 0 || limit > 50 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	args := []any{programID}
+	where := ` WHERE pm.program_id = $1 AND pm.member_type = 'mentor'`
+	if filter.Status != "" {
+		args = append(args, filter.Status)
+		where += fmt.Sprintf(` AND pm.status = $%d`, len(args))
+	}
+	if filter.Search != "" {
+		args = append(args, "%"+filter.Search+"%")
+		where += fmt.Sprintf(` AND (u.name ILIKE $%d OR u.email ILIKE $%d OR u.lfid ILIKE $%d)`, len(args), len(args), len(args))
+	}
+	var total int
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM program_members pm JOIN users u ON u.id = pm.user_id`+where, args...).Scan(&total); err != nil {
+		return nil, nil, fmt.Errorf("count mentor management: %w", err)
+	}
+	args = append(args, limit, offset)
+	q := `SELECT pm.id, pm.user_id, u.name, COALESCE(pm.email, u.email), u.lfid, u.avatar_url, pm.status, pm.created_on, pm.updated_on, EXISTS(SELECT 1 FROM user_profiles up WHERE up.user_id = pm.user_id AND up.profile_type = 'mentor')` + ` FROM program_members pm JOIN users u ON u.id = pm.user_id` + where + fmt.Sprintf(` ORDER BY pm.created_on DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
+	rows, err := r.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("list mentor management: %w", err)
+	}
+	defer rows.Close()
+	result := make([]*models.ProgramMentorManagementRow, 0)
+	for rows.Next() {
+		var row models.ProgramMentorManagementRow
+		if err := rows.Scan(&row.ID, &row.UserID, &row.Name, &row.Email, &row.Username, &row.AvatarURL, &row.Status, &row.CreatedOn, &row.UpdatedOn, &row.ProfileCreated); err != nil {
+			return nil, nil, fmt.Errorf("scan mentor management: %w", err)
+		}
+		result = append(result, &row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	return result, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, nil
+}
+
+// ListByUser returns a user's memberships in any status, each joined to its
+// program's name, newest first.
+func (r *ProgramMemberRepository) ListByUser(ctx context.Context, userID string, filter models.ProgramMemberFilter) ([]*models.ProgramMembership, *models.PaginationMeta, error) {
+	ctx, span := programMemberTracer.Start(ctx, "db.program_members.ListByUser")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.user_id", userID))
+
+	limit := filter.Limit
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	offset := filter.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	args := []any{userID}
+	where := ` WHERE pm.user_id = $1`
+	if filter.MemberType != "" {
+		args = append(args, filter.MemberType)
+		where += fmt.Sprintf(` AND pm.member_type = $%d`, len(args))
+	}
+
+	var total int
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM program_members pm`+where, args...).Scan(&total); err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("count user program memberships: %w", err)
+	}
+
+	args = append(args, limit, offset)
+	q := `SELECT pm.id, pm.program_id, p.name, pm.member_type, pm.status, pm.created_on, pm.updated_on
+		FROM program_members pm JOIN programs p ON p.id = pm.program_id` + where +
+		fmt.Sprintf(` ORDER BY pm.created_on DESC, pm.id LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
+
+	rows, err := r.pool.Query(ctx, q, args...)
+	if err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("list user program memberships: %w", err)
+	}
+	defer rows.Close()
+
+	memberships := make([]*models.ProgramMembership, 0)
+	for rows.Next() {
+		var m models.ProgramMembership
+		if err := rows.Scan(&m.ID, &m.ProgramID, &m.ProgramName, &m.MemberType, &m.Status, &m.CreatedOn, &m.UpdatedOn); err != nil {
+			span.RecordError(err)
+			return nil, nil, fmt.Errorf("scan user program membership: %w", err)
+		}
+		memberships = append(memberships, &m)
+	}
+	if err := rows.Err(); err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("rows error: %w", err)
+	}
+	return memberships, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, nil
+}
+
 // Create adds a member to a program.
 func (r *ProgramMemberRepository) Create(ctx context.Context, programID string, input models.ProgramMemberCreateInput) (*models.ProgramMember, error) {
 	ctx, span := programMemberTracer.Start(ctx, "db.program_members.Create")
@@ -190,6 +310,11 @@ func (r *ProgramMemberRepository) Create(ctx context.Context, programID string, 
 		if err := enqueueMemberMarker(ctx, tx, m, "put"); err != nil {
 			return nil, err
 		}
+		if m.MemberType == models.MemberTypeMentor {
+			if err := enqueueProgramIndexByID(ctx, tx, m.ProgramID); err != nil {
+				return nil, err
+			}
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create program member transaction: %w", err)
@@ -202,18 +327,45 @@ func (r *ProgramMemberRepository) Update(ctx context.Context, id string, input m
 	ctx, span := programMemberTracer.Start(ctx, "db.program_members.Update")
 	defer span.End()
 	span.SetAttributes(attribute.String("db.member_id", id))
+	m, err := r.update(ctx, id, input, nil)
+	if err != nil {
+		span.RecordError(err)
+	}
+	return m, err
+}
+
+// UpdateIfStatus applies input only while id's status is still one of from.
+// The row is locked before the check, so a concurrent change cannot slip in
+// between the check and the write.
+func (r *ProgramMemberRepository) UpdateIfStatus(ctx context.Context, id string, from []models.ProgramMemberStatus, input models.ProgramMemberUpdateInput) (*models.ProgramMember, error) {
+	ctx, span := programMemberTracer.Start(ctx, "db.program_members.UpdateIfStatus")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.member_id", id))
+	m, err := r.update(ctx, id, input, from)
+	if err != nil {
+		span.RecordError(err)
+	}
+	return m, err
+}
+
+// update applies input to the row and enqueues its FGA and index markers.
+// A non-empty from requires the locked row's status to be one of from.
+func (r *ProgramMemberRepository) update(ctx context.Context, id string, input models.ProgramMemberUpdateInput, from []models.ProgramMemberStatus) (*models.ProgramMember, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin update program member transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	current, err := scanProgramMember(tx.QueryRow(ctx, `SELECT `+programMemberCols+` FROM program_members WHERE id = $1`, id))
+	current, err := scanProgramMember(tx.QueryRow(ctx, `SELECT `+programMemberCols+` FROM program_members WHERE id = $1 FOR UPDATE`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrProgramMemberNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("load program member before update: %w", err)
+	}
+	if len(from) > 0 && (current.Status == nil || !slices.Contains(from, *current.Status)) {
+		return nil, fmt.Errorf("%w: program member status changed concurrently", domain.ErrInvalidStateTransition)
 	}
 
 	const q = `
@@ -228,7 +380,6 @@ func (r *ProgramMemberRepository) Update(ctx context.Context, id string, input m
 		return nil, domain.ErrProgramMemberNotFound
 	}
 	if err != nil {
-		span.RecordError(err)
 		return nil, fmt.Errorf("update program member: %w", err)
 	}
 	if isActiveMember(current) || isActiveMember(m) {
@@ -238,6 +389,11 @@ func (r *ProgramMemberRepository) Update(ctx context.Context, id string, input m
 		}
 		if err := enqueueMemberMarker(ctx, tx, m, op); err != nil {
 			return nil, err
+		}
+		if current.MemberType == models.MemberTypeMentor || m.MemberType == models.MemberTypeMentor {
+			if err := enqueueProgramIndexByID(ctx, tx, m.ProgramID); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -275,6 +431,11 @@ func (r *ProgramMemberRepository) Delete(ctx context.Context, id string) error {
 		if err := enqueueMemberMarker(ctx, tx, current, "remove"); err != nil {
 			return err
 		}
+		if current.MemberType == models.MemberTypeMentor {
+			if err := enqueueProgramIndexByID(ctx, tx, current.ProgramID); err != nil {
+				return err
+			}
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit delete program member transaction: %w", err)
@@ -297,21 +458,6 @@ func enqueueMemberMarker(ctx context.Context, tx pgx.Tx, member *models.ProgramM
 	relation := "mentor"
 	if member.MemberType == models.MemberTypeProgramAdmin {
 		relation = "writer"
-	}
-	if operation == "remove" {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO fga_membership_tombstones (object_type, object_uid, relation, username)
-			VALUES ('mentorship_program', $1, $2, $3)
-			ON CONFLICT (object_type, object_uid, relation, username)
-			DO UPDATE SET deleted_on = NOW(), last_reconciled_on = NULL`,
-			member.ProgramID, relation, *lfid); err != nil {
-			return fmt.Errorf("record program member FGA tombstone: %w", err)
-		}
-	}
-	if operation == "put" {
-		if _, err := tx.Exec(ctx, `DELETE FROM fga_membership_tombstones WHERE object_type = 'mentorship_program' AND object_uid = $1 AND relation = $2 AND username = $3`, member.ProgramID, relation, *lfid); err != nil {
-			return fmt.Errorf("clear program member FGA tombstone: %w", err)
-		}
 	}
 	markerOperation := "sync"
 	if operation == "remove" {

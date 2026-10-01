@@ -5,6 +5,19 @@ package models
 
 import "time"
 
+type ProgramMentorManagementRow struct {
+	ID             string               `json:"id"`
+	UserID         string               `json:"user_id"`
+	Name           *string              `json:"name,omitempty"`
+	Email          *string              `json:"email,omitempty"`
+	Username       *string              `json:"username,omitempty"`
+	AvatarURL      *string              `json:"avatar_url,omitempty"`
+	Status         *ProgramMemberStatus `json:"status,omitempty"`
+	CreatedOn      time.Time            `json:"created_on"`
+	UpdatedOn      time.Time            `json:"updated_on"`
+	ProfileCreated bool                 `json:"profile_created"`
+}
+
 // ProgramMemberStatus enumerates valid values for program_members.status.
 // A turned-down mentor invite is "declined", matching ApplicationStatusDeclined;
 // "rejected" is reserved for ProgramStatus (program moderation).
@@ -65,6 +78,24 @@ type ProgramMemberCreateInput struct {
 	MemberType MemberType           `json:"member_type"`
 	Status     *ProgramMemberStatus `json:"status,omitempty"`
 	Email      *string              `json:"email,omitempty"`
+}
+
+// ProgramMembership is one of the caller's own program_members rows, joined to
+// the program's name. It omits user_id and email: the caller already knows both.
+type ProgramMembership struct {
+	ID          string               `json:"id"`
+	ProgramID   string               `json:"program_id"`
+	ProgramName string               `json:"program_name"`
+	MemberType  MemberType           `json:"member_type"`
+	Status      *ProgramMemberStatus `json:"status,omitempty"`
+	CreatedOn   time.Time            `json:"created_on"`
+	UpdatedOn   time.Time            `json:"updated_on"`
+}
+
+// ProgramMembershipRequestInput is the request body for a mentor's own request
+// to join a program. The user is always the principal, never the body.
+type ProgramMembershipRequestInput struct {
+	ProgramID string `json:"program_id"`
 }
 
 // ProgramMemberUpdateInput is the request body for updating a program member.

@@ -119,7 +119,7 @@ func (b *DatabaseBuilder) buildTask(ctx context.Context, id string) (Message, er
 		return Message{}, err
 	}
 	if task.ApplicationID == nil || *task.ApplicationID == "" {
-		return Message{}, fmt.Errorf("task %s has no application parent", task.ID)
+		return DeleteAccess(taskObject, task.ID)
 	}
 	user, err := b.users.GetByID(ctx, task.AssigneeID)
 	if err != nil || user.LFID == nil || *user.LFID == "" {

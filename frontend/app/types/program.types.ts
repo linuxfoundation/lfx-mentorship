@@ -3,7 +3,13 @@
 
 import type { MenteeStatus } from './mentee.types';
 
-export const PROGRAM_STATUSES = ['open-soon', 'acceptance', 'in-progress', 'completed'] as const;
+export const PROGRAM_STATUSES = [
+  'open-soon',
+  'acceptance',
+  'in-progress',
+  'completed',
+  'pending',
+] as const;
 
 export type ProgramStatus = (typeof PROGRAM_STATUSES)[number];
 
@@ -87,6 +93,9 @@ export interface Program {
   activeTerms: ProgramTerm[];
   updatedAt: string;
   repositoryUrl?: string;
+  /** CII Best Practices project ID used to render the OpenSSF badge. */
+  ciiProjectId?: string;
+  codeOfConduct?: string;
   mentees: ProgramMentee[];
   mentors: ProgramMember[];
   sponsors: ProgramSponsor[];

@@ -16,9 +16,30 @@ import (
 type programMemberService interface {
 	GetByID(ctx context.Context, id string) (*models.ProgramMember, error)
 	ListByProgram(ctx context.Context, programID string, filter models.ProgramMemberFilter) ([]*models.ProgramMember, *models.PaginationMeta, error)
+	ListMentorManagement(ctx context.Context, programID string, filter models.ProgramMemberFilter) ([]*models.ProgramMentorManagementRow, *models.PaginationMeta, error)
 	Create(ctx context.Context, programID string, input models.ProgramMemberCreateInput) (*models.ProgramMember, error)
 	Update(ctx context.Context, programID, id string, input models.ProgramMemberUpdateInput, actorID string) (*models.ProgramMember, error)
 	Delete(ctx context.Context, programID, id, actorID string) error
+	ListMine(ctx context.Context, userID string, filter models.ProgramMemberFilter) ([]*models.ProgramMembership, *models.PaginationMeta, error)
+	RequestMentorship(ctx context.Context, programID, userID string) (*models.ProgramMember, error)
+	WithdrawMine(ctx context.Context, id, userID string) error
+}
+
+func (h *ProgramMemberHandler) ListMentorManagement(w http.ResponseWriter, r *http.Request) {
+	if auth.PrincipalFromContext(r.Context()) == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	limit, offset, ok := parsePaginationParams(w, r)
+	if !ok {
+		return
+	}
+	rows, meta, err := h.svc.ListMentorManagement(r.Context(), chi.URLParam(r, "id"), models.ProgramMemberFilter{Limit: limit, Offset: offset, Status: r.URL.Query().Get("status"), Search: r.URL.Query().Get("search")})
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]any{"data": rows, "meta": meta})
 }
 
 // ProgramMemberHandler holds Chi handlers for program members and admins.
@@ -139,6 +160,64 @@ func (h *ProgramMemberHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	withdrawn := models.ProgramMemberStatusWithdrawn
 	if _, err := h.svc.Update(r.Context(), programID, memberID, models.ProgramMemberUpdateInput{Status: &withdrawn}, principal.UserID); err != nil {
+		Error(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ListMine handles GET /v1/me/program-memberships — the caller's own rows in
+// any status, each with its program's name.
+func (h *ProgramMemberHandler) ListMine(w http.ResponseWriter, r *http.Request) {
+	principal := auth.PrincipalFromContext(r.Context())
+	if principal == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	limit, offset, ok := parsePaginationParams(w, r)
+	if !ok {
+		return
+	}
+	memberships, meta, err := h.svc.ListMine(r.Context(), principal.UserID, models.ProgramMemberFilter{
+		Limit:      limit,
+		Offset:     offset,
+		MemberType: r.URL.Query().Get("member_type"),
+	})
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]any{"data": memberships, "meta": meta})
+}
+
+// RequestMine handles POST /v1/me/program-memberships — the caller's own
+// request to mentor a program. The user is the principal, never the body.
+func (h *ProgramMemberHandler) RequestMine(w http.ResponseWriter, r *http.Request) {
+	principal := auth.PrincipalFromContext(r.Context())
+	if principal == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	var input models.ProgramMembershipRequestInput
+	if !decodeBody(w, r, &input) {
+		return
+	}
+	member, err := h.svc.RequestMentorship(r.Context(), input.ProgramID, principal.UserID)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusCreated, member)
+}
+
+// WithdrawMine handles POST /v1/me/program-memberships/{id}/withdraw.
+func (h *ProgramMemberHandler) WithdrawMine(w http.ResponseWriter, r *http.Request) {
+	principal := auth.PrincipalFromContext(r.Context())
+	if principal == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	if err := h.svc.WithdrawMine(r.Context(), chi.URLParam(r, "id"), principal.UserID); err != nil {
 		Error(w, err)
 		return
 	}

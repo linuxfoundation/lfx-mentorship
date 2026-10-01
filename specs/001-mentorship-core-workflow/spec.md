@@ -233,8 +233,8 @@ the program_admin can manage the program's visibility and terms throughout its l
   decline.
 - **FR-021**: System MUST allow a program_admin to manually set a mentor's `status` to
   `pending`.
-- **FR-022**: System MUST allow a program_admin to remove a mentor, setting `status` to
-  `withdrawn`.
+- **FR-022**: System MUST allow a program_admin to remove a mentor in any status,
+  deleting the `program_members` record.
 - **FR-023**: System MUST allow a mentor to self-request participation in a
   `published` program, creating a `program_members` record with `member_type =
   mentor` and `status = requested`.

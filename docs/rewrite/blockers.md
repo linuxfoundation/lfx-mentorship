@@ -168,7 +168,8 @@ stale access.
 1. The authority allowed to administer the global approver roster is named.
 2. The approver roster has relational source-of-truth storage.
 3. Insert and removal transactions create generation-guarded outbox markers.
-4. Seed and reconciliation cover `member_put` and precise `member_remove`.
+4. Transactional emission and the explicit seed cover `member_put` and precise
+   `member_remove`; exact dead-letter markers can be requeued after repair.
 5. Self-add and cross-authority escalation tests are denied.
 
 ## 4. PostgreSQL Data Invariants and Backfill
@@ -180,9 +181,9 @@ stale access.
 Before tuple emission is treated as complete:
 
 - Every program has a non-null canonical `project_uid`.
-- Every task has a non-null application parent.
-- `tasks.application_id` uses `NOT NULL` and `ON DELETE CASCADE` after orphan
-  repair.
+- Every task has a non-null application parent (enforced by migration 004;
+  parentless rows are held in `quarantined_tasks`).
+- `tasks.application_id` uses `NOT NULL` and `ON DELETE CASCADE`.
 - Every nested route verifies its child belongs to the path parent.
 - Every emitted object ID is a canonical UID, never a slug.
 - Every human principal used in a tuple resolves to an LFID.
@@ -243,6 +244,11 @@ creates a broken or bypassable deployment:
 - Gateway traffic without the relay and seed reaches a backend whose protected
   objects have no FGA tuples.
 - Frontend traffic left on the interim backend host bypasses the shared gateway.
+- Service-owned caller-owned collections bypass Query Service's standard access
+   filtering and direct-grant query pattern. Public collections (programs,
+   catalog, mentor and mentee directories, and aggregates) are the exception:
+   they return only published or publicly listable data, so there is nothing to
+   filter.
 
 These values must be reviewed as one environment change, not copied separately
 across releases.
@@ -253,10 +259,13 @@ across releases.
 2. The chart renders the intended Middleware, HTTPRoute, RuleSet, and relay
    configuration.
 3. The backend can validate a real Heimdall PS256 token from the cluster JWKS.
-4. NATS JetStream publish acknowledgements are observed.
+4. FGA and index relay JetStream publish acknowledgements are observed.
 5. The frontend/BFF points at the shared gateway URL and requests the gateway
    audience.
 6. Direct interim-host access is disabled or otherwise prevented at cutover.
+7. All resource collections other than the public program catalog are served by
+   Query Service; caller-owned views use `filter_grants=direct` with an explicit
+   resource `type`.
 
 ### Dual-gateway topology decision
 
@@ -273,17 +282,18 @@ The current code supports two URL prefixes on one backend deployment. That is a
 temporary migration shape, not evidence that cross-account routing or database
 ownership has been solved.
 
-## 6. Seed, Reconciliation, and Verification
+## 6. Seed, Repair, and Verification
 
 **Owners:** Mentorship operators and platform authorization owners
 
 ### Why this remains a blocker
 
-The current reconciliation command re-dirties current objects and current
-memberships, but a current-row scan alone cannot discover a stale tuple after
-the source membership row has been deleted. Deletion transactions are still
-mandatory, and stale-removal history must be retained until delivery is
-confirmed.
+The importer queues current-state object and index markers through the normal
+outbox relays. A current-row scan cannot discover a stale tuple after its source
+row has been deleted, so deletion transactions remain mandatory and failed
+deletion markers stay retained until delivery is confirmed. Operators repair
+the dependency and requeue one exact dead-letter marker with `outbox-repair`;
+the service does not run a periodic reconciler.
 
 Relay success also means only that a message reached the JetStream stream. It
 does not prove fga-sync applied the message or that OpenFGA contains the
@@ -299,7 +309,7 @@ expected tuple set.
    assignees, parent references, approvers, public wildcard grants, revocations,
    and deletions.
 5. Operators monitor oldest pending outbox age, retry exhaustion, publication
-   failures, reconciliation mismatches, and revocation lag.
+   failures, derived-state verification mismatches, and revocation lag.
 
 ## 7. Cutover Gate
 
@@ -307,7 +317,8 @@ Gateway enforcement must remain disabled until all blockers above have evidence.
 The cutover is not just a Helm flag:
 
 1. Deploy the shared model and verify its live ID.
-2. Deploy backend dual JWT acceptance, outbox relay, and reconciliation.
+2. Deploy backend dual JWT acceptance, outbox relays, and exact dead-letter
+   repair tooling.
 3. Seed and verify FGA coverage.
 4. Deploy Middleware, HTTPRoute, and RuleSet without traffic first.
 5. Run authenticated, anonymous, denied, cross-program, and stale-tuple smoke

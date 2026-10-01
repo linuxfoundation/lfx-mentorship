@@ -24,7 +24,7 @@ const crowdfundingUrl =
 
 export default {
   // Server-only
-  apiBaseUrl: process.env.NUXT_API_BASE_URL || 'http://localhost:8080',
+  apiBaseUrl: process.env.NUXT_API_BASE_URL || 'http://localhost:8080/mentorship',
 
   public: {
     apiBase: '/api',

@@ -9,8 +9,11 @@ metadata:
   labels:
     {{- include "lfx-v2-mentorship-service.labels" . | nindent 4 }}
 spec:
+  # Defaulted fields are spelled out so ArgoCD does not report drift against the live object.
   parentRefs:
-    - name: {{ .Values.traefik.gateway.name }}
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ .Values.traefik.gateway.name }}
       namespace: {{ .Values.traefik.gateway.namespace }}
   hostnames:
     - {{ printf "lfx-api.%s" .Values.lfx.domain | quote }}
@@ -26,6 +29,9 @@ spec:
             kind: Middleware
             name: {{ include "lfx-v2-mentorship-service.fullname" . }}-heimdall
       backendRefs:
-        - name: {{ include "lfx-v2-mentorship-service.fullname" . }}
+        - group: ""
+          kind: Service
+          name: {{ include "lfx-v2-mentorship-service.fullname" . }}
           port: {{ .Values.service.port }}
+          weight: 1
 {{- end }}

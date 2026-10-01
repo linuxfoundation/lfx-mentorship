@@ -68,6 +68,36 @@ Two things this guard must get right, both learned from review:
 {{- end }}
 {{- end }}
 
+{{- /* Notification email: the binary requires these whenever NATS is set, bypass or not.
+Like the bypass guard, read both config: and env:; an env value overrides config, and a
+valueFrom is resolved at runtime, so it counts as set without a format check. */ -}}
+{{- $emailKeys := list "FGA_NATS_URL" "PUBLIC_SITE_URL" "SELF_SERVE_URL" "EMAIL_HR_INBOX" }}
+{{- $email := dict }}
+{{- $emailFromRef := dict }}
+{{- range $key := $emailKeys }}
+{{- $_ := set $email $key (toString (get $.Values.config $key)) }}
+{{- end }}
+{{- range $entry := .Values.env }}
+{{- if has $entry.name $emailKeys }}
+{{- if $entry.valueFrom }}
+{{- $_ := set $emailFromRef $entry.name true }}
+{{- else }}
+{{- $_ := set $email $entry.name (toString ($entry.value | default "")) }}
+{{- $_ := unset $emailFromRef $entry.name }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if or (get $email "FGA_NATS_URL") (hasKey $emailFromRef "FGA_NATS_URL") }}
+{{- range $key := list "PUBLIC_SITE_URL" "SELF_SERVE_URL" }}
+{{- if not (or (hasKey $emailFromRef $key) (regexMatch "^https?://[^/]+" (get $email $key))) }}
+{{- fail (printf "values.yaml: %s must be an absolute http(s) URL (in config: or env:) when FGA_NATS_URL is set — notification email links point at it." $key) }}
+{{- end }}
+{{- end }}
+{{- if not (or (hasKey $emailFromRef "EMAIL_HR_INBOX") (regexMatch "^[^@\\s<>]+@[^@\\s<>]+$" (get $email "EMAIL_HR_INBOX"))) }}
+{{- fail "values.yaml: EMAIL_HR_INBOX must be an email address (in config: or env:) when FGA_NATS_URL is set — every mentee acceptance is sent to it." }}
+{{- end }}
+{{- end }}
+
 {{/*
 Required runtime configuration. The binary exits at startup without these
 (the database connection variables and MENTOR_INVITE_SECRET are hard-required;
@@ -98,6 +128,11 @@ requiring them would block the documented local bypass flow
 {{- end }}
 {{- if not $.Values.config.FGA_NATS_URL }}
 {{- fail "values.yaml: config.FGA_NATS_URL is required when heimdall.enabled=true so authorization changes reach FGA." }}
+{{- end }}
+{{- end }}
+{{- if $.Values.config.FGA_NATS_URL }}
+{{- if le (int $.Values.config.INDEX_RELAY_MAX_ATTEMPTS) 0 }}
+{{- fail "values.yaml: config.INDEX_RELAY_MAX_ATTEMPTS must be greater than 0." }}
 {{- end }}
 {{- end }}
 {{- if $heimdallConfigured }}

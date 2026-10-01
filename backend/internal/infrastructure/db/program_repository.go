@@ -5,6 +5,7 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -30,7 +31,7 @@ func NewProgramRepository(pool *pgxpool.Pool) *ProgramRepository {
 }
 
 const programSelectCols = `
-	programs.id, programs.project_uid, programs.name, programs.slug, programs.status, programs.is_paid,
+	programs.id, programs.lf_project_uid AS project_uid, programs.lf_project_slug AS project_slug, programs.lf_project_name AS project_name, programs.lf_project_logo_url AS project_logo_url, programs.name, programs.slug, programs.status, programs.is_paid,
 	programs.description, programs.logo_url, programs.website_url, programs.repo_link,
 	programs.code_of_conduct, programs.industry, programs.color, programs.lfid,
 	programs.cii_project_id, programs.accept_applications,
@@ -39,7 +40,7 @@ const programSelectCols = `
 	programs.mentee_needs, programs.task_templates, programs.created_on, programs.updated_on`
 
 const programReturningCols = `
-	id, project_uid, name, slug, status, is_paid, description, logo_url, website_url, repo_link,
+	id, lf_project_uid AS project_uid, lf_project_slug AS project_slug, lf_project_name AS project_name, lf_project_logo_url AS project_logo_url, name, slug, status, is_paid, description, logo_url, website_url, repo_link,
 	code_of_conduct, industry, color, lfid, cii_project_id, accept_applications,
 	terms_and_conditions, program_term_status, discover_sort_rank, amount_raised,
 	mentee_needs, task_templates, created_on, updated_on`
@@ -51,7 +52,7 @@ const programsWithFundingFrom = `
 func scanProgram(row pgx.Row) (*models.Program, error) {
 	var p models.Program
 	err := row.Scan(
-		&p.ID, &p.ProjectUID, &p.Name, &p.Slug, &p.Status, &p.IsPaid, &p.Description, &p.LogoURL,
+		&p.ID, &p.ProjectUID, &p.ProjectSlug, &p.ProjectName, &p.ProjectLogoURL, &p.Name, &p.Slug, &p.Status, &p.IsPaid, &p.Description, &p.LogoURL,
 		&p.WebsiteURL, &p.RepoLink, &p.CodeOfConduct, &p.Industry, &p.Color, &p.LFID,
 		&p.CIIProjectID, &p.AcceptApplications, &p.TermsAndConditions, &p.ProgramTermStatus,
 		&p.DiscoverSortRank, &p.AmountRaised, &p.MenteeNeeds, &p.TaskTemplates,
@@ -61,6 +62,80 @@ func scanProgram(row pgx.Row) (*models.Program, error) {
 		return nil, err
 	}
 	return &p, nil
+}
+
+func enqueueProgramIndex(ctx context.Context, tx pgx.Tx, program *models.Program, action string) error {
+	headers := domain.SanitizedIndexHeaders(domain.IndexHeadersFromContext(ctx))
+	headerData, err := json.Marshal(headers)
+	if err != nil {
+		return err
+	}
+	document := NewProgramIndexDocument(program)
+	if err := tx.QueryRow(ctx, `
+		SELECT
+			COUNT(*) FILTER (WHERE member_type = 'mentor' AND status = 'active'),
+			(SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE pt.program_id = $1 AND a.role = 'mentee' AND a.status = 'accepted'),
+			(SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE pt.program_id = $1 AND a.role = 'mentee' AND a.status = 'graduated')
+		FROM program_members
+		WHERE program_id = $1`, program.ID).Scan(&document.Stats.Mentors, &document.Stats.Mentees, &document.Stats.Graduated); err != nil {
+		return fmt.Errorf("resolve program index stats: %w", err)
+	}
+	data, err := json.Marshal(document)
+	if err != nil {
+		return err
+	}
+	config := NewProgramIndexConfig(program.ID, program.ProjectUID, program.Name, program.Slug, string(program.Status))
+	configData, err := json.Marshal(config)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO index_outbox (object_type, object_uid, action, headers, data, indexing_config)
+		VALUES ('mentorship_program', $1, $2, $3, $4, $5)
+		ON CONFLICT (object_type, object_uid) DO UPDATE SET
+			action = EXCLUDED.action,
+			headers = EXCLUDED.headers,
+			data = EXCLUDED.data,
+			indexing_config = EXCLUDED.indexing_config,
+			generation = index_outbox.generation + 1,
+			state = CASE WHEN index_outbox.state = 'in_flight' THEN 'in_flight' ELSE 'pending' END,
+			claimed_generation = CASE WHEN index_outbox.state = 'in_flight' THEN index_outbox.claimed_generation ELSE NULL END,
+			claimed_at = CASE WHEN index_outbox.state = 'in_flight' THEN index_outbox.claimed_at ELSE NULL END,
+			attempts = 0,
+			next_attempt_at = NOW(),
+			sent_on = NULL`, program.ID, action, headerData, data, configData)
+	return err
+}
+
+func enqueueProgramIndexByID(ctx context.Context, tx pgx.Tx, programID string) error {
+	program, err := scanProgram(tx.QueryRow(ctx, `SELECT`+programSelectCols+programsWithFundingFrom+` WHERE programs.id = $1`, programID))
+	if err != nil {
+		return fmt.Errorf("load program for index refresh: %w", err)
+	}
+	return enqueueProgramIndex(ctx, tx, program, "updated")
+}
+
+func enqueueProgramIndexDelete(ctx context.Context, tx pgx.Tx, id string) error {
+	headers := domain.SanitizedIndexHeaders(domain.IndexHeadersFromContext(ctx))
+	headerData, err := json.Marshal(headers)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO index_outbox (object_type, object_uid, action, headers)
+		VALUES ('mentorship_program', $1, 'deleted', $2)
+		ON CONFLICT (object_type, object_uid) DO UPDATE SET
+			action = 'deleted',
+			headers = EXCLUDED.headers,
+			data = NULL,
+			indexing_config = NULL,
+			generation = index_outbox.generation + 1,
+			state = CASE WHEN index_outbox.state = 'in_flight' THEN 'in_flight' ELSE 'pending' END,
+			claimed_generation = CASE WHEN index_outbox.state = 'in_flight' THEN index_outbox.claimed_generation ELSE NULL END,
+			claimed_at = CASE WHEN index_outbox.state = 'in_flight' THEN index_outbox.claimed_at ELSE NULL END,
+			attempts = 0,
+			sent_on = NULL`, id, headerData)
+	return err
 }
 
 // GetByID returns the program with the given UUID or ErrProgramNotFound.
@@ -97,6 +172,24 @@ func (r *ProgramRepository) GetBySlug(ctx context.Context, slug string) (*models
 		return nil, fmt.Errorf("get program by slug: %w", err)
 	}
 	return p, nil
+}
+
+func (r *ProgramRepository) GetHeaderProjection(ctx context.Context, programID string) (*models.ProgramHeaderProjection, error) {
+	program, err := r.GetByID(ctx, programID)
+	if err != nil {
+		return nil, err
+	}
+	projection := &models.ProgramHeaderProjection{Program: program}
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FILTER (WHERE member_type = 'mentor' AND status = 'active'), (SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE pt.program_id = $1 AND a.role = 'mentee' AND a.status = 'accepted'), (SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE pt.program_id = $1 AND a.role = 'mentee' AND a.status = 'graduated') FROM program_members WHERE program_id = $1`, programID).Scan(&projection.Stats.Mentors, &projection.Stats.Mentees, &projection.Stats.Graduated); err != nil {
+		return nil, fmt.Errorf("get program header stats: %w", err)
+	}
+	term, err := scanProgramTerm(r.pool.QueryRow(ctx, `SELECT`+programTermCols+` FROM program_terms WHERE program_id = $1 AND status = 'open' ORDER BY start_date_time DESC NULLS LAST LIMIT 1`, programID))
+	if err == nil {
+		projection.ActiveTerm = term
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+	return projection, nil
 }
 
 // List returns a paginated slice of programs optionally filtered by status or search.
@@ -160,6 +253,65 @@ func (r *ProgramRepository) List(ctx context.Context, filter models.ProgramFilte
 		programs = []*models.Program{}
 	}
 	return programs, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, nil
+}
+
+// GetEnrollmentTemplate returns enrollment fields for a gateway-authorized program.
+func (r *ProgramRepository) GetEnrollmentTemplate(ctx context.Context, programID string) (*models.ProgramEnrollmentTemplate, error) {
+	q := `SELECT` + programSelectCols + programsWithFundingFrom + ` WHERE programs.id = $1`
+	program, err := scanProgram(r.pool.QueryRow(ctx, q, programID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrProgramNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get enrollment template program: %w", err)
+	}
+	skills, err := r.ListSkills(ctx, programID)
+	if err != nil {
+		return nil, fmt.Errorf("get enrollment template skills: %w", err)
+	}
+	skillNames := make([]string, 0, len(skills))
+	for _, skill := range skills {
+		skillNames = append(skillNames, skill.Skill)
+	}
+	return &models.ProgramEnrollmentTemplate{Program: *program, Skills: skillNames, Prerequisites: program.TaskTemplates}, nil
+}
+
+// GetManagementSummary returns the object-scoped counts shown on the program
+// administration header without loading the tab rows themselves.
+func (r *ProgramRepository) GetManagementSummary(ctx context.Context, programID string) (*models.ProgramManagementSummary, error) {
+	ctx, span := programTracer.Start(ctx, "db.programs.GetManagementSummary")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.program_id", programID))
+	const q = `
+		SELECT
+			EXISTS (SELECT 1 FROM program_terms WHERE program_id = $1 AND status = 'open'),
+			EXISTS (SELECT 1 FROM program_terms WHERE program_id = $1 AND status = 'closed'),
+			COUNT(a.id) FILTER (WHERE pt.status = 'open' AND p.status NOT IN ('draft', 'submitted') AND a.role = 'mentee' AND a.status IN ('accepted', 'graduated')),
+			COUNT(a.id) FILTER (WHERE pt.status = 'closed' AND p.status NOT IN ('draft', 'submitted') AND a.role = 'mentee'),
+			COUNT(a.id) FILTER (WHERE p.status NOT IN ('draft', 'submitted') AND a.role = 'mentee'),
+			(SELECT COUNT(*) FROM program_members pm WHERE pm.program_id = $1 AND pm.member_type = 'mentor' AND pm.status = 'active'),
+			(SELECT COUNT(*) FROM program_terms WHERE program_id = $1 AND status <> 'deleted')
+		FROM program_terms pt
+		JOIN programs p ON p.id = pt.program_id
+		LEFT JOIN applications a ON a.program_term_id = pt.id
+		WHERE pt.program_id = $1`
+	var summary models.ProgramManagementSummary
+	if err := r.pool.QueryRow(ctx, q, programID).Scan(
+		&summary.HasOpenTerm, &summary.HasClosedTerm, &summary.Mentees,
+		&summary.PastMentees, &summary.Applicants, &summary.Mentors, &summary.Terms,
+	); err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("get program management summary: %w", err)
+	}
+	return &summary, nil
+}
+
+func (r *ProgramRepository) NameAvailable(ctx context.Context, name, excludeProgramID string) (bool, error) {
+	var exists bool
+	if err := r.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM programs WHERE LOWER(name) = LOWER($1) AND ($2 = '' OR id::text <> $2))`, name, excludeProgramID).Scan(&exists); err != nil {
+		return false, fmt.Errorf("check program name availability: %w", err)
+	}
+	return !exists, nil
 }
 
 func catalogLimitOffset(filter models.ProgramFilter) (limit, offset int) {
@@ -508,24 +660,36 @@ func (r *ProgramRepository) Create(ctx context.Context, input models.ProgramCrea
 		return nil, fmt.Errorf("begin create program transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	p, err := r.createInTx(ctx, tx, input)
+	if err != nil {
+		span.RecordError(err)
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit create program transaction: %w", err)
+	}
+	return p, nil
+}
+
+func (r *ProgramRepository) createInTx(ctx context.Context, tx pgx.Tx, input models.ProgramCreateInput) (*models.Program, error) {
 
 	const q = `
 		INSERT INTO programs (
-			id, project_uid, name, slug, status, is_paid, description, logo_url, website_url, repo_link,
-			code_of_conduct, industry, color, lfid, cii_project_id, accept_applications,
-			terms_and_conditions, mentee_needs, task_templates
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+			id, lf_project_uid, lf_project_slug, lf_project_name, lf_project_logo_url, name, slug, status, is_paid,
+			description, logo_url, website_url, repo_link, code_of_conduct, industry, color, lfid, cii_project_id,
+			accept_applications, terms_and_conditions, mentee_needs, task_templates
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
 		RETURNING` + programReturningCols
 
 	p, err := scanProgram(tx.QueryRow(ctx, q,
-		input.ID, input.ProjectUID, input.Name, input.Slug, input.Status, input.IsPaid,
+		input.ID, input.ProjectUID, input.ProjectSlug, input.ProjectName, input.ProjectLogoURL,
+		input.Name, input.Slug, input.Status, input.IsPaid,
 		input.Description, input.LogoURL, input.WebsiteURL, input.RepoLink,
 		input.CodeOfConduct, input.Industry, input.Color, input.LFID, input.CIIProjectID,
 		input.AcceptApplications, input.TermsAndConditions,
 		nilIfEmpty(input.MenteeNeeds), nilIfEmpty(input.TaskTemplates),
 	))
 	if err != nil {
-		span.RecordError(err)
 		return nil, fmt.Errorf("create program: %w", err)
 	}
 	if input.CreatorUserID == "" {
@@ -556,10 +720,49 @@ func (r *ProgramRepository) Create(ctx context.Context, input models.ProgramCrea
 	if err := enqueueObjectMarker(ctx, tx, "mentorship_program", p.ID, updateAccessOperation); err != nil {
 		return nil, err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit create program transaction: %w", err)
+	if err := enqueueProgramIndex(ctx, tx, p, "created"); err != nil {
+		return nil, err
 	}
 	return p, nil
+}
+
+func (r *ProgramRepository) CreateEnrollment(ctx context.Context, input models.ProgramEnrollmentInput) (*models.Program, error) {
+	ctx, span := programTracer.Start(ctx, "db.programs.CreateEnrollment")
+	defer span.End()
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin create enrollment transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	input.Program.TaskTemplates = input.Prerequisites
+	program, err := r.createInTx(ctx, tx, input.Program)
+	if err != nil {
+		span.RecordError(err)
+		return nil, err
+	}
+	for _, term := range input.Terms {
+		if term.ID == "" {
+			term.ID = uuid.NewString()
+		}
+		if term.Status == "" {
+			term.Status = models.ProgramTermStatusOpen
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO program_terms (id, program_id, name, status, active_users, start_date_time, end_date_time, application_start_date, application_end_date) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, term.ID, program.ID, term.Name, term.Status, term.ActiveUsers, term.StartDateTime, term.EndDateTime, term.ApplicationStartDate, term.ApplicationEndDate); err != nil {
+			return nil, fmt.Errorf("create enrollment term: %w", err)
+		}
+	}
+	for _, skill := range input.Skills {
+		if skill == "" {
+			continue
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO program_skills (id, program_id, skill) VALUES ($1,$2,$3)`, uuid.NewString(), program.ID, skill); err != nil {
+			return nil, fmt.Errorf("create enrollment skill: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit create enrollment transaction: %w", err)
+	}
+	return program, nil
 }
 
 // Update patches the program and returns the updated record.
@@ -627,6 +830,9 @@ func (r *ProgramRepository) Update(ctx context.Context, id string, input models.
 	if err := enqueueObjectMarker(ctx, tx, "mentorship_program", updatedID, updateAccessOperation); err != nil {
 		return nil, err
 	}
+	if err := enqueueProgramIndex(ctx, tx, p, "updated"); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit update program transaction: %w", err)
 	}
@@ -659,13 +865,22 @@ func (r *ProgramRepository) Delete(ctx context.Context, id string) error {
 		if err := enqueueObjectMarker(ctx, tx, "mentorship_task", taskID, deleteAccessOperation); err != nil {
 			return err
 		}
+		if err := enqueueIndexDelete(ctx, tx, "mentorship_task", taskID); err != nil {
+			return err
+		}
 	}
 	for _, applicationID := range applicationIDs {
 		if err := enqueueObjectMarker(ctx, tx, "mentorship_application", applicationID, deleteAccessOperation); err != nil {
 			return err
 		}
+		if err := enqueueIndexDelete(ctx, tx, "mentorship_application", applicationID); err != nil {
+			return err
+		}
 	}
 	if err := enqueueObjectMarker(ctx, tx, "mentorship_program", id, deleteAccessOperation); err != nil {
+		return err
+	}
+	if err := enqueueProgramIndexDelete(ctx, tx, id); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -767,7 +982,12 @@ func (r *ProgramRepository) AddSkill(ctx context.Context, programID string, inpu
 	defer span.End()
 
 	var s models.ProgramSkill
-	err := r.pool.QueryRow(ctx,
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin add skill transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	err = tx.QueryRow(ctx,
 		`INSERT INTO program_skills (program_id, skill) VALUES ($1, $2)
 		 ON CONFLICT (program_id, skill) DO UPDATE SET skill = EXCLUDED.skill
 		 RETURNING id, program_id, skill, created_on, updated_on`,
@@ -777,6 +997,19 @@ func (r *ProgramRepository) AddSkill(ctx context.Context, programID string, inpu
 		span.RecordError(err)
 		return nil, fmt.Errorf("add skill: %w", err)
 	}
+	program, err := scanProgram(tx.QueryRow(ctx, `SELECT`+programSelectCols+programsWithFundingFrom+` WHERE programs.id = $1`, programID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrProgramNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reload program for index update: %w", err)
+	}
+	if err := enqueueProgramIndex(ctx, tx, program, "updated"); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit add skill transaction: %w", err)
+	}
 	return &s, nil
 }
 
@@ -785,13 +1018,32 @@ func (r *ProgramRepository) DeleteSkill(ctx context.Context, programID, skillID 
 	ctx, span := programTracer.Start(ctx, "db.programs.DeleteSkill")
 	defer span.End()
 
-	cmd, err := r.pool.Exec(ctx, `DELETE FROM program_skills WHERE id = $1 AND program_id = $2`, skillID, programID)
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin delete skill transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	cmd, err := tx.Exec(ctx, `DELETE FROM program_skills WHERE id = $1 AND program_id = $2`, skillID, programID)
 	if err != nil {
 		span.RecordError(err)
 		return fmt.Errorf("delete skill: %w", err)
 	}
 	if cmd.RowsAffected() == 0 {
 		return domain.ErrProgramNotFound
+	}
+	program, err := scanProgram(tx.QueryRow(ctx, `SELECT`+programSelectCols+programsWithFundingFrom+` WHERE programs.id = $1`, programID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrProgramNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("reload program for index update: %w", err)
+	}
+	if err := enqueueProgramIndex(ctx, tx, program, "updated"); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit delete skill transaction: %w", err)
 	}
 	return nil
 }
@@ -822,7 +1074,12 @@ func (r *ProgramRepository) GetFundingTotals(ctx context.Context) (float64, floa
 	defer span.End()
 
 	var amountRaised, amountSpent float64
-	if err := r.pool.QueryRow(ctx, `SELECT COALESCE(SUM(amount_raised), 0), COALESCE(SUM(amount_spent), 0) FROM program_funding_stats`).Scan(&amountRaised, &amountSpent); err != nil {
+	const q = `
+		SELECT COALESCE(SUM(pfs.amount_raised), 0), COALESCE(SUM(pfs.amount_spent), 0)
+		FROM program_funding_stats pfs
+		JOIN programs p ON p.id = pfs.program_id
+		WHERE p.status = 'published'`
+	if err := r.pool.QueryRow(ctx, q).Scan(&amountRaised, &amountSpent); err != nil {
 		span.RecordError(err)
 		return 0, 0, fmt.Errorf("get funding totals: %w", err)
 	}
