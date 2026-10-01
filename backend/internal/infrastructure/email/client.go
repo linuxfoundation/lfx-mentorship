@@ -124,10 +124,16 @@ func (c *Client) request(ctx context.Context, data []byte) (Receipt, error) {
 	if err := json.Unmarshal(reply.Data, &errResp); err == nil && errResp.Error != "" {
 		return Receipt{}, fmt.Errorf("%w: %s", ErrRejected, errResp.Error)
 	}
-	var resp emailapi.SendEmailResponse
+	// Decode email_id as a pointer: an allowlist-blocked recipient gets "" (counted as sent), but a
+	// reply without the field is not a send reply at all.
+	var resp struct {
+		EmailID *string `json:"email_id"`
+	}
 	if err := json.Unmarshal(reply.Data, &resp); err != nil {
 		return Receipt{}, fmt.Errorf("decode email service reply: %w", err)
 	}
-	// A recipient blocked by the non-prod allowlist gets a success reply with an empty email_id; that counts as sent.
-	return Receipt{EmailID: resp.EmailID}, nil
+	if resp.EmailID == nil {
+		return Receipt{}, errors.New("decode email service reply: no email_id")
+	}
+	return Receipt{EmailID: *resp.EmailID}, nil
 }

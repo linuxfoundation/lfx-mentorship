@@ -27,18 +27,21 @@ const (
 )
 
 type senderStub struct {
-	mu      sync.Mutex
-	sent    []Message
-	failFor map[string]bool
-	release chan struct{}
+	mu           sync.Mutex
+	sent         []Message
+	failFor      map[string]bool
+	release      chan struct{}
+	hadDeadlines []bool
 }
 
-func (s *senderStub) Send(_ context.Context, msg Message) (Receipt, error) {
+func (s *senderStub) Send(ctx context.Context, msg Message) (Receipt, error) {
 	if s.release != nil {
 		<-s.release
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	_, hasDeadline := ctx.Deadline()
+	s.hadDeadlines = append(s.hadDeadlines, hasDeadline)
 	if s.failFor[msg.To] {
 		return Receipt{}, ErrRejected
 	}
@@ -306,6 +309,12 @@ func TestNotifyAdminTasksSubmitted_PagesThroughAllAdmins(t *testing.T) {
 	}
 	if len(f.members.filters) != 2 || f.members.filters[1].Offset != adminPageSize {
 		t.Fatalf("filters = %+v, want a second page at offset %d", f.members.filters, adminPageSize)
+	}
+	// Sends must not share the dispatch deadline, or slow early recipients would starve later ones.
+	for i, hadDeadline := range f.sender.hadDeadlines {
+		if hadDeadline {
+			t.Fatalf("send %d ran under the dispatch deadline", i)
+		}
 	}
 }
 

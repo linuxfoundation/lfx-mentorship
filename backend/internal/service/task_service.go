@@ -284,18 +284,9 @@ func (s *TaskService) Update(ctx context.Context, id string, input models.TaskUp
 // markTasksSubmitted flags the application once every prerequisite task is submitted or
 // complete, notifying program admins only on the first flip so later reviews do not re-send.
 func (s *TaskService) markTasksSubmitted(ctx context.Context, applicationID string) {
-	span := trace.SpanFromContext(ctx)
-	total, done, err := s.repo.CountPrerequisiteTasksByApplication(ctx, applicationID)
-	if err != nil {
-		span.RecordError(err)
-		return
-	}
-	if total == 0 || done < total {
-		return
-	}
 	flipped, err := s.appRepo.MarkTasksSubmitted(ctx, applicationID)
 	if err != nil {
-		span.RecordError(err)
+		trace.SpanFromContext(ctx).RecordError(err)
 		return
 	}
 	if flipped {

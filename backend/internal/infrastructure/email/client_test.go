@@ -124,9 +124,17 @@ func TestSend_TransportError(t *testing.T) {
 }
 
 func TestSend_MalformedReply(t *testing.T) {
-	_, err := NewClient(&requesterStub{reply: []byte("nope")}, Config{}).Send(context.Background(), Message{})
-	if err == nil || errors.Is(err, ErrRejected) {
-		t.Fatalf("err = %v, want malformed-reply error", err)
+	for name, reply := range map[string]string{
+		"not json":         "nope",
+		"empty object":     "{}",
+		"unrelated fields": `{"status":"ok"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := NewClient(&requesterStub{reply: []byte(reply)}, Config{}).Send(context.Background(), Message{})
+			if err == nil || errors.Is(err, ErrRejected) {
+				t.Fatalf("err = %v, want malformed-reply error", err)
+			}
+		})
 	}
 }
 

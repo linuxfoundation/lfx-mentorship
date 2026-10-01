@@ -126,19 +126,18 @@ func newTaskSvc(taskRepo *stubTaskRepo, appRepo *stubAppRepo, termRepo *stubTerm
 
 // ── task state machine ───────────────────────────────────────────────────────
 
-func TestTaskService_Update_LastPrerequisiteSubmitted_NotifiesOnFirstFlip(t *testing.T) {
+func TestTaskService_Update_SubmittedTask_NotifiesOnlyOnFirstFlip(t *testing.T) {
 	for name, tc := range map[string]struct {
-		alreadyFlagged bool
-		done           int
-		wantNotify     int
+		flipped    bool
+		wantNotify int
 	}{
-		"first flip":                  {alreadyFlagged: false, done: 2, wantNotify: 1},
-		"already flagged":             {alreadyFlagged: true, done: 2, wantNotify: 0},
-		"prerequisites still pending": {alreadyFlagged: false, done: 1, wantNotify: 0},
+		"first flip": {flipped: true, wantNotify: 1},
+		// The repository reports no flip when prerequisites are pending or the flag is already set.
+		"no flip": {flipped: false, wantNotify: 0},
 	} {
 		t.Run(name, func(t *testing.T) {
 			appID := "app-1"
-			var flagged bool
+			var markedID string
 			taskRepo := &stubTaskRepo{
 				getByID: func(_ context.Context, id string) (*models.Task, error) {
 					return &models.Task{ID: id, AssigneeID: "mentee-1", Status: "in_progress", ApplicationID: &appID}, nil
@@ -146,17 +145,11 @@ func TestTaskService_Update_LastPrerequisiteSubmitted_NotifiesOnFirstFlip(t *tes
 				update: func(_ context.Context, id string, _ models.TaskUpdateInput) (*models.Task, error) {
 					return &models.Task{ID: id, Status: "submitted", ApplicationID: &appID}, nil
 				},
-				countPrerequisitesByApplication: func(context.Context, string) (int, int, error) {
-					return 2, tc.done, nil
-				},
 			}
 			appRepo := &stubAppRepo{
-				markTasksSubmit: func(context.Context, string) (bool, error) {
-					if tc.alreadyFlagged {
-						return false, nil
-					}
-					flagged = true
-					return true, nil
+				markTasksSubmit: func(_ context.Context, id string) (bool, error) {
+					markedID = id
+					return tc.flipped, nil
 				},
 			}
 			n := &stubNotifier{}
@@ -165,8 +158,8 @@ func TestTaskService_Update_LastPrerequisiteSubmitted_NotifiesOnFirstFlip(t *tes
 			if _, err := svc.Update(context.Background(), "task-1", models.TaskUpdateInput{Status: &next, ActorID: "mentee-1"}); err != nil {
 				t.Fatalf("Update: %v", err)
 			}
-			if n.tasksSubmittedCalls != tc.wantNotify || flagged != (tc.wantNotify == 1) {
-				t.Errorf("notify calls = %d, flagged = %v; want %d, %v", n.tasksSubmittedCalls, flagged, tc.wantNotify, tc.wantNotify == 1)
+			if markedID != appID || n.tasksSubmittedCalls != tc.wantNotify {
+				t.Errorf("marked %q, notify calls = %d; want %q, %d", markedID, n.tasksSubmittedCalls, appID, tc.wantNotify)
 			}
 		})
 	}

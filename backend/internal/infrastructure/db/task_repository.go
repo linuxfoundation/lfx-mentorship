@@ -322,37 +322,3 @@ func enqueueTaskMarker(ctx context.Context, tx pgx.Tx, task *models.Task, operat
 	}
 	return nil
 }
-
-// CountPrerequisiteTasksByApplication returns the total prerequisite tasks and how many are submitted or complete.
-func (r *TaskRepository) CountPrerequisiteTasksByApplication(ctx context.Context, applicationID string) (total int, done int, err error) {
-	ctx, span := taskTracer.Start(ctx, "db.tasks.CountPrerequisiteTasksByApplication")
-	defer span.End()
-	span.SetAttributes(attribute.String("db.application_id", applicationID))
-
-	rows, qErr := r.pool.Query(ctx,
-		`SELECT status FROM tasks WHERE application_id = $1 AND category = 'prerequisite'`,
-		applicationID,
-	)
-	if qErr != nil {
-		span.RecordError(qErr)
-		return 0, 0, fmt.Errorf("count prerequisite tasks: %w", qErr)
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var status models.TaskStatus
-		if scanErr := rows.Scan(&status); scanErr != nil {
-			span.RecordError(scanErr)
-			return 0, 0, fmt.Errorf("scan task status: %w", scanErr)
-		}
-		total++
-		if status == models.TaskStatusComplete || status == models.TaskStatusSubmitted {
-			done++
-		}
-	}
-	if rowsErr := rows.Err(); rowsErr != nil {
-		span.RecordError(rowsErr)
-		return 0, 0, fmt.Errorf("prerequisite task rows: %w", rowsErr)
-	}
-	return total, done, nil
-}

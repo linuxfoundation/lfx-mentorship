@@ -91,7 +91,7 @@ func (m *stubAppRepo) MarkTasksSubmitted(ctx context.Context, id string) (bool, 
 	if m.markTasksSubmit != nil {
 		return m.markTasksSubmit(ctx, id)
 	}
-	return true, nil
+	return false, nil
 }
 func (m *stubAppRepo) Delete(ctx context.Context, id string) error {
 	if m.delete != nil {
@@ -313,13 +313,12 @@ func (m *stubProgRepo) GetFundingStats(ctx context.Context, id string) (*models.
 }
 
 type stubTaskRepo struct {
-	getByID                         func(context.Context, string) (*models.Task, error)
-	create                          func(context.Context, string, models.TaskCreateInput) (*models.Task, error)
-	update                          func(context.Context, string, models.TaskUpdateInput) (*models.Task, error)
-	delete                          func(context.Context, string) error
-	listByApplication               func(context.Context, string, models.TaskFilter) ([]*models.Task, *models.PaginationMeta, error)
-	listByProgramTerm               func(context.Context, string, models.TaskFilter) ([]*models.Task, *models.PaginationMeta, error)
-	countPrerequisitesByApplication func(context.Context, string) (int, int, error)
+	getByID           func(context.Context, string) (*models.Task, error)
+	create            func(context.Context, string, models.TaskCreateInput) (*models.Task, error)
+	update            func(context.Context, string, models.TaskUpdateInput) (*models.Task, error)
+	delete            func(context.Context, string) error
+	listByApplication func(context.Context, string, models.TaskFilter) ([]*models.Task, *models.PaginationMeta, error)
+	listByProgramTerm func(context.Context, string, models.TaskFilter) ([]*models.Task, *models.PaginationMeta, error)
 }
 
 func (m *stubTaskRepo) GetByID(ctx context.Context, id string) (*models.Task, error) {
@@ -357,12 +356,6 @@ func (m *stubTaskRepo) ListByProgramTerm(ctx context.Context, termID string, f m
 		return m.listByProgramTerm(ctx, termID, f)
 	}
 	return nil, &models.PaginationMeta{}, nil
-}
-func (m *stubTaskRepo) CountPrerequisiteTasksByApplication(ctx context.Context, appID string) (int, int, error) {
-	if m.countPrerequisitesByApplication != nil {
-		return m.countPrerequisitesByApplication(ctx, appID)
-	}
-	return 0, 0, nil
 }
 
 type stubNotifier struct {

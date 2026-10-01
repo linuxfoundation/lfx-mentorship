@@ -444,11 +444,15 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if input.Status != nil && *input.Status == models.ApplicationStatusAccepted {
+		var appStatus models.ApplicationStatus
 		var termStatus models.ProgramTermStatus
-		if err := tx.QueryRow(ctx, `SELECT pt.status FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE a.id = $1 FOR UPDATE OF pt`, id).Scan(&termStatus); errors.Is(err, pgx.ErrNoRows) {
+		if err := tx.QueryRow(ctx, `SELECT a.status, pt.status FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE a.id = $1 FOR UPDATE OF a, pt`, id).Scan(&appStatus, &termStatus); errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrApplicationNotFound
 		} else if err != nil {
 			return nil, fmt.Errorf("lock application term for acceptance: %w", err)
+		} else if appStatus == models.ApplicationStatusAccepted {
+			// A concurrent request accepted it after the caller validated the transition; accepting twice would mail twice.
+			return nil, fmt.Errorf("%w: application is already accepted", domain.ErrInvalidStateTransition)
 		} else if termStatus != models.ProgramTermStatusOpen {
 			return nil, fmt.Errorf("%w: applications are not open for this term", domain.ErrIneligible)
 		}
@@ -512,8 +516,10 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 	return a, nil
 }
 
-// MarkTasksSubmitted flips tasks_submitted to true only if it is not already set, and reports
-// whether it did. The flag gates no access, so only the search documents are refreshed.
+// MarkTasksSubmitted sets tasks_submitted once every prerequisite task is submitted or complete,
+// and reports whether this call flipped it. The application row is locked, then the prerequisite
+// tasks, so a concurrent flip or task reset is decided against one consistent state. The flag
+// gates no access, so only the search documents are refreshed.
 func (r *ApplicationRepository) MarkTasksSubmitted(ctx context.Context, id string) (bool, error) {
 	ctx, span := applicationTracer.Start(ctx, "db.applications.MarkTasksSubmitted")
 	defer span.End()
@@ -524,13 +530,29 @@ func (r *ApplicationRepository) MarkTasksSubmitted(ctx context.Context, id strin
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	a, err := scanApplication(tx.QueryRow(ctx, `
-		UPDATE applications SET tasks_submitted = true
-		WHERE id = $1 AND tasks_submitted IS NOT TRUE
-		RETURNING `+applicationCols, id))
-	if errors.Is(err, pgx.ErrNoRows) {
+	var submitted bool
+	if err := tx.QueryRow(ctx, `SELECT tasks_submitted FROM applications WHERE id = $1 FOR UPDATE`, id).Scan(&submitted); errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	} else if err != nil {
+		span.RecordError(err)
+		return false, fmt.Errorf("lock application for tasks submitted: %w", err)
+	}
+	if submitted {
 		return false, nil
 	}
+	var total, done int
+	if err := tx.QueryRow(ctx, `
+		SELECT COUNT(*), COUNT(*) FILTER (WHERE status IN ('submitted', 'complete'))
+		FROM (SELECT status FROM tasks WHERE application_id = $1 AND category = 'prerequisite' FOR SHARE) prerequisites`,
+		id).Scan(&total, &done); err != nil {
+		span.RecordError(err)
+		return false, fmt.Errorf("count prerequisite tasks: %w", err)
+	}
+	if total == 0 || done < total {
+		return false, nil
+	}
+
+	a, err := scanApplication(tx.QueryRow(ctx, `UPDATE applications SET tasks_submitted = true WHERE id = $1 RETURNING `+applicationCols, id))
 	if err != nil {
 		span.RecordError(err)
 		return false, fmt.Errorf("mark tasks submitted: %w", err)

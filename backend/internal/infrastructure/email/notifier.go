@@ -23,7 +23,8 @@ import (
 // adminPageSize is the largest page the member repository serves.
 const adminPageSize = 100
 
-// dispatchTimeout bounds one notification's lookups and sends so a stuck dependency cannot hold shutdown.
+// dispatchTimeout bounds one notification's lookups so a stuck dependency cannot hold shutdown.
+// Each send has its own timeout in the Client, so one slow recipient cannot starve the rest.
 const dispatchTimeout = 30 * time.Second
 
 var notifierTracer = otel.Tracer("email-notifier")
@@ -348,13 +349,14 @@ func (n *Notifier) dispatch(ctx context.Context, notification string, build func
 			return
 		}
 		seen := make(map[string]bool, len(msgs))
+		sendCtx := context.WithoutCancel(ctx)
 		for _, msg := range msgs {
 			addr := strings.ToLower(msg.To)
 			if seen[addr] {
 				continue
 			}
 			seen[addr] = true
-			receipt, err := n.sender.Send(ctx, msg)
+			receipt, err := n.sender.Send(sendCtx, msg)
 			if err != nil {
 				span.RecordError(err)
 				n.logger.ErrorContext(ctx, "email notification not sent", "notification", notification, "error", err)

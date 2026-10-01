@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -217,7 +218,7 @@ func TestApplicationRepositoryIntegration_ListByUserReturnsProjectName(t *testin
 	}
 }
 
-func TestApplicationRepositoryIntegration_MarkTasksSubmittedFlipsOnce(t *testing.T) {
+func TestApplicationRepositoryIntegration_MarkTasksSubmittedFlipsOnceWhenPrerequisitesDone(t *testing.T) {
 	pool := integrationPool(t)
 	fixture := seedIntegrationFixture(t, pool)
 	ctx := context.Background()
@@ -226,19 +227,54 @@ func TestApplicationRepositoryIntegration_MarkTasksSubmittedFlipsOnce(t *testing
 		t.Fatalf("insert application: %v", err)
 	}
 	repo := NewApplicationRepository(pool)
-
-	for i, want := range []bool{true, false} {
-		flipped, err := repo.MarkTasksSubmitted(ctx, applicationID)
-		if err != nil || flipped != want {
-			t.Fatalf("call %d: flipped = %v, err = %v; want %v", i+1, flipped, err, want)
+	mark := func(step string, want bool) {
+		t.Helper()
+		if flipped, err := repo.MarkTasksSubmitted(ctx, applicationID); err != nil || flipped != want {
+			t.Fatalf("%s: flipped = %v, err = %v; want %v", step, flipped, err, want)
 		}
 	}
+
+	mark("no prerequisites", false)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO tasks (id, application_id, program_term_id, assignee_id, status, category, application_status, program_term_status) VALUES
+		('00000000-0000-0000-0000-000000000073', $1, $2, $3, 'submitted', 'prerequisite', 'pending', 'open'),
+		('00000000-0000-0000-0000-000000000074', $1, $2, $3, 'incomplete', 'prerequisite', 'pending', 'open'),
+		('00000000-0000-0000-0000-000000000075', $1, $2, $3, 'incomplete', 'non_prerequisite', 'pending', 'open')`,
+		applicationID, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatalf("insert tasks: %v", err)
+	}
+	mark("a prerequisite still incomplete", false)
+	if _, err := pool.Exec(ctx, `UPDATE tasks SET status = 'complete' WHERE id = '00000000-0000-0000-0000-000000000074'`); err != nil {
+		t.Fatalf("complete task: %v", err)
+	}
+	mark("every prerequisite done", true)
+	mark("already flagged", false)
+
 	var indexed bool
 	if err := pool.QueryRow(ctx, `SELECT (data->>'tasks_submitted')::boolean FROM index_outbox WHERE object_type = 'mentorship_application' AND object_uid = $1`, applicationID).Scan(&indexed); err != nil || !indexed {
 		t.Fatalf("indexed tasks_submitted = %v, err = %v; want one refreshed document", indexed, err)
 	}
 	if flipped, err := repo.MarkTasksSubmitted(ctx, "00000000-0000-0000-0000-000000000072"); err != nil || flipped {
 		t.Fatalf("missing application: flipped = %v, err = %v; want false, nil", flipped, err)
+	}
+}
+
+func TestApplicationRepositoryIntegration_AcceptTwiceIsRejected(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	applicationID := "00000000-0000-0000-0000-000000000076"
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentee', 'pending')`, applicationID, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatalf("insert application: %v", err)
+	}
+	repo := NewApplicationRepository(pool)
+	accepted := models.ApplicationStatusAccepted
+
+	if _, err := repo.Update(ctx, applicationID, models.ApplicationUpdateInput{Status: &accepted}); err != nil {
+		t.Fatalf("first accept: %v", err)
+	}
+	if _, err := repo.Update(ctx, applicationID, models.ApplicationUpdateInput{Status: &accepted}); !errors.Is(err, domain.ErrInvalidStateTransition) {
+		t.Fatalf("second accept err = %v; want ErrInvalidStateTransition", err)
 	}
 }
 
