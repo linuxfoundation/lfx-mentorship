@@ -144,7 +144,7 @@ real JWT. **Never set these in production.**
 |---|---|
 | 🔓 | No JWT required |
 | 🔒 | `Authorization: Bearer <token>` required |
-| 🪙 | Signed invite token in request body (no JWT) |
+| 🪙 | Signed invite token in the path, plus `Authorization: Bearer <token>` for the invited user |
 
 ---
 
@@ -1400,7 +1400,7 @@ Update a member's status or email.
 }
 ```
 
-When `status = "declined"` is set via this endpoint, `NotifyMentorDeclined` is triggered.
+When this endpoint moves a mentor's request to `declined` (`requested → declined`), `NotifyMentorDeclined` is triggered. Revoking an invite (`invited → declined`) sends no email.
 
 A mentor's request belongs to the mentor: only they can create it or withdraw
 it, through the [mentor self-service](#mentor-self-service) routes. A program
@@ -1510,43 +1510,33 @@ Withdraws the caller's own mentor request, moving it from `requested` or
 
 ## 11. Mentor Invite Tokens
 
-These endpoints are called from the tokenised link in an invite email. The signed token acts as the credential — no JWT is required.
+These endpoints are called by the LFX Self Serve page that the invite email links to (`/mentorship/mentor/invites?token=…`). Both need the signed token **and** the invited user's JWT: the token says which program and user it was issued for, and the caller must be that user.
 
 ### Token Format
 
-Tokens are HMAC-SHA256 signed strings encoding `programID:userID`. The signing secret is set via the `INVITE_SECRET` environment variable.
+`base64url(JSON {program_id, user_id, exp}) + "." + base64url(HMAC-SHA256 signature)`, valid for 7 days. The signing secret is set via the `MENTOR_INVITE_SECRET` environment variable. Tokens are not stored, so one stays usable until it expires or the member row leaves `invited`.
 
 ---
 
-#### `POST /v1/mentor-invites/accept` 🪙
+#### `POST /v1/mentor-invites/{token}/accept` 🪙
 
-Accept a mentor invitation.
+Accept a mentor invitation. No request body.
 
-**Request body**
-```json
-{ "token": "<signed-invite-token>" }
-```
-
-**Effect**: Sets the matching `program_members` record's `status` from `invited` to `approved`.
+**Effect**: Sets the matching `program_members` record's `status` from `invited` to `approved`, and emails the program's active Program Admins (`NotifyAdminMentorAccepted`).
 
 **Response** `200` → `<ProgramMember>`  
-**Errors** `400` (invalid/expired token or no pending invite found)
+**Errors** `400` (invalid or expired token, or no pending invite — including one already answered), `401` (no JWT), `403` (the token belongs to another user), `409` (the row changed concurrently)
 
 ---
 
-#### `POST /v1/mentor-invites/decline` 🪙
+#### `POST /v1/mentor-invites/{token}/decline` 🪙
 
-Decline a mentor invitation.
+Decline a mentor invitation. No request body.
 
-**Request body**
-```json
-{ "token": "<signed-invite-token>" }
-```
-
-**Effect**: Sets `status` to `declined` and triggers `NotifyMentorDeclined`.
+**Effect**: Sets `status` from `invited` to `declined`, and emails the program's active Program Admins (`NotifyAdminMentorDeclined`).
 
 **Response** `204`  
-**Errors** `400`
+**Errors** as for accept
 
 ---
 
@@ -2154,15 +2144,15 @@ POST /v1/programs/{programId}/members
 Body: { "user_id": "<mentorUserId>", "member_type": "mentor" }
 ```
 
-The system sends an email containing a link like:
+The system sends an email containing a link to LFX Self Serve like:
 ```
-https://mentorship.lfx.linuxfoundation.org/mentor-invite?token=<signed-token>
+https://app.lfx.dev/mentorship/mentor/invites?token=<signed-token>
 ```
 
-The frontend's invite landing page calls:
+The Self Serve invite page calls, as the signed-in mentor:
 ```
-POST /v1/mentor-invites/accept   Body: { "token": "<token>" }
-POST /v1/mentor-invites/decline  Body: { "token": "<token>" }
+POST /v1/mentor-invites/{token}/accept
+POST /v1/mentor-invites/{token}/decline
 ```
 
 #### Mentor Self-Request
@@ -2274,7 +2264,10 @@ class ApiError extends Error {
 | `HEIMDALL_JWKS_URL` | Yes | — | Heimdall JWKS endpoint |
 | `HEIMDALL_JWT_AUDIENCE` | Yes | — | Expected JWT `aud` claim |
 | `HEIMDALL_JWT_ISSUER` | Yes | — | Expected JWT `iss` claim |
-| `FGA_NATS_URL` | Yes for relays | — | Shared NATS URL for FGA and index publishing |
+| `FGA_NATS_URL` | Yes for relays | — | Shared NATS URL for FGA and index publishing, and notification email via lfx-v2-email-service |
+| `PUBLIC_SITE_URL` | When `FGA_NATS_URL` is set | — | Public Mentorship site that user-facing email links point at |
+| `SELF_SERVE_URL` | When `FGA_NATS_URL` is set | — | LFX Self Serve base URL for management links in email |
+| `EMAIL_HR_INBOX` | When `FGA_NATS_URL` is set | — | LF staff HR inbox sent every mentee acceptance |
 | `FGA_RELAY_BATCH_SIZE` | No | `50` | FGA/index claim batch size |
 | `FGA_RELAY_INTERVAL` | No | `1s` | Relay polling interval |
 | `FGA_RELAY_RETRY_DELAY` | No | `1m` | FGA retry delay |

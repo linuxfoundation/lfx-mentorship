@@ -154,12 +154,12 @@ func TestProgramMemberService_Create_ProgramAdmin_SetsApprovedStatus(t *testing.
 
 // ── Update ────────────────────────────────────────────────────────────────────
 
-func TestProgramMemberService_Update_ValidTransition_InvitedToActive(t *testing.T) {
+func TestProgramMemberService_Update_ValidTransition_InvitedToApproved(t *testing.T) {
 	invited := models.ProgramMemberStatusInvited
-	active := models.ProgramMemberStatusApproved
+	approved := models.ProgramMemberStatusApproved
 	memberRepo := &stubMemberRepo{
 		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
-			return &models.ProgramMember{MemberType: models.MemberTypeProgramAdmin, Status: &active}, nil
+			return &models.ProgramMember{MemberType: models.MemberTypeProgramAdmin, Status: &approved}, nil
 		},
 		getByID: func(_ context.Context, id string) (*models.ProgramMember, error) {
 			return &models.ProgramMember{ID: id, ProgramID: "prog-1", UserID: "u1", Status: &invited}, nil
@@ -169,7 +169,7 @@ func TestProgramMemberService_Update_ValidTransition_InvitedToActive(t *testing.
 	next := models.ProgramMemberStatusApproved
 	_, err := svc.Update(context.Background(), "prog-1", "member-1", models.ProgramMemberUpdateInput{Status: &next}, "admin-1")
 	if err != nil {
-		t.Errorf("invited→active should be valid, got %v", err)
+		t.Errorf("invited→approved should be valid, got %v", err)
 	}
 }
 
@@ -258,21 +258,31 @@ func TestProgramMemberService_Update_InvalidStatus(t *testing.T) {
 }
 
 func TestProgramMemberService_Update_Decline_NotifiesMentor(t *testing.T) {
-	invited := models.ProgramMemberStatusInvited
-	n := &stubNotifier{}
-	memberRepo := &stubMemberRepo{
-		getByID: func(_ context.Context, id string) (*models.ProgramMember, error) {
-			return &models.ProgramMember{ID: id, ProgramID: "prog-1", UserID: "mentor-1", Status: &invited}, nil
-		},
+	tests := []struct {
+		from      models.ProgramMemberStatus
+		wantCalls int
+	}{
+		{from: models.ProgramMemberStatusRequested, wantCalls: 1},
+		{from: models.ProgramMemberStatusInvited, wantCalls: 0},
 	}
-	svc := newMemberSvc(memberRepo, &stubProgRepo{}, n)
-	next := models.ProgramMemberStatusDeclined
-	_, err := svc.Update(context.Background(), "prog-1", "member-1", models.ProgramMemberUpdateInput{Status: &next}, "admin-1")
-	if err != nil {
-		t.Fatalf("invited→declined should be valid: %v", err)
-	}
-	if n.mentorDeclinedCalls != 1 {
-		t.Errorf("NotifyMentorDeclined called %d times; want 1", n.mentorDeclinedCalls)
+	for _, tt := range tests {
+		t.Run(string(tt.from), func(t *testing.T) {
+			from := tt.from
+			n := &stubNotifier{}
+			memberRepo := &stubMemberRepo{
+				getByID: func(_ context.Context, id string) (*models.ProgramMember, error) {
+					return &models.ProgramMember{ID: id, ProgramID: "prog-1", UserID: "mentor-1", Status: &from}, nil
+				},
+			}
+			svc := newMemberSvc(memberRepo, &stubProgRepo{}, n)
+			next := models.ProgramMemberStatusDeclined
+			if _, err := svc.Update(context.Background(), "prog-1", "member-1", models.ProgramMemberUpdateInput{Status: &next}, "admin-1"); err != nil {
+				t.Fatalf("%s→declined should be valid: %v", from, err)
+			}
+			if n.mentorDeclinedCalls != tt.wantCalls {
+				t.Errorf("NotifyMentorDeclined called %d times; want %d", n.mentorDeclinedCalls, tt.wantCalls)
+			}
+		})
 	}
 }
 
@@ -294,6 +304,43 @@ func TestProgramMemberService_DeclineInvite_InvalidToken(t *testing.T) {
 	}
 }
 
+func TestProgramMemberService_AcceptInvite_NotifiesAdminsOnlyAfterWrite(t *testing.T) {
+	token, err := auth.GenerateInviteToken("prog-1", "mentor-1", "test-secret")
+	if err != nil {
+		t.Fatalf("generate invite token: %v", err)
+	}
+	invited := models.ProgramMemberStatusInvited
+	for name, writeErr := range map[string]error{"write succeeds": nil, "write fails": errors.New("db down")} {
+		t.Run(name, func(t *testing.T) {
+			memberRepo := &stubMemberRepo{
+				listByProgram: func(context.Context, string, models.ProgramMemberFilter) ([]*models.ProgramMember, *models.PaginationMeta, error) {
+					return []*models.ProgramMember{{ID: "member-1", UserID: "mentor-1", Status: &invited}}, &models.PaginationMeta{}, nil
+				},
+				updateIfStatus: func(_ context.Context, id string, _ []models.ProgramMemberStatus, _ models.ProgramMemberUpdateInput) (*models.ProgramMember, error) {
+					if writeErr != nil {
+						return nil, writeErr
+					}
+					return &models.ProgramMember{ID: id}, nil
+				},
+			}
+			n := &stubNotifier{}
+			_, err := newMemberSvc(memberRepo, &stubProgRepo{}, n).AcceptInvite(context.Background(), token, "mentor-1")
+			want := 1
+			if writeErr != nil {
+				want = 0
+				if err == nil {
+					t.Fatal("expected error")
+				}
+			} else if err != nil {
+				t.Fatalf("AcceptInvite: %v", err)
+			}
+			if n.adminMentorAcceptedCalls != want {
+				t.Errorf("NotifyAdminMentorAccepted calls = %d; want %d", n.adminMentorAcceptedCalls, want)
+			}
+		})
+	}
+}
+
 func TestProgramMemberService_InviteRejectsMismatchedPrincipal(t *testing.T) {
 	token, err := auth.GenerateInviteToken("prog-1", "mentor-1", "test-secret")
 	if err != nil {
@@ -306,6 +353,28 @@ func TestProgramMemberService_InviteRejectsMismatchedPrincipal(t *testing.T) {
 	}
 	if err := svc.DeclineInvite(context.Background(), token, "different-user"); !errors.Is(err, domain.ErrForbidden) {
 		t.Errorf("decline should reject mismatched principal with ErrForbidden, got %v", err)
+	}
+}
+
+func TestProgramMemberService_DeclineInvite_NotifiesAdmins(t *testing.T) {
+	token, err := auth.GenerateInviteToken("prog-1", "mentor-1", "test-secret")
+	if err != nil {
+		t.Fatalf("generate invite token: %v", err)
+	}
+	invited := models.ProgramMemberStatusInvited
+	memberRepo := &stubMemberRepo{
+		listByProgram: func(context.Context, string, models.ProgramMemberFilter) ([]*models.ProgramMember, *models.PaginationMeta, error) {
+			return []*models.ProgramMember{{ID: "member-1", UserID: "mentor-1", Status: &invited}}, &models.PaginationMeta{}, nil
+		},
+	}
+	n := &stubNotifier{}
+	svc := newMemberSvc(memberRepo, &stubProgRepo{}, n)
+
+	if err := svc.DeclineInvite(context.Background(), token, "mentor-1"); err != nil {
+		t.Fatalf("DeclineInvite: %v", err)
+	}
+	if n.adminMentorDeclinedCalls != 1 || n.mentorDeclinedCalls != 0 {
+		t.Errorf("admin/mentor declined notifications = %d/%d; want 1/0", n.adminMentorDeclinedCalls, n.mentorDeclinedCalls)
 	}
 }
 

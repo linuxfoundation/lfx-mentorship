@@ -1,0 +1,8 @@
+{{- /* Copyright The Linux Foundation and each contributor to LFX. */ -}}
+{{- /* SPDX-License-Identifier: MIT */ -}}
+{{template "header" .}}Congratulations!
+
+We are pleased to let you know that you have been accepted as a mentee to the {{.ProgramName}} mentorship{{with .TermName}} for the {{.}} term{{end}}{{with .AttendanceType}} on a {{.}} basis{{end}}. The program administrator will contact you with the next steps.
+
+Log in to LFX Mentorship: {{.ManageURL}}
+{{template "footer" .}}

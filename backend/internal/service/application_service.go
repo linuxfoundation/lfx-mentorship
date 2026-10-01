@@ -350,6 +350,8 @@ func (s *ApplicationService) Update(ctx context.Context, id string, input models
 			if !ok {
 				return nil, fmt.Errorf("%w: cannot transition application from %q to %q", domain.ErrInvalidStateTransition, current.Status, next)
 			}
+			// The transition was validated against current.Status, so the write must apply only while the row still has it.
+			input.ExpectedStatus = &current.Status
 
 			// Withdrawal guard: only the applicant may self-withdraw.
 			if next == models.ApplicationStatusWithdrawn && input.ActorID != "" && current.UserID != input.ActorID {

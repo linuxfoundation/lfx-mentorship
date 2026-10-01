@@ -27,6 +27,7 @@ type stubAppRepo struct {
 	reapply           func(context.Context, string, string, models.ApplicationCreateInput) (*models.Application, error)
 	reapplyWithTasks  func(context.Context, string, string, models.ApplicationCreateInput, []models.TaskCreateInput) (*models.Application, error)
 	update            func(context.Context, string, models.ApplicationUpdateInput) (*models.Application, error)
+	markTasksSubmit   func(context.Context, string) (bool, error)
 	delete            func(context.Context, string) error
 	countBlocking     func(context.Context, string) (int, error)
 	countAccepted     func(context.Context, string) (int, error)
@@ -85,6 +86,12 @@ func (m *stubAppRepo) Update(ctx context.Context, id string, in models.Applicati
 		return m.update(ctx, id, in)
 	}
 	return &models.Application{ID: id}, nil
+}
+func (m *stubAppRepo) MarkTasksSubmitted(ctx context.Context, id string) (bool, error) {
+	if m.markTasksSubmit != nil {
+		return m.markTasksSubmit(ctx, id)
+	}
+	return false, nil
 }
 func (m *stubAppRepo) Delete(ctx context.Context, id string) error {
 	if m.delete != nil {
@@ -306,13 +313,12 @@ func (m *stubProgRepo) GetFundingStats(ctx context.Context, id string) (*models.
 }
 
 type stubTaskRepo struct {
-	getByID                         func(context.Context, string) (*models.Task, error)
-	create                          func(context.Context, string, models.TaskCreateInput) (*models.Task, error)
-	update                          func(context.Context, string, models.TaskUpdateInput) (*models.Task, error)
-	delete                          func(context.Context, string) error
-	listByApplication               func(context.Context, string, models.TaskFilter) ([]*models.Task, *models.PaginationMeta, error)
-	listByProgramTerm               func(context.Context, string, models.TaskFilter) ([]*models.Task, *models.PaginationMeta, error)
-	countPrerequisitesByApplication func(context.Context, string) (int, int, error)
+	getByID           func(context.Context, string) (*models.Task, error)
+	create            func(context.Context, string, models.TaskCreateInput) (*models.Task, error)
+	update            func(context.Context, string, models.TaskUpdateInput) (*models.Task, error)
+	delete            func(context.Context, string) error
+	listByApplication func(context.Context, string, models.TaskFilter) ([]*models.Task, *models.PaginationMeta, error)
+	listByProgramTerm func(context.Context, string, models.TaskFilter) ([]*models.Task, *models.PaginationMeta, error)
 }
 
 func (m *stubTaskRepo) GetByID(ctx context.Context, id string) (*models.Task, error) {
@@ -351,22 +357,24 @@ func (m *stubTaskRepo) ListByProgramTerm(ctx context.Context, termID string, f m
 	}
 	return nil, &models.PaginationMeta{}, nil
 }
-func (m *stubTaskRepo) CountPrerequisiteTasksByApplication(ctx context.Context, appID string) (int, int, error) {
-	if m.countPrerequisitesByApplication != nil {
-		return m.countPrerequisitesByApplication(ctx, appID)
-	}
-	return 0, 0, nil
-}
 
 type stubNotifier struct {
-	mentorInvitedCalls  int
-	mentorDeclinedCalls int
-	tasksSubmittedCalls int
-	menteeAcceptedCalls int
+	mentorInvitedCalls       int
+	mentorDeclinedCalls      int
+	adminMentorDeclinedCalls int
+	adminMentorAcceptedCalls int
+	tasksSubmittedCalls      int
+	menteeAcceptedCalls      int
 }
 
 func (n *stubNotifier) NotifyMentorInvited(_ context.Context, _, _, _ string) { n.mentorInvitedCalls++ }
 func (n *stubNotifier) NotifyMentorDeclined(_ context.Context, _, _ string)   { n.mentorDeclinedCalls++ }
+func (n *stubNotifier) NotifyAdminMentorDeclined(_ context.Context, _, _ string) {
+	n.adminMentorDeclinedCalls++
+}
+func (n *stubNotifier) NotifyAdminMentorAccepted(_ context.Context, _, _ string) {
+	n.adminMentorAcceptedCalls++
+}
 func (n *stubNotifier) NotifyAdminTasksSubmitted(_ context.Context, _ string) {
 	n.tasksSubmittedCalls++
 }
@@ -565,9 +573,14 @@ func TestApplicationService_Create_WithdrawnReapply_ClonesPrerequisiteTasks(t *t
 }
 
 func TestApplicationService_Update_ValidTransition(t *testing.T) {
+	var expected *models.ApplicationStatus
 	repo := &stubAppRepo{
 		getByID: func(_ context.Context, id string) (*models.Application, error) {
 			return &models.Application{ID: id, Status: "pending"}, nil
+		},
+		update: func(_ context.Context, id string, in models.ApplicationUpdateInput) (*models.Application, error) {
+			expected = in.ExpectedStatus
+			return &models.Application{ID: id}, nil
 		},
 	}
 	svc := newApplicationSvc(repo, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{})
@@ -576,6 +589,10 @@ func TestApplicationService_Update_ValidTransition(t *testing.T) {
 	_, err := svc.Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &next, AttendanceType: &attType, ActorID: "reviewer"})
 	if err != nil {
 		t.Errorf("expected valid transition pending→accepted, got %v", err)
+	}
+	// The repository must apply the change only while the row is still in the status that was validated.
+	if expected == nil || *expected != models.ApplicationStatusPending {
+		t.Errorf("ExpectedStatus = %v; want pending", expected)
 	}
 }
 
