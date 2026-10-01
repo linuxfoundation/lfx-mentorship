@@ -27,6 +27,7 @@ type stubAppRepo struct {
 	reapply           func(context.Context, string, string, models.ApplicationCreateInput) (*models.Application, error)
 	reapplyWithTasks  func(context.Context, string, string, models.ApplicationCreateInput, []models.TaskCreateInput) (*models.Application, error)
 	update            func(context.Context, string, models.ApplicationUpdateInput) (*models.Application, error)
+	markTasksSubmit   func(context.Context, string) (bool, error)
 	delete            func(context.Context, string) error
 	countBlocking     func(context.Context, string) (int, error)
 	countAccepted     func(context.Context, string) (int, error)
@@ -85,6 +86,12 @@ func (m *stubAppRepo) Update(ctx context.Context, id string, in models.Applicati
 		return m.update(ctx, id, in)
 	}
 	return &models.Application{ID: id}, nil
+}
+func (m *stubAppRepo) MarkTasksSubmitted(ctx context.Context, id string) (bool, error) {
+	if m.markTasksSubmit != nil {
+		return m.markTasksSubmit(ctx, id)
+	}
+	return true, nil
 }
 func (m *stubAppRepo) Delete(ctx context.Context, id string) error {
 	if m.delete != nil {

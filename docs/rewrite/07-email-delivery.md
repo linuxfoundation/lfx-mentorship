@@ -55,7 +55,7 @@ Status column: **hook** — a `Notifier` method exists but delivers nothing yet;
 | `admin-mentorship-submission-rejected` | Program Admin | program `submitted → rejected` | none |
 | `admin-project-edited-notification` | Program Admin | Program Admin edits a program that is not `rejected` | none |
 | **Mentors** | | | |
-| `mentor-project-invite` | invited mentor | mentor added to a program (`invited`) | done: `NotifyMentorInvited` — signature changes with 08 |
+| `mentor-project-invite` | invited mentor | mentor added to a program (`invited`) | done: `NotifyMentorInvited` — links to Self Serve `/mentorship/mentor/invites?token=…`; signature changes with 08 |
 | `admin-mentor-accepted` | active Program Admins | mentor accepts the invite (`invited → active`) | done: `NotifyAdminMentorAccepted` from `AcceptInvite` (08 drafted this as `NotifyMentorAccepted`) |
 | `admin-mentor-declined` | active Program Admins | mentor declines the invite (`invited → declined`) | done: `NotifyAdminMentorDeclined` from `DeclineInvite` |
 | `mentor-admin-declined` | mentor | Program Admin declines a mentor (member `→ declined`) | done: `NotifyMentorDeclined` from `Update`, after the write |

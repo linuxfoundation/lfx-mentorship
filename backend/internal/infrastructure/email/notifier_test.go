@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -81,12 +82,14 @@ func (r *termRepoStub) GetByID(context.Context, string) (*models.ProgramTerm, er
 type memberRepoStub struct {
 	domain.ProgramMemberRepository
 	members []*models.ProgramMember
-	filter  models.ProgramMemberFilter
+	filters []models.ProgramMemberFilter
 }
 
 func (r *memberRepoStub) ListByProgram(_ context.Context, _ string, filter models.ProgramMemberFilter) ([]*models.ProgramMember, *models.PaginationMeta, error) {
-	r.filter = filter
-	return r.members, &models.PaginationMeta{}, nil
+	r.filters = append(r.filters, filter)
+	start := min(filter.Offset, len(r.members))
+	end := min(start+filter.Limit, len(r.members))
+	return r.members[start:end], &models.PaginationMeta{Total: len(r.members), Limit: filter.Limit, Offset: filter.Offset}, nil
 }
 
 type applicationRepoStub struct {
@@ -184,7 +187,7 @@ func TestNotifyMentorInvited(t *testing.T) {
 	if msg.To != "mentor@linuxfoundation.org" || msg.Subject != "You've been invited to mentor for Kernel <Dev>" {
 		t.Fatalf("to/subject = %q / %q", msg.To, msg.Subject)
 	}
-	inviteURL := testPublicSiteURL + "/mentor-invite?token=tok%2Ben%2F%3D"
+	inviteURL := testSelfServeURL + "/mentorship/mentor/invites?token=tok%2Ben%2F%3D"
 	for _, want := range []string{"Hi Mo Mentor!", inviteURL, "log in with the username momentor", "Copyright © " + strconv.Itoa(time.Now().UTC().Year())} {
 		if !strings.Contains(msg.Text, want) {
 			t.Fatalf("text missing %q:\n%s", want, msg.Text)
@@ -282,9 +285,27 @@ func TestNotifyAdminTasksSubmitted(t *testing.T) {
 	if !strings.Contains(sent[0].Text, "Hi there!") || !strings.Contains(sent[0].Text, "application from Mia Mentee to become a mentee for the Kernel <Dev> program (Fall 2026 term).") {
 		t.Fatalf("text = %s", sent[0].Text)
 	}
-	want := models.ProgramMemberFilter{Limit: maxProgramAdmins, MemberType: "program_admin", Status: "active"}
-	if f.members.filter != want {
-		t.Fatalf("filter = %+v, want %+v", f.members.filter, want)
+	want := []models.ProgramMemberFilter{{Limit: adminPageSize, MemberType: "program_admin", Status: "active"}}
+	if !slices.Equal(f.members.filters, want) {
+		t.Fatalf("filters = %+v, want %+v", f.members.filters, want)
+	}
+}
+
+func TestNotifyAdminTasksSubmitted_PagesThroughAllAdmins(t *testing.T) {
+	f := newFixture()
+	for i := range adminPageSize + 1 {
+		id := "page-admin-" + strconv.Itoa(i)
+		f.users.users[id] = &models.User{ID: id, Email: strPtr(id + "@linuxfoundation.org")}
+		f.members.members = append(f.members.members, &models.ProgramMember{UserID: id})
+	}
+
+	f.n.NotifyAdminTasksSubmitted(context.Background(), "a1")
+
+	if sent := f.wait(t); len(sent) != adminPageSize+1 {
+		t.Fatalf("sent %d messages, want %d", len(sent), adminPageSize+1)
+	}
+	if len(f.members.filters) != 2 || f.members.filters[1].Offset != adminPageSize {
+		t.Fatalf("filters = %+v, want a second page at offset %d", f.members.filters, adminPageSize)
 	}
 }
 
@@ -366,6 +387,24 @@ func TestNotifyMenteeAccepted_HRNoticeWithoutCountry(t *testing.T) {
 				t.Fatalf("hr = %+v, want notice without the country row", hr)
 			}
 		})
+	}
+}
+
+func TestNotifyMenteeAccepted_HRInboxAlsoAdmin_GetsHRNotice(t *testing.T) {
+	f := newFixture()
+	f.users.users["hradmin"] = &models.User{ID: "hradmin", Email: strPtr(strings.ToUpper(testHRInbox))}
+	f.members.members = []*models.ProgramMember{{UserID: "hradmin"}}
+
+	f.n.NotifyMenteeAccepted(context.Background(), "a1", "full_time")
+
+	var hr []Message
+	for _, msg := range f.wait(t) {
+		if strings.EqualFold(msg.To, testHRInbox) {
+			hr = append(hr, msg)
+		}
+	}
+	if len(hr) != 1 || !strings.Contains(hr[0].Text, "Hi HR team!") || !strings.Contains(hr[0].Text, "India (IN)") {
+		t.Fatalf("hr = %+v, want one HR notice with the country of residence", hr)
 	}
 }
 

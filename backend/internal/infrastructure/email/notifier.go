@@ -20,8 +20,8 @@ import (
 	"golang.org/x/text/language/display"
 )
 
-// maxProgramAdmins caps admin recipients per notification; the repository pages at 100.
-const maxProgramAdmins = 100
+// adminPageSize is the largest page the member repository serves.
+const adminPageSize = 100
 
 // dispatchTimeout bounds one notification's lookups and sends so a stuck dependency cannot hold shutdown.
 const dispatchTimeout = 30 * time.Second
@@ -37,6 +37,9 @@ const (
 
 // selfServeMentorshipPath is the Self Serve lens where program admins, mentors, and mentees manage mentorships.
 const selfServeMentorshipPath = "/mentorship"
+
+// selfServeMentorInvitesPath is the Self Serve page where an invited mentor accepts or declines.
+const selfServeMentorInvitesPath = selfServeMentorshipPath + "/mentor/invites"
 
 // Sender delivers one rendered Message.
 type Sender interface {
@@ -116,7 +119,7 @@ func (n *Notifier) NotifyMentorInvited(ctx context.Context, programID, userID, t
 			RecipientName: firstName(user),
 			ProgramName:   program.Name,
 			ProgramURL:    n.programURL(program),
-			InviteURL:     n.publicURL + "/mentor-invite?token=" + url.QueryEscape(token),
+			InviteURL:     n.selfServeURL + selfServeMentorInvitesPath + "?token=" + url.QueryEscape(token),
 			LFID:          deref(user.LFID),
 		})
 		return []Message{msg}, err
@@ -272,7 +275,9 @@ func (n *Notifier) NotifyMenteeAccepted(ctx context.Context, applicationID, atte
 		if err != nil {
 			return nil, err
 		}
-		return append(msgs, hr), nil
+		// HR goes first: dispatch keeps the first message per address, and an HR inbox that is
+		// also an admin must still get the HR notice with the country of residence.
+		return append([]Message{hr}, msgs...), nil
 	})
 }
 
@@ -366,15 +371,23 @@ type recipientUser struct {
 	email string
 }
 
-// activeAdmins resolves the program's active admins, skipping any without an email address.
+// activeAdmins resolves every active admin of the program, skipping any without an email address.
 func (n *Notifier) activeAdmins(ctx context.Context, programID, notification string) ([]recipientUser, error) {
-	members, _, err := n.repos.Members.ListByProgram(ctx, programID, models.ProgramMemberFilter{
-		Limit:      maxProgramAdmins,
-		MemberType: string(models.MemberTypeProgramAdmin),
-		Status:     string(models.ProgramMemberStatusActive),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("list program admins: %w", err)
+	var members []*models.ProgramMember
+	for {
+		page, meta, err := n.repos.Members.ListByProgram(ctx, programID, models.ProgramMemberFilter{
+			Limit:      adminPageSize,
+			Offset:     len(members),
+			MemberType: string(models.MemberTypeProgramAdmin),
+			Status:     string(models.ProgramMemberStatusActive),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("list program admins: %w", err)
+		}
+		members = append(members, page...)
+		if len(page) == 0 || meta == nil || len(members) >= meta.Total {
+			break
+		}
 	}
 	var admins []recipientUser
 	for _, m := range members {

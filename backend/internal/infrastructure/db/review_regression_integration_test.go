@@ -217,6 +217,31 @@ func TestApplicationRepositoryIntegration_ListByUserReturnsProjectName(t *testin
 	}
 }
 
+func TestApplicationRepositoryIntegration_MarkTasksSubmittedFlipsOnce(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	applicationID := "00000000-0000-0000-0000-000000000071"
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentee', 'pending')`, applicationID, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatalf("insert application: %v", err)
+	}
+	repo := NewApplicationRepository(pool)
+
+	for i, want := range []bool{true, false} {
+		flipped, err := repo.MarkTasksSubmitted(ctx, applicationID)
+		if err != nil || flipped != want {
+			t.Fatalf("call %d: flipped = %v, err = %v; want %v", i+1, flipped, err, want)
+		}
+	}
+	var indexed bool
+	if err := pool.QueryRow(ctx, `SELECT (data->>'tasks_submitted')::boolean FROM index_outbox WHERE object_type = 'mentorship_application' AND object_uid = $1`, applicationID).Scan(&indexed); err != nil || !indexed {
+		t.Fatalf("indexed tasks_submitted = %v, err = %v; want one refreshed document", indexed, err)
+	}
+	if flipped, err := repo.MarkTasksSubmitted(ctx, "00000000-0000-0000-0000-000000000072"); err != nil || flipped {
+		t.Fatalf("missing application: flipped = %v, err = %v; want false, nil", flipped, err)
+	}
+}
+
 func assertTermProjectionStatus(t *testing.T, pool *pgxpool.Pool, termID, want string) {
 	t.Helper()
 	var applicationStatus, taskStatus, indexedStatus string

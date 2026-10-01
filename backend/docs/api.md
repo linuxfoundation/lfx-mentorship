@@ -2154,15 +2154,15 @@ POST /v1/programs/{programId}/members
 Body: { "user_id": "<mentorUserId>", "member_type": "mentor" }
 ```
 
-The system sends an email containing a link like:
+The system sends an email containing a link to LFX Self Serve like:
 ```
-https://mentorship.lfx.linuxfoundation.org/mentor-invite?token=<signed-token>
+https://app.lfx.dev/mentorship/mentor/invites?token=<signed-token>
 ```
 
-The frontend's invite landing page calls:
+The Self Serve invite page calls, as the signed-in mentor:
 ```
-POST /v1/mentor-invites/accept   Body: { "token": "<token>" }
-POST /v1/mentor-invites/decline  Body: { "token": "<token>" }
+POST /v1/mentor-invites/{token}/accept
+POST /v1/mentor-invites/{token}/decline
 ```
 
 #### Mentor Self-Request

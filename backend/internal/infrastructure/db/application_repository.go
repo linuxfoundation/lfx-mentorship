@@ -512,6 +512,45 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 	return a, nil
 }
 
+// MarkTasksSubmitted flips tasks_submitted to true only if it is not already set, and reports
+// whether it did. The flag gates no access, so only the search documents are refreshed.
+func (r *ApplicationRepository) MarkTasksSubmitted(ctx context.Context, id string) (bool, error) {
+	ctx, span := applicationTracer.Start(ctx, "db.applications.MarkTasksSubmitted")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.application_id", id))
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("begin mark tasks submitted transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	a, err := scanApplication(tx.QueryRow(ctx, `
+		UPDATE applications SET tasks_submitted = true
+		WHERE id = $1 AND tasks_submitted IS NOT TRUE
+		RETURNING `+applicationCols, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		span.RecordError(err)
+		return false, fmt.Errorf("mark tasks submitted: %w", err)
+	}
+	if err := enqueueApplicationIndex(ctx, tx, a, "updated"); err != nil {
+		return false, err
+	}
+	var programID string
+	if err := tx.QueryRow(ctx, `SELECT program_id FROM program_terms WHERE id = $1`, a.ProgramTermID).Scan(&programID); err != nil {
+		return false, fmt.Errorf("resolve application program for index refresh: %w", err)
+	}
+	if err := enqueueProgramIndexByID(ctx, tx, programID); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit mark tasks submitted transaction: %w", err)
+	}
+	return true, nil
+}
+
 func syncTasksWithApplicationState(ctx context.Context, tx pgx.Tx, application *models.Application) ([]*models.Task, error) {
 	rows, err := tx.Query(ctx, `
 		UPDATE tasks

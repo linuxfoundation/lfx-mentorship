@@ -293,20 +293,14 @@ func (s *TaskService) markTasksSubmitted(ctx context.Context, applicationID stri
 	if total == 0 || done < total {
 		return
 	}
-	app, err := s.appRepo.GetByID(ctx, applicationID)
+	flipped, err := s.appRepo.MarkTasksSubmitted(ctx, applicationID)
 	if err != nil {
 		span.RecordError(err)
 		return
 	}
-	if app.TasksSubmitted {
-		return
+	if flipped {
+		s.notifier.NotifyAdminTasksSubmitted(ctx, applicationID)
 	}
-	tasksSubmitted := true
-	if _, err := s.appRepo.Update(ctx, applicationID, models.ApplicationUpdateInput{TasksSubmitted: &tasksSubmitted}); err != nil {
-		span.RecordError(err)
-		return
-	}
-	s.notifier.NotifyAdminTasksSubmitted(ctx, applicationID)
 }
 
 // assertReviewer verifies that actorID holds an active mentor or program_admin role

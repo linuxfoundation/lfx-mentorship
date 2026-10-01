@@ -151,12 +151,12 @@ func TestTaskService_Update_LastPrerequisiteSubmitted_NotifiesOnFirstFlip(t *tes
 				},
 			}
 			appRepo := &stubAppRepo{
-				getByID: func(_ context.Context, id string) (*models.Application, error) {
-					return &models.Application{ID: id, TasksSubmitted: tc.alreadyFlagged}, nil
-				},
-				update: func(_ context.Context, id string, in models.ApplicationUpdateInput) (*models.Application, error) {
-					flagged = in.TasksSubmitted != nil && *in.TasksSubmitted
-					return &models.Application{ID: id}, nil
+				markTasksSubmit: func(context.Context, string) (bool, error) {
+					if tc.alreadyFlagged {
+						return false, nil
+					}
+					flagged = true
+					return true, nil
 				},
 			}
 			n := &stubNotifier{}

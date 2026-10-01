@@ -142,6 +142,9 @@ type ApplicationRepository interface {
 	Reapply(ctx context.Context, oldID, programTermID string, input models.ApplicationCreateInput) (*models.Application, error)
 	ReapplyWithTasks(ctx context.Context, oldID, programTermID string, input models.ApplicationCreateInput, tasks []models.TaskCreateInput) (*models.Application, error)
 	Update(ctx context.Context, id string, input models.ApplicationUpdateInput) (*models.Application, error)
+	// MarkTasksSubmitted sets tasks_submitted and reports whether this call flipped it from false,
+	// so concurrent callers agree on exactly one first flip.
+	MarkTasksSubmitted(ctx context.Context, id string) (bool, error)
 	Delete(ctx context.Context, id string) error
 
 	// CountBlockingAppsForProgram returns applications in a non-terminal state across all terms of a program.
