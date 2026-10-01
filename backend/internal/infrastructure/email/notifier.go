@@ -129,7 +129,7 @@ func (n *Notifier) NotifyMentorInvited(ctx context.Context, programID, userID, t
 	})
 }
 
-// NotifyMentorDeclined tells the mentor a program admin declined them.
+// NotifyMentorDeclined tells the mentor a program admin declined their request.
 func (n *Notifier) NotifyMentorDeclined(ctx context.Context, programID, userID string) {
 	n.dispatch(ctx, templateMentorDeclined, func(ctx context.Context) ([]Message, error) {
 		program, err := n.repos.Programs.GetByID(ctx, programID)

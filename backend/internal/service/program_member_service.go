@@ -356,7 +356,8 @@ func (s *ProgramMemberService) Update(ctx context.Context, programID, id string,
 		span.RecordError(err)
 		return nil, fmt.Errorf("update program member: %w", err)
 	}
-	if *input.Status == models.ProgramMemberStatusDeclined {
+	// Revoking an invite (invited → declined) is not a reply to anything the mentor asked for.
+	if currentStatus == models.ProgramMemberStatusRequested && *input.Status == models.ProgramMemberStatusDeclined {
 		s.notifier.NotifyMentorDeclined(ctx, current.ProgramID, current.UserID)
 	}
 	return m, nil

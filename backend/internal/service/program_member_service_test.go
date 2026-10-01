@@ -258,21 +258,31 @@ func TestProgramMemberService_Update_InvalidStatus(t *testing.T) {
 }
 
 func TestProgramMemberService_Update_Decline_NotifiesMentor(t *testing.T) {
-	invited := models.ProgramMemberStatusInvited
-	n := &stubNotifier{}
-	memberRepo := &stubMemberRepo{
-		getByID: func(_ context.Context, id string) (*models.ProgramMember, error) {
-			return &models.ProgramMember{ID: id, ProgramID: "prog-1", UserID: "mentor-1", Status: &invited}, nil
-		},
+	tests := []struct {
+		from      models.ProgramMemberStatus
+		wantCalls int
+	}{
+		{from: models.ProgramMemberStatusRequested, wantCalls: 1},
+		{from: models.ProgramMemberStatusInvited, wantCalls: 0},
 	}
-	svc := newMemberSvc(memberRepo, &stubProgRepo{}, n)
-	next := models.ProgramMemberStatusDeclined
-	_, err := svc.Update(context.Background(), "prog-1", "member-1", models.ProgramMemberUpdateInput{Status: &next}, "admin-1")
-	if err != nil {
-		t.Fatalf("invited→declined should be valid: %v", err)
-	}
-	if n.mentorDeclinedCalls != 1 {
-		t.Errorf("NotifyMentorDeclined called %d times; want 1", n.mentorDeclinedCalls)
+	for _, tt := range tests {
+		t.Run(string(tt.from), func(t *testing.T) {
+			from := tt.from
+			n := &stubNotifier{}
+			memberRepo := &stubMemberRepo{
+				getByID: func(_ context.Context, id string) (*models.ProgramMember, error) {
+					return &models.ProgramMember{ID: id, ProgramID: "prog-1", UserID: "mentor-1", Status: &from}, nil
+				},
+			}
+			svc := newMemberSvc(memberRepo, &stubProgRepo{}, n)
+			next := models.ProgramMemberStatusDeclined
+			if _, err := svc.Update(context.Background(), "prog-1", "member-1", models.ProgramMemberUpdateInput{Status: &next}, "admin-1"); err != nil {
+				t.Fatalf("%s→declined should be valid: %v", from, err)
+			}
+			if n.mentorDeclinedCalls != tt.wantCalls {
+				t.Errorf("NotifyMentorDeclined called %d times; want %d", n.mentorDeclinedCalls, tt.wantCalls)
+			}
+		})
 	}
 }
 

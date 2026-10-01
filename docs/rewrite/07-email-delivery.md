@@ -58,7 +58,7 @@ Status column: **hook** — a `Notifier` method exists but delivers nothing yet;
 | `mentor-project-invite` | invited mentor | mentor added to a program (`invited`) | done: `NotifyMentorInvited` — links to Self Serve `/mentorship/mentor/invites?token=…`; signature changes with 08 |
 | `admin-mentor-accepted` | active Program Admins | mentor accepts the invite (`invited → active`) | done: `NotifyAdminMentorAccepted` from `AcceptInvite` (08 drafted this as `NotifyMentorAccepted`) |
 | `admin-mentor-declined` | active Program Admins | mentor declines the invite (`invited → declined`) | done: `NotifyAdminMentorDeclined` from `DeclineInvite` |
-| `mentor-admin-declined` | mentor | Program Admin declines a mentor (member `→ declined`) | done: `NotifyMentorDeclined` from `Update`, after the write |
+| `mentor-admin-declined` | mentor | Program Admin declines a mentor's request (`requested → declined`); revoking an invite (`invited → declined`) sends nothing | done: `NotifyMentorDeclined` from `Update`, after the write |
 | `admin-new-mentor-request` | active Program Admins | mentor applies to a program (application with role `mentor`) | none |
 | `admin-mentor-withdrew-request` | active Program Admins | mentor application `→ withdrawn` | none |
 | `admin-mentor-removed-project` | active Program Admins | active mentor leaves (member `active → withdrawn`) | none — transition missing: only a Program Admin can withdraw a member today, so mentors need a way to leave |
