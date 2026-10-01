@@ -630,6 +630,8 @@ Paginated public catalog of programs with nested skills, terms, and active mento
 
 Always returns `status = published` programs. Draft, hidden, and other statuses are omitted.
 
+Through the gateway this is the one service-owned collection route: Heimdall authenticates optionally and applies `allow_all`, so the published pin in the service is the only filter.
+
 **Response** `200`
 ```json
 {
@@ -980,7 +982,7 @@ Fetch a program by UUID or slug.
 
 Resolve a program UUID or slug to the canonical program UUID.
 
-> Hidden program visibility matches `GET /v1/programs/{id}`: non-owners receive `404`.
+> Only `published` programs resolve, except for the program's LFID owner; everyone else receives `404`.
 
 **Response** `200`
 ```json
@@ -1105,7 +1107,7 @@ Remove a skill tag.
 
 #### `GET /v1/funding-stats/total` 🔓
 
-Returns the total amount raised and spent across all program funding stats.
+Returns the total amount raised and spent across published programs.
 
 **Response** `200`
 
@@ -1215,7 +1217,7 @@ The `discovery_label` field is **computed on read** and not stored in the databa
 
 | Parameter | Values | Description |
 |---|---|---|
-| `status` | `open\|closed\|deleted` | Filter by status |
+| `status` | `open\|closed` | Filter by status; any other value returns `400`. Deleted terms are never listed |
 | `limit` / `offset` | — | Pagination |
 
 **Response** `200`
@@ -1543,10 +1545,12 @@ Submit an application to a term.
 **Request body**
 ```json
 {
-  "user_id": "uuid",     // required
-  "role":    "mentee"    // required; "mentor" | "mentee"
+  "role": "mentee"    // required; "mentor" | "mentee"
 }
 ```
+
+The applicant is always the caller. `attendance_type` is ignored; a Program
+Admin sets it on acceptance.
 
 **Response** `201` → `<Application>`  
 **Errors** `400`, `401`, `409` (duplicate / blocked reapplication), `422` (window closed, term not open)
@@ -1555,30 +1559,25 @@ Submit an application to a term.
 
 #### `PATCH /v1/applications/{id}` 🔒
 
-Transition an application's status or update fields.
+Update applicant-supplied application content. The gateway admits the applicant
+and Program Admins (`writer` on the application).
 
 **Request body** (all optional)
 ```json
 {
-  "status":          "accepted",
-  "attendance_type": "full_time",
   "start_date_time": "2026-03-01T00:00:00Z",
   "end_date_time":   "2026-06-30T23:59:59Z"
 }
 ```
 
-**Key rules**:
-
-| Transition | Rule |
-|---|---|
-| Any status → `accepted` | `attendance_type` must be supplied (`full_time` or `part_time`) |
-| `pending` → `withdrawn` | Only the applicant (`actor_id == user_id`) may self-withdraw |
-| All others | Enforced by state machine; invalid transitions return `409` |
-
-When status is set to `accepted`, `NotifyMenteeAccepted` is triggered.
+`status`, `attendance_type`, `program_term_status`, `tasks_submitted`,
+`admin_notified`, `evaluation` and `reviewer_note` are rejected with `400`.
+Status and attendance type change through `PATCH /v1/applications/{id}/status`;
+withdrawal, evaluation and the reviewer note have their own routes; the rest are
+maintained by the service.
 
 **Response** `200` → `<Application>`  
-**Errors** `400`, `401`, `403` (wrong actor for withdrawal), `404`, `409`
+**Errors** `400`, `401`, `403` (not a `writer` on the application), `404`
 
 ---
 
@@ -2016,7 +2015,7 @@ Foundations and stipend totals are not on this endpoint yet — keep those as st
 3. Submit the application:
    ```
    POST /v1/program-terms/{termId}/applications
-   Body: { "user_id": "<uid>", "role": "mentee" }
+   Body: { "role": "mentee" }
    ```
 4. Poll / display the returned `status` and `tasks_submitted` flag.
 
@@ -2041,11 +2040,11 @@ When all prerequisite tasks reach `submitted`/`complete`, the application's `tas
 GET /v1/program-terms/{termId}/applications?status=pending
 
 # Accept
-PATCH /v1/applications/{id}
+PATCH /v1/applications/{id}/status
 Body: { "status": "accepted", "attendance_type": "full_time" }
 
 # Decline
-PATCH /v1/applications/{id}
+PATCH /v1/applications/{id}/status
 Body: { "status": "declined" }
 
 # Bulk decline all pending
@@ -2184,10 +2183,7 @@ class ApiError extends Error {
 | `FGA_RELAY_INTERVAL` | No | `1s` | Relay polling interval |
 | `FGA_RELAY_RETRY_DELAY` | No | `1m` | FGA retry delay |
 | `FGA_RELAY_MAX_ATTEMPTS` | No | `10` | FGA attempts before dead letter |
-| `FGA_INDEXER_TOKEN_URL` | Required with `FGA_NATS_URL` | — | Indexer M2M token endpoint |
-| `FGA_INDEXER_AUDIENCE` | Required with `FGA_NATS_URL` | — | Indexer M2M audience |
-| `FGA_INDEXER_SCOPE` | No | `access:query` | Indexer M2M scope |
-| `INDEXER_CLIENT_ID`, `INDEXER_CLIENT_SECRET` | Required with `FGA_NATS_URL` | — | Indexer M2M credentials |
+| `INDEXER_SERVICE_TOKEN` | No | — | Service credential stamped on index messages; secret value |
 | `INDEX_RELAY_RETRY_DELAY` | No | `1m` | Index publish retry delay |
 | `INDEX_RELAY_MAX_ATTEMPTS` | No | `10` | Index attempts before dead letter |
 | `MENTOR_INVITE_SECRET` | Yes | — | HMAC secret for mentor invite tokens |
@@ -2195,7 +2191,6 @@ class ApiError extends Error {
 | `ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS` | No | `false` | Enable local dev JWT bypass |
 | `DISABLED_MOCK_LOCAL_PRINCIPAL` | No | — | Static user ID for bypass mode |
 
-For an environment upgrade, provision the indexer client ID and secret through
-Secrets Manager before enabling the relay. The token URL, audience, scope, and
-client credentials must describe the same M2M application; missing credentials
-fail startup validation rather than producing unauthenticated index publishes.
+Provision `INDEXER_SERVICE_TOKEN` in the backend Secret through Secrets Manager.
+Without it the index relay idles and leaves outbox rows pending rather than
+publishing messages the indexer would drop.

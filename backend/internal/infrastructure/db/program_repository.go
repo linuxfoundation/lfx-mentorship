@@ -257,7 +257,7 @@ func (r *ProgramRepository) List(ctx context.Context, filter models.ProgramFilte
 
 // GetEnrollmentTemplate returns enrollment fields for a gateway-authorized program.
 func (r *ProgramRepository) GetEnrollmentTemplate(ctx context.Context, programID string) (*models.ProgramEnrollmentTemplate, error) {
-	q := `SELECT ` + programSelectCols + ` FROM programs WHERE programs.id = $1`
+	q := `SELECT` + programSelectCols + programsWithFundingFrom + ` WHERE programs.id = $1`
 	program, err := scanProgram(r.pool.QueryRow(ctx, q, programID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrProgramNotFound
@@ -1074,7 +1074,12 @@ func (r *ProgramRepository) GetFundingTotals(ctx context.Context) (float64, floa
 	defer span.End()
 
 	var amountRaised, amountSpent float64
-	if err := r.pool.QueryRow(ctx, `SELECT COALESCE(SUM(amount_raised), 0), COALESCE(SUM(amount_spent), 0) FROM program_funding_stats`).Scan(&amountRaised, &amountSpent); err != nil {
+	const q = `
+		SELECT COALESCE(SUM(pfs.amount_raised), 0), COALESCE(SUM(pfs.amount_spent), 0)
+		FROM program_funding_stats pfs
+		JOIN programs p ON p.id = pfs.program_id
+		WHERE p.status = 'published'`
+	if err := r.pool.QueryRow(ctx, q).Scan(&amountRaised, &amountSpent); err != nil {
 		span.RecordError(err)
 		return 0, 0, fmt.Errorf("get funding totals: %w", err)
 	}

@@ -181,9 +181,9 @@ stale access.
 Before tuple emission is treated as complete:
 
 - Every program has a non-null canonical `project_uid`.
-- Every task has a non-null application parent.
-- `tasks.application_id` uses `NOT NULL` and `ON DELETE CASCADE` after orphan
-  repair.
+- Every task has a non-null application parent (enforced by migration 004;
+  parentless rows are held in `quarantined_tasks`).
+- `tasks.application_id` uses `NOT NULL` and `ON DELETE CASCADE`.
 - Every nested route verifies its child belongs to the path parent.
 - Every emitted object ID is a canonical UID, never a slug.
 - Every human principal used in a tuple resolves to an LFID.
@@ -244,8 +244,11 @@ creates a broken or bypassable deployment:
 - Gateway traffic without the relay and seed reaches a backend whose protected
   objects have no FGA tuples.
 - Frontend traffic left on the interim backend host bypasses the shared gateway.
-- Service-owned top-level collections bypass Query Service's standard access
-   filtering and direct-grant query pattern.
+- Service-owned caller-owned collections bypass Query Service's standard access
+   filtering and direct-grant query pattern. Public collections (programs,
+   catalog, mentor and mentee directories, and aggregates) are the exception:
+   they return only published or publicly listable data, so there is nothing to
+   filter.
 
 These values must be reviewed as one environment change, not copied separately
 across releases.
@@ -256,12 +259,13 @@ across releases.
 2. The chart renders the intended Middleware, HTTPRoute, RuleSet, and relay
    configuration.
 3. The backend can validate a real Heimdall PS256 token from the cluster JWKS.
-4. NATS JetStream publish acknowledgements are observed.
+4. FGA and index relay JetStream publish acknowledgements are observed.
 5. The frontend/BFF points at the shared gateway URL and requests the gateway
    audience.
 6. Direct interim-host access is disabled or otherwise prevented at cutover.
-7. All resource collections are served by Query Service; caller-owned views use
-   `filter_grants=direct` with an explicit resource `type`.
+7. All resource collections other than the public program catalog are served by
+   Query Service; caller-owned views use `filter_grants=direct` with an explicit
+   resource `type`.
 
 ### Dual-gateway topology decision
 

@@ -98,7 +98,7 @@ func (r *ProgramTermRepository) ListByProgram(ctx context.Context, programID str
 	}
 
 	args := []any{programID}
-	where := ` WHERE program_id = $1`
+	where := ` WHERE program_id = $1 AND status <> 'deleted'`
 	if filter.Status != "" {
 		args = append(args, filter.Status)
 		where += fmt.Sprintf(` AND status = $%d`, len(args))

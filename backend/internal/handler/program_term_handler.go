@@ -28,12 +28,14 @@ type programTermService interface {
 
 // ProgramTermHandler holds Chi handlers for the program terms resource.
 type ProgramTermHandler struct {
-	svc programTermService
+	svc      programTermService
+	programs programLookup
 }
 
-// NewProgramTermHandler creates a ProgramTermHandler.
-func NewProgramTermHandler(svc programTermService) *ProgramTermHandler {
-	return &ProgramTermHandler{svc: svc}
+// NewProgramTermHandler creates a ProgramTermHandler. programs resolves the
+// parent program so public term reads apply the hidden-program rule.
+func NewProgramTermHandler(svc programTermService, programs programLookup) *ProgramTermHandler {
+	return &ProgramTermHandler{svc: svc, programs: programs}
 }
 
 // termWithLabel wraps a ProgramTerm with a computed discovery_label.
@@ -48,15 +50,18 @@ func withLabel(t *models.ProgramTerm) termWithLabel {
 
 // ListByProgram handles GET /v1/programs/{id}/terms.
 func (h *ProgramTermHandler) ListByProgram(w http.ResponseWriter, r *http.Request) {
-	programID := chi.URLParam(r, "id")
 	limit, offset, ok := parsePaginationParams(w, r)
 	if !ok {
 		return
 	}
-	terms, meta, err := h.svc.ListByProgram(r.Context(), programID, models.ProgramTermFilter{
+	program, ok := resolveVisibleProgram(w, r, h.programs)
+	if !ok {
+		return
+	}
+	terms, meta, err := h.svc.ListByProgram(r.Context(), program.ID, models.ProgramTermFilter{
 		Limit:     limit,
 		Offset:    offset,
-		ProgramID: programID,
+		ProgramID: program.ID,
 		Status:    r.URL.Query().Get("status"),
 	})
 	if err != nil {
@@ -87,28 +92,19 @@ func (h *ProgramTermHandler) ListManagementByProgram(w http.ResponseWriter, r *h
 	JSON(w, http.StatusOK, map[string]any{"data": rows, "meta": meta})
 }
 
-// GetByID handles GET /v1/programs/{programID}/terms/{termID} and legacy /v1/program-terms/{id}.
+// GetByID handles GET /v1/programs/{programID}/terms/{termID}.
 func (h *ProgramTermHandler) GetByID(w http.ResponseWriter, r *http.Request) {
-	programID := chi.URLParam(r, "programID")
-	if programID == "" {
-		programID = chi.URLParam(r, "program_uid")
+	program, ok := resolveVisibleProgram(w, r, h.programs)
+	if !ok {
+		return
 	}
-	id := chi.URLParam(r, "termID")
-	if id == "" {
-		id = chi.URLParam(r, "id")
-	}
-
-	var (
-		term *models.ProgramTerm
-		err  error
-	)
-	if programID != "" {
-		term, err = h.svc.GetByProgramAndID(r.Context(), programID, id)
-	} else {
-		term, err = h.svc.GetByID(r.Context(), id)
-	}
+	term, err := h.svc.GetByProgramAndID(r.Context(), program.ID, chi.URLParam(r, "termID"))
 	if err != nil {
 		Error(w, err)
+		return
+	}
+	if term.Status == models.ProgramTermStatusDeleted {
+		Error(w, domain.ErrProgramTermNotFound)
 		return
 	}
 	JSON(w, http.StatusOK, withLabel(term))

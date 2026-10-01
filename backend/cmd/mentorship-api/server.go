@@ -73,13 +73,8 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	programSvc := service.NewProgramService(programRepo, programTermRepo, applicationRepo, programMemberRepo)
 	if cfg.Crowdfunding.IsConfigured() {
 		programSvc.SetCrowdfundingClient(clients.NewCrowdfundingClient(clients.CrowdfundingConfig{
-			BaseURL:      cfg.Crowdfunding.BaseURL,
-			TokenURL:     cfg.Crowdfunding.TokenURL,
-			ClientID:     cfg.Crowdfunding.ClientID,
-			ClientSecret: cfg.Crowdfunding.ClientSecret,
-			Audience:     cfg.Crowdfunding.Audience,
-			Scope:        cfg.Crowdfunding.Scope,
-			Timeout:      cfg.Crowdfunding.Timeout,
+			BaseURL: cfg.Crowdfunding.BaseURL,
+			Timeout: cfg.Crowdfunding.Timeout,
 		}))
 	}
 	programTermSvc := service.NewProgramTermService(programTermRepo, applicationRepo)
@@ -120,9 +115,8 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		indexOutbox := db.NewIndexOutboxRepository(pool)
 		indexOutbox.SetMaxAttempts(cfg.Indexer.MaxAttempts)
 		indexOutbox.SetRetryDelay(cfg.Indexer.RetryDelay)
-		indexRelay := indexer.NewRelay(indexOutbox, natsConn, cfg.FGA.RelayBatch)
+		indexRelay := indexer.NewRelay(indexOutbox, js, cfg.FGA.RelayBatch, cfg.Indexer.ServiceToken)
 		indexRelay.SetLogger(logger)
-		indexRelay.SetAuthorizationProvider(indexer.NewManagedAuthorizationProvider(nil, cfg.Indexer.TokenURL, cfg.Indexer.ClientID, cfg.Indexer.ClientSecret, cfg.Indexer.Audience, cfg.Indexer.Scope))
 		go indexRelay.Run(relayCtx, cfg.FGA.RelayInterval)
 	}
 
@@ -130,7 +124,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	userH := handler.NewUserHandler(userSvc)
 	userProfileH := handler.NewUserProfileHandler(userProfileSvc)
 	programH := handler.NewProgramHandler(programSvc)
-	programTermH := handler.NewProgramTermHandler(programTermSvc)
+	programTermH := handler.NewProgramTermHandler(programTermSvc, programSvc)
 	programMemberH := handler.NewProgramMemberHandler(programMemberSvc, programSvc)
 	applicationH := handler.NewApplicationHandler(applicationSvc, programTermSvc)
 	taskH := handler.NewTaskHandler(taskSvc, programTermSvc)

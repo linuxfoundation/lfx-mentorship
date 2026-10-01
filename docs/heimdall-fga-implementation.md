@@ -23,7 +23,7 @@ For the detailed relation model and route-by-route decisions, see the
 | Shared-gateway HTTPRoute and Middleware | **Implemented in chart** | Rendered successfully with live-shaped dev values; environment activation is pending |
 | FGA transactional outbox | **Implemented and tested** | Generation-guarded claim, retry, acknowledgement, and dead-letter behavior |
 | FGA NATS/JetStream relay | **Implemented and dev-validated** | A program marker was acknowledged and its tuple was verified in the live `lfx-core` store |
-| Index relay authentication and retry | **Implemented and tested** | Cached M2M token, delayed single-count retries, generation guards, and relay metrics |
+| Index relay authentication and retry | **Implemented and tested** | Service-token stamping, JetStream publish acknowledgement, delayed single-count retries, generation guards, and relay metrics |
 | Program/application/task tuple lifecycle | **Implemented** | Full-state updates, precise membership changes, and hard-delete messages use fga-sync subjects |
 | Approver-team membership lifecycle | **Partially implemented** | PostgreSQL storage and precise markers exist; administration stays off the gateway until a platform staff relation is approved |
 | Initial FGA and index seeding | **Implemented in importer** | Environment seed still needs to be run after all reported data gaps are resolved or quarantined |
@@ -95,9 +95,13 @@ flowchart LR
    decision.
 
 Anonymous object reads still pass through OpenFGA. Published programs carry
-`viewer@user:*`; unpublished programs do not. Resource collections do not pass
+`viewer@user:*`; unpublished programs do not. Caller-owned collections do not pass
 through the Mentorship RuleSet: callers use Query Service `GET /query/resources?v=1`,
-which applies access filtering over indexed objects.
+which applies access filtering over indexed objects. Public collections are the
+exception: `GET /programs`, `/programs/catalog`, `/mentors`, `/mentees`, their
+summaries, `/summary`, and `/funding-stats/total` are anonymous `allow_all`
+routes whose services return only published programs and publicly listable
+profiles.
 
 ### Write and Derived-State Path
 
@@ -156,13 +160,20 @@ The service publishes the standard fga-sync operations:
   user row. This is self-scoping, not an arbitrary resource authorization path.
 - Mentor invite acceptance retains its signed-token ownership check because no
   FGA invite object is created.
+- The public program catalog (`GET /programs/catalog`) stays service-owned and
+  routed through the RuleSet as anonymous `allow_all`. Its skill and term-status
+  filters, accepting-first sort, and nested terms, skills, and mentors need
+  relational joins the program index does not carry. The service pins
+  `status = published`, so the collection returns only data every caller may see.
+- The public program list, mentor and mentee directories, and the summary and
+  funding-total aggregates stay service-owned on the same anonymous `allow_all`
+  shape. They return public display fields, counts, and aggregate totals only, so every caller may see them.
 
-### Transitional Collection Gap
+### Caller-Owned Collections
 
-Service-owned top-level program, mentor, mentee, and summary collections remain in the
-backend for migration compatibility, but they are not an accepted v2 exception
-and are absent from the shared-gateway RuleSet. Query Service must hold all
-Mentorship resource objects before cutover.
+Caller-owned collections — a user's programs, applications, and tasks — are
+served by Query Service. Query Service must hold all Mentorship resource objects
+before cutover.
 
 Nested views such as a program's terms or members may remain service-owned when
 every returned item shares the path parent's permission; Heimdall checks that
@@ -188,7 +199,8 @@ metadata.
 - A competing Mentorship-owned project-admin roster.
 - Empty-relation membership removals that can delete unrelated grants.
 - Authentication bypass in any deployed environment.
-- Service-owned top-level resource collections at gateway cutover.
+- Service-owned caller-owned collections at gateway cutover; public collections
+  are the only service-owned top-level collections.
 
 ## Implementation Map
 
@@ -239,23 +251,20 @@ required components must be present.
 | `FGA_RELAY_INTERVAL` | `1s` | Poll interval for FGA and index relays |
 | `FGA_RELAY_RETRY_DELAY` | `1m` | Delay before retrying an FGA marker |
 | `FGA_RELAY_MAX_ATTEMPTS` | `10` | Attempts before FGA dead letter |
-| `FGA_INDEXER_TOKEN_URL` | None | OAuth client-credentials token endpoint for index publishing |
-| `FGA_INDEXER_AUDIENCE` | None | Machine-token audience accepted by the indexer |
-| `FGA_INDEXER_SCOPE` | `access:query` | Machine-token scope for index publishing |
-| `INDEXER_CLIENT_ID` | None | Indexer M2M client ID; secret value |
-| `INDEXER_CLIENT_SECRET` | None | Indexer M2M client secret; secret value |
+| `INDEXER_SERVICE_TOKEN` | None | Service credential stamped on index messages; secret value. Without it the index relay idles |
 | `INDEX_RELAY_RETRY_DELAY` | `1m` | Delay after a failed index publish |
 | `INDEX_RELAY_MAX_ATTEMPTS` | `10` | Failed index publishes before dead letter |
 | `JWT_CLOCK_SKEW` | `5s` | Allowed Heimdall JWT clock skew |
 | `DB_MAX_CONNS` | `10` | PostgreSQL pool maximum |
 | `DB_MIN_CONNS` | `2` | PostgreSQL pool minimum |
 
-The index relay shares `FGA_NATS_URL`, obtains and caches an Auth0
-client-credentials token, and overwrites the redacted stored authorization
-placeholder before publishing. Client-supplied `x-on-behalf-of` metadata is
-discarded; index records currently carry no actor attribution because the
-request metadata middleware runs before the validated Heimdall principal is
-available. The publisher authenticates as the Mentorship service.
+The index relay shares `FGA_NATS_URL` and stamps `INDEXER_SERVICE_TOKEN` over the
+redacted stored authorization placeholder, as lfx-v2-campaign-service does. It
+marks a record sent once JetStream acknowledges the publish; the indexer
+consumes a durable stream and NAKs messages it fails to process. Client-supplied
+`x-on-behalf-of` metadata is discarded; index
+records currently carry no actor attribution because the request metadata
+middleware runs before the validated Heimdall principal is available.
 
 ### Helm Values Required for Gateway Activation
 
@@ -271,6 +280,9 @@ These are Helm values, not process environment variables:
 | `lfx.domain` | Environment domain used to form `lfx-api.{domain}` |
 | `traefik.gateway.name` | Shared gateway name |
 | `traefik.gateway.namespace` | Shared gateway namespace |
+| `networkPolicy.enabled` | Opt-in; restricts backend ingress to the gateway namespace |
+| `networkPolicy.gatewayNamespace` | Namespace of the Traefik pods, when it differs from `traefik.gateway.namespace` |
+| `networkPolicy.extraIngressFrom` | Extra `NetworkPolicyPeer` entries, such as the BFF or the `/internal/metrics` scraper |
 | `secretName` | Existing externally managed Kubernetes Secret |
 | `createPlaceholderSecret` | `false` outside local clusters |
 | `allowLocalAuthBypass` | Always `false` in deployed environments |
@@ -317,7 +329,11 @@ reported row. Reports include:
 
 The most recent dev import observed at least 34 programs without `project_uid`
 and 366 tasks without `application_id`. Those objects cannot have complete
-authorization inheritance and must not be treated as cutover-ready.
+authorization inheritance and must not be treated as cutover-ready. Migration
+004 moves parentless tasks into `quarantined_tasks` and makes
+`tasks.application_id` `NOT NULL`; the importer writes unmatched tasks there
+too. A repaired task is restored by inserting it into `tasks` with its
+application and deleting its quarantine row.
 
 The relays must be running before the seed commits so that new writes and seed
 markers converge through the same path.
@@ -420,7 +436,7 @@ Not yet validated end to end:
 
 - [ ] Resolve every missing program `project_uid` or explicitly quarantine the
   program from gateway-backed workflows.
-- [ ] Resolve every task without `application_id` or explicitly quarantine it.
+- [ ] Repair or accept the tasks migration 004 moves into `quarantined_tasks`.
 - [ ] Resolve all missing LFIDs reported for members, applicants, assignees, and
   approvers.
 - [ ] Resolve historical ambiguous mentor rows; do not turn pending invitations
@@ -448,14 +464,9 @@ Not yet validated end to end:
   access-check metadata, and the fields required by their collection views.
   Runtime lifecycle writes and importer seed upserts use the same
   generation-guarded index outbox.
-- [ ] Define Query Service resource projections for mentor/mentee directories
-  and replace service-owned summary aggregation with Query Service count/group
-  queries where supported.
-- [ ] Move all top-level collection consumers to `GET /query/resources?v=1`.
+- [ ] Move caller-owned collection consumers to `GET /query/resources?v=1`.
 - [ ] Use `filter_grants=direct` with an explicit `type` for caller-owned
   initiative views; forward the caller bearer token rather than a user ID.
-- [ ] Remove or retire the superseded Mentorship collection endpoints after all
-  frontend/BFF consumers have moved.
 
 ### 3. Deploy Relays and Seed Derived State
 
@@ -524,7 +535,8 @@ true:
 6. authenticated, anonymous, denied, cross-program, revocation, and deletion
    smokes pass;
 7. clients use the shared gateway; and
-8. resource collections are served by Query Service; and
+8. resource collections other than the public program catalog are served by
+   Query Service; and
 9. direct bypass routes are disabled.
 
 Until then, keep `heimdall.enabled=false` in environment values.

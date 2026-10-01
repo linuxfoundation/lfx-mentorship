@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/handler"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/auth"
@@ -32,10 +31,6 @@ func (s *stubUserProfileSvc) GetByID(ctx context.Context, id string) (*models.Us
 		return s.getByID(ctx, id)
 	}
 	return &models.UserProfile{ID: id}, nil
-}
-
-func (s *stubUserProfileSvc) GetBySlug(ctx context.Context, slug string) (*models.UserProfile, error) {
-	return &models.UserProfile{Slug: &slug}, nil
 }
 
 func (s *stubUserProfileSvc) List(ctx context.Context, filter models.UserProfileFilter) ([]*models.UserProfile, *models.PaginationMeta, error) {
@@ -209,73 +204,6 @@ func TestUserProfileHandler_PutMeByType_CreatesForPrincipal(t *testing.T) {
 	}
 	if got.UserID != "caller-user" || got.ProfileType != "mentee" {
 		t.Fatalf("got owner/type %q/%q; want caller-user/mentee", got.UserID, got.ProfileType)
-	}
-}
-
-func TestUserProfileHandler_Update_RejectsCrossUserMutation(t *testing.T) {
-	h := handler.NewUserProfileHandler(&stubUserProfileSvc{
-		getByID: func(context.Context, string) (*models.UserProfile, error) {
-			return &models.UserProfile{ID: "profile-1", UserID: "owner-user"}, nil
-		},
-		update: func(context.Context, string, models.UserProfileUpdateInput) (*models.UserProfile, error) {
-			t.Fatal("update should not be called")
-			return nil, nil
-		},
-	})
-	r := httptest.NewRequest(http.MethodPatch, "/v1/user-profiles/profile-1", bytes.NewBufferString(`{"about":"x"}`))
-	r.Header.Set("Content-Type", "application/json")
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "profile-1")
-	r = r.WithContext(context.WithValue(auth.ContextWithPrincipal(r.Context(), &models.Principal{UserID: "caller-user"}), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	h.Update(w, r)
-
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("got %d; want 403", w.Code)
-	}
-}
-
-func TestUserProfileHandler_Delete_RejectsCrossUserMutation(t *testing.T) {
-	h := handler.NewUserProfileHandler(&stubUserProfileSvc{
-		getByID: func(context.Context, string) (*models.UserProfile, error) {
-			return &models.UserProfile{ID: "profile-1", UserID: "owner-user"}, nil
-		},
-		delete: func(context.Context, string) error {
-			t.Fatal("delete should not be called")
-			return nil
-		},
-	})
-	r := httptest.NewRequest(http.MethodDelete, "/v1/user-profiles/profile-1", nil)
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "profile-1")
-	r = r.WithContext(context.WithValue(auth.ContextWithPrincipal(r.Context(), &models.Principal{UserID: "caller-user"}), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	h.Delete(w, r)
-
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("got %d; want 403", w.Code)
-	}
-}
-
-func TestUserProfileHandler_Update_PropagatesNotFoundFromLookup(t *testing.T) {
-	h := handler.NewUserProfileHandler(&stubUserProfileSvc{
-		getByID: func(context.Context, string) (*models.UserProfile, error) {
-			return nil, domain.ErrUserProfileNotFound
-		},
-	})
-	r := httptest.NewRequest(http.MethodPatch, "/v1/user-profiles/missing", bytes.NewBufferString(`{"about":"x"}`))
-	r.Header.Set("Content-Type", "application/json")
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "missing")
-	r = r.WithContext(context.WithValue(auth.ContextWithPrincipal(r.Context(), &models.Principal{UserID: "caller-user"}), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	h.Update(w, r)
-
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("got %d; want 404", w.Code)
 	}
 }
 

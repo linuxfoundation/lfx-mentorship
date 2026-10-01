@@ -62,29 +62,21 @@ type FGAConfig struct {
 
 // IndexerConfig configures authenticated index publishing and retry behavior.
 type IndexerConfig struct {
-	TokenURL     string
-	ClientID     string
-	ClientSecret string
-	Audience     string
-	Scope        string
+	// ServiceToken is stamped on every index message; without it the relay idles.
+	ServiceToken string
 	RetryDelay   time.Duration
 	MaxAttempts  int
 }
 
-// CrowdfundingConfig holds outbound crowdfunding API and M2M auth settings.
+// CrowdfundingConfig holds outbound crowdfunding API settings.
 type CrowdfundingConfig struct {
-	BaseURL      string
-	TokenURL     string
-	ClientID     string
-	ClientSecret string
-	Audience     string
-	Scope        string
-	Timeout      time.Duration
+	BaseURL string
+	Timeout time.Duration
 }
 
-// IsConfigured reports whether all required crowdfunding client settings are present.
+// IsConfigured reports whether the crowdfunding client has a base URL.
 func (c CrowdfundingConfig) IsConfigured() bool {
-	return c.BaseURL != "" && c.TokenURL != "" && c.ClientID != "" && c.ClientSecret != "" && c.Audience != ""
+	return c.BaseURL != ""
 }
 
 // OTelConfig holds OpenTelemetry settings.
@@ -171,13 +163,6 @@ func loadConfig() (*Config, error) {
 	if err != nil || indexMaxAttempts <= 0 {
 		return nil, fmt.Errorf("INDEX_RELAY_MAX_ATTEMPTS: must be a positive integer")
 	}
-	indexerTokenURL := os.Getenv("FGA_INDEXER_TOKEN_URL")
-	indexerClientID := os.Getenv("INDEXER_CLIENT_ID")
-	indexerClientSecret := os.Getenv("INDEXER_CLIENT_SECRET")
-	indexerAudience := os.Getenv("FGA_INDEXER_AUDIENCE")
-	if os.Getenv("FGA_NATS_URL") != "" && (indexerTokenURL == "" || indexerClientID == "" || indexerClientSecret == "" || indexerAudience == "") {
-		return nil, fmt.Errorf("FGA_INDEXER_TOKEN_URL, INDEXER_CLIENT_ID, INDEXER_CLIENT_SECRET, and FGA_INDEXER_AUDIENCE are required when FGA_NATS_URL is configured")
-	}
 	crowdfundingTimeout := 10 * time.Second
 	if v := os.Getenv("CROWDFUNDING_TIMEOUT"); v != "" {
 		d, err := time.ParseDuration(v)
@@ -217,22 +202,13 @@ func loadConfig() (*Config, error) {
 			RelayMaxAttempts: relayMaxAttempts,
 		},
 		Indexer: IndexerConfig{
-			TokenURL:     indexerTokenURL,
-			ClientID:     indexerClientID,
-			ClientSecret: indexerClientSecret,
-			Audience:     indexerAudience,
-			Scope:        getEnv("FGA_INDEXER_SCOPE", "access:query"),
+			ServiceToken: os.Getenv("INDEXER_SERVICE_TOKEN"),
 			RetryDelay:   indexRetryDelay,
 			MaxAttempts:  indexMaxAttempts,
 		},
 		Crowdfunding: CrowdfundingConfig{
-			BaseURL:      strings.TrimRight(os.Getenv("CROWDFUNDING_BASE_URL"), "/"),
-			TokenURL:     os.Getenv("CROWDFUNDING_TOKEN_URL"),
-			ClientID:     os.Getenv("CROWDFUNDING_CLIENT_ID"),
-			ClientSecret: os.Getenv("CROWDFUNDING_CLIENT_SECRET"),
-			Audience:     os.Getenv("CROWDFUNDING_AUDIENCE"),
-			Scope:        getEnv("CROWDFUNDING_SCOPE", "access:manage"),
-			Timeout:      crowdfundingTimeout,
+			BaseURL: strings.TrimRight(os.Getenv("CROWDFUNDING_BASE_URL"), "/"),
+			Timeout: crowdfundingTimeout,
 		},
 		OTel: OTelConfig{
 			ServiceName:    getEnv("OTEL_SERVICE_NAME", "lfx-mentorship-api"),
