@@ -21,6 +21,9 @@ type stubProgramMemberSvc struct {
 	listByProgram  func(context.Context, string, models.ProgramMemberFilter) ([]*models.ProgramMember, *models.PaginationMeta, error)
 	listManagement func(context.Context, string, models.ProgramMemberFilter) ([]*models.ProgramMentorManagementRow, *models.PaginationMeta, error)
 	update         func(context.Context, string, string, models.ProgramMemberUpdateInput, string) (*models.ProgramMember, error)
+	listMine       func(context.Context, string, models.ProgramMemberFilter) ([]*models.ProgramMembership, *models.PaginationMeta, error)
+	requestMentor  func(context.Context, string, string) (*models.ProgramMember, error)
+	withdrawMine   func(context.Context, string, string) error
 }
 
 func (s *stubProgramMemberSvc) GetByID(ctx context.Context, id string) (*models.ProgramMember, error) {
@@ -51,6 +54,24 @@ func (s *stubProgramMemberSvc) Update(ctx context.Context, programID, id string,
 	return &models.ProgramMember{}, nil
 }
 func (s *stubProgramMemberSvc) Delete(context.Context, string, string, string) error { return nil }
+func (s *stubProgramMemberSvc) ListMine(ctx context.Context, userID string, f models.ProgramMemberFilter) ([]*models.ProgramMembership, *models.PaginationMeta, error) {
+	if s.listMine != nil {
+		return s.listMine(ctx, userID, f)
+	}
+	return []*models.ProgramMembership{}, &models.PaginationMeta{}, nil
+}
+func (s *stubProgramMemberSvc) RequestMentorship(ctx context.Context, programID, userID string) (*models.ProgramMember, error) {
+	if s.requestMentor != nil {
+		return s.requestMentor(ctx, programID, userID)
+	}
+	return &models.ProgramMember{}, nil
+}
+func (s *stubProgramMemberSvc) WithdrawMine(ctx context.Context, id, userID string) error {
+	if s.withdrawMine != nil {
+		return s.withdrawMine(ctx, id, userID)
+	}
+	return nil
+}
 
 // The public roster is active members only, and the caller must not be able to
 // widen it by asking for another status.
@@ -258,5 +279,170 @@ func TestProgramMemberHandler_List_ResolvesSlugToID(t *testing.T) {
 	}
 	if gotProgramID != "p-uuid" {
 		t.Errorf("programID = %q; want p-uuid", gotProgramID)
+	}
+}
+
+// ── /me/program-memberships ──────────────────────────────────────────────────
+
+func TestProgramMemberHandler_MeRoutes_NoPrincipal_Return401(t *testing.T) {
+	h := handler.NewProgramMemberHandler(&stubProgramMemberSvc{}, &stubProgramSvc{})
+	for name, call := range map[string]func(http.ResponseWriter, *http.Request){
+		"list":     h.ListMine,
+		"request":  h.RequestMine,
+		"withdraw": h.WithdrawMine,
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, "/v1/me/program-memberships", strings.NewReader(`{"program_id":"p1"}`))
+			w := httptest.NewRecorder()
+			call(w, r)
+			if w.Code != http.StatusUnauthorized {
+				t.Errorf("got %d; want 401", w.Code)
+			}
+		})
+	}
+}
+
+func TestProgramMemberHandler_ListMine_ScopesToPrincipal(t *testing.T) {
+	var gotUser string
+	var gotFilter models.ProgramMemberFilter
+	h := handler.NewProgramMemberHandler(&stubProgramMemberSvc{
+		listMine: func(_ context.Context, userID string, f models.ProgramMemberFilter) ([]*models.ProgramMembership, *models.PaginationMeta, error) {
+			gotUser, gotFilter = userID, f
+			return []*models.ProgramMembership{{ID: "m1", ProgramName: "Program One"}}, &models.PaginationMeta{Total: 1}, nil
+		},
+	}, &stubProgramSvc{})
+	r := httptest.NewRequest(http.MethodGet, "/v1/me/program-memberships?member_type=mentor&limit=5&offset=10", nil)
+	r = requestWithPrincipal(r, "caller-user")
+	w := httptest.NewRecorder()
+	h.ListMine(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d; want 200: %s", w.Code, w.Body.String())
+	}
+	if gotUser != "caller-user" {
+		t.Errorf("userID = %q; want caller-user", gotUser)
+	}
+	if gotFilter.MemberType != string(models.MemberTypeMentor) || gotFilter.Limit != 5 || gotFilter.Offset != 10 {
+		t.Errorf("filter = %+v; want member_type=mentor limit=5 offset=10", gotFilter)
+	}
+	if !strings.Contains(w.Body.String(), `"program_name":"Program One"`) {
+		t.Errorf("body missing program_name: %s", w.Body.String())
+	}
+}
+
+func TestProgramMemberHandler_ListMine_InvalidMemberType_Returns400(t *testing.T) {
+	h := handler.NewProgramMemberHandler(&stubProgramMemberSvc{
+		listMine: func(context.Context, string, models.ProgramMemberFilter) ([]*models.ProgramMembership, *models.PaginationMeta, error) {
+			return nil, nil, domain.ErrInvalidInput
+		},
+	}, &stubProgramSvc{})
+	r := httptest.NewRequest(http.MethodGet, "/v1/me/program-memberships?member_type=bogus", nil)
+	r = requestWithPrincipal(r, "caller-user")
+	w := httptest.NewRecorder()
+	h.ListMine(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("got %d; want 400", w.Code)
+	}
+}
+
+// The user comes from the principal; a user_id in the body is ignored.
+func TestProgramMemberHandler_RequestMine_UsesPrincipalNotBody(t *testing.T) {
+	var gotProgram, gotUser string
+	requested := models.ProgramMemberStatusRequested
+	h := handler.NewProgramMemberHandler(&stubProgramMemberSvc{
+		requestMentor: func(_ context.Context, programID, userID string) (*models.ProgramMember, error) {
+			gotProgram, gotUser = programID, userID
+			return &models.ProgramMember{ID: "m1", ProgramID: programID, UserID: userID, MemberType: models.MemberTypeMentor, Status: &requested}, nil
+		},
+	}, &stubProgramSvc{})
+	r := httptest.NewRequest(http.MethodPost, "/v1/me/program-memberships", strings.NewReader(`{"program_id":"p1","user_id":"someone-else"}`))
+	r = requestWithPrincipal(r, "caller-user")
+	w := httptest.NewRecorder()
+	h.RequestMine(w, r)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("got %d; want 201: %s", w.Code, w.Body.String())
+	}
+	if gotProgram != "p1" || gotUser != "caller-user" {
+		t.Errorf("RequestMentorship(%q, %q); want (p1, caller-user)", gotProgram, gotUser)
+	}
+	var body models.ProgramMember
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Status == nil || *body.Status != models.ProgramMemberStatusRequested {
+		t.Errorf("status = %v; want requested", body.Status)
+	}
+}
+
+func TestProgramMemberHandler_RequestMine_MapsErrors(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err  error
+		want int
+	}{
+		"missing program":  {domain.ErrProgramNotFound, http.StatusNotFound},
+		"not published":    {domain.ErrInvalidInput, http.StatusBadRequest},
+		"existing request": {domain.ErrConflict, http.StatusConflict},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := handler.NewProgramMemberHandler(&stubProgramMemberSvc{
+				requestMentor: func(context.Context, string, string) (*models.ProgramMember, error) { return nil, tc.err },
+			}, &stubProgramSvc{})
+			r := httptest.NewRequest(http.MethodPost, "/v1/me/program-memberships", strings.NewReader(`{"program_id":"p1"}`))
+			r = requestWithPrincipal(r, "caller-user")
+			w := httptest.NewRecorder()
+			h.RequestMine(w, r)
+			if w.Code != tc.want {
+				t.Errorf("got %d; want %d", w.Code, tc.want)
+			}
+		})
+	}
+}
+
+func TestProgramMemberHandler_RequestMine_MalformedBody_Returns400(t *testing.T) {
+	h := handler.NewProgramMemberHandler(&stubProgramMemberSvc{
+		requestMentor: func(context.Context, string, string) (*models.ProgramMember, error) {
+			t.Fatal("service must not be called for a malformed body")
+			return nil, nil
+		},
+	}, &stubProgramSvc{})
+	r := httptest.NewRequest(http.MethodPost, "/v1/me/program-memberships", strings.NewReader(`{`))
+	r = requestWithPrincipal(r, "caller-user")
+	w := httptest.NewRecorder()
+	h.RequestMine(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("got %d; want 400", w.Code)
+	}
+}
+
+func TestProgramMemberHandler_WithdrawMine(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err  error
+		want int
+	}{
+		"withdrawn":          {nil, http.StatusNoContent},
+		"not the caller row": {domain.ErrProgramMemberNotFound, http.StatusNotFound},
+		"not withdrawable":   {domain.ErrInvalidStateTransition, http.StatusConflict},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var gotID, gotUser string
+			h := handler.NewProgramMemberHandler(&stubProgramMemberSvc{
+				withdrawMine: func(_ context.Context, id, userID string) error {
+					gotID, gotUser = id, userID
+					return tc.err
+				},
+			}, &stubProgramSvc{})
+			r := httptest.NewRequest(http.MethodPost, "/v1/me/program-memberships/m1/withdraw", nil)
+			r = requestWithPrincipal(r, "caller-user")
+			r = requestWithChiParam(r, "id", "m1")
+			w := httptest.NewRecorder()
+			h.WithdrawMine(w, r)
+			if w.Code != tc.want {
+				t.Errorf("got %d; want %d", w.Code, tc.want)
+			}
+			if gotID != "m1" || gotUser != "caller-user" {
+				t.Errorf("WithdrawMine(%q, %q); want (m1, caller-user)", gotID, gotUser)
+			}
+		})
 	}
 }

@@ -227,3 +227,25 @@ func TestMentorModuleRoutesAreCoveredByHeimdall(t *testing.T) {
 		}
 	}
 }
+
+func TestMeProgramMembershipRulesNeedOnlyASignedInUser(t *testing.T) {
+	for id, route := range map[string]string{
+		"me-program-memberships":         "/mentorship/v1/me/program-memberships",
+		"me-program-membership-withdraw": "/mentorship/v1/me/program-memberships/:id/withdraw",
+	} {
+		block := ruleBlock(t, id)
+		if strings.Count(block, "- path:") != 1 || !strings.Contains(block, "- path: "+route+"\n") {
+			t.Errorf("%s rule must cover only %q:\n%s", id, route, block)
+		}
+		expected := `      execute:
+        - authenticator: oidc
+        - authorizer: allow_all
+        - finalizer: create_jwt`
+		if !strings.Contains(block, expected) {
+			t.Errorf("%s rule lacks oidc -> allow_all -> create_jwt sequence", id)
+		}
+		if strings.Contains(block, "anonymous_authenticator") {
+			t.Errorf("%s rule must not admit anonymous callers", id)
+		}
+	}
+}

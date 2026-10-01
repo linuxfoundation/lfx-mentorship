@@ -17,11 +17,14 @@ import (
 type stubMemberRepo struct {
 	getByID            func(context.Context, string) (*models.ProgramMember, error)
 	findByProgramUser  func(context.Context, string, string) (*models.ProgramMember, error)
+	findByUserAndType  func(context.Context, string, string, models.MemberType) (*models.ProgramMember, error)
 	findActiveReviewer func(context.Context, string, string) (*models.ProgramMember, error)
 	findActiveAdmin    func(context.Context, string, string) (*models.ProgramMember, error)
 	listByProgram      func(context.Context, string, models.ProgramMemberFilter) ([]*models.ProgramMember, *models.PaginationMeta, error)
+	listByUser         func(context.Context, string, models.ProgramMemberFilter) ([]*models.ProgramMembership, *models.PaginationMeta, error)
 	create             func(context.Context, string, models.ProgramMemberCreateInput) (*models.ProgramMember, error)
 	update             func(context.Context, string, models.ProgramMemberUpdateInput) (*models.ProgramMember, error)
+	updateIfStatus     func(context.Context, string, []models.ProgramMemberStatus, models.ProgramMemberUpdateInput) (*models.ProgramMember, error)
 	delete             func(context.Context, string) error
 }
 
@@ -40,6 +43,18 @@ func (m *stubMemberRepo) FindByProgramAndUser(ctx context.Context, programID, us
 		return m.findByProgramUser(ctx, programID, userID)
 	}
 	return nil, domain.ErrProgramMemberNotFound
+}
+func (m *stubMemberRepo) FindByProgramUserAndType(ctx context.Context, programID, userID string, memberType models.MemberType) (*models.ProgramMember, error) {
+	if m.findByUserAndType != nil {
+		return m.findByUserAndType(ctx, programID, userID, memberType)
+	}
+	return nil, domain.ErrProgramMemberNotFound
+}
+func (m *stubMemberRepo) ListByUser(ctx context.Context, userID string, f models.ProgramMemberFilter) ([]*models.ProgramMembership, *models.PaginationMeta, error) {
+	if m.listByUser != nil {
+		return m.listByUser(ctx, userID, f)
+	}
+	return []*models.ProgramMembership{}, &models.PaginationMeta{}, nil
 }
 func (m *stubMemberRepo) FindActiveReviewerByProgramAndUser(ctx context.Context, programID, userID string) (*models.ProgramMember, error) {
 	if m.findActiveReviewer != nil {
@@ -90,6 +105,12 @@ func (m *stubMemberRepo) Update(ctx context.Context, id string, in models.Progra
 		return m.update(ctx, id, in)
 	}
 	return &models.ProgramMember{ID: id}, nil
+}
+func (m *stubMemberRepo) UpdateIfStatus(ctx context.Context, id string, from []models.ProgramMemberStatus, in models.ProgramMemberUpdateInput) (*models.ProgramMember, error) {
+	if m.updateIfStatus != nil {
+		return m.updateIfStatus(ctx, id, from, in)
+	}
+	return &models.ProgramMember{ID: id, Status: in.Status}, nil
 }
 func (m *stubMemberRepo) Delete(ctx context.Context, id string) error {
 	if m.delete != nil {
