@@ -10,9 +10,9 @@ metadata:
     {{- include "lfx-v2-mentorship-service.labels" . | nindent 4 }}
 spec:
   rules:
-    # Slug resolution must happen before an object-level FGA check. Top-level
-    # resource collections are served by Query Service and are absent here,
-    # except the public program catalog below; nested views remain checked
+    # Slug resolution must happen before an object-level FGA check. Caller-owned
+    # collections are served by Query Service and are absent here; the public
+    # directory collections below are service-owned. Nested views remain checked
     # against their path parent.
     - id: rule:lfx:lfx-mentorship-backend:public-resolver
       allow_encoded_slashes: "off"
@@ -46,15 +46,39 @@ spec:
             values:
               aud: {{ .Values.app.audience | quote }}
 
-    # The one service-owned collection: the catalog joins terms, skills, and mentors
-    # that Query Service does not index. No object UID to check; the service pins
-    # status = published. More specific than /programs/:id, so it wins regardless of order.
+    # The catalog joins terms, skills, and mentors that Query Service does not index.
+    # No object UID to check; the service pins status = published. More specific
+    # than /programs/:id, so it wins regardless of order.
     - id: rule:lfx:lfx-mentorship-backend:programs-catalog-public
       allow_encoded_slashes: "off"
       match:
         methods: [GET]
         routes:
           - path: /mentorship/v1/programs/catalog
+      execute:
+        - authenticator: oidc
+        - authenticator: anonymous_authenticator
+        - authorizer: allow_all
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    # Public directory collections and aggregates. No object UID to check; the
+    # service returns only published programs and publicly listable profiles.
+    # The summaries are listed explicitly rather than relying on /mentors/:id.
+    - id: rule:lfx:lfx-mentorship-backend:public-collections
+      allow_encoded_slashes: "off"
+      match:
+        methods: [GET]
+        routes:
+          - path: /mentorship/v1/programs
+          - path: /mentorship/v1/mentors
+          - path: /mentorship/v1/mentors/summary
+          - path: /mentorship/v1/mentees
+          - path: /mentorship/v1/mentees/summary
+          - path: /mentorship/v1/summary
+          - path: /mentorship/v1/funding-stats/total
       execute:
         - authenticator: oidc
         - authenticator: anonymous_authenticator
@@ -139,6 +163,36 @@ spec:
           - path: /mentorship/v1/me/profiles/:profileType
           - path: /mentorship/v1/me/profiles/by-id/:id
           - path: /mentorship/v1/me/applications
+      execute:
+        - authenticator: oidc
+        - authorizer: allow_all
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    # A mentor's own program memberships. No FGA program relation: the service
+    # takes the user from the principal and scopes every read and write to it.
+    - id: rule:lfx:lfx-mentorship-backend:me-program-memberships
+      allow_encoded_slashes: "off"
+      match:
+        methods: [GET, POST]
+        routes:
+          - path: /mentorship/v1/me/program-memberships
+      execute:
+        - authenticator: oidc
+        - authorizer: allow_all
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    - id: rule:lfx:lfx-mentorship-backend:me-program-membership-withdraw
+      allow_encoded_slashes: "off"
+      match:
+        methods: [POST]
+        routes:
+          - path: /mentorship/v1/me/program-memberships/:id/withdraw
       execute:
         - authenticator: oidc
         - authorizer: allow_all

@@ -28,6 +28,16 @@ func (n *LogNotifier) NotifyMentorDeclined(ctx context.Context, programID, userI
 	n.logger.InfoContext(ctx, "notify: mentor declined", "program_id", programID, "user_id", userID)
 }
 
+// NotifyAdminMentorDeclined logs a mentor-declined-invite event.
+func (n *LogNotifier) NotifyAdminMentorDeclined(ctx context.Context, programID, userID string) {
+	n.logger.InfoContext(ctx, "notify: mentor declined invite", "program_id", programID, "user_id", userID)
+}
+
+// NotifyAdminMentorAccepted logs a mentor-accepted-invite event.
+func (n *LogNotifier) NotifyAdminMentorAccepted(ctx context.Context, programID, userID string) {
+	n.logger.InfoContext(ctx, "notify: mentor accepted invite", "program_id", programID, "user_id", userID)
+}
+
 // NotifyAdminTasksSubmitted logs a tasks-submitted event.
 func (n *LogNotifier) NotifyAdminTasksSubmitted(ctx context.Context, applicationID string) {
 	n.logger.InfoContext(ctx, "notify: all tasks submitted", "application_id", applicationID)

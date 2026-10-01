@@ -116,12 +116,18 @@ type ProgramTermRepository interface {
 type ProgramMemberRepository interface {
 	GetByID(ctx context.Context, id string) (*models.ProgramMember, error)
 	FindByProgramAndUser(ctx context.Context, programID, userID string) (*models.ProgramMember, error)
+	FindByProgramUserAndType(ctx context.Context, programID, userID string, memberType models.MemberType) (*models.ProgramMember, error)
 	FindActiveReviewerByProgramAndUser(ctx context.Context, programID, userID string) (*models.ProgramMember, error)
 	FindActiveProgramAdminByProgramAndUser(ctx context.Context, programID, userID string) (*models.ProgramMember, error)
 	ListByProgram(ctx context.Context, programID string, filter models.ProgramMemberFilter) ([]*models.ProgramMember, *models.PaginationMeta, error)
 	ListMentorManagement(ctx context.Context, programID string, filter models.ProgramMemberFilter) ([]*models.ProgramMentorManagementRow, *models.PaginationMeta, error)
+	ListByUser(ctx context.Context, userID string, filter models.ProgramMemberFilter) ([]*models.ProgramMembership, *models.PaginationMeta, error)
 	Create(ctx context.Context, programID string, input models.ProgramMemberCreateInput) (*models.ProgramMember, error)
 	Update(ctx context.Context, id string, input models.ProgramMemberUpdateInput) (*models.ProgramMember, error)
+	// UpdateIfStatus applies input only while the row's status is still one of
+	// from, returning ErrInvalidStateTransition otherwise. The check and the
+	// write are atomic, so a status validated by the caller cannot go stale.
+	UpdateIfStatus(ctx context.Context, id string, from []models.ProgramMemberStatus, input models.ProgramMemberUpdateInput) (*models.ProgramMember, error)
 	Delete(ctx context.Context, id string) error
 }
 
@@ -136,6 +142,9 @@ type ApplicationRepository interface {
 	Reapply(ctx context.Context, oldID, programTermID string, input models.ApplicationCreateInput) (*models.Application, error)
 	ReapplyWithTasks(ctx context.Context, oldID, programTermID string, input models.ApplicationCreateInput, tasks []models.TaskCreateInput) (*models.Application, error)
 	Update(ctx context.Context, id string, input models.ApplicationUpdateInput) (*models.Application, error)
+	// MarkTasksSubmitted sets tasks_submitted once every prerequisite task is submitted or complete,
+	// and reports whether this call flipped it, so concurrent callers agree on exactly one first flip.
+	MarkTasksSubmitted(ctx context.Context, id string) (bool, error)
 	Delete(ctx context.Context, id string) error
 
 	// CountBlockingAppsForProgram returns applications in a non-terminal state across all terms of a program.
@@ -160,7 +169,4 @@ type TaskRepository interface {
 	Create(ctx context.Context, applicationID string, input models.TaskCreateInput) (*models.Task, error)
 	Update(ctx context.Context, id string, input models.TaskUpdateInput) (*models.Task, error)
 	Delete(ctx context.Context, id string) error
-
-	// CountPrerequisiteTasksByApplication returns (total, complete) prerequisite task counts.
-	CountPrerequisiteTasksByApplication(ctx context.Context, applicationID string) (total int, complete int, err error)
 }

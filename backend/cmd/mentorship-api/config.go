@@ -6,6 +6,8 @@ package main
 
 import (
 	"fmt"
+	"net/mail"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -21,6 +23,7 @@ type Config struct {
 	JWT          JWTConfig
 	FGA          FGAConfig
 	Indexer      IndexerConfig
+	Email        EmailConfig
 	Crowdfunding CrowdfundingConfig
 	OTel         OTelConfig
 	Local        LocalConfig
@@ -68,20 +71,25 @@ type IndexerConfig struct {
 	MaxAttempts  int
 }
 
-// CrowdfundingConfig holds outbound crowdfunding API and M2M auth settings.
-type CrowdfundingConfig struct {
-	BaseURL      string
-	TokenURL     string
-	ClientID     string
-	ClientSecret string
-	Audience     string
-	Scope        string
-	Timeout      time.Duration
+// EmailConfig configures notification email, which is sent over the FGA NATS connection whenever it is set.
+type EmailConfig struct {
+	// PublicSiteURL is the public Mentorship site that user-facing links point at.
+	PublicSiteURL string
+	// SelfServeURL is LFX Self Serve, where program management pages live.
+	SelfServeURL string
+	// HRInbox is the LF staff HR inbox copied on every mentee acceptance.
+	HRInbox string
 }
 
-// IsConfigured reports whether all required crowdfunding client settings are present.
+// CrowdfundingConfig holds outbound crowdfunding API settings.
+type CrowdfundingConfig struct {
+	BaseURL string
+	Timeout time.Duration
+}
+
+// IsConfigured reports whether the crowdfunding client has a base URL.
 func (c CrowdfundingConfig) IsConfigured() bool {
-	return c.BaseURL != "" && c.TokenURL != "" && c.ClientID != "" && c.ClientSecret != "" && c.Audience != ""
+	return c.BaseURL != ""
 }
 
 // OTelConfig holds OpenTelemetry settings.
@@ -179,6 +187,10 @@ func loadConfig() (*Config, error) {
 		}
 		crowdfundingTimeout = d
 	}
+	emailCfg, err := loadEmailConfig(os.Getenv("FGA_NATS_URL") != "")
+	if err != nil {
+		return nil, err
+	}
 
 	return &Config{
 		Server: ServerConfig{
@@ -211,14 +223,10 @@ func loadConfig() (*Config, error) {
 			RetryDelay:   indexRetryDelay,
 			MaxAttempts:  indexMaxAttempts,
 		},
+		Email: emailCfg,
 		Crowdfunding: CrowdfundingConfig{
-			BaseURL:      strings.TrimRight(os.Getenv("CROWDFUNDING_BASE_URL"), "/"),
-			TokenURL:     os.Getenv("CROWDFUNDING_TOKEN_URL"),
-			ClientID:     os.Getenv("CROWDFUNDING_CLIENT_ID"),
-			ClientSecret: os.Getenv("CROWDFUNDING_CLIENT_SECRET"),
-			Audience:     os.Getenv("CROWDFUNDING_AUDIENCE"),
-			Scope:        getEnv("CROWDFUNDING_SCOPE", "access:api"),
-			Timeout:      crowdfundingTimeout,
+			BaseURL: strings.TrimRight(os.Getenv("CROWDFUNDING_BASE_URL"), "/"),
+			Timeout: crowdfundingTimeout,
 		},
 		OTel: OTelConfig{
 			ServiceName:    getEnv("OTEL_SERVICE_NAME", "lfx-mentorship-api"),
@@ -231,6 +239,27 @@ func loadConfig() (*Config, error) {
 			InviteSecret:                  requireEnv("MENTOR_INVITE_SECRET"),
 		},
 	}, nil
+}
+
+// loadEmailConfig reads notification email settings, which are required once NATS is configured.
+func loadEmailConfig(natsConfigured bool) (EmailConfig, error) {
+	cfg := EmailConfig{
+		PublicSiteURL: strings.TrimRight(os.Getenv("PUBLIC_SITE_URL"), "/"),
+		SelfServeURL:  strings.TrimRight(os.Getenv("SELF_SERVE_URL"), "/"),
+		HRInbox:       strings.TrimSpace(os.Getenv("EMAIL_HR_INBOX")),
+	}
+	if !natsConfigured {
+		return cfg, nil
+	}
+	for _, kv := range [][2]string{{"PUBLIC_SITE_URL", cfg.PublicSiteURL}, {"SELF_SERVE_URL", cfg.SelfServeURL}} {
+		if u, err := url.Parse(kv[1]); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+			return EmailConfig{}, fmt.Errorf("%s must be an absolute http(s) URL with no query or fragment when FGA_NATS_URL is set", kv[0])
+		}
+	}
+	if addr, err := mail.ParseAddress(cfg.HRInbox); err != nil || addr.Address != cfg.HRInbox {
+		return EmailConfig{}, fmt.Errorf("EMAIL_HR_INBOX must be a bare email address when FGA_NATS_URL is set")
+	}
+	return cfg, nil
 }
 
 // jwtAuthConfig converts JWTConfig into an auth.JWTAuthConfig.

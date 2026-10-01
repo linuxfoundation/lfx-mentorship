@@ -15,11 +15,13 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/handler"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/auth"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/clients"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/db"
+	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/email"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/fga"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/indexer"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/service"
@@ -37,6 +39,8 @@ type Server struct {
 	httpSrv     *http.Server
 	natsConn    *nats.Conn
 	relayCancel context.CancelFunc
+	// emailNotifier is nil unless email notifications are enabled.
+	emailNotifier *email.Notifier
 }
 
 // NewServer wires all dependencies and builds the Chi router.
@@ -64,8 +68,33 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	platformSummaryRepo := db.NewPlatformSummaryRepository(pool)
 	rosterRepo := db.NewRosterRepository(pool)
 
+	var natsConn *nats.Conn
+	if cfg.FGA.NATSURL != "" {
+		natsConn, err = nats.Connect(cfg.FGA.NATSURL)
+		if err != nil {
+			pool.Close()
+			return nil, fmt.Errorf("FGA NATS connection: %w", err)
+		}
+	}
+
 	// Notifier
-	notifier := infrastructure.NewLogNotifier(logger)
+	var notifier domain.Notifier = infrastructure.NewLogNotifier(logger)
+	var emailNotifier *email.Notifier
+	if natsConn != nil {
+		emailNotifier = email.NewNotifier(email.NewClient(natsConn, email.Config{}), email.Repositories{
+			Users:        userRepo,
+			Profiles:     userProfileRepo,
+			Programs:     programRepo,
+			Terms:        programTermRepo,
+			Members:      programMemberRepo,
+			Applications: applicationRepo,
+		}, email.NotifierConfig{
+			PublicSiteURL: cfg.Email.PublicSiteURL,
+			SelfServeURL:  cfg.Email.SelfServeURL,
+			HRInbox:       cfg.Email.HRInbox,
+		}, logger)
+		notifier = emailNotifier
+	}
 
 	// Services
 	userSvc := service.NewUserService(userRepo)
@@ -73,13 +102,8 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	programSvc := service.NewProgramService(programRepo, programTermRepo, applicationRepo, programMemberRepo)
 	if cfg.Crowdfunding.IsConfigured() {
 		programSvc.SetCrowdfundingClient(clients.NewCrowdfundingClient(clients.CrowdfundingConfig{
-			BaseURL:      cfg.Crowdfunding.BaseURL,
-			TokenURL:     cfg.Crowdfunding.TokenURL,
-			ClientID:     cfg.Crowdfunding.ClientID,
-			ClientSecret: cfg.Crowdfunding.ClientSecret,
-			Audience:     cfg.Crowdfunding.Audience,
-			Scope:        cfg.Crowdfunding.Scope,
-			Timeout:      cfg.Crowdfunding.Timeout,
+			BaseURL: cfg.Crowdfunding.BaseURL,
+			Timeout: cfg.Crowdfunding.Timeout,
 		}))
 	}
 	programTermSvc := service.NewProgramTermService(programTermRepo, applicationRepo)
@@ -92,14 +116,8 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	rosterSvc := service.NewRosterService(rosterRepo)
 	fundingStatsSvc := service.NewFundingStatsService(programRepo)
 
-	var natsConn *nats.Conn
 	var relayCancel context.CancelFunc
-	if cfg.FGA.NATSURL != "" {
-		natsConn, err = nats.Connect(cfg.FGA.NATSURL)
-		if err != nil {
-			pool.Close()
-			return nil, fmt.Errorf("FGA NATS connection: %w", err)
-		}
+	if natsConn != nil {
 		js, jsErr := jetstream.New(natsConn)
 		if jsErr != nil {
 			natsConn.Close()
@@ -221,6 +239,9 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			r.Patch("/me", userH.UpdateMe)
 			r.Delete("/me", userH.DeleteMe)
 			r.Get("/me/applications", applicationH.ListByMe)
+			r.Get("/me/program-memberships", programMemberH.ListMine)
+			r.Post("/me/program-memberships", programMemberH.RequestMine)
+			r.Post("/me/program-memberships/{id}/withdraw", programMemberH.WithdrawMine)
 
 			// User profiles
 			r.Get("/me/profiles", userProfileH.ListMe)
@@ -346,6 +367,8 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		httpSrv:     httpSrv,
 		natsConn:    natsConn,
 		relayCancel: relayCancel,
+
+		emailNotifier: emailNotifier,
 	}, nil
 }
 
@@ -360,6 +383,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	err := s.httpSrv.Shutdown(ctx)
 	if s.relayCancel != nil {
 		s.relayCancel()
+	}
+	if s.emailNotifier != nil {
+		if waitErr := s.emailNotifier.Wait(ctx); waitErr != nil {
+			s.logger.Warn("in-flight email notifications abandoned at shutdown", "error", waitErr)
+		}
 	}
 	if s.natsConn != nil {
 		s.natsConn.Close()

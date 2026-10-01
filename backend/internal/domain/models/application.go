@@ -128,10 +128,11 @@ type Application struct {
 }
 
 type ApplicationProgram struct {
-	ID      string  `json:"id"`
-	Name    string  `json:"name"`
-	Slug    string  `json:"slug"`
-	LogoURL *string `json:"logo_url,omitempty"`
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	Slug        string  `json:"slug"`
+	LogoURL     *string `json:"logo_url,omitempty"`
+	ProjectName *string `json:"project_name,omitempty"`
 }
 type ApplicationTerm struct {
 	ID                   string            `json:"id"`
@@ -168,4 +169,6 @@ type ApplicationUpdateInput struct {
 	ReviewerNote      *string            `json:"reviewer_note,omitempty"`
 	// ActorID is the caller's user ID for permission checks; not persisted.
 	ActorID string `json:"-"`
+	// ExpectedStatus, when set, makes a status change apply only if the row still has this status.
+	ExpectedStatus *ApplicationStatus `json:"-"`
 }

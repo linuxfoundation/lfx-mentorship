@@ -1,0 +1,17 @@
+{{- /* Copyright The Linux Foundation and each contributor to LFX. */ -}}
+{{- /* SPDX-License-Identifier: MIT */ -}}
+{{- /* Legacy: hr-mentee-accepted, without the HR paperwork and special-recipient CCs. */ -}}
+{{template "header" .}}<p><strong>{{.MenteeName}}</strong> has been accepted to the <strong>{{.ProgramName}}</strong> mentorship.</p>
+{{if .HRNotice}}<p>Please generate the acceptance letter and contract paperwork with the following details.</p>
+{{end}}<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 18px;font-size:14px;line-height:150%;color:#444444;">
+<tr><td style="padding:2px 12px 2px 0;font-weight:bold;">Mentorship Program</td><td>{{.ProgramName}}</td></tr>
+{{range .ProgramAdmins}}<tr><td style="padding:2px 12px 2px 0;font-weight:bold;">Program Admin</td><td>{{.}}</td></tr>
+{{end}}<tr><td style="padding:2px 12px 2px 0;font-weight:bold;">Mentee Name</td><td>{{.MenteeName}}</td></tr>
+{{with .MenteeEmail}}<tr><td style="padding:2px 12px 2px 0;font-weight:bold;">Mentee Email</td><td>{{.}}</td></tr>
+{{end}}{{with .MenteeCountry}}<tr><td style="padding:2px 12px 2px 0;font-weight:bold;">Mentee Country of Residence</td><td>{{.}}</td></tr>
+{{end}}{{with .TermName}}<tr><td style="padding:2px 12px 2px 0;font-weight:bold;">Term</td><td>{{.}}</td></tr>
+{{end}}{{with .TermPeriod}}<tr><td style="padding:2px 12px 2px 0;font-weight:bold;">Mentorship Period</td><td>{{.}}</td></tr>
+{{end}}{{with .AttendanceType}}<tr><td style="padding:2px 12px 2px 0;font-weight:bold;">Attendance Status</td><td>{{.}}</td></tr>
+{{end}}</table>
+{{if .MenteeCountry}}<p><strong>Note:</strong> please save the mentee's country of residence for stipend amount verification.</p>
+{{end}}{{template "button" .ManageURL}}View Program{{template "button_end"}}{{template "footer" .}}

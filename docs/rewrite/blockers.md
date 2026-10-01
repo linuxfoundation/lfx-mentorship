@@ -244,9 +244,10 @@ creates a broken or bypassable deployment:
 - Gateway traffic without the relay and seed reaches a backend whose protected
   objects have no FGA tuples.
 - Frontend traffic left on the interim backend host bypasses the shared gateway.
-- Service-owned top-level collections bypass Query Service's standard access
-   filtering and direct-grant query pattern. The public program catalog is the
-   one exception: it returns only published programs, so there is nothing to
+- Service-owned caller-owned collections bypass Query Service's standard access
+   filtering and direct-grant query pattern. Public collections (programs,
+   catalog, mentor and mentee directories, and aggregates) are the exception:
+   they return only published or publicly listable data, so there is nothing to
    filter.
 
 These values must be reviewed as one environment change, not copied separately
