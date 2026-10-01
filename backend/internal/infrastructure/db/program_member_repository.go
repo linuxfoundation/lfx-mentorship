@@ -75,6 +75,25 @@ func (r *ProgramMemberRepository) FindByProgramAndUser(ctx context.Context, prog
 	return m, nil
 }
 
+// FindByProgramUserAndType returns the member row for a program, user and
+// member type — the table's unique key — or ErrProgramMemberNotFound.
+func (r *ProgramMemberRepository) FindByProgramUserAndType(ctx context.Context, programID, userID string, memberType models.MemberType) (*models.ProgramMember, error) {
+	ctx, span := programMemberTracer.Start(ctx, "db.program_members.FindByProgramUserAndType")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.program_id", programID), attribute.String("db.user_id", userID), attribute.String("db.member_type", string(memberType)))
+
+	q := `SELECT ` + programMemberCols + ` FROM program_members WHERE program_id = $1 AND user_id = $2 AND member_type = $3`
+	m, err := scanProgramMember(r.pool.QueryRow(ctx, q, programID, userID, memberType))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrProgramMemberNotFound
+	}
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("find program member by program, user and type: %w", err)
+	}
+	return m, nil
+}
+
 // FindActiveReviewerByProgramAndUser returns an active mentor or program admin membership.
 func (r *ProgramMemberRepository) FindActiveReviewerByProgramAndUser(ctx context.Context, programID, userID string) (*models.ProgramMember, error) {
 	return r.findActiveMembership(ctx, programID, userID, "member_type IN ('mentor', 'program_admin')", "find active reviewer membership")
@@ -205,6 +224,63 @@ func (r *ProgramMemberRepository) ListMentorManagement(ctx context.Context, prog
 		return nil, nil, err
 	}
 	return result, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, nil
+}
+
+// ListByUser returns a user's memberships in any status, each joined to its
+// program's name, newest first.
+func (r *ProgramMemberRepository) ListByUser(ctx context.Context, userID string, filter models.ProgramMemberFilter) ([]*models.ProgramMembership, *models.PaginationMeta, error) {
+	ctx, span := programMemberTracer.Start(ctx, "db.program_members.ListByUser")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.user_id", userID))
+
+	limit := filter.Limit
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	offset := filter.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	args := []any{userID}
+	where := ` WHERE pm.user_id = $1`
+	if filter.MemberType != "" {
+		args = append(args, filter.MemberType)
+		where += fmt.Sprintf(` AND pm.member_type = $%d`, len(args))
+	}
+
+	var total int
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM program_members pm`+where, args...).Scan(&total); err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("count user program memberships: %w", err)
+	}
+
+	args = append(args, limit, offset)
+	q := `SELECT pm.id, pm.program_id, p.name, pm.member_type, pm.status, pm.created_on, pm.updated_on
+		FROM program_members pm JOIN programs p ON p.id = pm.program_id` + where +
+		fmt.Sprintf(` ORDER BY pm.created_on DESC, pm.id LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
+
+	rows, err := r.pool.Query(ctx, q, args...)
+	if err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("list user program memberships: %w", err)
+	}
+	defer rows.Close()
+
+	memberships := make([]*models.ProgramMembership, 0)
+	for rows.Next() {
+		var m models.ProgramMembership
+		if err := rows.Scan(&m.ID, &m.ProgramID, &m.ProgramName, &m.MemberType, &m.Status, &m.CreatedOn, &m.UpdatedOn); err != nil {
+			span.RecordError(err)
+			return nil, nil, fmt.Errorf("scan user program membership: %w", err)
+		}
+		memberships = append(memberships, &m)
+	}
+	if err := rows.Err(); err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("rows error: %w", err)
+	}
+	return memberships, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, nil
 }
 
 // Create adds a member to a program.

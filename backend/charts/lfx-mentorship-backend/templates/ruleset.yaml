@@ -171,6 +171,36 @@ spec:
             values:
               aud: {{ .Values.app.audience | quote }}
 
+    # A mentor's own program memberships. No FGA program relation: the service
+    # takes the user from the principal and scopes every read and write to it.
+    - id: rule:lfx:lfx-mentorship-backend:me-program-memberships
+      allow_encoded_slashes: "off"
+      match:
+        methods: [GET, POST]
+        routes:
+          - path: /mentorship/v1/me/program-memberships
+      execute:
+        - authenticator: oidc
+        - authorizer: allow_all
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    - id: rule:lfx:lfx-mentorship-backend:me-program-membership-withdraw
+      allow_encoded_slashes: "off"
+      match:
+        methods: [POST]
+        routes:
+          - path: /mentorship/v1/me/program-memberships/:id/withdraw
+      execute:
+        - authenticator: oidc
+        - authorizer: allow_all
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
     - id: rule:lfx:lfx-mentorship-backend:program-create
       allow_encoded_slashes: "off"
       match:
