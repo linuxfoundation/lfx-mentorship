@@ -17,11 +17,14 @@ import (
 type stubMemberRepo struct {
 	getByID            func(context.Context, string) (*models.ProgramMember, error)
 	findByProgramUser  func(context.Context, string, string) (*models.ProgramMember, error)
+	findByUserAndType  func(context.Context, string, string, models.MemberType) (*models.ProgramMember, error)
 	findActiveReviewer func(context.Context, string, string) (*models.ProgramMember, error)
 	findActiveAdmin    func(context.Context, string, string) (*models.ProgramMember, error)
 	listByProgram      func(context.Context, string, models.ProgramMemberFilter) ([]*models.ProgramMember, *models.PaginationMeta, error)
+	listByUser         func(context.Context, string, models.ProgramMemberFilter) ([]*models.ProgramMembership, *models.PaginationMeta, error)
 	create             func(context.Context, string, models.ProgramMemberCreateInput) (*models.ProgramMember, error)
 	update             func(context.Context, string, models.ProgramMemberUpdateInput) (*models.ProgramMember, error)
+	updateIfStatus     func(context.Context, string, []models.ProgramMemberStatus, models.ProgramMemberUpdateInput) (*models.ProgramMember, error)
 	delete             func(context.Context, string) error
 }
 
@@ -40,6 +43,18 @@ func (m *stubMemberRepo) FindByProgramAndUser(ctx context.Context, programID, us
 		return m.findByProgramUser(ctx, programID, userID)
 	}
 	return nil, domain.ErrProgramMemberNotFound
+}
+func (m *stubMemberRepo) FindByProgramUserAndType(ctx context.Context, programID, userID string, memberType models.MemberType) (*models.ProgramMember, error) {
+	if m.findByUserAndType != nil {
+		return m.findByUserAndType(ctx, programID, userID, memberType)
+	}
+	return nil, domain.ErrProgramMemberNotFound
+}
+func (m *stubMemberRepo) ListByUser(ctx context.Context, userID string, f models.ProgramMemberFilter) ([]*models.ProgramMembership, *models.PaginationMeta, error) {
+	if m.listByUser != nil {
+		return m.listByUser(ctx, userID, f)
+	}
+	return []*models.ProgramMembership{}, &models.PaginationMeta{}, nil
 }
 func (m *stubMemberRepo) FindActiveReviewerByProgramAndUser(ctx context.Context, programID, userID string) (*models.ProgramMember, error) {
 	if m.findActiveReviewer != nil {
@@ -91,6 +106,12 @@ func (m *stubMemberRepo) Update(ctx context.Context, id string, in models.Progra
 	}
 	return &models.ProgramMember{ID: id}, nil
 }
+func (m *stubMemberRepo) UpdateIfStatus(ctx context.Context, id string, from []models.ProgramMemberStatus, in models.ProgramMemberUpdateInput) (*models.ProgramMember, error) {
+	if m.updateIfStatus != nil {
+		return m.updateIfStatus(ctx, id, from, in)
+	}
+	return &models.ProgramMember{ID: id, Status: in.Status}, nil
+}
 func (m *stubMemberRepo) Delete(ctx context.Context, id string) error {
 	if m.delete != nil {
 		return m.delete(ctx, id)
@@ -104,6 +125,45 @@ func newTaskSvc(taskRepo *stubTaskRepo, appRepo *stubAppRepo, termRepo *stubTerm
 }
 
 // ── task state machine ───────────────────────────────────────────────────────
+
+func TestTaskService_Update_SubmittedTask_NotifiesOnlyOnFirstFlip(t *testing.T) {
+	for name, tc := range map[string]struct {
+		flipped    bool
+		wantNotify int
+	}{
+		"first flip": {flipped: true, wantNotify: 1},
+		// The repository reports no flip when prerequisites are pending or the flag is already set.
+		"no flip": {flipped: false, wantNotify: 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			appID := "app-1"
+			var markedID string
+			taskRepo := &stubTaskRepo{
+				getByID: func(_ context.Context, id string) (*models.Task, error) {
+					return &models.Task{ID: id, AssigneeID: "mentee-1", Status: "in_progress", ApplicationID: &appID}, nil
+				},
+				update: func(_ context.Context, id string, _ models.TaskUpdateInput) (*models.Task, error) {
+					return &models.Task{ID: id, Status: "submitted", ApplicationID: &appID}, nil
+				},
+			}
+			appRepo := &stubAppRepo{
+				markTasksSubmit: func(_ context.Context, id string) (bool, error) {
+					markedID = id
+					return tc.flipped, nil
+				},
+			}
+			n := &stubNotifier{}
+			svc := service.NewTaskService(taskRepo, appRepo, &stubTermRepo{}, &stubMemberRepo{}, n)
+			next := models.TaskStatusSubmitted
+			if _, err := svc.Update(context.Background(), "task-1", models.TaskUpdateInput{Status: &next, ActorID: "mentee-1"}); err != nil {
+				t.Fatalf("Update: %v", err)
+			}
+			if markedID != appID || n.tasksSubmittedCalls != tc.wantNotify {
+				t.Errorf("marked %q, notify calls = %d; want %q, %d", markedID, n.tasksSubmittedCalls, appID, tc.wantNotify)
+			}
+		})
+	}
+}
 
 func TestTaskService_Update_Assignee_CanMarkInProgress(t *testing.T) {
 	appID := "app-1"

@@ -31,7 +31,7 @@ SPDX-License-Identifier: MIT
         v-model="isSignInModalOpen"
         :program-name="program.name"
         :term-name="applyTerm?.name"
-        :redirect-to="applyRedirectTo"
+        :apply-url="applyUrl"
       />
 
       <section class="border border-neutral-200 rounded-lg bg-white overflow-hidden">
@@ -108,7 +108,7 @@ import { useAuth } from '~/composables/useAuth';
 import { useProgram } from '~/composables/programs/useProgram';
 import { useProgramMentees } from '~/composables/programs/useProgramMentees';
 import { useProgramSponsors } from '~/composables/programs/useProgramSponsors';
-import { programPath } from '~/config/routes';
+import { selfServeMenteeApplyUrl } from '~/config/routes';
 import LfxButton from '~/components/uikit/button/button.vue';
 import LfxSpinner from '~/components/uikit/spinner/spinner.vue';
 import { ToastTypesEnum } from '~/components/uikit/toast/types/toast.types';
@@ -124,7 +124,7 @@ const programId = computed(() => props.programId);
 const { data: program, isLoading, error } = useProgram(programId);
 const { showToast } = useToastService();
 const {
-  public: { crowdfundingUrl },
+  public: { crowdfundingUrl, selfServeUrl },
 } = useRuntimeConfig();
 
 watch(error, (err) => {
@@ -187,10 +187,9 @@ const isSignInModalOpen = ref(false);
 const applyTerm = ref<ProgramTerm | null>(null);
 const { isAuthenticated } = useAuth();
 
-const applyRedirectTo = computed(() => {
-  const id = program.value?.slug || program.value?.id || programId.value;
-  const path = programPath(id);
-  return applyTerm.value ? `${path}?apply=${applyTerm.value.id}` : path;
+const applyUrl = computed(() => {
+  if (!program.value || !applyTerm.value) return '';
+  return selfServeMenteeApplyUrl(String(selfServeUrl), program.value.id, applyTerm.value.id);
 });
 
 function onApply(term: ProgramTerm) {

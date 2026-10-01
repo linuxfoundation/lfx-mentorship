@@ -144,11 +144,17 @@ config:
   FGA_RELAY_MAX_ATTEMPTS: "10"
   INDEX_RELAY_RETRY_DELAY: "1m"
   INDEX_RELAY_MAX_ATTEMPTS: "10"
+  # Notification email goes out via lfx-v2-email-service whenever FGA_NATS_URL is set; these are then required.
+  # Public Mentorship site, e.g. https://mentorship.lfx.linuxfoundation.org
+  PUBLIC_SITE_URL: ""
+  # LFX Self Serve, where management pages live, e.g. https://app.lfx.dev
+  SELF_SERVE_URL: ""
+  # LF staff HR inbox that receives every mentee acceptance.
+  EMAIL_HR_INBOX: ""
   LEDGER_BASE_URL: ""
+  # Crowdfunding is reached through the LFX v2 gateway at
+  # https://lfx-api.<domain>/crowdfunding; the transactions route is public.
   CROWDFUNDING_BASE_URL: ""
-  CROWDFUNDING_TOKEN_URL: ""
-  CROWDFUNDING_AUDIENCE: ""
-  CROWDFUNDING_SCOPE: "access:manage"
   OTEL_EXPORTER_OTLP_ENDPOINT: ""
   OTEL_SERVICE_NAME: "lfx-mentorship-backend"
 
@@ -171,8 +177,6 @@ env: []
 #   assembling a DSN string, so a password containing a backslash or a space is
 #   not altered in transit.
 #   LEDGER_API_KEY — bearer token for Ledger service API
-#   CROWDFUNDING_CLIENT_ID — Auth0 M2M client ID for crowdfunding API
-#   CROWDFUNDING_CLIENT_SECRET — Auth0 M2M client secret for crowdfunding API
 #   INDEXER_SERVICE_TOKEN — service credential stamped on index messages.
 #     Optional: without it the index relay idles and outbox rows stay pending.
 #   MENTOR_INVITE_SECRET — HMAC secret for signing mentor invite tokens.

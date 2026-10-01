@@ -29,18 +29,6 @@ func TestRuleSetDoesNotContainRetiredRoutesOrBroadProgramMethods(t *testing.T) {
 	for _, line := range strings.Split(ruleset, "\n") {
 		routeLines[strings.TrimSpace(line)] = true
 	}
-	// Query Service owns these collections; the matching detail routes stay in the RuleSet.
-	for _, collection := range []string{
-		"- path: /mentorship/v1/programs/catalog",
-		"- path: /mentorship/v1/mentors",
-		"- path: /mentorship/v1/mentees",
-		"- path: /mentorship/v1/summary",
-		"- path: /mentorship/v1/funding-stats/total",
-	} {
-		if routeLines[collection] {
-			t.Errorf("RuleSet contains retired collection route %q", collection)
-		}
-	}
 	for _, profile := range []string{
 		"- path: /mentorship/v1/mentors/:id",
 		"- path: /mentorship/v1/mentees/:id",
@@ -76,6 +64,71 @@ func TestRuleSetDoesNotContainRetiredRoutesOrBroadProgramMethods(t *testing.T) {
 	} {
 		if !strings.Contains(ruleset, required) {
 			t.Errorf("RuleSet is missing required authorization mapping %q", required)
+		}
+	}
+}
+
+func TestPublicCatalogRuleIsAnonymousReadOnly(t *testing.T) {
+	block := ruleBlock(t, "programs-catalog-public")
+	if strings.Count(block, "- path:") != 1 || !strings.Contains(block, "- path: /mentorship/v1/programs/catalog\n") {
+		t.Fatalf("public catalog rule must cover only the catalog collection:\n%s", block)
+	}
+	assertAnonymousReadOnly(t, "public catalog", block)
+}
+
+func TestPublicCollectionsRuleIsAnonymousReadOnly(t *testing.T) {
+	block := ruleBlock(t, "public-collections")
+	paths := []string{
+		"/mentorship/v1/programs",
+		"/mentorship/v1/mentors",
+		"/mentorship/v1/mentors/summary",
+		"/mentorship/v1/mentees",
+		"/mentorship/v1/mentees/summary",
+		"/mentorship/v1/summary",
+		"/mentorship/v1/funding-stats/total",
+	}
+	if got := strings.Count(block, "- path:"); got != len(paths) {
+		t.Fatalf("public collections rule has %d routes, want %d:\n%s", got, len(paths), block)
+	}
+	for _, path := range paths {
+		if !strings.Contains(block, "- path: "+path+"\n") {
+			t.Errorf("public collections rule is missing %q", path)
+		}
+	}
+	assertAnonymousReadOnly(t, "public collections", block)
+}
+
+// ruleBlock returns the RuleSet text of the rule with the given id suffix, up to the next rule.
+func ruleBlock(t *testing.T, id string) string {
+	t.Helper()
+	contents, err := os.ReadFile("templates/ruleset.yaml")
+	if err != nil {
+		t.Fatalf("read RuleSet: %v", err)
+	}
+	ruleset := string(contents)
+	start := strings.Index(ruleset, "id: rule:lfx:lfx-mentorship-backend:"+id+"\n")
+	if start < 0 {
+		t.Fatalf("RuleSet is missing rule %q", id)
+	}
+	end := strings.Index(ruleset[start:], "\n    - id:")
+	if end < 0 {
+		t.Fatalf("RuleSet rule %q has no following rule boundary", id)
+	}
+	return ruleset[start : start+end]
+}
+
+func assertAnonymousReadOnly(t *testing.T, name, block string) {
+	t.Helper()
+	if !strings.Contains(block, "methods: [GET]\n") {
+		t.Errorf("%s rule must be GET-only", name)
+	}
+	for _, required := range []string{
+		"- authenticator: anonymous_authenticator",
+		"- authorizer: allow_all",
+		"- finalizer: create_jwt",
+	} {
+		if !strings.Contains(block, required) {
+			t.Errorf("%s rule is missing %q", name, required)
 		}
 	}
 }
@@ -171,6 +224,28 @@ func TestMentorModuleRoutesAreCoveredByHeimdall(t *testing.T) {
 	} {
 		if !strings.Contains(ruleset, required) {
 			t.Errorf("RuleSet is missing mentor module authorization group %q", required)
+		}
+	}
+}
+
+func TestMeProgramMembershipRulesNeedOnlyASignedInUser(t *testing.T) {
+	for id, route := range map[string]string{
+		"me-program-memberships":         "/mentorship/v1/me/program-memberships",
+		"me-program-membership-withdraw": "/mentorship/v1/me/program-memberships/:id/withdraw",
+	} {
+		block := ruleBlock(t, id)
+		if strings.Count(block, "- path:") != 1 || !strings.Contains(block, "- path: "+route+"\n") {
+			t.Errorf("%s rule must cover only %q:\n%s", id, route, block)
+		}
+		expected := `      execute:
+        - authenticator: oidc
+        - authorizer: allow_all
+        - finalizer: create_jwt`
+		if !strings.Contains(block, expected) {
+			t.Errorf("%s rule lacks oidc -> allow_all -> create_jwt sequence", id)
+		}
+		if strings.Contains(block, "anonymous_authenticator") {
+			t.Errorf("%s rule must not admit anonymous callers", id)
 		}
 	}
 }

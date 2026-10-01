@@ -20,3 +20,14 @@ export function menteePath(id: string): string {
 export function mentorPath(id: string): string {
   return `${AppRoute.Mentors}/${id}`;
 }
+
+/** Mentee apply flow in LFX Self Serve, which handles sign-in and account creation. */
+export function selfServeMenteeApplyUrl(
+  selfServeUrl: string,
+  programId: string,
+  programTermId: string,
+): string {
+  const base = selfServeUrl.replace(/\/$/, '');
+  const query = new URLSearchParams({ programId, programTermId });
+  return `${base}/mentorship/mentee/apply?${query.toString()}`;
+}
