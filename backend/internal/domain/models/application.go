@@ -169,4 +169,6 @@ type ApplicationUpdateInput struct {
 	ReviewerNote      *string            `json:"reviewer_note,omitempty"`
 	// ActorID is the caller's user ID for permission checks; not persisted.
 	ActorID string `json:"-"`
+	// ExpectedStatus, when set, makes a status change apply only if the row still has this status.
+	ExpectedStatus *ApplicationStatus `json:"-"`
 }

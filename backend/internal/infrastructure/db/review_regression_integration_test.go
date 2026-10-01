@@ -259,7 +259,7 @@ func TestApplicationRepositoryIntegration_MarkTasksSubmittedFlipsOnceWhenPrerequ
 	}
 }
 
-func TestApplicationRepositoryIntegration_AcceptTwiceIsRejected(t *testing.T) {
+func TestApplicationRepositoryIntegration_StatusChangeAppliesOnlyFromExpectedStatus(t *testing.T) {
 	pool := integrationPool(t)
 	fixture := seedIntegrationFixture(t, pool)
 	ctx := context.Background()
@@ -268,13 +268,18 @@ func TestApplicationRepositoryIntegration_AcceptTwiceIsRejected(t *testing.T) {
 		t.Fatalf("insert application: %v", err)
 	}
 	repo := NewApplicationRepository(pool)
-	accepted := models.ApplicationStatusAccepted
+	pending, accepted, declined := models.ApplicationStatusPending, models.ApplicationStatusAccepted, models.ApplicationStatusDeclined
 
-	if _, err := repo.Update(ctx, applicationID, models.ApplicationUpdateInput{Status: &accepted}); err != nil {
-		t.Fatalf("first accept: %v", err)
+	// Two reviewers both validated against pending; the decline commits first.
+	if _, err := repo.Update(ctx, applicationID, models.ApplicationUpdateInput{Status: &declined, ExpectedStatus: &pending}); err != nil {
+		t.Fatalf("decline: %v", err)
 	}
-	if _, err := repo.Update(ctx, applicationID, models.ApplicationUpdateInput{Status: &accepted}); !errors.Is(err, domain.ErrInvalidStateTransition) {
-		t.Fatalf("second accept err = %v; want ErrInvalidStateTransition", err)
+	if _, err := repo.Update(ctx, applicationID, models.ApplicationUpdateInput{Status: &accepted, ExpectedStatus: &pending}); !errors.Is(err, domain.ErrInvalidStateTransition) {
+		t.Fatalf("stale accept err = %v; want ErrInvalidStateTransition", err)
+	}
+	var status models.ApplicationStatus
+	if err := pool.QueryRow(ctx, `SELECT status FROM applications WHERE id = $1`, applicationID).Scan(&status); err != nil || status != declined {
+		t.Fatalf("status = %q, err = %v; want declined", status, err)
 	}
 }
 

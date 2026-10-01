@@ -27,21 +27,31 @@ const (
 )
 
 type senderStub struct {
-	mu           sync.Mutex
-	sent         []Message
-	failFor      map[string]bool
-	release      chan struct{}
-	hadDeadlines []bool
+	mu          sync.Mutex
+	sent        []Message
+	failFor     map[string]bool
+	release     chan struct{}
+	delay       time.Duration
+	inFlight    int
+	maxInFlight int
 }
 
-func (s *senderStub) Send(ctx context.Context, msg Message) (Receipt, error) {
+func (s *senderStub) Send(_ context.Context, msg Message) (Receipt, error) {
+	s.mu.Lock()
+	s.inFlight++
+	s.maxInFlight = max(s.maxInFlight, s.inFlight)
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.inFlight--
+		s.mu.Unlock()
+	}()
 	if s.release != nil {
 		<-s.release
 	}
+	time.Sleep(s.delay)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, hasDeadline := ctx.Deadline()
-	s.hadDeadlines = append(s.hadDeadlines, hasDeadline)
 	if s.failFor[msg.To] {
 		return Receipt{}, ErrRejected
 	}
@@ -296,6 +306,7 @@ func TestNotifyAdminTasksSubmitted(t *testing.T) {
 
 func TestNotifyAdminTasksSubmitted_PagesThroughAllAdmins(t *testing.T) {
 	f := newFixture()
+	f.sender.delay = 5 * time.Millisecond
 	for i := range adminPageSize + 1 {
 		id := "page-admin-" + strconv.Itoa(i)
 		f.users.users[id] = &models.User{ID: id, Email: strPtr(id + "@linuxfoundation.org")}
@@ -310,11 +321,9 @@ func TestNotifyAdminTasksSubmitted_PagesThroughAllAdmins(t *testing.T) {
 	if len(f.members.filters) != 2 || f.members.filters[1].Offset != adminPageSize {
 		t.Fatalf("filters = %+v, want a second page at offset %d", f.members.filters, adminPageSize)
 	}
-	// Sends must not share the dispatch deadline, or slow early recipients would starve later ones.
-	for i, hadDeadline := range f.sender.hadDeadlines {
-		if hadDeadline {
-			t.Fatalf("send %d ran under the dispatch deadline", i)
-		}
+	// Slow recipients are sent in parallel so they cannot use up the deadline, but never more than the cap at once.
+	if f.sender.maxInFlight < 2 || f.sender.maxInFlight > sendConcurrency {
+		t.Fatalf("max sends in flight = %d, want between 2 and %d", f.sender.maxInFlight, sendConcurrency)
 	}
 }
 

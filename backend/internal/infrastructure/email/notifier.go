@@ -23,9 +23,11 @@ import (
 // adminPageSize is the largest page the member repository serves.
 const adminPageSize = 100
 
-// dispatchTimeout bounds one notification's lookups so a stuck dependency cannot hold shutdown.
-// Each send has its own timeout in the Client, so one slow recipient cannot starve the rest.
+// dispatchTimeout bounds one notification's lookups and sends so a stuck dependency cannot hold shutdown.
 const dispatchTimeout = 30 * time.Second
+
+// sendConcurrency caps parallel sends per notification, so slow recipients cannot starve the rest of the deadline.
+const sendConcurrency = 5
 
 var notifierTracer = otel.Tracer("email-notifier")
 
@@ -349,21 +351,34 @@ func (n *Notifier) dispatch(ctx context.Context, notification string, build func
 			return
 		}
 		seen := make(map[string]bool, len(msgs))
-		sendCtx := context.WithoutCancel(ctx)
+		slots := make(chan struct{}, sendConcurrency)
+		var sends sync.WaitGroup
 		for _, msg := range msgs {
 			addr := strings.ToLower(msg.To)
 			if seen[addr] {
 				continue
 			}
 			seen[addr] = true
-			receipt, err := n.sender.Send(sendCtx, msg)
-			if err != nil {
-				span.RecordError(err)
-				n.logger.ErrorContext(ctx, "email notification not sent", "notification", notification, "error", err)
-				continue
-			}
-			n.logger.InfoContext(ctx, "email notification sent", "notification", notification, "email_id", receipt.EmailID)
+			slots <- struct{}{}
+			sends.Add(1)
+			go func() {
+				defer sends.Done()
+				defer func() { <-slots }()
+				defer func() {
+					if r := recover(); r != nil {
+						n.logger.ErrorContext(ctx, "email notification panicked", "notification", notification, "panic", r)
+					}
+				}()
+				receipt, err := n.sender.Send(ctx, msg)
+				if err != nil {
+					span.RecordError(err)
+					n.logger.ErrorContext(ctx, "email notification not sent", "notification", notification, "error", err)
+					return
+				}
+				n.logger.InfoContext(ctx, "email notification sent", "notification", notification, "email_id", receipt.EmailID)
+			}()
 		}
+		sends.Wait()
 	}()
 }
 

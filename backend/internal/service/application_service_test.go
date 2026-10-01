@@ -573,9 +573,14 @@ func TestApplicationService_Create_WithdrawnReapply_ClonesPrerequisiteTasks(t *t
 }
 
 func TestApplicationService_Update_ValidTransition(t *testing.T) {
+	var expected *models.ApplicationStatus
 	repo := &stubAppRepo{
 		getByID: func(_ context.Context, id string) (*models.Application, error) {
 			return &models.Application{ID: id, Status: "pending"}, nil
+		},
+		update: func(_ context.Context, id string, in models.ApplicationUpdateInput) (*models.Application, error) {
+			expected = in.ExpectedStatus
+			return &models.Application{ID: id}, nil
 		},
 	}
 	svc := newApplicationSvc(repo, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{})
@@ -584,6 +589,10 @@ func TestApplicationService_Update_ValidTransition(t *testing.T) {
 	_, err := svc.Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &next, AttendanceType: &attType, ActorID: "reviewer"})
 	if err != nil {
 		t.Errorf("expected valid transition pending→accepted, got %v", err)
+	}
+	// The repository must apply the change only while the row is still in the status that was validated.
+	if expected == nil || *expected != models.ApplicationStatusPending {
+		t.Errorf("ExpectedStatus = %v; want pending", expected)
 	}
 }
 

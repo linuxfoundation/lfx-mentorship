@@ -444,17 +444,23 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if input.Status != nil && *input.Status == models.ApplicationStatusAccepted {
-		var appStatus models.ApplicationStatus
 		var termStatus models.ProgramTermStatus
-		if err := tx.QueryRow(ctx, `SELECT a.status, pt.status FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE a.id = $1 FOR UPDATE OF a, pt`, id).Scan(&appStatus, &termStatus); errors.Is(err, pgx.ErrNoRows) {
+		if err := tx.QueryRow(ctx, `SELECT pt.status FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE a.id = $1 FOR UPDATE OF pt`, id).Scan(&termStatus); errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrApplicationNotFound
 		} else if err != nil {
 			return nil, fmt.Errorf("lock application term for acceptance: %w", err)
-		} else if appStatus == models.ApplicationStatusAccepted {
-			// A concurrent request accepted it after the caller validated the transition; accepting twice would mail twice.
-			return nil, fmt.Errorf("%w: application is already accepted", domain.ErrInvalidStateTransition)
 		} else if termStatus != models.ProgramTermStatusOpen {
 			return nil, fmt.Errorf("%w: applications are not open for this term", domain.ErrIneligible)
+		}
+	}
+	if input.ExpectedStatus != nil {
+		var current models.ApplicationStatus
+		if err := tx.QueryRow(ctx, `SELECT status FROM applications WHERE id = $1 FOR UPDATE`, id).Scan(&current); errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrApplicationNotFound
+		} else if err != nil {
+			return nil, fmt.Errorf("lock application for status change: %w", err)
+		} else if current != *input.ExpectedStatus {
+			return nil, fmt.Errorf("%w: application status changed concurrently", domain.ErrInvalidStateTransition)
 		}
 	}
 
