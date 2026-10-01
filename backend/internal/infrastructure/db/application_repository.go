@@ -453,6 +453,16 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 			return nil, fmt.Errorf("%w: applications are not open for this term", domain.ErrIneligible)
 		}
 	}
+	if input.ExpectedStatus != nil {
+		var current models.ApplicationStatus
+		if err := tx.QueryRow(ctx, `SELECT status FROM applications WHERE id = $1 FOR UPDATE`, id).Scan(&current); errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrApplicationNotFound
+		} else if err != nil {
+			return nil, fmt.Errorf("lock application for status change: %w", err)
+		} else if current != *input.ExpectedStatus {
+			return nil, fmt.Errorf("%w: application status changed concurrently", domain.ErrInvalidStateTransition)
+		}
+	}
 
 	const q = `
 		UPDATE applications SET
@@ -510,6 +520,63 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 		return nil, fmt.Errorf("commit update application transaction: %w", err)
 	}
 	return a, nil
+}
+
+// MarkTasksSubmitted sets tasks_submitted once every prerequisite task is submitted or complete,
+// and reports whether this call flipped it. The application row is locked, then the prerequisite
+// tasks, so a concurrent flip or task reset is decided against one consistent state. The flag
+// gates no access, so only the search documents are refreshed.
+func (r *ApplicationRepository) MarkTasksSubmitted(ctx context.Context, id string) (bool, error) {
+	ctx, span := applicationTracer.Start(ctx, "db.applications.MarkTasksSubmitted")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.application_id", id))
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("begin mark tasks submitted transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var submitted bool
+	if err := tx.QueryRow(ctx, `SELECT tasks_submitted FROM applications WHERE id = $1 FOR UPDATE`, id).Scan(&submitted); errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	} else if err != nil {
+		span.RecordError(err)
+		return false, fmt.Errorf("lock application for tasks submitted: %w", err)
+	}
+	if submitted {
+		return false, nil
+	}
+	var total, done int
+	if err := tx.QueryRow(ctx, `
+		SELECT COUNT(*), COUNT(*) FILTER (WHERE status IN ('submitted', 'complete'))
+		FROM (SELECT status FROM tasks WHERE application_id = $1 AND category = 'prerequisite' FOR SHARE) prerequisites`,
+		id).Scan(&total, &done); err != nil {
+		span.RecordError(err)
+		return false, fmt.Errorf("count prerequisite tasks: %w", err)
+	}
+	if total == 0 || done < total {
+		return false, nil
+	}
+
+	a, err := scanApplication(tx.QueryRow(ctx, `UPDATE applications SET tasks_submitted = true WHERE id = $1 RETURNING `+applicationCols, id))
+	if err != nil {
+		span.RecordError(err)
+		return false, fmt.Errorf("mark tasks submitted: %w", err)
+	}
+	if err := enqueueApplicationIndex(ctx, tx, a, "updated"); err != nil {
+		return false, err
+	}
+	var programID string
+	if err := tx.QueryRow(ctx, `SELECT program_id FROM program_terms WHERE id = $1`, a.ProgramTermID).Scan(&programID); err != nil {
+		return false, fmt.Errorf("resolve application program for index refresh: %w", err)
+	}
+	if err := enqueueProgramIndexByID(ctx, tx, programID); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit mark tasks submitted transaction: %w", err)
+	}
+	return true, nil
 }
 
 func syncTasksWithApplicationState(ctx context.Context, tx pgx.Tx, application *models.Application) ([]*models.Task, error) {

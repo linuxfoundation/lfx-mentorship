@@ -142,6 +142,9 @@ type ApplicationRepository interface {
 	Reapply(ctx context.Context, oldID, programTermID string, input models.ApplicationCreateInput) (*models.Application, error)
 	ReapplyWithTasks(ctx context.Context, oldID, programTermID string, input models.ApplicationCreateInput, tasks []models.TaskCreateInput) (*models.Application, error)
 	Update(ctx context.Context, id string, input models.ApplicationUpdateInput) (*models.Application, error)
+	// MarkTasksSubmitted sets tasks_submitted once every prerequisite task is submitted or complete,
+	// and reports whether this call flipped it, so concurrent callers agree on exactly one first flip.
+	MarkTasksSubmitted(ctx context.Context, id string) (bool, error)
 	Delete(ctx context.Context, id string) error
 
 	// CountBlockingAppsForProgram returns applications in a non-terminal state across all terms of a program.
@@ -166,7 +169,4 @@ type TaskRepository interface {
 	Create(ctx context.Context, applicationID string, input models.TaskCreateInput) (*models.Task, error)
 	Update(ctx context.Context, id string, input models.TaskUpdateInput) (*models.Task, error)
 	Delete(ctx context.Context, id string) error
-
-	// CountPrerequisiteTasksByApplication returns (total, complete) prerequisite task counts.
-	CountPrerequisiteTasksByApplication(ctx context.Context, applicationID string) (total int, complete int, err error)
 }
