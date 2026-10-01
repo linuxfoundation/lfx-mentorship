@@ -49,9 +49,11 @@ func (s *ProgramMemberService) assertActiveProgramAdmin(ctx context.Context, pro
 	return nil
 }
 
-// memberTransitions defines valid next statuses for each member status.
-// withdrawn → requested is deliberately absent: only the mentor's own
-// RequestMentorship may reopen a withdrawn row.
+// memberTransitions defines the statuses a program admin may move a member
+// to. A mentor's request is the mentor's to make or withdraw: an admin
+// approves, declines, or deletes it, so requested/pending → withdrawn and
+// withdrawn → requested are absent here and reachable only through
+// WithdrawMine and RequestMentorship.
 var memberTransitions = map[models.ProgramMemberStatus]map[models.ProgramMemberStatus]bool{
 	models.ProgramMemberStatusInvited: {
 		models.ProgramMemberStatusActive:   true,
@@ -59,19 +61,17 @@ var memberTransitions = map[models.ProgramMemberStatus]map[models.ProgramMemberS
 		models.ProgramMemberStatusPending:  true,
 	},
 	models.ProgramMemberStatusRequested: {
-		models.ProgramMemberStatusActive:    true,
-		models.ProgramMemberStatusDeclined:  true,
-		models.ProgramMemberStatusPending:   true,
-		models.ProgramMemberStatusWithdrawn: true,
+		models.ProgramMemberStatusActive:   true,
+		models.ProgramMemberStatusDeclined: true,
+		models.ProgramMemberStatusPending:  true,
 	},
 	models.ProgramMemberStatusActive: {
 		models.ProgramMemberStatusWithdrawn: true,
 		models.ProgramMemberStatusPending:   true,
 	},
 	models.ProgramMemberStatusPending: {
-		models.ProgramMemberStatusActive:    true,
-		models.ProgramMemberStatusDeclined:  true,
-		models.ProgramMemberStatusWithdrawn: true,
+		models.ProgramMemberStatusActive:   true,
+		models.ProgramMemberStatusDeclined: true,
 	},
 	models.ProgramMemberStatusDeclined:  {},
 	models.ProgramMemberStatusWithdrawn: {},

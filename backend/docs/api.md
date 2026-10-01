@@ -1402,18 +1402,21 @@ Update a member's status or email.
 
 When `status = "declined"` is set via this endpoint, `NotifyMentorDeclined` is triggered.
 
-A `requested` or `pending` row may move to `withdrawn`. A `withdrawn` row cannot
-move back to `requested` here; only the mentor can reopen it, through
-`POST /v1/me/program-memberships`.
+A mentor's request belongs to the mentor: only they can create it or withdraw
+it, through the [mentor self-service](#mentor-self-service) routes. A program
+admin approves a request (`active`), declines it (`declined`), or deletes it.
+This endpoint therefore refuses `requested`/`pending` → `withdrawn` and
+`withdrawn` → `requested` with `409`.
 
 **Response** `200` → `<ProgramMember>`  
-**Errors** `400`, `403`, `404`
+**Errors** `400`, `403`, `404`, `409` (transition not allowed)
 
 ---
 
 #### `DELETE /v1/programs/{id}/members/{memberId}` 🔒
 
-> **FR-022**: This endpoint does **not** delete the record. It sets `status = "withdrawn"` and returns `204`.
+Deletes the member row, in any status, and returns `204`. Removing an active
+member also removes their OpenFGA relation.
 
 **Response** `204`  
 **Errors** `403`, `404`

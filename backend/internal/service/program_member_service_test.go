@@ -669,7 +669,8 @@ func TestProgramMemberService_Create_RequestedMentor_SendsNoInvite(t *testing.T)
 	}
 }
 
-func TestProgramMemberService_Update_AdminMayWithdrawRequestedOrPending(t *testing.T) {
+// Withdrawing a request is the mentor's action; an admin declines or deletes.
+func TestProgramMemberService_Update_AdminCannotWithdrawRequestedOrPending(t *testing.T) {
 	for _, status := range []models.ProgramMemberStatus{
 		models.ProgramMemberStatusRequested,
 		models.ProgramMemberStatusPending,
@@ -682,8 +683,8 @@ func TestProgramMemberService_Update_AdminMayWithdrawRequestedOrPending(t *testi
 			}
 			svc := newMemberSvc(memberRepo, &stubProgRepo{}, &stubNotifier{})
 			_, err := svc.Update(context.Background(), "prog-1", "member-1", models.ProgramMemberUpdateInput{Status: memberStatus(models.ProgramMemberStatusWithdrawn)}, "admin-1")
-			if err != nil {
-				t.Errorf("%s→withdrawn should be valid, got %v", status, err)
+			if !errors.Is(err, domain.ErrInvalidStateTransition) {
+				t.Errorf("%s→withdrawn by an admin: expected ErrInvalidStateTransition, got %v", status, err)
 			}
 		})
 	}
