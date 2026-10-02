@@ -94,6 +94,18 @@ Before creating or updating a PR, review the entire diff and verify:
 - **Clear architecture** — interfaces, packages, and responsibilities are well-defined and easy to follow
 - **Terminology** — no banned terms (see **Terminology** above)
 
+## Review lifecycle configuration
+
+Load and follow `/lfx-skills:lfx-local-review` as the sole owner of the review
+lifecycle. The values below configure that skill and do not replace or override
+its instructions.
+
+- repo code reviewer: `/lfx-mentorship-code-review`
+- repo learnings reviewer: `/lfx-mentorship-learnings-review`
+- readiness action: `/lfx-mentorship-pr-readiness origin/main`
+- preflight action: `/lfx-mentorship-preflight origin/main --report-only`
+- post-PR extension: `none`
+
 ## Status
 
 Implementation in progress. The backend (Go + Chi under `backend/`, Postgres schema in `backend/db/migrations/`) and the Nuxt public site under `frontend/` both build, containerize, and have Helm charts. Run `make build`, `make test`, `make lint`, and `make license-check` from `backend/`.
