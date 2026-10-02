@@ -1,6 +1,7 @@
 // Copyright The Linux Foundation and each contributor to LFX.
 // SPDX-License-Identifier: MIT
 
+import type { ProfileProgramStatus } from '~/types/mentee.types';
 import type { Program, ProgramStatus, ProgramTerm } from '../types/program.types';
 
 /** Public-facing term lifecycle shown on the program Terms tab. */
@@ -80,7 +81,7 @@ export function getProgramTermDisplayStatus(
  * Catalog / program-card badge: derived from term application windows
  * the same way `GET /v1/programs/catalog` is mapped for the programs list.
  */
-export function toProgramCardStatus(terms: ProgramTerm[]): ProgramStatus {
+export function toProgramCardStatus(terms: ProgramTerm[]): ProfileProgramStatus {
   const displays = terms.map((term) => getProgramTermDisplayStatus(term));
   if (displays.some((status) => status === 'accepting')) return 'acceptance';
   if (displays.some((status) => status === 'opens-soon')) return 'open-soon';

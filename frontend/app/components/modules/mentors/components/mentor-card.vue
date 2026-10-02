@@ -24,7 +24,7 @@ SPDX-License-Identifier: MIT
       </div>
 
       <p class="text-xs text-neutral-600 leading-4 line-clamp-5">
-        {{ mentor.bio }}
+        {{ plainBio }}
       </p>
 
       <div
@@ -91,8 +91,12 @@ import type { Mentor } from '~/types/mentor.types';
 import ProfileInitialsAvatar from '~/components/shared/directory/profile-initials-avatar.vue';
 import LfxButton from '~/components/uikit/button/button.vue';
 import LfxTooltip from '~/components/uikit/tooltip/tooltip.vue';
+import { useSanitize } from '~/composables/useSanitize';
 
 const props = defineProps<{ mentor: Mentor }>();
+const { stripHtml } = useSanitize();
+
+const plainBio = computed(() => stripHtml(props.mentor.bio ?? ''));
 
 const visibleSkills = computed(() => props.mentor.skills.slice(0, MENTOR_SKILLS_VISIBLE_COUNT));
 const overflowSkills = computed(() => props.mentor.skills.slice(MENTOR_SKILLS_VISIBLE_COUNT));

@@ -41,9 +41,12 @@ SPDX-License-Identifier: MIT
             </div>
           </div>
 
-          <p class="text-sm text-neutral-600 leading-5 max-w-[80%]">
-            {{ mentee.introduction }}
-          </p>
+          <!-- eslint-disable vue/no-v-html -- content is sanitized via useSanitize() -->
+          <div
+            class="lfx-rich-text text-neutral-600 max-w-[80%]"
+            v-html="introductionHtml"
+          />
+          <!-- eslint-enable vue/no-v-html -->
 
           <div class="flex flex-wrap items-center gap-3 pt-1">
             <lfx-button
@@ -104,8 +107,12 @@ import DetailBackLink from '~/components/shared/detail-back-link.vue';
 import type { MenteeDetail } from '~/types/mentee.types';
 import LfxButton from '~/components/uikit/button/button.vue';
 import LfxTag from '~/components/uikit/tag/tag.vue';
+import { useSanitize } from '~/composables/useSanitize';
 
 const props = defineProps<{ mentee: MenteeDetail }>();
+const { renderDescription } = useSanitize();
+
+const introductionHtml = computed(() => renderDescription(props.mentee.introduction ?? ''));
 
 const statusConfig = computed(() => (props.mentee.status ? MENTEE_STATUS_CONFIG[props.mentee.status] : undefined));
 const programLabel = computed(() => {

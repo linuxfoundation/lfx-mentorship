@@ -95,10 +95,10 @@ SPDX-License-Identifier: MIT
           <div class="min-w-0">
             <p class="text-xs font-normal text-neutral-900 truncate">{{ mentor.name }}</p>
             <p
-              v-if="mentor.title"
+              v-if="mentor.introduction"
               class="text-xxs text-neutral-500 truncate"
             >
-              {{ mentor.title }}
+              {{ stripHtml(mentor.introduction) }}
             </p>
           </div>
         </li>
