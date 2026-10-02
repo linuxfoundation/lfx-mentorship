@@ -206,6 +206,9 @@ function onApply(term: ProgramTerm) {
     );
   }
   if (isAuthenticated.value) {
+    if (applyUrl.value && import.meta.client) {
+      window.open(applyUrl.value, '_blank', 'noopener,noreferrer');
+    }
     return;
   }
   isSignInModalOpen.value = true;

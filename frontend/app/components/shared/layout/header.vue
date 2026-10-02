@@ -36,11 +36,11 @@ SPDX-License-Identifier: MIT
       <!-- Right: actions + user -->
       <div class="flex items-center gap-2 md:gap-3">
         <div
-          v-if="lfxHeaderCtas.length"
+          v-if="headerCtas.length"
           class="hidden items-center gap-2 md:flex"
         >
           <NuxtLink
-            v-for="cta in lfxHeaderCtas"
+            v-for="cta in headerCtas"
             :key="cta.label"
             :to="cta.to"
           >
@@ -72,6 +72,11 @@ import LfxMobileMenu from '~/components/shared/layout/components/mobile-menu.vue
 import LfxUserLogin from '~/components/shared/layout/components/user-login.vue';
 import LfxTools from '~/components/shared/layout/tools.vue';
 import LfxMentorshipLogo from '~/components/shared/layout/components/lfx-mentorship-logo.vue';
+
+const {
+  public: { selfServeUrl },
+} = useRuntimeConfig();
+const headerCtas = lfxHeaderCtas(selfServeUrl);
 
 const mobileMenuOpen = ref(false);
 </script>
