@@ -194,9 +194,12 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	var requireGatewayPrincipal func(http.Handler) http.Handler
 	routes := func(r chi.Router) {
 		// ── Public endpoints ─────────────────────────────────────────────────
+		// The fully public lists and aggregates stay service-owned and are
+		// publicly cacheable (docs/rewrite/05-heimdall-gateway.md).
+		public := r.With(handler.PublicCache)
 		r.With(requireGatewayPrincipal).Get("/programs/name-availability", programH.NameAvailable)
-		r.Get("/programs", programH.List)
-		r.Get("/programs/catalog", programH.ListCatalog)
+		public.Get("/programs", programH.List)
+		public.Get("/programs/catalog", programH.ListCatalog)
 		r.Get("/programs/resolve/{id}", programH.ResolveID)
 		r.Get("/programs/{id}", programH.GetByID)
 		r.Get("/programs/{id}/header", programH.GetHeaderProjection)
@@ -204,14 +207,14 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		r.Get("/programs/{id}/mentees", programH.ListCatalogMentees)
 		r.Get("/programs/{id}/skills", programH.ListSkills)
 
-		r.Get("/mentees", menteeH.List)
-		r.Get("/mentees/summary", menteeH.Summary)
+		public.Get("/mentees", menteeH.List)
+		public.Get("/mentees/summary", menteeH.Summary)
 		r.Get("/mentees/{id}", menteeH.GetByID)
-		r.Get("/mentors", mentorH.List)
-		r.Get("/mentors/summary", mentorH.Summary)
+		public.Get("/mentors", mentorH.List)
+		public.Get("/mentors/summary", mentorH.Summary)
 		r.Get("/mentors/{id}", mentorH.GetByID)
-		r.Get("/summary", platformSummaryH.Get)
-		r.Get("/funding-stats/total", fundingStatsH.GetTotal)
+		public.Get("/summary", platformSummaryH.Get)
+		public.Get("/funding-stats/total", fundingStatsH.GetTotal)
 		r.Get("/programs/{id}/funding-stats", programH.GetFundingStats)
 		r.Get("/programs/{id}/transactions", programH.GetCategorizedTransactions)
 		r.Get("/programs/{id}/sponsors", programH.GetProgramSponsors)
