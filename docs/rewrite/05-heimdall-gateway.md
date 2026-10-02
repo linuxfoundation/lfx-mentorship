@@ -15,6 +15,14 @@ Related: [04-authorization-model.md](./04-authorization-model.md) (what FGA hold
 > anonymous `allow_all` rules: `GET /v1/programs`, `/v1/programs/catalog`,
 > `/v1/mentors`, `/v1/mentees`, their summaries, `/v1/summary`, and
 > `/v1/funding-stats/total`. Each service pins what is public (see GW-2).
+> Eric Searcy confirmed this exception on 2026-10-02
+> ([Slack](https://linuxfoundation.slack.com/archives/C04DWU3FVMW/p1790960083154129?thread_ts=1790958240.101819&cid=C04DWU3FVMW)),
+> closing his question on [PR 157](https://github.com/linuxfoundation/lfx-mentorship/pull/157#discussion_r4074898687).
+> The exception is narrow: these lists are fully public and unauthenticated, so
+> FGA has nothing to enforce, and the service sends
+> `Cache-Control: public, max-age=300` on them as Query Service does for public
+> documents. Any collection that is authenticated or filtered by the caller's
+> grants goes through Query Service.
 
 ## Today vs target
 
