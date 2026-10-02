@@ -95,10 +95,10 @@ SPDX-License-Identifier: MIT
           <div class="min-w-0">
             <p class="text-xs font-normal text-neutral-900 truncate">{{ mentor.name }}</p>
             <p
-              v-if="mentor.title"
+              v-if="mentor.introduction"
               class="text-xxs text-neutral-500 truncate"
             >
-              {{ mentor.title }}
+              {{ plainTextFromHtml(mentor.introduction) }}
             </p>
           </div>
         </li>
@@ -114,10 +114,10 @@ import ProfileInitialsAvatar from '~/components/shared/directory/profile-initial
 import type { ProfileProgram } from '~/types/mentee.types';
 import LfxTag from '~/components/uikit/tag/tag.vue';
 import { programPath } from '~/config/routes';
+import { plainTextFromHtml } from '~/utils/html-text';
 
-const { stripHtml } = useSanitize();
 const props = defineProps<{ program: ProfileProgram }>();
-const plainDescription = computed(() => stripHtml(props.program.description ?? ''));
+const plainDescription = computed(() => plainTextFromHtml(props.program.description ?? ''));
 const statusConfig = computed(() => PROFILE_PROGRAM_STATUS_CONFIG[props.program.status]);
 </script>
 
