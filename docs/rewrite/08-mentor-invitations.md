@@ -72,6 +72,39 @@ So parity means: invite by **email**, since the recipient may have no account; l
 
 ## Design
 
+### Flow
+
+```mermaid
+sequenceDiagram
+    actor PA as Program Admin
+    participant SS as Self Serve
+    participant H as Heimdall
+    participant API as Mentorship API
+    participant E as lfx-v2-email-service
+    participant S as fga-sync
+    actor M as Invited mentor
+
+    PA->>SS: Invite mentor (email, name)
+    SS->>H: POST /v1/programs/{uid}/invitations
+    H->>API: forward if writer on mentorship_program:{uid}
+    API->>API: insert a pending row, or refresh the pending one
+    API-)E: invitation email
+    E-)M: Accept, Decline, View the program
+    M->>SS: open /mentorship/mentor/invites?token={id}
+    Note over M,SS: login required, Auth0 offers sign-up
+    M->>SS: Accept
+    SS->>H: POST /v1/mentor-invites/{id}/accept
+    H->>API: forward (allow_all) with the email claim
+    API->>API: caller email = invitation email, else 403
+    API->>API: pending and unexpired, else 409
+    API->>API: status accepted, active mentor row in program_members
+    API-->>SS: 200
+    API-)S: member_put mentor
+    API-)E: admin-mentor-accepted
+```
+
+Decline takes the same path: `status = 'declined'`, no `program_members` row, then `admin-mentor-declined`. lfx-v2-invite-service is not involved.
+
 ### Data
 
 New table `mentor_invitations`:
@@ -87,6 +120,19 @@ New table `mentor_invitations`:
 | `accepted_user_id` | FK `users`, set on accept |
 | `created_on`, `updated_on` | As every table; the shared `set_updated_on` trigger maintains `updated_on`, so it also records re-sends |
 | `responded_at` | Set on accept or decline |
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending: POST
+    pending --> pending: POST again, re-send with a new expiry
+    pending --> accepted: accept
+    pending --> declined: decline
+    pending --> [*]: DELETE, row removed
+    accepted --> [*]
+    declined --> [*]
+```
+
+Expired is not a status: a `pending` row past `expires_at` cannot be accepted or declined (409) until a re-send refreshes it.
 
 A partial unique index on `(program_id, email) WHERE status = 'pending'` allows one open invitation per address per program. It never strands an address: `declined` rows do not count, an `accepted` row blocks only while its user is an active mentor, and the next `POST` refreshes an expired `pending` row in place.
 
@@ -140,7 +186,7 @@ Both sides live in Self Serve: [02](./02-target-architecture.md) gives it the au
 - Accept and decline are `POST`s from the page, so mail-client link prefetchers cannot trigger them.
 - A 403 shows the page's existing "This invitation is for a different account" state, which asks the invitee to sign in with the invited address, plus a new sign-out link. The page never shows the invited address.
 - After accept: the mentor profile setup page when the user has none, otherwise the mentor dashboard. As in legacy, approval does not depend on the profile.
-- **Program Admin side.** The mentors tab of the admin program-detail page replaces its user-picker placeholder (and the mock `invitable-users` BFF route behind it) with an "Invite mentor" form (email, name) and, beside the mentor list it loads from `member-management`, a pending-invitations list with Resend (the same `POST`) and Remove (`DELETE`). No user picker: v2 has no user search, and legacy's was restricted for PII reasons anyway.
+- **Program Admin side.** The mentors tab of the admin program-detail page replaces its user-picker placeholder (and the mock `invitable-users` BFF route behind it) with an "Invite mentor" form (email, name) and, beside the mentor list it loads from `member-management`, a pending-invitations list with Resend (the same `POST`) and Remove (`DELETE`).
 
 ### Email
 
@@ -184,7 +230,7 @@ This invitation expires on {expires_at}.
 ## Deliberate divergences from legacy
 
 - No auto-approval of existing mentors. Everyone accepts.
-- No user search. Email and name only.
+- No user picker. Legacy's mentors tab searched existing users (`GET /users/search`); the Program Admin now types an email and name, which also reaches invitees with no account. v2 has no user directory to search.
 - No signed token. The link carries the invitation id; login plus email match is the guard.
 - 30-day expiry and in-place re-send. Legacy had neither; re-inviting created a second row. Current rewrite code: 7 days.
 - The match is against one address: the Heimdall claim, or the auth-service primary email when the claim is absent. Matching any of an account's addresses is a follow-up; until then the Program Admin re-invites the address the mentor signs in with.
@@ -204,4 +250,4 @@ None. The three raised on 2026-09-24 were resolved on 2026-09-30 and are in the 
 | 2026-09-30 | Reviewed against the platform rules, the legacy code, lfx-v2-invite-service, lfx-v2-committee-service and Self Serve. Changes: no signed token, the link carries the invitation id; caller email from the Heimdall `email` claim with a stored-row fallback, no `email_verified` (none exists downstream); a repeat `POST` is the re-send, `DELETE` is remove, `revoked` dropped; conditional update as the race guard; email normalised at creation; both pages move to Self Serve, one invitee page; the management list stays service-side as a nested edge-authorised list; legacy baseline corrected (`admin-mentor-declined`, profile never gated approval, no expiry or re-send). Open questions resolved. |
 | 2026-10-01 | Review on [linuxfoundation/lfx-mentorship#177](https://github.com/linuxfoundation/lfx-mentorship/pull/177). Changes: the `users.email` fallback is replaced by an lfx-v2-auth-service lookup, because `PUT /v1/me` lets the caller set that field; `GET /v1/mentor-invites/{id}` runs the email check; an `accepted` invitation blocks a new one only while that user is an active mentor; `POST /v1/programs/{uid}/members` accepts only `program_admin`; the existing `NotifyAdminMentorAccepted` and `NotifyAdminMentorDeclined` are reused; Self Serve's existing invite page ([linuxfoundation/lfx-self-serve#3171](https://github.com/linuxfoundation/lfx-self-serve/pull/3171)) is reused with the invitation id in `token`, and the `?action=` preselect is dropped; the `mentor-invites` rule enables the OIDC contextualizer, so a just-registered invitee who is not yet in lfx-v2-auth-service can still accept. |
 | 2026-10-02 | Doc tightened for readability; no design change beyond two review fixes on [linuxfoundation/lfx-mentorship#177](https://github.com/linuxfoundation/lfx-mentorship/pull/177): `DELETE` matches `program_id` as well as `id` (04's parent-child invariant), and Self Serve's `isMentorshipMentorInviteToken` must accept a UUID, since the page's other parts stay. Added why extending lfx-v2-invite-service costs more than the Mentorship-owned design. Resolved open questions folded into the design. |
-| 2026-10-02 | Second review round on [linuxfoundation/lfx-mentorship#177](https://github.com/linuxfoundation/lfx-mentorship/pull/177). `GET /v1/mentor-invites/{id}` dropped: Self Serve's invite page never calls it and already handles every outcome after the click. Accept sets `accepted_user_id` and both responses set `responded_at`; `status` gets a CHECK constraint; create rejects a missing name or invalid email with 400; the self-request path and `member-management` are named alongside the new routes; no HTTPRoute per route (the chart has one prefix route); spec 001 added to the follow-ups; timestamps follow the schema convention (`created_on`, `updated_on` with the shared trigger). |
+| 2026-10-02 | Second review round on [linuxfoundation/lfx-mentorship#177](https://github.com/linuxfoundation/lfx-mentorship/pull/177). `GET /v1/mentor-invites/{id}` dropped: Self Serve's invite page never calls it and already handles every outcome after the click. Accept sets `accepted_user_id` and both responses set `responded_at`; `status` gets a CHECK constraint; create rejects a missing name or invalid email with 400; the self-request path and `member-management` are named alongside the new routes; no HTTPRoute per route (the chart has one prefix route); spec 001 added to the follow-ups; timestamps follow the schema convention (`created_on`, `updated_on` with the shared trigger). Flow and status diagrams added. |
