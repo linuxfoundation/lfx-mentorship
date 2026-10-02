@@ -6,7 +6,6 @@ import type {
   ProgramMember,
   ProgramMentee,
   ProgramSponsor,
-  ProgramStatus,
   ProgramTerm,
   TermStatus,
 } from '../../app/types/program.types';
@@ -159,7 +158,7 @@ export function mapCatalogItemToProgram(item: ProgramCatalogItem): Program {
     description: item.description ?? '',
     logoUrl: item.logo_url,
     skills: item.skills ?? [],
-    status: item.status === 'draft' ? 'pending' : (toProgramCardStatus(terms) as ProgramStatus),
+    status: item.status === 'draft' ? 'pending' : toProgramCardStatus(terms),
     foundation: EMPTY_FOUNDATION,
     terms,
     updatedAt: item.updated_on,

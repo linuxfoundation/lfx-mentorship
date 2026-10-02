@@ -1,8 +1,7 @@
 // Copyright The Linux Foundation and each contributor to LFX.
 // SPDX-License-Identifier: MIT
 
-import type { ProfileProgramStatus } from '~/types/mentee.types';
-import type { Program, ProgramTerm } from '../types/program.types';
+import type { Program, ProgramStatus, ProgramTerm } from '../types/program.types';
 
 /** Public-facing term lifecycle shown on the program Terms tab. */
 export const PROGRAM_TERM_DISPLAY_STATUSES = ['opens-soon', 'accepting', 'completed'] as const;
@@ -80,8 +79,10 @@ export function getProgramTermDisplayStatus(
 /**
  * Catalog / program-card badge: derived from term application windows
  * the same way `GET /v1/programs/catalog` is mapped for the programs list.
+ * Never `pending`, which is a draft-program status set by the caller; the narrower
+ * type keeps the result assignable to both `ProgramStatus` and `ProfileProgramStatus`.
  */
-export function toProgramCardStatus(terms: ProgramTerm[]): ProfileProgramStatus {
+export function toProgramCardStatus(terms: ProgramTerm[]): Exclude<ProgramStatus, 'pending'> {
   const displays = terms.map((term) => getProgramTermDisplayStatus(term));
   if (displays.some((status) => status === 'accepting')) return 'acceptance';
   if (displays.some((status) => status === 'opens-soon')) return 'open-soon';
