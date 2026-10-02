@@ -101,11 +101,11 @@ POST /v1/mentor-invites/{token}/accept   [public]
 ```
 
 - Validates JWT `token` (issued at invite time, 7-day TTL, contains `program_id` + `user_id`)
-- Sets `program_members.status = active` for the matching record
+- Sets `program_members.status = approved` for the matching record
 - Notifies the program program_admin (in-process hook)
 
 **Responses**:
-- `200 OK` — `{ "status": "active", "program_id": "..." }`
+- `200 OK` — `{ "status": "approved", "program_id": "..." }`
 - `410 Gone` — token expired or already redeemed
 - `404 Not Found` — no matching `program_members` record
 
@@ -212,7 +212,7 @@ Content-Type: application/json
 - **Mentee** (caller is the task's `assignee_id`): may transition `incomplete → in_progress`
   and `in_progress → submitted` only.
 - **Program Admin / Mentor** (caller is the program's member with `member_type = program_admin |
-  mentor` and `status = active`): may transition `submitted → complete` or reset any state
+  mentor` and `status = approved`): may transition `submitted → complete` or reset any state
   to `incomplete`.
 
 **Side effect when `submitted` or `complete`**: if all `prerequisite` tasks on the same

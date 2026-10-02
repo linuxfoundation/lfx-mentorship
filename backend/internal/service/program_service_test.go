@@ -783,7 +783,7 @@ func TestProgramService_GetCategorizedTransactions_DefaultCategoryAndArgs(t *tes
 }
 
 func TestProgramService_DeleteSkill_ActiveAdmin_ScopesDeleteByProgramAndSkillID(t *testing.T) {
-	active := models.ProgramMemberStatusActive
+	active := models.ProgramMemberStatusApproved
 	called := false
 	var gotProgramID, gotSkillID string
 
@@ -845,7 +845,7 @@ func TestProgramService_DeleteSkill_NonMemberForbidden(t *testing.T) {
 }
 
 func TestProgramService_DeleteSkill_WrongRoleForbidden(t *testing.T) {
-	active := models.ProgramMemberStatusActive
+	active := models.ProgramMemberStatusApproved
 	svc := newProgramSvcWithMember(&stubProgRepo{}, &stubTermRepo{}, &stubAppRepo{}, &stubMemberRepo{
 		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
 			return &models.ProgramMember{MemberType: models.MemberTypeMentor, Status: &active}, nil

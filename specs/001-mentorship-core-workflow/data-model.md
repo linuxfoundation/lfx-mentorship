@@ -102,15 +102,15 @@ open │ closed ──soft-delete──► deleted
 ### Status Lifecycle
 
 ```
-── invite ──► invited ──accept──► active
+── invite ──► invited ──accept──► approved
              invited ──decline──► declined
-── self-request ──► requested ──approve──► active
+── self-request ──► requested ──approve──► approved
                     requested ──decline──► declined
-active ──remove──► withdrawn
-invited │ requested │ active ──manual-hold──► pending
+approved ──remove──► withdrawn
+invited │ requested │ approved ──manual-hold──► pending
 ```
 
-**Program Admin records (`member_type = program_admin`) carry no status (NULL).**
+**Program Admin records (`member_type = program_admin`) are created `approved`; they skip the invite and request steps.**
 
 ---
 

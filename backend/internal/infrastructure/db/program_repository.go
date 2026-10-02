@@ -73,7 +73,7 @@ func enqueueProgramIndex(ctx context.Context, tx pgx.Tx, program *models.Program
 	document := NewProgramIndexDocument(program)
 	if err := tx.QueryRow(ctx, `
 		SELECT
-			COUNT(*) FILTER (WHERE member_type = 'mentor' AND status = 'active'),
+			COUNT(*) FILTER (WHERE member_type = 'mentor' AND status = 'approved'),
 			(SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE pt.program_id = $1 AND a.role = 'mentee' AND a.status = 'accepted'),
 			(SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE pt.program_id = $1 AND a.role = 'mentee' AND a.status = 'graduated')
 		FROM program_members
@@ -180,7 +180,7 @@ func (r *ProgramRepository) GetHeaderProjection(ctx context.Context, programID s
 		return nil, err
 	}
 	projection := &models.ProgramHeaderProjection{Program: program}
-	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FILTER (WHERE member_type = 'mentor' AND status = 'active'), (SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE pt.program_id = $1 AND a.role = 'mentee' AND a.status = 'accepted'), (SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE pt.program_id = $1 AND a.role = 'mentee' AND a.status = 'graduated') FROM program_members WHERE program_id = $1`, programID).Scan(&projection.Stats.Mentors, &projection.Stats.Mentees, &projection.Stats.Graduated); err != nil {
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FILTER (WHERE member_type = 'mentor' AND status = 'approved'), (SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE pt.program_id = $1 AND a.role = 'mentee' AND a.status = 'accepted'), (SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE pt.program_id = $1 AND a.role = 'mentee' AND a.status = 'graduated') FROM program_members WHERE program_id = $1`, programID).Scan(&projection.Stats.Mentors, &projection.Stats.Mentees, &projection.Stats.Graduated); err != nil {
 		return nil, fmt.Errorf("get program header stats: %w", err)
 	}
 	term, err := scanProgramTerm(r.pool.QueryRow(ctx, `SELECT`+programTermCols+` FROM program_terms WHERE program_id = $1 AND status = 'open' ORDER BY start_date_time DESC NULLS LAST LIMIT 1`, programID))
@@ -289,7 +289,7 @@ func (r *ProgramRepository) GetManagementSummary(ctx context.Context, programID 
 			COUNT(a.id) FILTER (WHERE pt.status = 'open' AND p.status NOT IN ('draft', 'submitted') AND a.role = 'mentee' AND a.status IN ('accepted', 'graduated')),
 			COUNT(a.id) FILTER (WHERE pt.status = 'closed' AND p.status NOT IN ('draft', 'submitted') AND a.role = 'mentee'),
 			COUNT(a.id) FILTER (WHERE p.status NOT IN ('draft', 'submitted') AND a.role = 'mentee'),
-			(SELECT COUNT(*) FROM program_members pm WHERE pm.program_id = $1 AND pm.member_type = 'mentor' AND pm.status = 'active'),
+			(SELECT COUNT(*) FROM program_members pm WHERE pm.program_id = $1 AND pm.member_type = 'mentor' AND pm.status = 'approved'),
 			(SELECT COUNT(*) FROM program_terms WHERE program_id = $1 AND status <> 'deleted')
 		FROM program_terms pt
 		JOIN programs p ON p.id = pt.program_id
@@ -633,7 +633,7 @@ func (r *ProgramRepository) loadCatalogMentors(ctx context.Context, ids []string
 		) up ON true
 		WHERE pm.program_id = ANY($1::uuid[])
 		  AND pm.member_type = 'mentor'
-		  AND pm.status = 'active'
+		  AND pm.status = 'approved'
 		ORDER BY u.name NULLS LAST, pm.created_on`, ids)
 	if err != nil {
 		return nil, fmt.Errorf("list catalog mentors: %w", err)
@@ -698,7 +698,7 @@ func (r *ProgramRepository) createInTx(ctx context.Context, tx pgx.Tx, input mod
 	creatorMemberID := uuid.NewString()
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO program_members (id, program_id, user_id, member_type, status)
-		VALUES ($1, $2, $3, 'program_admin', 'active')`, creatorMemberID, p.ID, input.CreatorUserID); err != nil {
+		VALUES ($1, $2, $3, 'program_admin', 'approved')`, creatorMemberID, p.ID, input.CreatorUserID); err != nil {
 		return nil, fmt.Errorf("create program creator membership: %w", err)
 	}
 	var creatorLFID string

@@ -298,7 +298,7 @@ func TestNotifyAdminTasksSubmitted(t *testing.T) {
 	if !strings.Contains(sent[0].Text, "Hi there!") || !strings.Contains(sent[0].Text, "application from Mia Mentee to become a mentee for the Kernel <Dev> program (Fall 2026 term).") {
 		t.Fatalf("text = %s", sent[0].Text)
 	}
-	want := []models.ProgramMemberFilter{{Limit: adminPageSize, MemberType: "program_admin", Status: "active"}}
+	want := []models.ProgramMemberFilter{{Limit: adminPageSize, MemberType: "program_admin", Status: "approved"}}
 	if !slices.Equal(f.members.filters, want) {
 		t.Fatalf("filters = %+v, want %+v", f.members.filters, want)
 	}

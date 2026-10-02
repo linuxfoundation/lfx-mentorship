@@ -80,7 +80,7 @@ func (b *DatabaseBuilder) buildProgram(ctx context.Context, id string) (Message,
 	}
 	writers, mentors := []string{}, []string{}
 	for _, member := range members {
-		if member.Status == nil || *member.Status != models.ProgramMemberStatusActive {
+		if member.Status == nil || *member.Status != models.ProgramMemberStatusApproved {
 			continue
 		}
 		user, err := b.users.GetByID(ctx, member.UserID)
@@ -134,7 +134,7 @@ func (b *DatabaseBuilder) buildMembership(ctx context.Context, marker domain.FGA
 		return Message{}, err
 	}
 	for _, member := range members {
-		if !isActiveMembership(member, *marker.Relation) {
+		if !isApprovedMembership(member, *marker.Relation) {
 			continue
 		}
 		user, err := b.users.GetByID(ctx, member.UserID)
@@ -163,8 +163,8 @@ func (b *DatabaseBuilder) listAllMembers(ctx context.Context, programID string) 
 	}
 }
 
-func isActiveMembership(member *models.ProgramMember, relation string) bool {
-	if member.Status == nil || *member.Status != models.ProgramMemberStatusActive {
+func isApprovedMembership(member *models.ProgramMember, relation string) bool {
+	if member.Status == nil || *member.Status != models.ProgramMemberStatusApproved {
 		return false
 	}
 	return (relation == "writer" && member.MemberType == models.MemberTypeProgramAdmin) || (relation == "mentor" && member.MemberType == models.MemberTypeMentor)

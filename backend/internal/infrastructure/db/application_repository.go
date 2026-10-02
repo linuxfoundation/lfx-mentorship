@@ -665,9 +665,9 @@ func ensureAcceptedMentorMembership(ctx context.Context, tx pgx.Tx, application 
 
 	const q = `
 		INSERT INTO program_members (id, program_id, user_id, member_type, status)
-		VALUES (gen_random_uuid(), $1, $2, 'mentor', 'active')
+		VALUES (gen_random_uuid(), $1, $2, 'mentor', 'approved')
 		ON CONFLICT (program_id, user_id, member_type)
-		DO UPDATE SET status = 'active', updated_on = NOW()
+		DO UPDATE SET status = 'approved', updated_on = NOW()
 		RETURNING ` + programMemberCols
 	member, err := scanProgramMember(tx.QueryRow(ctx, q, programID, application.UserID))
 	if err != nil {

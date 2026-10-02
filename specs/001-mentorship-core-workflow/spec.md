@@ -75,16 +75,16 @@ the program_admin can manage the program's visibility and terms throughout its l
     tokenised accept/decline link is sent.
 
 11. **Given** an invited mentor, **When** they accept, **Then** `status` transitions
-    to `active`. **When** they decline, **Then** `status` transitions to `declined`
+    to `approved`. **When** they decline, **Then** `status` transitions to `declined`
     and the program admin is notified.
 
 12. **Given** a `published` program, **When** a mentor self-requests participation
     without an invitation, **Then** a `program_members` record is created with
     `member_type = mentor`, `status = requested`. **When** the program_admin approves,
-    **Then** `status` transitions to `active`. **When** the program_admin declines,
+    **Then** `status` transitions to `approved`. **When** the program_admin declines,
     **Then** `status` transitions to `declined`.
 
-13. **Given** an `active` mentor, **When** the program_admin removes them, **Then**
+13. **Given** an `approved` mentor, **When** the program_admin removes them, **Then**
     `status` transitions to `withdrawn`.
 
 14. **Given** a prospective mentee who confirms all three eligibility criteria
@@ -228,7 +228,7 @@ the program_admin can manage the program's visibility and terms throughout its l
   and `status = invited`.
 - **FR-019**: System MUST dispatch an invitation email containing a tokenised
   accept/decline link when a mentor is invited.
-- **FR-020**: System MUST transition an invited mentor's `status` to `active` on
+- **FR-020**: System MUST transition an invited mentor's `status` to `approved` on
   acceptance, or to `declined` on decline, and MUST notify the program admin on
   decline.
 - **FR-021**: System MUST allow a program_admin to manually set a mentor's `status` to
@@ -239,7 +239,7 @@ the program_admin can manage the program's visibility and terms throughout its l
   `published` program, creating a `program_members` record with `member_type =
   mentor` and `status = requested`.
 - **FR-024**: System MUST allow a program_admin to approve a self-requested mentor
-  (`status = active`), decline them (`status = declined`), or remove them (`status =
+  (`status = approved`), decline them (`status = declined`), or remove them (`status =
   withdrawn`).
 
 ### Functional Requirements — Mentee Eligibility, Profile & Application
@@ -321,7 +321,7 @@ the program_admin can manage the program's visibility and terms throughout its l
   lifecycle: `open` ↔ `closed` | `deleted`. Belongs to one Program.
 - **ProgramMember**: Represents a mentor's (or program_admin's) relationship to a
   program. Key attributes: `member_type` (`mentor`, etc.), `status` (`invited` |
-  `requested` → `active` | `declined` | `withdrawn`; `pending` as a manual hold).
+  `requested` → `approved` | `declined` | `withdrawn`; `pending` as a manual hold).
   Belongs to one Program.
 - **UserProfile**: A mentee's (`profile_type = mentee`) or other user's profile.
   Key attributes: identity, phone, address, GitHub URL (validated), LinkedIn, resume,

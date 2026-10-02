@@ -396,7 +396,7 @@ func (n *Notifier) activeAdmins(ctx context.Context, programID, notification str
 			Limit:      adminPageSize,
 			Offset:     len(members),
 			MemberType: string(models.MemberTypeProgramAdmin),
-			Status:     string(models.ProgramMemberStatusActive),
+			Status:     string(models.ProgramMemberStatusApproved),
 		})
 		if err != nil {
 			return nil, fmt.Errorf("list program admins: %w", err)
