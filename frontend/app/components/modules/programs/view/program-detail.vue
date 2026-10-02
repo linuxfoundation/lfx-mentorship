@@ -104,7 +104,6 @@ import ProgramDetailTerms from '../components/program-detail-terms.vue';
 import SignInToApplyModal from '../components/sign-in-to-apply-modal.vue';
 import { DEFAULT_PROGRAM_DETAIL_TAB, PROGRAM_DETAIL_TABS } from '../config/program-detail.config';
 import { FunnelEvent, trackFunnelEvent } from '~/composables/useFunnelAnalytics';
-import { useAuth } from '~/composables/useAuth';
 import { useProgram } from '~/composables/programs/useProgram';
 import { useProgramMentees } from '~/composables/programs/useProgramMentees';
 import { useProgramSponsors } from '~/composables/programs/useProgramSponsors';
@@ -185,7 +184,6 @@ function openDonate() {
 
 const isSignInModalOpen = ref(false);
 const applyTerm = ref<ProgramTerm | null>(null);
-const { isAuthenticated } = useAuth();
 
 const applyUrl = computed(() => {
   if (!program.value || !applyTerm.value) return '';
@@ -204,9 +202,6 @@ function onApply(term: ProgramTerm) {
       },
       `apply_started:${program.value.id}:${term.id}`,
     );
-  }
-  if (isAuthenticated.value) {
-    return;
   }
   isSignInModalOpen.value = true;
 }

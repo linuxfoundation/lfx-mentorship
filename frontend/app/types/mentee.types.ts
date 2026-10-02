@@ -23,7 +23,7 @@ export type ProfileProgramStatus = (typeof PROFILE_PROGRAM_STATUSES)[number];
 export interface DirectoryMentorRef {
   id: string;
   name: string;
-  title?: string;
+  introduction?: string;
   avatarUrl?: string;
 }
 
