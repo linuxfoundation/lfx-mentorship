@@ -31,3 +31,18 @@ export function selfServeMenteeApplyUrl(
   const query = new URLSearchParams({ programId, programTermId });
   return `${base}/mentorship/mentee/apply?${query.toString()}`;
 }
+
+export function selfServeMentorUrl(selfServeUrl: string): string {
+  const base = selfServeUrl.replace(/\/$/, '');
+  return `${base}/mentorship/mentor`;
+}
+
+export function selfServeMenteeUrl(selfServeUrl: string): string {
+  const base = selfServeUrl.replace(/\/$/, '');
+  return `${base}/mentorship/mentee`;
+}
+
+export function selfServeEnrollProgramUrl(selfServeUrl: string): string {
+  const base = selfServeUrl.replace(/\/$/, '');
+  return `${base}/mentorship/admin/enroll`;
+}

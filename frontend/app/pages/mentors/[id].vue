@@ -24,9 +24,11 @@ if (error.value) {
   throw createError(error.value);
 }
 
+const { stripHtml } = useSanitize();
+
 usePublicSeo({
   title: computed(() => mentor.value?.name ?? 'Mentor'),
-  description: computed(() => mentor.value?.bio ?? 'Explore this mentor profile on LFX Mentorship.'),
+  description: computed(() => stripHtml(mentor.value?.bio ?? '') || 'Explore this mentor profile on LFX Mentorship.'),
   type: 'profile',
 });
 </script>
