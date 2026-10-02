@@ -33,7 +33,7 @@ SPDX-License-Identifier: MIT
         <lfx-desktop-nav />
       </div>
 
-      <!-- Right: actions + user -->
+      <!-- Right: actions -->
       <div class="flex items-center gap-2 md:gap-3">
         <div
           v-if="headerCtas.length"
@@ -52,7 +52,6 @@ SPDX-License-Identifier: MIT
             />
           </NuxtLink>
         </div>
-        <lfx-user-login />
       </div>
     </div>
 
@@ -69,7 +68,6 @@ import LfxButton from '~/components/uikit/button/button.vue';
 import LfxIconButton from '~/components/uikit/icon-button/icon-button.vue';
 import LfxDesktopNav from '~/components/shared/layout/components/desktop-nav.vue';
 import LfxMobileMenu from '~/components/shared/layout/components/mobile-menu.vue';
-import LfxUserLogin from '~/components/shared/layout/components/user-login.vue';
 import LfxTools from '~/components/shared/layout/tools.vue';
 import LfxMentorshipLogo from '~/components/shared/layout/components/lfx-mentorship-logo.vue';
 
