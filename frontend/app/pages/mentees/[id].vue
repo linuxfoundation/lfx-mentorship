@@ -26,7 +26,8 @@ if (error.value) {
 
 usePublicSeo({
   title: computed(() => mentee.value?.name ?? 'Mentee'),
-  description: computed(() => mentee.value?.introduction ?? 'Explore this mentee profile on LFX Mentorship.'),
+  description: computed(() => mentee.value?.introduction ?? ''),
+  descriptionFallback: 'Explore this mentee profile on LFX Mentorship.',
   type: 'profile',
 });
 </script>
