@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import type { ProfileProgramStatus } from '~/types/mentee.types';
-import type { Program, ProgramStatus, ProgramTerm } from '../types/program.types';
+import type { Program, ProgramTerm } from '../types/program.types';
 
 /** Public-facing term lifecycle shown on the program Terms tab. */
 export const PROGRAM_TERM_DISPLAY_STATUSES = ['opens-soon', 'accepting', 'completed'] as const;
