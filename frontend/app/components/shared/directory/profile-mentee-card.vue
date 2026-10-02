@@ -35,12 +35,11 @@ import { computed } from 'vue';
 import ProfileInitialsAvatar from '~/components/shared/directory/profile-initials-avatar.vue';
 import { menteePath } from '~/config/routes';
 import type { MentorMenteeSummary } from '~/types/mentor.types';
-import { useSanitize } from '~/composables/useSanitize';
+import { plainTextFromHtml } from '~/utils/html-text';
 
 const props = defineProps<{ mentee: MentorMenteeSummary }>();
-const { stripHtml } = useSanitize();
 
-const plainBio = computed(() => stripHtml(props.mentee.bio ?? ''));
+const plainBio = computed(() => plainTextFromHtml(props.mentee.bio ?? ''));
 </script>
 
 <script lang="ts">

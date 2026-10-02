@@ -10,6 +10,7 @@ SPDX-License-Identifier: MIT
 import { computed } from 'vue';
 import MentorDetailView from '~/components/modules/mentors/view/mentor-detail.vue';
 import type { MentorDetail } from '~/types/mentor.types';
+import { plainTextFromHtml } from '~/utils/html-text';
 
 const route = useRoute();
 const mentorId = computed(() => String(route.params.id ?? ''));
@@ -24,11 +25,11 @@ if (error.value) {
   throw createError(error.value);
 }
 
-const { stripHtml } = useSanitize();
-
 usePublicSeo({
   title: computed(() => mentor.value?.name ?? 'Mentor'),
-  description: computed(() => stripHtml(mentor.value?.bio ?? '') || 'Explore this mentor profile on LFX Mentorship.'),
+  description: computed(
+    () => plainTextFromHtml(mentor.value?.bio ?? '') || 'Explore this mentor profile on LFX Mentorship.',
+  ),
   type: 'profile',
 });
 </script>
