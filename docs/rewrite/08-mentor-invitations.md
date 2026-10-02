@@ -66,7 +66,7 @@ So parity means: invite by **email**, since the recipient may have no account; l
 - **B — use it only to mint the link.** Needs an invite-service change (return the link, suppress its email) and leaves two token formats and an `lfx.invite.accepted` subscription, all for one link.
 - **C — Mentorship-owned.** One invitation row, one email via lfx-v2-email-service, one page in Self Serve.
 
-**Extending it costs more than building here.** It would need decline, revoke, re-send, list-by-resource and a returned link or caller-owned email, built as generic platform features in a service another team owns, with cross-team review and two deploys per change. Its main consumer does not lean on it for this either: lfx-v2-committee-service keeps invite state, accept, decline, revoke and expiry itself, and uses the invite service only for the email and the `lfx.invite-service.invite_accepted` event that reports a new LFID ([invite-application-invariants.md](https://github.com/linuxfoundation/lfx-v2-committee-service/blob/main/.claude/skills/committee-service-dev/references/invite-application-invariants.md)). C is one table, six routes and one template in this repo, changed and deployed together. Revisit if the platform adds decline and custom templates, or a second product needs the same flow.
+**Extending it costs more than building here.** It would need decline, revoke, re-send, list-by-resource and a returned link or caller-owned email, built as generic platform features in a service another team owns, with cross-team review and two deploys per change. Its main consumer does not lean on it for this either: lfx-v2-committee-service keeps invite state, accept, decline, revoke and expiry itself, and uses the invite service only for the email and the `lfx.invite-service.invite_accepted` event that reports a new LFID ([invite-application-invariants.md](https://github.com/linuxfoundation/lfx-v2-committee-service/blob/main/.claude/skills/committee-service-dev/references/invite-application-invariants.md)). C is one table, five routes and one template in this repo, changed and deployed together. Revisit if the platform adds decline and custom templates, or a second product needs the same flow.
 
 **Decision: C.** The account-less leg needs nothing from the invite service: our page requires login and Auth0 universal login handles sign-up, as Self Serve's committee invite page does. The costs: Mentorship keeps its own invitation table, and mentorship invitations do not appear in Self Serve's Pending Actions widget (today only committee invitations do).
 
@@ -82,7 +82,7 @@ New table `mentor_invitations`:
 | `program_id` | FK `programs` `ON DELETE CASCADE`, as `program_members` |
 | `email`, `name` | `email` trimmed and lower-cased; `name` as entered by the Program Admin |
 | `invited_by` | FK `users` (the Program Admin) |
-| `status` | `pending` \| `accepted` \| `declined`; a named string type with `IsValid()`, per Code Style |
+| `status` | `pending` \| `accepted` \| `declined`, with a matching CHECK constraint; a named string type with `IsValid()`, per Code Style |
 | `expires_at` | 30 days from creation; a repeat invite refreshes it |
 | `accepted_user_id` | FK `users`, set on accept |
 | `created_at`, `responded_at` | |
@@ -97,31 +97,30 @@ The link carries the invitation `id`, not a signed token. Accept and decline alr
 
 ### API
 
-All routes require login. The three program routes check `writer` on `mentorship_program:{uid}` at Heimdall. The three invitee routes are `allow_all` at the edge and run the email check in the service.
+All routes require login. The three program routes check `writer` on `mentorship_program:{uid}` at Heimdall. The two invitee routes are `allow_all` at the edge and run the email check in the service.
 
 | Route | Edge | Does |
 | --- | --- | --- |
 | `POST /v1/programs/{uid}/invitations` `{email, name}` | `writer` | Create or re-send |
 | `GET /v1/programs/{uid}/invitations` | `writer` | Management list |
 | `DELETE /v1/programs/{uid}/invitations/{id}` | `writer` | Remove a `pending` invitation (legacy `remove-mentor`) |
-| `GET /v1/mentor-invites/{id}` | `allow_all` | Program name, inviter, status and expiry |
 | `POST /v1/mentor-invites/{id}/accept` | `allow_all` | Accept |
 | `POST /v1/mentor-invites/{id}/decline` | `allow_all` | Decline |
 
-- **Create or re-send**, by the trimmed, lower-cased email:
+- **Create or re-send**, by the trimmed, lower-cased email. A missing `name` or an invalid address is 400 (`ErrInvalidInput`), since the send is fire-and-forget and such a row could never be delivered or accepted. Then:
   - no row, or only `declined` rows: insert and send;
   - a `pending` row: refresh `expires_at`, re-send and return it. This also revives an expired invitation, and is needed from day one because 07's send is fire-and-forget;
   - an `accepted` row: 409 while `accepted_user_id` is an active mentor of the program, otherwise insert a new invitation.
 
   Inviting before the program is `published` is allowed, as in legacy; the email then omits the View link.
-- **Single entry point.** `POST /v1/programs/{uid}/members` accepts only `member_type=program_admin` and returns 400 for `mentor`, so nobody becomes a mentor except through an accepted invitation or an accepted application.
-- **List.** A nested, edge-authorised list stays service-side, like `GET /v1/programs/{uid}/members`; the Query Service rule in [06](./06-route-matrix.md) covers caller-owned collections. This closes the "invitation management has no read path" gap noted in [05 GW-9](./05-heimdall-gateway.md).
+- **Mentor entry points.** `POST /v1/programs/{uid}/members` accepts only `member_type=program_admin` and returns 400 for `mentor`. A mentor joins only with their consent: an accepted invitation, an accepted mentor application, or a self-request (`POST /v1/me/program-memberships`) that a Program Admin approves, which is unchanged.
+- **List.** A nested, edge-authorised list stays service-side, like `GET /v1/programs/{uid}/members`; the Query Service rule in [06](./06-route-matrix.md) covers caller-owned collections. It returns invitations only. `GET /v1/programs/{uid}/member-management` keeps listing the program's mentor rows (requested, active and so on); `invited` rows drop out of it because none are written any more.
 - **Remove.** `DELETE … WHERE id = $id AND program_id = $uid AND status = 'pending'`. Matching on `program_id` is 04's parent-child invariant: the edge checked `writer` on the program in the path, so a `writer` on one program must not reach another program's invitation. Zero rows: 404 when the program has no invitation with that id, 409 when it is no longer `pending`.
-- **Email check** (all three invitee routes). The caller's email (see Caller identity) must equal `row.email`, case-insensitively, or the route returns 403 with no invitation details.
-- **Accept.** In one transaction: `UPDATE … SET status = 'accepted' WHERE id = $1 AND status = 'pending' AND expires_at > now()`, where zero rows is 409 (the race guard); upsert the `program_members` mentor row as `active` (same path as `ensureAcceptedMentorMembership`, `application_repository.go:458`); emit `member_put` for `mentor`. Then `NotifyAdminMentorAccepted`.
-- **Decline.** The same conditional update to `declined`, then `NotifyAdminMentorDeclined`.
+- **Email check** (accept and decline). The caller's email (see Caller identity) must equal `row.email`, case-insensitively, or the route returns 403.
+- **Accept.** In one transaction: `UPDATE … SET status = 'accepted', accepted_user_id = $caller, responded_at = now() WHERE id = $1 AND status = 'pending' AND expires_at > now()`, where zero rows is 409 (the race guard); upsert the `program_members` mentor row as `active` (same path as `ensureAcceptedMentorMembership`, `application_repository.go:458`); emit `member_put` for `mentor`. Then `NotifyAdminMentorAccepted`.
+- **Decline.** The same conditional update with `status = 'declined', responded_at = now()`, then `NotifyAdminMentorDeclined`.
 
-Each new route ships with its HTTPRoute and RuleSet rule in the same PR.
+Each new route ships with its RuleSet rule in the same PR. The chart's single `/mentorship/` HTTPRoute already covers the paths.
 
 ### Caller identity
 
@@ -136,11 +135,11 @@ Never `users.email`, which the caller can set through `PUT /v1/me`. lfx-v2-commi
 
 Both sides live in Self Serve: [02](./02-target-architecture.md) gives it the authenticated Program Admin and mentor experiences, and it already hosts mentor profile registration ([linuxfoundation/lfx-self-serve#3148](https://github.com/linuxfoundation/lfx-self-serve/pull/3148)) and the committee invite page. The Nuxt site only serves the public program page behind the View link.
 
-- **Invitee page.** It already exists: `/mentorship/mentor/invites?token=` ([linuxfoundation/lfx-self-serve#3171](https://github.com/linuxfoundation/lfx-self-serve/pull/3171)), with Accept and Decline on one page; both email links open it. The `token` parameter now carries the invitation id. The page, its BFF routes and the telemetry redaction of `token=` stay; [`isMentorshipMentorInviteToken`](https://github.com/linuxfoundation/lfx-self-serve/blob/main/packages/shared/src/utils/mentorship.utils.ts), which only accepts a two-part `header.signature` token, and its tests change to accept a UUID. Login required; Auth0 universal login offers sign-up.
+- **Invitee page.** It already exists: `/mentorship/mentor/invites?token=` ([linuxfoundation/lfx-self-serve#3171](https://github.com/linuxfoundation/lfx-self-serve/pull/3171)), with Accept and Decline on one page; both email links open it. The `token` parameter now carries the invitation id. The page, its BFF routes and the telemetry redaction of `token=` stay; [`isMentorshipMentorInviteToken`](https://github.com/linuxfoundation/lfx-self-serve/blob/main/packages/shared/src/utils/mentorship.utils.ts), which only accepts a two-part `header.signature` token, and its tests change to accept a UUID. Login required; Auth0 universal login offers sign-up. The page reads nothing before the click: the email names the program, and it already maps a 403 and a 400 or 409 to its "different account" and "expired or already answered" states, so there is no `GET` for the invitation.
 - Accept and decline are `POST`s from the page, so mail-client link prefetchers cannot trigger them.
 - A 403 shows the page's existing "This invitation is for a different account" state, which asks the invitee to sign in with the invited address, plus a new sign-out link. The page never shows the invited address.
 - After accept: the mentor profile setup page when the user has none, otherwise the mentor dashboard. As in legacy, approval does not depend on the profile.
-- **Program Admin side.** The mentors tab of the admin program-detail page replaces its user-picker placeholder (and the mock `invitable-users` BFF route behind it) with an "Invite mentor" form (email, name) and a pending-invitations list with Resend (the same `POST`) and Remove (`DELETE`). No user picker: v2 has no user search, and legacy's was restricted for PII reasons anyway.
+- **Program Admin side.** The mentors tab of the admin program-detail page replaces its user-picker placeholder (and the mock `invitable-users` BFF route behind it) with an "Invite mentor" form (email, name) and, beside the mentor list it loads from `member-management`, a pending-invitations list with Resend (the same `POST`) and Remove (`DELETE`). No user picker: v2 has no user search, and legacy's was restricted for PII reasons anyway.
 
 ### Email
 
@@ -175,8 +174,9 @@ This invitation expires on {expires_at}.
 ## Follow-up changes once approved
 
 - **04**: decision 4 and AQ-7 wording, "user named in the signed invitation token" → "email recorded on the invitation", "signed token" → "invitation id". Lifecycle table unchanged (`member_put` on accept).
-- **06**: invite routes section: the two `{token}` routes become the three `{id}` routes above; add the three `programs/{uid}/invitations` routes; `POST /v1/programs/{uid}/members` accepts only `member_type=program_admin` (400 for `mentor`).
+- **06**: invite routes section: the two `{token}` routes become the two `{id}` routes above; add the three `programs/{uid}/invitations` routes; `POST /v1/programs/{uid}/members` accepts only `member_type=program_admin` (400 for `mentor`).
 - **07**: `Notifier` mapping — `NotifyMentorInvited(invitation)` → this email, its link now `/mentorship/mentor/invites?token={id}`; `NotifyAdminMentorAccepted` and `NotifyAdminMentorDeclined` move to the `{id}` routes unchanged.
+- **Spec 001** ([`specs/001-mentorship-core-workflow/spec.md`](../../specs/001-mentorship-core-workflow/spec.md)): rewrite scenarios 10 and 11 to this flow (invite by email and name in any program status, a `mentor_invitations` row, accept or decline through the invitation). Scenario 12, the self-request, is unchanged.
 - **Backend chart**: drop `MENTOR_INVITE_SECRET` from `values.yaml` and `validate.yaml`; RuleSet paths `mentor-invites/:token/*` → `:id`; the `mentor-invites` rule gains `oidc_contextualizer` behind a chart value.
 - **Self Serve**: `isMentorshipMentorInviteToken` and its tests accept a UUID; the invite page's forbidden state gains a sign-out link; the mentor programs list stops marking invited programs from `invited` membership rows (`invitedProgramIds`), since those rows are no longer written.
 
@@ -196,8 +196,6 @@ None. The three raised on 2026-09-24 were resolved on 2026-09-30 and are in the 
 
 | Date | Event |
 | --- | --- |
-| Date | Event |
-| --- | --- |
 | 2026-09-04 | [#2187](https://github.com/linuxfoundation/lfx-self-serve/issues/2187) opened. Recommended direction at the time: own the invite resource, reuse the rails (`mentorship_invite` FGA type mirroring `committee_invite`, LFID invite JWT for the account leg). |
 | 2026-09-14 | AQ-7 resolved in [04](./04-authorization-model.md) ([ca701d0](https://github.com/linuxfoundation/lfx-mentorship/commit/ca701d0)): `allow_all` plus signed token; `mentorship_invite` FGA type rejected. Contradicts the ticket's recommended direction; the ticket was not updated. |
 | 2026-09-22 | [07](./07-email-delivery.md) approved ([#2188](https://github.com/linuxfoundation/lfx-self-serve/issues/2188)): email via lfx-v2-email-service, templates owned here. |
@@ -205,3 +203,4 @@ None. The three raised on 2026-09-24 were resolved on 2026-09-30 and are in the 
 | 2026-09-30 | Reviewed against the platform rules, the legacy code, lfx-v2-invite-service, lfx-v2-committee-service and Self Serve. Changes: no signed token, the link carries the invitation id; caller email from the Heimdall `email` claim with a stored-row fallback, no `email_verified` (none exists downstream); a repeat `POST` is the re-send, `DELETE` is remove, `revoked` dropped; conditional update as the race guard; email normalised at creation; both pages move to Self Serve, one invitee page; the management list stays service-side as a nested edge-authorised list; legacy baseline corrected (`admin-mentor-declined`, profile never gated approval, no expiry or re-send). Open questions resolved. |
 | 2026-10-01 | Review on [linuxfoundation/lfx-mentorship#177](https://github.com/linuxfoundation/lfx-mentorship/pull/177). Changes: the `users.email` fallback is replaced by an lfx-v2-auth-service lookup, because `PUT /v1/me` lets the caller set that field; `GET /v1/mentor-invites/{id}` runs the email check; an `accepted` invitation blocks a new one only while that user is an active mentor; `POST /v1/programs/{uid}/members` accepts only `program_admin`; the existing `NotifyAdminMentorAccepted` and `NotifyAdminMentorDeclined` are reused; Self Serve's existing invite page ([linuxfoundation/lfx-self-serve#3171](https://github.com/linuxfoundation/lfx-self-serve/pull/3171)) is reused with the invitation id in `token`, and the `?action=` preselect is dropped; the `mentor-invites` rule enables the OIDC contextualizer, so a just-registered invitee who is not yet in lfx-v2-auth-service can still accept. |
 | 2026-10-02 | Doc tightened for readability; no design change beyond two review fixes on [linuxfoundation/lfx-mentorship#177](https://github.com/linuxfoundation/lfx-mentorship/pull/177): `DELETE` matches `program_id` as well as `id` (04's parent-child invariant), and Self Serve's `isMentorshipMentorInviteToken` must accept a UUID, since the page's other parts stay. Added why extending lfx-v2-invite-service costs more than the Mentorship-owned design. Resolved open questions folded into the design. |
+| 2026-10-02 | Second review round on [linuxfoundation/lfx-mentorship#177](https://github.com/linuxfoundation/lfx-mentorship/pull/177). `GET /v1/mentor-invites/{id}` dropped: Self Serve's invite page never calls it and already handles every outcome after the click. Accept sets `accepted_user_id` and both responses set `responded_at`; `status` gets a CHECK constraint; create rejects a missing name or invalid email with 400; the self-request path and `member-management` are named alongside the new routes; no HTTPRoute per route (the chart has one prefix route); spec 001 added to the follow-ups. |
