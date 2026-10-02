@@ -38,6 +38,9 @@ Key notes
 - DynamoDB mentee status "approved" (and "active") maps to applications.status
   "accepted" — applications.status has no "active" value.
 - DynamoDB user-profile type for mentees maps to Postgres profile_type "mentee".
+- applications.program_term_status and tasks.program_term_status are taken from
+  the migrated term status (open|closed), not the stale legacy copy. Rows on
+  deleted terms keep the legacy value.
 - tasks.application_id is resolved post-scan by matching (program_term_id, assignee_id)
   against inserted applications. Tasks with no match are written to
   quarantined_tasks for repair; tasks.application_id is NOT NULL. A task that was
@@ -278,6 +281,18 @@ def _map_profile_type(dynamo_type: str | None) -> str:
     if (dynamo_type or "").strip().lower() == "mentor":
         return "mentor"
     return "mentee"
+
+
+def _map_program_term_status(term_status: str | None, dynamo_value: str | None) -> str | None:
+    """Derive the denormalised program_term_status from the migrated term status.
+
+    The legacy copy on mentees and tasks is stale on many closed terms because
+    the legacy cron's status push often did not finish. Deleted terms keep the
+    legacy value.
+    """
+    if term_status in ("open", "closed"):
+        return term_status
+    return (dynamo_value or "").strip() or None
 
 
 # ---------------------------------------------------------------------------
@@ -668,11 +683,11 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
 # ---------------------------------------------------------------------------
 
 
-def migrate_program_terms(cur, terms: list, known_program_ids: set) -> set:
-    """Upsert program_terms; return set of known term IDs."""
+def migrate_program_terms(cur, terms: list, known_program_ids: set) -> dict:
+    """Upsert program_terms; return {term_id: status} for known terms."""
     log.info("Migrating program_terms (%d rows) ...", len(terms))
     rows = []
-    term_ids: set = set()
+    term_ids: dict = {}
     skipped = 0
 
     for t in terms:
@@ -685,10 +700,10 @@ def migrate_program_terms(cur, terms: list, known_program_ids: set) -> set:
             log.warning("  program_term %s references unknown program %s — skipping", tid, pid)
             skipped += 1
             continue
-        term_ids.add(tid)
         status = (t.get("Active") or "open").lower()
         if status not in ("open", "closed", "deleted"):
             status = "closed"
+        term_ids[tid] = status
         rows.append(
             (
                 tid,
@@ -857,7 +872,7 @@ def migrate_program_members(
 def migrate_mentees(
     cur,
     mentees: list,
-    known_term_ids: set,
+    known_term_ids: dict,
     known_user_ids: set,
 ) -> dict:
     """
@@ -898,7 +913,7 @@ def migrate_mentees(
                 uid,
                 "mentee",
                 _map_application_status(dynamo_status),
-                (m.get("programTermStatus") or "").strip() or None,
+                _map_program_term_status(known_term_ids[term_id], m.get("programTermStatus")),
                 _parse_epoch(m.get("startDateTime")),
                 _parse_epoch(m.get("endDateTime")),
                 _as_bool(m.get("tasksSubmitted")),
@@ -1008,7 +1023,7 @@ def migrate_tasks(
     cur,
     tasks: list,
     application_index: dict,
-    known_term_ids: set,
+    known_term_ids: dict,
     known_user_ids: set,
 ) -> None:
     """Upsert tasks; resolve application_id via (program_term_id, assignee_id)."""
@@ -1073,7 +1088,7 @@ def migrate_tasks(
             category,
             status,
             (t.get("applicationStatus") or "").strip() or None,
-            (t.get("programTermStatus") or "").strip() or None,
+            _map_program_term_status(known_term_ids.get(resolved_term_id), t.get("programTermStatus")),
             _as_bool(t.get("custom")),
             (t.get("submitFile") or "").strip() or None,
             (t.get("file") or "").strip() or None,
