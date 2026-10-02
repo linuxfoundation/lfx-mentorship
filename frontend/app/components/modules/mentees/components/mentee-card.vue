@@ -143,12 +143,11 @@ import ProfileInitialsAvatar from '~/components/shared/directory/profile-initial
 import LfxButton from '~/components/uikit/button/button.vue';
 import LfxTag from '~/components/uikit/tag/tag.vue';
 import LfxTooltip from '~/components/uikit/tooltip/tooltip.vue';
-import { useSanitize } from '~/composables/useSanitize';
+import { plainTextFromHtml } from '~/utils/html-text';
 
 const props = defineProps<{ mentee: Mentee }>();
-const { stripHtml } = useSanitize();
 
-const plainIntroduction = computed(() => stripHtml(props.mentee.introduction ?? ''));
+const plainIntroduction = computed(() => plainTextFromHtml(props.mentee.introduction ?? ''));
 
 const statusConfig = computed(() => (props.mentee.status ? MENTEE_STATUS_CONFIG[props.mentee.status] : undefined));
 const programLabel = computed(() => {

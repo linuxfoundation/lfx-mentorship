@@ -24,13 +24,10 @@ if (error.value) {
   throw createError(error.value);
 }
 
-const { stripHtml } = useSanitize();
-
 usePublicSeo({
   title: computed(() => mentee.value?.name ?? 'Mentee'),
-  description: computed(
-    () => stripHtml(mentee.value?.introduction ?? '') || 'Explore this mentee profile on LFX Mentorship.',
-  ),
+  description: computed(() => mentee.value?.introduction ?? ''),
+  descriptionFallback: 'Explore this mentee profile on LFX Mentorship.',
   type: 'profile',
 });
 </script>
