@@ -42,6 +42,7 @@ type ProgramService struct {
 	appRepo    domain.ApplicationRepository
 	memberRepo domain.ProgramMemberRepository
 	cfClient   clients.CrowdfundingClient
+	projects   domain.ProjectLookup
 }
 
 // NewProgramService returns a ProgramService.
@@ -53,6 +54,13 @@ func NewProgramService(repo domain.ProgramRepository, termRepo domain.ProgramTer
 // cross-service program transaction endpoints.
 func (s *ProgramService) SetCrowdfundingClient(client clients.CrowdfundingClient) {
 	s.cfClient = client
+}
+
+// SetProjectLookup makes Project Service the source of the project slug, name,
+// and logo stored with a new program. Without it, the values the caller sent
+// are stored, which only local development without NATS relies on.
+func (s *ProgramService) SetProjectLookup(projects domain.ProjectLookup) {
+	s.projects = projects
 }
 
 // programTransitions defines the valid next states for each program status.
@@ -278,7 +286,7 @@ func (s *ProgramService) Create(ctx context.Context, input models.ProgramCreateI
 	}
 	canonicalProjectUID := projectUID.String()
 	input.ProjectUID = &canonicalProjectUID
-	if input.ProjectSlug, input.ProjectName, input.ProjectLogoURL, err = normalizeProjectMetadata(input.ProjectSlug, input.ProjectName, input.ProjectLogoURL); err != nil {
+	if input.ProjectSlug, input.ProjectName, input.ProjectLogoURL, err = s.resolveProjectMetadata(ctx, canonicalProjectUID, input.ProjectSlug, input.ProjectName, input.ProjectLogoURL); err != nil {
 		return nil, err
 	}
 	input.Status = models.ProgramStatusPending // programs always start as pending
@@ -377,7 +385,7 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 	}
 	canonicalProjectUID := projectUID.String()
 	input.Program.ProjectUID = &canonicalProjectUID
-	if input.Program.ProjectSlug, input.Program.ProjectName, input.Program.ProjectLogoURL, err = normalizeProjectMetadata(input.Program.ProjectSlug, input.Program.ProjectName, input.Program.ProjectLogoURL); err != nil {
+	if input.Program.ProjectSlug, input.Program.ProjectName, input.Program.ProjectLogoURL, err = s.resolveProjectMetadata(ctx, canonicalProjectUID, input.Program.ProjectSlug, input.Program.ProjectName, input.Program.ProjectLogoURL); err != nil {
 		return nil, err
 	}
 	input.Program.Status = models.ProgramStatusPending
@@ -385,8 +393,26 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 	return s.repo.CreateEnrollment(ctx, input)
 }
 
-// normalizeProjectMetadata trims the Project Service slug, name, and logo the
-// caller resolved alongside project_uid. The program index snapshot is derived
+// resolveProjectMetadata replaces the caller's project slug, name, and logo
+// with Project Service's, so a program cannot carry another project's
+// branding. It runs after all other validation to spend no lookup on a
+// request that is rejected anyway.
+func (s *ProgramService) resolveProjectMetadata(ctx context.Context, projectUID string, slug, name, logoURL *string) (*string, *string, *string, error) {
+	if s.projects != nil {
+		project, err := s.projects.GetProject(ctx, projectUID)
+		if errors.Is(err, domain.ErrProjectNotFound) {
+			return nil, nil, nil, fmt.Errorf("%w: projectId does not match a Project Service project", domain.ErrInvalidInput)
+		}
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("resolve project: %w", err)
+		}
+		slug, name, logoURL = &project.Slug, &project.Name, project.LogoURL
+	}
+	return normalizeProjectMetadata(slug, name, logoURL)
+}
+
+// normalizeProjectMetadata trims the Project Service slug, name, and logo
+// stored alongside project_uid. The program index snapshot is derived
 // from the persisted row, so slug and name must be present whenever the project is set.
 func normalizeProjectMetadata(slug, name, logoURL *string) (*string, *string, *string, error) {
 	trim := func(value *string) *string {
