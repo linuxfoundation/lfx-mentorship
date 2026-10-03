@@ -154,7 +154,7 @@ Handler mechanics are the platform baseline ([lfx-object-store-design](https://g
 | `GET /v1/user-profiles/{id}/logo-download` | anonymous | — | `allow_all` | Public class. Directory profiles have no model type (RM-2), so the service serves this only for publicly-listable profiles |
 | `POST /v1/tasks/{uid}/file-upload` | required | `mentorship_task:{uid}` | `assignee` | **Private class.** PDF/doc allowlist, 20 MB. Only before review closes — a state rule, service-side. Pairs with `PATCH /v1/tasks/{uid}/submission` |
 | `GET /v1/tasks/{uid}/file-download` | required | `mentorship_task:{uid}` | `auditor` | Admits the assignee and the reviewers. Filename is the key minus its `{uuid}-` prefix ([02 §stored value and delivery](./02-target-architecture.md#stored-value-and-delivery)). **This route, not `tasks.file`, is what the program-admin mentee listing returns per task** |
-| `DELETE /v1/tasks/{uid}/file` | required | `mentorship_task:{uid}` | `assignee` | Only before review closes. Null the column and queue the key for deletion |
+| `DELETE /v1/tasks/{uid}/file` | required | `mentorship_task:{uid}` | `assignee` | Only before submission (`incomplete` or `in_progress`), since a submitted task that requires a file must keep one (`backend/internal/service/task_service.go:232-234`); a submitted file is replaced through `file-upload`, not deleted. Null the column and queue the key for deletion |
 
 Three things to note.
 
