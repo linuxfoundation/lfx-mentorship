@@ -17,6 +17,7 @@ var (
 	ErrProgramMemberNotFound = errors.New("program member not found")
 	ErrApplicationNotFound   = errors.New("application not found")
 	ErrTaskNotFound          = errors.New("task not found")
+	ErrProjectNotFound       = errors.New("project not found")
 
 	ErrInvalidInput        = errors.New("invalid input")
 	ErrUnauthorized        = errors.New("unauthorized")

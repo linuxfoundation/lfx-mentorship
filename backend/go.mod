@@ -12,7 +12,8 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/linuxfoundation/lfx-v2-email-service v0.1.13
-	github.com/nats-io/nats.go v1.47.0
+	github.com/linuxfoundation/lfx-v2-project-service v0.9.12
+	github.com/nats-io/nats.go v1.49.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.68.0
 	go.opentelemetry.io/otel v1.44.0
 	go.opentelemetry.io/otel/trace v1.44.0
@@ -30,7 +31,7 @@ require (
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/klauspost/compress v1.19.2 // indirect
 	github.com/lib/pq v1.10.9 // indirect
-	github.com/nats-io/nkeys v0.4.11 // indirect
+	github.com/nats-io/nkeys v0.4.15 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel/metric v1.44.0 // indirect

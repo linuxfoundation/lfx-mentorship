@@ -24,6 +24,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/email"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/fga"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/indexer"
+	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/projects"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/service"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
@@ -105,6 +106,9 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			BaseURL: cfg.Crowdfunding.BaseURL,
 			Timeout: cfg.Crowdfunding.Timeout,
 		}))
+	}
+	if natsConn != nil {
+		programSvc.SetProjectLookup(projects.NewClient(natsConn))
 	}
 	programTermSvc := service.NewProgramTermService(programTermRepo, applicationRepo)
 	programMemberSvc := service.NewProgramMemberService(programMemberRepo, programRepo, notifier, cfg.Local.InviteSecret)
