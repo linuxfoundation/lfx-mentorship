@@ -399,6 +399,20 @@ func TestApplicationRepositoryIntegration_ReapplyRejectsClosedTerm(t *testing.T)
 	}
 }
 
+// Reapply ordering and models.Application both rely on applications always carrying timestamps.
+func TestApplicationRepositoryIntegration_TimestampsAreRequired(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	var pgErr *pgconn.PgError
+	for _, column := range []string{"created_on", "updated_on"} {
+		_, err := pool.Exec(context.Background(), `INSERT INTO applications (id, program_term_id, user_id, role, status, `+column+`)
+			VALUES ('00000000-0000-0000-0000-000000000087', $1, $2, 'mentee', 'withdrawn', NULL)`, fixture.OpenTerm, fixture.UserID)
+		if !errors.As(err, &pgErr) || pgErr.Code != "23502" {
+			t.Fatalf("insert with NULL %s err = %v; want not_null_violation", column, err)
+		}
+	}
+}
+
 func assertTermProjectionStatus(t *testing.T, pool *pgxpool.Pool, termID, want string) {
 	t.Helper()
 	var applicationStatus, taskStatus, indexedStatus string

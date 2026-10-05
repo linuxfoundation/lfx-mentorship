@@ -18,4 +18,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_applications_active
   ON applications (program_term_id, user_id, role)
   WHERE status <> 'withdrawn';
 
+-- Telling a reapplication from its withdrawn history orders on created_on, and
+-- the application model reads both timestamps as non-null. Backfilled legacy
+-- rows can lack them, so fill the gaps from the other timestamp and enforce it.
+UPDATE applications
+  SET created_on = COALESCE(created_on, updated_on, NOW()),
+      updated_on = COALESCE(updated_on, created_on, NOW())
+  WHERE created_on IS NULL OR updated_on IS NULL;
+
+ALTER TABLE applications
+  ALTER COLUMN created_on SET NOT NULL,
+  ALTER COLUMN updated_on SET NOT NULL;
+
 COMMIT;

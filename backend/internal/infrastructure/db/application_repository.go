@@ -145,13 +145,13 @@ func (r *ApplicationRepository) ListByProgram(ctx context.Context, programID str
 	args := []any{programID}
 	// Withdrawn applications kept beside a reapplication are history, not separate applicants: list
 	// one application per (term, user) — the live one, else the newest withdrawn — matching
-	// GetManagementSummary's counts. created_on is nullable (backfilled rows), so ties break on id.
+	// GetManagementSummary's counts. Equal created_on values break the tie on id.
 	where := ` WHERE pt.program_id = $1 AND a.role = 'mentee' AND p.status NOT IN ('draft', 'submitted')
 		AND NOT (a.status = 'withdrawn' AND EXISTS (SELECT 1 FROM applications other
 			WHERE other.program_term_id = a.program_term_id AND other.user_id = a.user_id
 			AND other.role = a.role AND other.id <> a.id
 			AND (other.status <> 'withdrawn'
-				OR (COALESCE(other.created_on, '-infinity'), other.id) > (COALESCE(a.created_on, '-infinity'), a.id))))`
+				OR (other.created_on, other.id) > (a.created_on, a.id))))`
 	switch filter.Type {
 	case models.ProgramApplicationTypeCurrent:
 		where += ` AND pt.status = 'open'`
@@ -867,7 +867,7 @@ func (r *ApplicationRepository) FindByTermAndUser(ctx context.Context, termID, u
 	// one as history) but at most one other. Prefer that live one, else the latest withdrawn, so
 	// the reapply guard sees the application that currently decides eligibility.
 	q := `SELECT ` + applicationCols + ` FROM applications WHERE program_term_id = $1 AND user_id = $2 AND role = $3
-		ORDER BY status = 'withdrawn', created_on DESC NULLS LAST, id DESC LIMIT 1`
+		ORDER BY status = 'withdrawn', created_on DESC, id DESC LIMIT 1`
 	a, err := scanApplication(r.pool.QueryRow(ctx, q, termID, userID, role))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil

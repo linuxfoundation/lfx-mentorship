@@ -893,6 +893,14 @@ def migrate_program_members(
 # Migration: applications + enrollments
 # ---------------------------------------------------------------------------
 
+# One mentee application id per (term, user), with the one that decides eligibility last so it
+# wins when collected into a dict: a user can hold withdrawn applications beside a reapplication
+# (uq_applications_active), so the live one wins, else the newest withdrawn.
+_MENTEE_APPLICATIONS_BY_PRECEDENCE = (
+    "SELECT program_term_id::text, user_id::text, id::text FROM applications WHERE role = 'mentee'"
+    " ORDER BY status <> 'withdrawn', created_on, id"
+)
+
 
 def migrate_mentees(
     cur,
@@ -975,7 +983,20 @@ def migrate_mentees(
             )
             if row_sort > prev_sort:
                 best[key] = row
-    app_rows = list(best.values())
+
+    # Each (term, user) keeps the row a previous run wrote for it: the live one, else the newest
+    # withdrawn. Upserting by that id rather than the winner's own lets a rerun whose winner
+    # changed update the row in place instead of adding a second live row (uq_applications_active).
+    cur.execute(_MENTEE_APPLICATIONS_BY_PRECEDENCE)
+    existing = {(row[0], row[1]): row[2] for row in cur.fetchall()}
+    # created_on and updated_on are NOT NULL; legacy records can lack either, so fall back on
+    # the other one, then on the time of this run.
+    migrated_on = datetime.now(timezone.utc)
+    app_rows = [
+        (existing.get(key, row[0]),) + row[1:11]
+        + (row[11] or row[12] or migrated_on, row[12] or row[11] or migrated_on)
+        for key, row in best.items()
+    ]
 
     psycopg2.extras.execute_batch(
         cur,
@@ -999,13 +1020,8 @@ def migrate_mentees(
     )
     log.info("  → %d applications upserted, %d skipped", len(app_rows), skipped)
 
-    # Rebuild index from DB so ON CONFLICT winners are used for task resolution. A user can hold
-    # withdrawn applications beside a reapplication (uq_applications_active), so order the live,
-    # newest application last and let it win the (term, user) key.
-    cur.execute(
-        "SELECT program_term_id::text, user_id::text, id::text FROM applications WHERE role = 'mentee'"
-        " ORDER BY status <> 'withdrawn', created_on NULLS FIRST, id"
-    )
+    # Rebuild index from DB so ON CONFLICT winners are used for task resolution.
+    cur.execute(_MENTEE_APPLICATIONS_BY_PRECEDENCE)
     application_index = {(row[0], row[1]): row[2] for row in cur.fetchall()}
 
     return application_index
