@@ -33,8 +33,8 @@ type stubAppRepo struct {
 	delete            func(context.Context, string) error
 	countBlocking     func(context.Context, string) (int, error)
 	countAccepted     func(context.Context, string) (int, error)
-	findByTermAndUser func(context.Context, string, string) (*models.Application, error)
-	countWithdrawn    func(context.Context, string, string) (int, error)
+	findByTermAndUser func(context.Context, string, string, models.ApplicationRole) (*models.Application, error)
+	countWithdrawn    func(context.Context, string, string, models.ApplicationRole) (int, error)
 	bulkDecline       func(context.Context, string) (int, error)
 	listPastMentees   func(context.Context, string) ([]*models.Application, error)
 }
@@ -115,15 +115,15 @@ func (m *stubAppRepo) CountAcceptedByTerm(ctx context.Context, id string) (int, 
 	return 0, nil
 }
 func (m *stubAppRepo) CountByTerm(context.Context, string) (int, error) { return 0, nil }
-func (m *stubAppRepo) FindByTermAndUser(ctx context.Context, termID, userID string) (*models.Application, error) {
+func (m *stubAppRepo) FindByTermAndUser(ctx context.Context, termID, userID string, role models.ApplicationRole) (*models.Application, error) {
 	if m.findByTermAndUser != nil {
-		return m.findByTermAndUser(ctx, termID, userID)
+		return m.findByTermAndUser(ctx, termID, userID, role)
 	}
 	return nil, nil
 }
-func (m *stubAppRepo) CountWithdrawnByTermAndUser(ctx context.Context, termID, userID string) (int, error) {
+func (m *stubAppRepo) CountWithdrawnByTermAndUser(ctx context.Context, termID, userID string, role models.ApplicationRole) (int, error) {
 	if m.countWithdrawn != nil {
-		return m.countWithdrawn(ctx, termID, userID)
+		return m.countWithdrawn(ctx, termID, userID, role)
 	}
 	return 1, nil
 }
@@ -496,7 +496,7 @@ func TestApplicationService_Create_DuplicateActive_Blocked(t *testing.T) {
 		return openTerm(time.Now()), nil
 	}}
 	repo := &stubAppRepo{
-		findByTermAndUser: func(_ context.Context, _, _ string) (*models.Application, error) {
+		findByTermAndUser: func(_ context.Context, _, _ string, _ models.ApplicationRole) (*models.Application, error) {
 			return &models.Application{ID: "existing", Status: "accepted"}, nil
 		},
 	}
@@ -512,7 +512,7 @@ func TestApplicationService_Create_DeclinedReapply_Blocked(t *testing.T) {
 		return openTerm(time.Now()), nil
 	}}
 	repo := &stubAppRepo{
-		findByTermAndUser: func(_ context.Context, _, _ string) (*models.Application, error) {
+		findByTermAndUser: func(_ context.Context, _, _ string, _ models.ApplicationRole) (*models.Application, error) {
 			return &models.Application{ID: "existing", Status: "declined"}, nil
 		},
 	}
@@ -529,7 +529,7 @@ func TestApplicationService_Create_WithdrawnReapply_ReappliesFromWithdrawn(t *te
 		return openTerm(time.Now()), nil
 	}}
 	repo := &stubAppRepo{
-		findByTermAndUser: func(_ context.Context, _, _ string) (*models.Application, error) {
+		findByTermAndUser: func(_ context.Context, _, _ string, _ models.ApplicationRole) (*models.Application, error) {
 			return &models.Application{ID: "old", Status: "withdrawn"}, nil
 		},
 		reapply: func(_ context.Context, oldID, _ string, _ models.ApplicationCreateInput) (*models.Application, error) {
@@ -563,12 +563,12 @@ func TestApplicationService_Create_WithdrawnReapply_Limit(t *testing.T) {
 			}}
 			reapplied := false
 			repo := &stubAppRepo{
-				findByTermAndUser: func(_ context.Context, _, _ string) (*models.Application, error) {
+				findByTermAndUser: func(_ context.Context, _, _ string, _ models.ApplicationRole) (*models.Application, error) {
 					return &models.Application{ID: "old", Status: models.ApplicationStatusWithdrawn}, nil
 				},
-				countWithdrawn: func(_ context.Context, termID, userID string) (int, error) {
-					if termID != "t1" || userID != "u1" {
-						t.Fatalf("countWithdrawn arguments = term %q, user %q", termID, userID)
+				countWithdrawn: func(_ context.Context, termID, userID string, role models.ApplicationRole) (int, error) {
+					if termID != "t1" || userID != "u1" || role != models.ApplicationRoleMentee {
+						t.Fatalf("countWithdrawn arguments = term %q, user %q, role %q", termID, userID, role)
 					}
 					return tc.withdrawn, nil
 				},
@@ -601,10 +601,10 @@ func TestApplicationService_Create_CountWithdrawnError(t *testing.T) {
 	}}
 	countErr := errors.New("db down")
 	repo := &stubAppRepo{
-		findByTermAndUser: func(_ context.Context, _, _ string) (*models.Application, error) {
+		findByTermAndUser: func(_ context.Context, _, _ string, _ models.ApplicationRole) (*models.Application, error) {
 			return &models.Application{ID: "old", Status: models.ApplicationStatusWithdrawn}, nil
 		},
-		countWithdrawn: func(context.Context, string, string) (int, error) { return 0, countErr },
+		countWithdrawn: func(context.Context, string, string, models.ApplicationRole) (int, error) { return 0, countErr },
 	}
 	svc := newApplicationSvc(repo, &stubTaskRepo{}, termRepo, &stubProgRepo{})
 	if _, err := svc.Create(context.Background(), "t1", models.ApplicationCreateInput{UserID: "u1", Role: models.ApplicationRoleMentee}); !errors.Is(err, countErr) {
@@ -619,7 +619,7 @@ func TestApplicationService_Create_WithdrawnReapply_ClonesPrerequisiteTasks(t *t
 		return term, nil
 	}}
 	repo := &stubAppRepo{
-		findByTermAndUser: func(_ context.Context, _, _ string) (*models.Application, error) {
+		findByTermAndUser: func(_ context.Context, _, _ string, _ models.ApplicationRole) (*models.Application, error) {
 			return &models.Application{ID: "old", Status: models.ApplicationStatusWithdrawn}, nil
 		},
 		reapply: func(_ context.Context, oldID, termID string, in models.ApplicationCreateInput) (*models.Application, error) {

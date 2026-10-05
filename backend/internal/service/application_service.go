@@ -227,7 +227,7 @@ func (s *ApplicationService) Create(ctx context.Context, programTermID string, i
 	}
 
 	// Reapply guard: no existing non-terminal application for this term+user.
-	existing, err := s.repo.FindByTermAndUser(ctx, programTermID, input.UserID)
+	existing, err := s.repo.FindByTermAndUser(ctx, programTermID, input.UserID, input.Role)
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("check duplicate application: %w", err)
@@ -240,7 +240,7 @@ func (s *ApplicationService) Create(ctx context.Context, programTermID string, i
 		if existing.Status != models.ApplicationStatusWithdrawn {
 			return nil, fmt.Errorf("%w: an application for this term already exists (status: %s)", domain.ErrConflict, existing.Status)
 		}
-		withdrawn, err := s.repo.CountWithdrawnByTermAndUser(ctx, programTermID, input.UserID)
+		withdrawn, err := s.repo.CountWithdrawnByTermAndUser(ctx, programTermID, input.UserID, input.Role)
 		if err != nil {
 			span.RecordError(err)
 			return nil, fmt.Errorf("count withdrawn applications: %w", err)

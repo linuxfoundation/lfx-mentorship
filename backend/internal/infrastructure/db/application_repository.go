@@ -143,12 +143,15 @@ func (r *ApplicationRepository) ListByProgram(ctx context.Context, programID str
 		offset = 0
 	}
 	args := []any{programID}
-	// A withdrawn application that was later reapplied from is history, not a separate applicant:
-	// list only the newest application per (term, user), matching GetManagementSummary's counts.
+	// Withdrawn applications kept beside a reapplication are history, not separate applicants: list
+	// one application per (term, user) — the live one, else the newest withdrawn — matching
+	// GetManagementSummary's counts. created_on is nullable (backfilled rows), so ties break on id.
 	where := ` WHERE pt.program_id = $1 AND a.role = 'mentee' AND p.status NOT IN ('draft', 'submitted')
-		AND NOT (a.status = 'withdrawn' AND EXISTS (SELECT 1 FROM applications newer
-			WHERE newer.program_term_id = a.program_term_id AND newer.user_id = a.user_id
-			AND newer.role = a.role AND newer.created_on > a.created_on))`
+		AND NOT (a.status = 'withdrawn' AND EXISTS (SELECT 1 FROM applications other
+			WHERE other.program_term_id = a.program_term_id AND other.user_id = a.user_id
+			AND other.role = a.role AND other.id <> a.id
+			AND (other.status <> 'withdrawn'
+				OR (COALESCE(other.created_on, '-infinity'), other.id) > (COALESCE(a.created_on, '-infinity'), a.id))))`
 	switch filter.Type {
 	case models.ProgramApplicationTypeCurrent:
 		where += ` AND pt.status = 'open'`
@@ -334,6 +337,9 @@ func (r *ApplicationRepository) ReapplyWithTasks(ctx context.Context, oldID, pro
 	if err != nil {
 		return nil, fmt.Errorf("lock program term for reapply: %w", err)
 	}
+	if termStatus != models.ProgramTermStatusOpen {
+		return nil, fmt.Errorf("%w: applications are not open for this term", domain.ErrIneligible)
+	}
 	// Re-check under lock that the application being reapplied from is still withdrawn in this
 	// term; the service validated it before the transaction began.
 	var status models.ApplicationStatus
@@ -345,11 +351,22 @@ func (r *ApplicationRepository) ReapplyWithTasks(ctx context.Context, oldID, pro
 	if status != models.ApplicationStatusWithdrawn {
 		return nil, fmt.Errorf("%w: only a withdrawn application can be reapplied (status: %s)", domain.ErrConflict, status)
 	}
-	// Re-check the reapplication limit under the term lock: the service counted before the
-	// transaction, and a reapply-then-withdraw that committed since could have reached the limit.
-	var withdrawn int
-	if err := tx.QueryRow(ctx, countWithdrawnByTermAndUserQuery, programTermID, input.UserID).Scan(&withdrawn); err != nil {
-		return nil, fmt.Errorf("count withdrawn applications for reapply: %w", err)
+	// Re-check the reapplication limit: the service counted before the transaction began. Locking
+	// every application the user holds for this term and role also makes a concurrent withdrawal
+	// wait, so it cannot clear uq_applications_active between this check and the insert.
+	rows, err := tx.Query(ctx, `SELECT status FROM applications WHERE program_term_id = $1 AND user_id = $2 AND role = $3 FOR UPDATE`, programTermID, input.UserID, input.Role)
+	if err != nil {
+		return nil, fmt.Errorf("lock applications for reapply: %w", err)
+	}
+	statuses, err := pgx.CollectRows(rows, pgx.RowTo[models.ApplicationStatus])
+	if err != nil {
+		return nil, fmt.Errorf("lock applications for reapply: %w", err)
+	}
+	withdrawn := 0
+	for _, s := range statuses {
+		if s == models.ApplicationStatusWithdrawn {
+			withdrawn++
+		}
 	}
 	if withdrawn >= models.MaxWithdrawnApplicationsPerTerm {
 		return nil, fmt.Errorf("%w: reapplication limit reached: you have withdrawn %d applications for this term and cannot apply to it again", domain.ErrIneligible, withdrawn)
@@ -842,16 +859,16 @@ func (r *ApplicationRepository) CountByTerm(ctx context.Context, termID string) 
 }
 
 // FindByTermAndUser returns an application for a specific term and user, or nil.
-func (r *ApplicationRepository) FindByTermAndUser(ctx context.Context, termID, userID string) (*models.Application, error) {
+func (r *ApplicationRepository) FindByTermAndUser(ctx context.Context, termID, userID string, role models.ApplicationRole) (*models.Application, error) {
 	ctx, span := applicationTracer.Start(ctx, "db.applications.FindByTermAndUser")
 	defer span.End()
 
 	// A user may hold several withdrawn applications for a term (each reapply leaves the previous
 	// one as history) but at most one other. Prefer that live one, else the latest withdrawn, so
 	// the reapply guard sees the application that currently decides eligibility.
-	q := `SELECT ` + applicationCols + ` FROM applications WHERE program_term_id = $1 AND user_id = $2
-		ORDER BY status = 'withdrawn', created_on DESC LIMIT 1`
-	a, err := scanApplication(r.pool.QueryRow(ctx, q, termID, userID))
+	q := `SELECT ` + applicationCols + ` FROM applications WHERE program_term_id = $1 AND user_id = $2 AND role = $3
+		ORDER BY status = 'withdrawn', created_on DESC NULLS LAST, id DESC LIMIT 1`
+	a, err := scanApplication(r.pool.QueryRow(ctx, q, termID, userID, role))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -862,15 +879,14 @@ func (r *ApplicationRepository) FindByTermAndUser(ctx context.Context, termID, u
 	return a, nil
 }
 
-const countWithdrawnByTermAndUserQuery = `SELECT COUNT(*) FROM applications WHERE program_term_id = $1 AND user_id = $2 AND status = 'withdrawn'`
-
-// CountWithdrawnByTermAndUser returns how many withdrawn applications a user holds for a term.
-func (r *ApplicationRepository) CountWithdrawnByTermAndUser(ctx context.Context, termID, userID string) (int, error) {
+// CountWithdrawnByTermAndUser returns how many withdrawn applications a user holds for a term in a role.
+func (r *ApplicationRepository) CountWithdrawnByTermAndUser(ctx context.Context, termID, userID string, role models.ApplicationRole) (int, error) {
 	ctx, span := applicationTracer.Start(ctx, "db.applications.CountWithdrawnByTermAndUser")
 	defer span.End()
 
 	var count int
-	if err := r.pool.QueryRow(ctx, countWithdrawnByTermAndUserQuery, termID, userID).Scan(&count); err != nil {
+	const q = `SELECT COUNT(*) FROM applications WHERE program_term_id = $1 AND user_id = $2 AND role = $3 AND status = 'withdrawn'`
+	if err := r.pool.QueryRow(ctx, q, termID, userID, role).Scan(&count); err != nil {
 		span.RecordError(err)
 		return 0, fmt.Errorf("count withdrawn applications: %w", err)
 	}

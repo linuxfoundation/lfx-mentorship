@@ -1688,7 +1688,7 @@ Submit an application to a term.
 1. Term must have `status = "open"`.
 2. Current date must fall within `application_start_date` and `application_end_date`.
 3. No existing non-withdrawn application for this user+term (reapplication from `declined` is permanently blocked; reapplication from `withdrawn` is allowed while the window is open).
-4. Fewer than 3 withdrawn applications for this user+term — once a user has withdrawn 3, no further application to the term is accepted.
+4. Fewer than 3 withdrawn applications for this user+term in the requested role — once a user has withdrawn 3, no further application to the term in that role is accepted.
 
 **After creation**: The program's `task_templates` JSONB array is cloned as individual `prerequisite` tasks linked to the new application.
 

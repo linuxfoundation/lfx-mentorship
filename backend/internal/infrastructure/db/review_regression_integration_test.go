@@ -290,8 +290,12 @@ func TestApplicationRepositoryIntegration_ReapplyKeepsWithdrawnApplication(t *te
 	ctx := context.Background()
 	oldID, newID := "00000000-0000-0000-0000-000000000077", "00000000-0000-0000-0000-00000000007b"
 	oldTaskID := "00000000-0000-0000-0000-000000000078"
-	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status, reviewer_note, evaluation) VALUES ($1, $2, $3, 'mentee', 'withdrawn', 'do not accept', 'partial')`, oldID, fixture.OpenTerm, fixture.UserID); err != nil {
+	// created_on is NULL as on backfilled rows; the user also holds a live mentor application.
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status, reviewer_note, evaluation, created_on) VALUES ($1, $2, $3, 'mentee', 'withdrawn', 'do not accept', 'partial', NULL)`, oldID, fixture.OpenTerm, fixture.UserID); err != nil {
 		t.Fatalf("insert application: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ('00000000-0000-0000-0000-000000000079', $1, $2, 'mentor', 'pending')`, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatalf("insert mentor application: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO tasks (id, application_id, program_term_id, assignee_id, status, category, application_status, program_term_status) VALUES ($1, $2, $3, $4, 'incomplete', 'non_prerequisite', 'withdrawn', 'open')`, oldTaskID, oldID, fixture.OpenTerm, fixture.UserID); err != nil {
 		t.Fatalf("insert task: %v", err)
@@ -320,14 +324,14 @@ func TestApplicationRepositoryIntegration_ReapplyKeepsWithdrawnApplication(t *te
 		t.Fatalf("withdrawn application task parent = %q, err = %v; want %q", taskParent, err, oldID)
 	}
 
-	// The reapply guard now sees the live application, not the withdrawn one.
-	current, err := repo.FindByTermAndUser(ctx, fixture.OpenTerm, fixture.UserID)
+	// The reapply guard now sees the live mentee application, not the withdrawn one or the mentor one.
+	current, err := repo.FindByTermAndUser(ctx, fixture.OpenTerm, fixture.UserID, models.ApplicationRoleMentee)
 	if err != nil || current == nil || current.ID != newID {
 		t.Fatalf("FindByTermAndUser = %+v, err = %v; want %q", current, err, newID)
 	}
 
 	// Only the withdrawn application counts toward the reapplication limit.
-	if n, err := repo.CountWithdrawnByTermAndUser(ctx, fixture.OpenTerm, fixture.UserID); err != nil || n != 1 {
+	if n, err := repo.CountWithdrawnByTermAndUser(ctx, fixture.OpenTerm, fixture.UserID, models.ApplicationRoleMentee); err != nil || n != 1 {
 		t.Fatalf("CountWithdrawnByTermAndUser = %d, err = %v; want 1", n, err)
 	}
 
@@ -358,17 +362,39 @@ func TestApplicationRepositoryIntegration_ReapplyEnforcesWithdrawnLimit(t *testi
 	ctx := context.Background()
 	withdrawnIDs := []string{"00000000-0000-0000-0000-000000000081", "00000000-0000-0000-0000-000000000082", "00000000-0000-0000-0000-000000000083"}
 	for _, id := range withdrawnIDs {
-		if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentee', 'withdrawn')`, id, fixture.OpenTerm, fixture.UserID); err != nil {
+		// NULL created_on, as on backfilled rows, so the list must break the tie on id.
+		if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status, created_on) VALUES ($1, $2, $3, 'mentee', 'withdrawn', NULL)`, id, fixture.OpenTerm, fixture.UserID); err != nil {
 			t.Fatalf("insert withdrawn application: %v", err)
 		}
 	}
+	repo := NewApplicationRepository(pool)
 	input := models.ApplicationCreateInput{ID: "00000000-0000-0000-0000-000000000084", UserID: fixture.UserID, Role: models.ApplicationRoleMentee, Status: models.ApplicationStatusPending}
-	if _, err := NewApplicationRepository(pool).ReapplyWithTasks(ctx, withdrawnIDs[2], fixture.OpenTerm, input, nil); !errors.Is(err, domain.ErrIneligible) {
+	if _, err := repo.ReapplyWithTasks(ctx, withdrawnIDs[2], fixture.OpenTerm, input, nil); !errors.Is(err, domain.ErrIneligible) {
 		t.Fatalf("reapply past the limit err = %v; want ErrIneligible", err)
 	}
 	var count int
 	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM applications WHERE id = $1`, input.ID).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("applications created past the limit = %d, err = %v; want 0", count, err)
+	}
+
+	// Only the newest withdrawn application is listed, one applicant as in the summary.
+	rows, meta, err := repo.ListByProgram(ctx, fixture.ProgramID, models.ProgramApplicationFilter{})
+	if err != nil || meta.Total != 1 || len(rows) != 1 || rows[0].ApplicationID != withdrawnIDs[2] {
+		t.Fatalf("ListByProgram = %d rows, meta %+v, err = %v; want only %q", len(rows), meta, err, withdrawnIDs[2])
+	}
+}
+
+func TestApplicationRepositoryIntegration_ReapplyRejectsClosedTerm(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	oldID := "00000000-0000-0000-0000-000000000085"
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentee', 'withdrawn')`, oldID, fixture.ClosedTerm, fixture.UserID); err != nil {
+		t.Fatalf("insert withdrawn application: %v", err)
+	}
+	input := models.ApplicationCreateInput{ID: "00000000-0000-0000-0000-000000000086", UserID: fixture.UserID, Role: models.ApplicationRoleMentee, Status: models.ApplicationStatusPending}
+	if _, err := NewApplicationRepository(pool).ReapplyWithTasks(ctx, oldID, fixture.ClosedTerm, input, nil); !errors.Is(err, domain.ErrIneligible) {
+		t.Fatalf("reapply to a closed term err = %v; want ErrIneligible", err)
 	}
 }
 

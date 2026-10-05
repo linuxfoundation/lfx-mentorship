@@ -1004,7 +1004,7 @@ def migrate_mentees(
     # newest application last and let it win the (term, user) key.
     cur.execute(
         "SELECT program_term_id::text, user_id::text, id::text FROM applications WHERE role = 'mentee'"
-        " ORDER BY status <> 'withdrawn', created_on"
+        " ORDER BY status <> 'withdrawn', created_on NULLS FIRST, id"
     )
     application_index = {(row[0], row[1]): row[2] for row in cur.fetchall()}
 
