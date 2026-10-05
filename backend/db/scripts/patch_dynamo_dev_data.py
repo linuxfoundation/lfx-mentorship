@@ -36,11 +36,6 @@ def scan(table):
         kwargs["ExclusiveStartKey"] = page["LastEvaluatedKey"]
 
 
-def slugify(value: object) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", str(value or "").lower()).strip("-")
-    return slug or "project"
-
-
 def now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -64,7 +59,14 @@ def main() -> None:
     parser.add_argument("--region", default="us-east-1")
     parser.add_argument("--table-prefix", default="jobspring-dev")
     parser.add_argument("--apply", action="store_true", help="write changes; default is dry-run")
+    # FGA inherits program access from the project, so it must exist in project-service.
+    parser.add_argument("--project-uid", required=True, help="real dev LF project UID for programs without one")
+    parser.add_argument("--project-slug", required=True)
+    parser.add_argument("--project-name", required=True)
+    parser.add_argument("--project-logo-url")
     args = parser.parse_args()
+    if not UUID_RE.match(args.project_uid):
+        parser.error("--project-uid must be a UUID")
 
     dynamo = cast(DynamoResource, boto3.resource("dynamodb", region_name=args.region))
     table = lambda suffix: dynamo.Table(f"{args.table_prefix}-{suffix}")
@@ -140,20 +142,18 @@ def main() -> None:
                 }
             )
 
-    used_slugs: set[str] = set()
+    # Rows with a legacy LF project UID keep it; every other row, including one
+    # holding a previously fabricated lfProjectUid, links to --project-uid.
     project_repairs = []
-    for row in sorted(project_rows, key=lambda item: str(item.get("projectId", ""))):
-        project_id = row["projectId"]
-        base_slug = slugify(row.get("slug") or row.get("name") or project_id)
-        project_slug = base_slug
-        if project_slug in used_slugs:
-            project_slug = f"{base_slug}-{str(project_id).replace('-', '')[:8]}"
-        used_slugs.add(project_slug)
-        project_name = str(row.get("name") or f"Synthetic LF Project {str(project_id)[:8]}").strip()
-        project_logo_url = str(row.get("logoUrl") or "https://example.invalid/lf-projects/default.svg").strip()
-        existing_uid = row.get("projectUid") or row.get("lfProjectId") or row.get("lfProjectUID") or row.get("fundspringProjectId")
-        project_uid = existing_uid if existing_uid and UUID_RE.match(str(existing_uid)) else str(uuid.uuid5(NAMESPACE, f"lf-project:{project_slug}"))
-        project_repairs.append((project_id, project_uid, project_slug, project_name, project_logo_url))
+    for row in project_rows:
+        legacy_uid = str(row.get("projectUid") or row.get("lfProjectId") or row.get("lfProjectUID") or "")
+        if UUID_RE.match(legacy_uid) and legacy_uid != str(row["projectId"]):
+            continue
+        if (row.get("lfProjectUid"), row.get("lfProjectSlug"), row.get("lfProjectName"), row.get("lfProjectLogoUrl")) == (
+            args.project_uid, args.project_slug, args.project_name, args.project_logo_url
+        ):
+            continue
+        project_repairs.append(row["projectId"])
 
     enum_repairs = [
         row["id"]
@@ -189,12 +189,15 @@ def main() -> None:
             names = {f"#{key}": key for key in values}
             expr = "SET " + ", ".join(f"#{key} = :{key}" for key in values)
             tasks.update_item(Key={"id": row["id"]}, UpdateExpression=expr, ExpressionAttributeNames=names, ExpressionAttributeValues={f":{key}": value for key, value in values.items()})
-    for project_id, project_uid, project_slug, project_name, project_logo_url in project_repairs:
-        projects.update_item(
-            Key={"projectId": project_id},
-            UpdateExpression="SET lfProjectUid = :uid, lfProjectSlug = :slug, lfProjectName = :name, lfProjectLogoUrl = :logo",
-            ExpressionAttributeValues={":uid": project_uid, ":slug": project_slug, ":name": project_name, ":logo": project_logo_url},
-        )
+    project_values = {":uid": args.project_uid, ":slug": args.project_slug, ":name": args.project_name}
+    project_update = "SET lfProjectUid = :uid, lfProjectSlug = :slug, lfProjectName = :name"
+    if args.project_logo_url:
+        project_values[":logo"] = args.project_logo_url
+        project_update += ", lfProjectLogoUrl = :logo"
+    else:
+        project_update += " REMOVE lfProjectLogoUrl"
+    for project_id in project_repairs:
+        projects.update_item(Key={"projectId": project_id}, UpdateExpression=project_update, ExpressionAttributeValues=project_values)
     print("status=applied")
 
 

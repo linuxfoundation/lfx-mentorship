@@ -528,6 +528,8 @@ def migrate_programs(cur, projects: list, known_user_ids: set, files: lo.LegacyF
             or p.get("lfProjectUID")
             or linked_project.get("id")
         )
+        if project_uid == pid:
+            project_uid = None
         if not project_uid:
             unresolved_project_uids.append(pid)
 
