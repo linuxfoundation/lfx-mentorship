@@ -346,6 +346,10 @@ func (r *ApplicationRepository) ReapplyWithTasks(ctx context.Context, oldID, pro
 	if err != nil {
 		return nil, fmt.Errorf("lock program term for reapply: %w", err)
 	}
+	// Blocks new tasks on the withdrawn application while its task files are queued.
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM applications WHERE id = $1 FOR UPDATE`, oldID); err != nil {
+		return nil, fmt.Errorf("lock withdrawn application for reapply: %w", err)
+	}
 	var taskIDs []string
 	rows, err := tx.Query(ctx, `SELECT id FROM tasks WHERE application_id = $1`, oldID)
 	if err != nil {
@@ -691,7 +695,7 @@ func (r *ApplicationRepository) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("begin delete application transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	current, err := scanApplication(tx.QueryRow(ctx, `SELECT `+applicationCols+` FROM applications WHERE id = $1`, id))
+	current, err := scanApplication(tx.QueryRow(ctx, `SELECT `+applicationCols+` FROM applications WHERE id = $1 FOR UPDATE`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ErrApplicationNotFound
 	}

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"slices"
 	"testing"
 	"time"
 
@@ -17,20 +18,28 @@ import (
 const relayCDNPrefix = "https://cdn.example.org/mentorship"
 
 type fakeQueue struct {
-	entries      []domain.ObjectDeletion
-	referenced   map[string]bool
-	done         []string
-	retried      []string
-	deadLetter   bool
-	referenceErr error
+	entries        []domain.ObjectDeletion
+	referenced     map[string]bool
+	done           []string
+	retried        []string
+	deadLetter     bool
+	referenceErr   error
+	claimedBuckets []domain.ObjectBucket
 }
 
 func (q *fakeQueue) Schedule(context.Context, domain.ObjectBucket, string, time.Duration) (string, error) {
 	return "", nil
 }
 
-func (q *fakeQueue) Claim(context.Context, int) ([]domain.ObjectDeletion, error) {
-	return q.entries, nil
+func (q *fakeQueue) Claim(_ context.Context, buckets []domain.ObjectBucket, _ int) ([]domain.ObjectDeletion, error) {
+	q.claimedBuckets = buckets
+	var due []domain.ObjectDeletion
+	for _, e := range q.entries {
+		if slices.Contains(buckets, e.Bucket) {
+			due = append(due, e)
+		}
+	}
+	return due, nil
 }
 
 func (q *fakeQueue) IsReferenced(_ context.Context, locator string) (bool, error) {
@@ -115,7 +124,6 @@ func TestRelay_RetriesFailures(t *testing.T) {
 	}{
 		{"delete fails", &fakeQueue{}, &fakeDeleter{err: errors.New("s3 down")}},
 		{"reference check fails", &fakeQueue{referenceErr: errors.New("db down")}, &fakeDeleter{}},
-		{"bucket not configured", &fakeQueue{}, nil},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -128,5 +136,18 @@ func TestRelay_RetriesFailures(t *testing.T) {
 				t.Fatalf("done=%v retried=%v", tc.q.done, tc.q.retried)
 			}
 		})
+	}
+}
+
+func TestRelay_LeavesUnconfiguredBucketsQueued(t *testing.T) {
+	q := &fakeQueue{entries: []domain.ObjectDeletion{{ID: "task", Bucket: domain.ObjectBucketAttachments, Locator: "abc-essay.pdf"}}}
+	if err := newTestRelay(q, &fakeDeleter{}, nil).RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if !slices.Equal(q.claimedBuckets, []domain.ObjectBucket{domain.ObjectBucketLogos}) {
+		t.Fatalf("claimed buckets = %v; want only logos", q.claimedBuckets)
+	}
+	if len(q.retried)+len(q.done) != 0 {
+		t.Fatalf("an unconfigured bucket's entry must not be touched: done=%v retried=%v", q.done, q.retried)
 	}
 }

@@ -8,6 +8,7 @@ package db
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,6 +23,8 @@ const (
 	fileTestTask        = "00000000-0000-0000-0000-000000000081"
 	fileTestProfile     = "00000000-0000-0000-0000-000000000082"
 )
+
+var fileTestBuckets = []domain.ObjectBucket{domain.ObjectBucketLogos, domain.ObjectBucketAttachments}
 
 func fileIntegrationPool(t *testing.T) (*pgxpool.Pool, integrationFixture) {
 	t.Helper()
@@ -102,7 +105,7 @@ func TestFileRepositoryIntegration_ReplaceFailsOnceRelayClaimedTheNewKey(t *test
 	queue, files := NewObjectDeletionRepository(pool), NewFileRepository(pool)
 
 	pending, _ := queue.Schedule(ctx, domain.ObjectBucketAttachments, "late-key", 0)
-	if claimed, err := queue.Claim(ctx, 10); err != nil || len(claimed) != 1 {
+	if claimed, err := queue.Claim(ctx, fileTestBuckets, 10); err != nil || len(claimed) != 1 {
 		t.Fatalf("claim = %v, %v", claimed, err)
 	}
 	err := files.ReplaceTaskFile(ctx, domain.FileReplacement{RowID: fileTestTask, Next: "late-key", PendingDeletionID: pending})
@@ -199,7 +202,7 @@ func TestObjectDeletionIntegration_ClaimReferenceRetryAndDeadLetter(t *testing.T
 		t.Fatal(err)
 	}
 
-	claimed, err := queue.Claim(ctx, 10)
+	claimed, err := queue.Claim(ctx, fileTestBuckets, 10)
 	if err != nil || len(claimed) != 1 || claimed[0].Locator != shared {
 		t.Fatalf("claim = %+v, %v; want only the due entry", claimed, err)
 	}
@@ -209,12 +212,104 @@ func TestObjectDeletionIntegration_ClaimReferenceRetryAndDeadLetter(t *testing.T
 	if dead, err := queue.MarkRetry(ctx, claimed[0], errors.New("s3 down")); err != nil || dead {
 		t.Fatalf("first retry dead = %v, %v", dead, err)
 	}
-	claimed, _ = queue.Claim(ctx, 10)
+	claimed, _ = queue.Claim(ctx, fileTestBuckets, 10)
 	if dead, err := queue.MarkRetry(ctx, claimed[0], errors.New("s3 down")); err != nil || !dead {
 		t.Fatalf("second retry dead = %v, %v; want dead-lettered", dead, err)
 	}
-	if claimed, _ := queue.Claim(ctx, 10); len(claimed) != 0 {
+	if claimed, _ := queue.Claim(ctx, fileTestBuckets, 10); len(claimed) != 0 {
 		t.Fatalf("dead-lettered entry was reclaimed: %+v", claimed)
+	}
+}
+
+func TestObjectDeletionIntegration_ClaimSkipsUnconfiguredBuckets(t *testing.T) {
+	pool, _ := fileIntegrationPool(t)
+	ctx := context.Background()
+	queue := NewObjectDeletionRepository(pool)
+	if _, err := queue.Schedule(ctx, domain.ObjectBucketAttachments, "task-key", 0); err != nil {
+		t.Fatal(err)
+	}
+	if claimed, err := queue.Claim(ctx, []domain.ObjectBucket{domain.ObjectBucketLogos}, 10); err != nil || len(claimed) != 0 {
+		t.Fatalf("claim = %+v, %v; an attachments entry must wait for its bucket", claimed, err)
+	}
+	if got := deletionRows(t, pool); len(got) != 1 || got[0].state != "pending" {
+		t.Fatalf("queue = %+v", got)
+	}
+}
+
+// A file write that commits while a parent delete waits on its lock must be queued by that delete.
+func TestFileRepositoryIntegration_ParentDeletesQueueFilesWrittenConcurrently(t *testing.T) {
+	tests := map[string]func(pool *pgxpool.Pool, fixture integrationFixture) error{
+		"task": func(pool *pgxpool.Pool, _ integrationFixture) error {
+			return NewTaskRepository(pool).Delete(context.Background(), fileTestTask)
+		},
+		"application": func(pool *pgxpool.Pool, _ integrationFixture) error {
+			return NewApplicationRepository(pool).Delete(context.Background(), fileTestApplication)
+		},
+		"program": func(pool *pgxpool.Pool, fixture integrationFixture) error {
+			return NewProgramRepository(pool).Delete(context.Background(), fixture.ProgramID)
+		},
+	}
+	for name, deleteParent := range tests {
+		t.Run(name, func(t *testing.T) {
+			pool, fixture := fileIntegrationPool(t)
+			ctx := context.Background()
+			writer, err := pool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = writer.Rollback(ctx) }()
+			if _, err := writer.Exec(ctx, `UPDATE tasks SET file = 'racing-key' WHERE id = $1`, fileTestTask); err != nil {
+				t.Fatal(err)
+			}
+
+			done := make(chan error, 1)
+			go func() { done <- deleteParent(pool, fixture) }()
+			select {
+			case err := <-done:
+				t.Fatalf("delete finished while the file write held the task: %v", err)
+			case <-time.After(200 * time.Millisecond):
+			}
+			if err := writer.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := <-done; err != nil {
+				t.Fatalf("delete: %v", err)
+			}
+			if got := deletionRows(t, pool); len(got) != 1 || got[0].locator != "racing-key" {
+				t.Fatalf("queue = %+v; want the concurrently written key", got)
+			}
+		})
+	}
+}
+
+func TestTaskRepositoryIntegration_SubmitRequiresFileAtomically(t *testing.T) {
+	pool, _ := fileIntegrationPool(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `UPDATE tasks SET submit_file = 'required' WHERE id = $1`, fileTestTask); err != nil {
+		t.Fatal(err)
+	}
+	submitted := models.TaskStatusSubmitted
+	_, err := NewTaskRepository(pool).Update(ctx, fileTestTask, models.TaskUpdateInput{Status: &submitted})
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("err = %v; want ErrInvalidInput", err)
+	}
+	if _, err := NewTaskRepository(pool).Update(ctx, "00000000-0000-0000-0000-0000000000ff", models.TaskUpdateInput{Status: &submitted}); !errors.Is(err, domain.ErrTaskNotFound) {
+		t.Fatalf("missing task err = %v; want ErrTaskNotFound", err)
+	}
+}
+
+func TestUserProfileRepositoryIntegration_RedactsResumeLink(t *testing.T) {
+	pool, _ := fileIntegrationPool(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `UPDATE user_profiles SET profile_links = '{"githubProfileLink":"https://github.com/x","resumeLink":"https://x/cv.pdf"}' WHERE id = $1`, fileTestProfile); err != nil {
+		t.Fatal(err)
+	}
+	p, err := NewUserProfileRepository(pool).GetByID(ctx, fileTestProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(p.ProfileLinks), "resumeLink") || !strings.Contains(string(p.ProfileLinks), "githubProfileLink") {
+		t.Fatalf("profile_links = %s; want resumeLink removed and other links kept", p.ProfileLinks)
 	}
 }
 

@@ -6,6 +6,7 @@ package service
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/binary"
 	"path"
 	"strings"
 	"unicode/utf8"
@@ -24,8 +25,7 @@ var (
 	fileTypePNG  = fileType{"image/png", ".png", hasPrefix("\x89PNG\r\n\x1a\n")}
 	fileTypeJPEG = fileType{"image/jpeg", ".jpg", hasPrefix("\xff\xd8\xff")}
 	fileTypePDF  = fileType{"application/pdf", ".pdf", hasPrefix("%PDF-")}
-	// The compound-file signature is shared with XLS, PPT and MSI; any of them downloads as .doc, never runnable.
-	fileTypeDOC  = fileType{"application/msword", ".doc", hasPrefix("\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1")}
+	fileTypeDOC  = fileType{"application/msword", ".doc", isDOC}
 	fileTypeDOCX = fileType{"application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".docx", isDOCX}
 	fileTypeText = fileType{"text/plain; charset=utf-8", ".txt", isPlainText}
 
@@ -43,7 +43,36 @@ const (
 	fallbackFilename  = "file"
 	// maxDOCXEntries caps zip.NewReader's per-entry allocation; real documents have far fewer.
 	maxDOCXEntries = 1000
+
+	compoundFileSignature = "\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+	// Compound-file directory entries are 128 bytes, aligned to the file's 512- or 4096-byte sectors.
+	compoundDirEntrySize = 128
+	compoundStreamObject = 2
 )
+
+// wordDocumentEntryName is "WordDocument" in UTF-16LE with its terminator, as a directory entry stores it.
+var wordDocumentEntryName = func() []byte {
+	var b []byte
+	for _, r := range "WordDocument\x00" {
+		b = append(b, byte(r), 0)
+	}
+	return b
+}()
+
+// isDOC requires a WordDocument stream: XLS, PPT and MSI share the compound-file signature but not that stream.
+func isDOC(data []byte) bool {
+	if !bytes.HasPrefix(data, []byte(compoundFileSignature)) {
+		return false
+	}
+	for off := 512; off+compoundDirEntrySize <= len(data); off += compoundDirEntrySize {
+		entry := data[off : off+compoundDirEntrySize]
+		nameLength := int(binary.LittleEndian.Uint16(entry[64:66]))
+		if nameLength == len(wordDocumentEntryName) && entry[66] == compoundStreamObject && bytes.HasPrefix(entry, wordDocumentEntryName) {
+			return true
+		}
+	}
+	return false
+}
 
 func hasPrefix(signature string) func([]byte) bool {
 	return func(data []byte) bool { return bytes.HasPrefix(data, []byte(signature)) }

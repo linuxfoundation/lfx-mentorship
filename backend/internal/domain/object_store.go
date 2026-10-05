@@ -85,8 +85,8 @@ type ObjectDeletion struct {
 type ObjectDeletionRepository interface {
 	// Schedule queues locator for deletion after delay in its own transaction, returning the entry ID.
 	Schedule(ctx context.Context, bucket ObjectBucket, locator string, delay time.Duration) (string, error)
-	// Claim moves due entries to in_flight.
-	Claim(ctx context.Context, limit int) ([]ObjectDeletion, error)
+	// Claim moves due entries for the given buckets to in_flight.
+	Claim(ctx context.Context, buckets []ObjectBucket, limit int) ([]ObjectDeletion, error)
 	// IsReferenced reports whether any file column still holds locator.
 	IsReferenced(ctx context.Context, locator string) (bool, error)
 	MarkDone(ctx context.Context, entry ObjectDeletion) error

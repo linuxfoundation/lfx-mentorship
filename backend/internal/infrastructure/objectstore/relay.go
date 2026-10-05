@@ -9,6 +9,8 @@ import (
 	"expvar"
 	"fmt"
 	"log/slog"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
@@ -36,8 +38,10 @@ type RelayBucket struct {
 type Relay struct {
 	queue   domain.ObjectDeletionRepository
 	buckets map[domain.ObjectBucket]RelayBucket
-	batch   int
-	logger  *slog.Logger
+	// claimable lists the configured buckets; entries for any other bucket wait until it is configured.
+	claimable []domain.ObjectBucket
+	batch     int
+	logger    *slog.Logger
 }
 
 // NewRelay returns a Relay over the configured buckets.
@@ -45,12 +49,16 @@ func NewRelay(queue domain.ObjectDeletionRepository, buckets map[domain.ObjectBu
 	if batch <= 0 {
 		batch = 50
 	}
-	return &Relay{queue: queue, buckets: buckets, batch: batch, logger: logger}
+	claimable := slices.Sorted(maps.Keys(buckets))
+	return &Relay{queue: queue, buckets: buckets, claimable: claimable, batch: batch, logger: logger}
 }
 
 // RunOnce claims and processes one batch of due entries.
 func (r *Relay) RunOnce(ctx context.Context) error {
-	entries, err := r.queue.Claim(ctx, r.batch)
+	if len(r.claimable) == 0 {
+		return nil
+	}
+	entries, err := r.queue.Claim(ctx, r.claimable, r.batch)
 	if err != nil {
 		return err
 	}

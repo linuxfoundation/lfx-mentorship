@@ -1,6 +1,10 @@
 -- Copyright The Linux Foundation and each contributor to LFX.
 -- SPDX-License-Identifier: MIT
 
+BEGIN;
+
+SET LOCAL search_path TO mentorship, public;
+
 -- Transactional queue of stored files to delete. Every path that drops a file
 -- locator writes the locator here in the same transaction; a relay deletes the
 -- object once the entry is due and no file column still holds the locator.
@@ -23,3 +27,9 @@ CREATE INDEX IF NOT EXISTS idx_object_deletions_pending
 
 CREATE INDEX IF NOT EXISTS idx_object_deletions_in_flight
   ON object_deletions(claimed_at) WHERE state = 'in_flight';
+
+-- Resumes are not migrated (docs/rewrite/02 §file classes); drop links an earlier ETL run carried over.
+UPDATE user_profiles SET profile_links = profile_links - 'resumeLink'
+WHERE profile_links ? 'resumeLink';
+
+COMMIT;

@@ -56,16 +56,18 @@ func (r *FileRepository) ReplaceProfileLogo(ctx context.Context, rep domain.File
 	span.SetAttributes(attribute.String("db.profile_id", rep.RowID))
 
 	return r.inTx(ctx, "replace profile logo", func(tx pgx.Tx) error {
-		var userID string
-		err := tx.QueryRow(ctx, `
-			UPDATE user_profiles SET logo_url = $3
-			WHERE id = $1 AND logo_url IS NOT DISTINCT FROM $2
-			RETURNING user_id`, rep.RowID, rep.Previous, rep.Next).Scan(&userID)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return missOrConflict(ctx, tx, `SELECT EXISTS (SELECT 1 FROM user_profiles WHERE id = $1)`, rep.RowID, domain.ErrUserProfileNotFound)
-		}
+		userID, err := lockProfileOwner(ctx, tx, rep.RowID)
 		if err != nil {
 			return err
+		}
+		cmd, err := tx.Exec(ctx, `
+			UPDATE user_profiles SET logo_url = $3
+			WHERE id = $1 AND logo_url IS NOT DISTINCT FROM $2`, rep.RowID, rep.Previous, rep.Next)
+		if err != nil {
+			return err
+		}
+		if cmd.RowsAffected() == 0 {
+			return fmt.Errorf("%w: file changed concurrently", domain.ErrConflict)
 		}
 		// Directory reads prefer avatar_url over the profile logo, so keep it aliased.
 		if _, err := tx.Exec(ctx, `UPDATE users SET avatar_url = $2 WHERE id = $1`, userID, rep.Next); err != nil {
@@ -127,16 +129,16 @@ func (r *FileRepository) ClearProfileLogo(ctx context.Context, profileID, previo
 	span.SetAttributes(attribute.String("db.profile_id", profileID))
 
 	return r.inTx(ctx, "clear profile logo", func(tx pgx.Tx) error {
-		var userID string
-		err := tx.QueryRow(ctx, `
-			UPDATE user_profiles SET logo_url = NULL
-			WHERE id = $1 AND logo_url = $2
-			RETURNING user_id`, profileID, previous).Scan(&userID)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return missOrConflict(ctx, tx, `SELECT EXISTS (SELECT 1 FROM user_profiles WHERE id = $1)`, profileID, domain.ErrUserProfileNotFound)
-		}
+		userID, err := lockProfileOwner(ctx, tx, profileID)
 		if err != nil {
 			return err
+		}
+		cmd, err := tx.Exec(ctx, `UPDATE user_profiles SET logo_url = NULL WHERE id = $1 AND logo_url = $2`, profileID, previous)
+		if err != nil {
+			return err
+		}
+		if cmd.RowsAffected() == 0 {
+			return fmt.Errorf("%w: file changed concurrently", domain.ErrConflict)
 		}
 		if err := clearAvatarAlias(ctx, tx, userID, previous); err != nil {
 			return err
@@ -235,6 +237,22 @@ func settleReplacement(ctx context.Context, tx pgx.Tx, bucket domain.ObjectBucke
 		return fmt.Errorf("%w: the upload expired before it was saved; retry it", domain.ErrConflict)
 	}
 	return queueObjectDeletions(ctx, tx, bucket, rep.Previous)
+}
+
+// lockProfileOwner locks a profile's user ahead of the profile, the order user deletion
+// takes, and returns the user ID.
+func lockProfileOwner(ctx context.Context, tx pgx.Tx, profileID string) (string, error) {
+	var userID string
+	err := tx.QueryRow(ctx, `
+		SELECT u.id FROM users u JOIN user_profiles up ON up.user_id = u.id
+		WHERE up.id = $1 FOR NO KEY UPDATE OF u`, profileID).Scan(&userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", domain.ErrUserProfileNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("lock profile owner: %w", err)
+	}
+	return userID, nil
 }
 
 // clearAvatarAlias nulls users.avatar_url while it still aliases logo.

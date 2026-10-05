@@ -848,15 +848,18 @@ func (r *ProgramRepository) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("begin delete program transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	var logoURL *string
+	if err := tx.QueryRow(ctx, `SELECT logo_url FROM programs WHERE id = $1 FOR UPDATE`, id).Scan(&logoURL); errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrProgramNotFound
+	} else if err != nil {
+		return fmt.Errorf("lock program before delete: %w", err)
+	}
+	if err := lockProgramDescendants(ctx, tx, id); err != nil {
+		return err
+	}
 	applicationIDs, taskIDs, err := descendantIDsForProgram(ctx, tx, id)
 	if err != nil {
 		return err
-	}
-	var logoURL *string
-	if err := tx.QueryRow(ctx, `SELECT logo_url FROM programs WHERE id = $1`, id).Scan(&logoURL); errors.Is(err, pgx.ErrNoRows) {
-		return domain.ErrProgramNotFound
-	} else if err != nil {
-		return fmt.Errorf("load program logo before delete: %w", err)
 	}
 	if err := queueObjectDeletions(ctx, tx, domain.ObjectBucketLogos, logoURL); err != nil {
 		return err
@@ -918,6 +921,20 @@ func enqueueObjectMarker(ctx context.Context, tx pgx.Tx, objectType, objectID, o
 		              updated_on = NOW()`
 	if _, err := tx.Exec(ctx, q, objectType, objectID, operation); err != nil {
 		return fmt.Errorf("enqueue %s FGA marker: %w", objectType, err)
+	}
+	return nil
+}
+
+// lockProgramDescendants write-locks a program's terms and applications, which blocks new
+// tasks under them, so the task set read for file deletion cannot grow before the delete.
+func lockProgramDescendants(ctx context.Context, tx pgx.Tx, programID string) error {
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM program_terms WHERE program_id = $1 FOR UPDATE`, programID); err != nil {
+		return fmt.Errorf("lock program terms before delete: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		SELECT 1 FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id
+		WHERE pt.program_id = $1 FOR UPDATE OF a`, programID); err != nil {
+		return fmt.Errorf("lock program applications before delete: %w", err)
 	}
 	return nil
 }

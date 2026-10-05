@@ -28,10 +28,11 @@ func NewUserProfileRepository(pool *pgxpool.Pool) *UserProfileRepository {
 	return &UserProfileRepository{pool: pool}
 }
 
+// profile_links drops resumeLink on read: resumes are not a supported file class.
 const userProfileCols = `
 	id, user_id, profile_type, slug, first_name, last_name, email, phone,
 	logo_url, introduction, terms_and_conditions, number_of_projects,
-	address, demographics, socioeconomics, skill_set, profile_links,
+	address, demographics, socioeconomics, skill_set, profile_links - 'resumeLink' AS profile_links,
 	created_on, updated_on`
 
 func scanUserProfile(row pgx.Row) (*models.UserProfile, error) {
@@ -340,9 +341,12 @@ func (r *UserProfileRepository) Delete(ctx context.Context, id string) error {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var userID string
+	userID, err := lockProfileOwner(ctx, tx, id)
+	if err != nil {
+		return err
+	}
 	var logoURL *string
-	err = tx.QueryRow(ctx, `DELETE FROM user_profiles WHERE id = $1 RETURNING user_id, logo_url`, id).Scan(&userID, &logoURL)
+	err = tx.QueryRow(ctx, `DELETE FROM user_profiles WHERE id = $1 RETURNING logo_url`, id).Scan(&logoURL)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ErrUserProfileNotFound
 	}

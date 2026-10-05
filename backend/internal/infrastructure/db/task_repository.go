@@ -219,15 +219,19 @@ func (r *TaskRepository) Update(ctx context.Context, id string, input models.Tas
 			file               = COALESCE($10, file),
 			due_date           = COALESCE($11, due_date)
 		WHERE id = $1
+		  -- A task that requires a file cannot be submitted without one, even if it was just cleared.
+		  AND NOT (COALESCE($5, '') = $12
+		           AND COALESCE($9, submit_file, '') <> ''
+		           AND COALESCE($10, file, '') = '')
 		RETURNING ` + taskCols
 
 	t, err := scanTask(tx.QueryRow(ctx, q,
 		id, input.Name, input.Description, input.Category, input.Status,
 		input.ApplicationStatus, input.ProgramTermStatus, input.Custom,
-		input.SubmitFile, input.File, input.DueDate,
+		input.SubmitFile, input.File, input.DueDate, models.TaskStatusSubmitted,
 	))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, domain.ErrTaskNotFound
+		return nil, missOrRequiredFile(ctx, tx, id)
 	}
 	if err != nil {
 		span.RecordError(err)
@@ -254,7 +258,7 @@ func (r *TaskRepository) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("begin delete task transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	current, err := scanTask(tx.QueryRow(ctx, `SELECT `+taskCols+` FROM tasks WHERE id = $1`, id))
+	current, err := scanTask(tx.QueryRow(ctx, `SELECT `+taskCols+` FROM tasks WHERE id = $1 FOR UPDATE`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ErrTaskNotFound
 	}
@@ -283,6 +287,19 @@ func (r *TaskRepository) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("commit delete task transaction: %w", err)
 	}
 	return nil
+}
+
+// missOrRequiredFile resolves an update that matched no row into not-found or a submit
+// blocked by a missing required file.
+func missOrRequiredFile(ctx context.Context, tx pgx.Tx, id string) error {
+	var exists bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM tasks WHERE id = $1)`, id).Scan(&exists); err != nil {
+		return fmt.Errorf("check task after missed update: %w", err)
+	}
+	if !exists {
+		return domain.ErrTaskNotFound
+	}
+	return fmt.Errorf("%w: upload the required file before submitting", domain.ErrInvalidInput)
 }
 
 func enqueueTaskMarker(ctx context.Context, tx pgx.Tx, task *models.Task, operation string) error {

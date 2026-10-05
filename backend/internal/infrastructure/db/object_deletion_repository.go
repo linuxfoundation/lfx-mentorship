@@ -44,12 +44,17 @@ func (r *ObjectDeletionRepository) Schedule(ctx context.Context, bucket domain.O
 
 // Claim implements domain.ObjectDeletionRepository. An in_flight entry whose relay
 // died is reclaimed after objectDeletionClaimTimeout.
-func (r *ObjectDeletionRepository) Claim(ctx context.Context, limit int) ([]domain.ObjectDeletion, error) {
+func (r *ObjectDeletionRepository) Claim(ctx context.Context, buckets []domain.ObjectBucket, limit int) ([]domain.ObjectDeletion, error) {
+	bucketNames := make([]string, len(buckets))
+	for i, b := range buckets {
+		bucketNames[i] = string(b)
+	}
 	rows, err := r.pool.Query(ctx, `
 		WITH claimed AS (
 			SELECT id FROM object_deletions
-			WHERE (state = 'pending' AND next_attempt_at <= NOW())
-			   OR (state = 'in_flight' AND claimed_at < NOW() - make_interval(secs => $2))
+			WHERE bucket = ANY($3)
+			  AND ((state = 'pending' AND next_attempt_at <= NOW())
+			   OR (state = 'in_flight' AND claimed_at < NOW() - make_interval(secs => $2)))
 			ORDER BY next_attempt_at
 			FOR UPDATE SKIP LOCKED
 			LIMIT $1
@@ -58,7 +63,7 @@ func (r *ObjectDeletionRepository) Claim(ctx context.Context, limit int) ([]doma
 		SET state = 'in_flight', claimed_at = NOW(), attempts = d.attempts + 1
 		FROM claimed
 		WHERE d.id = claimed.id
-		RETURNING d.id, d.bucket, d.locator, d.attempts, d.claimed_at`, limit, objectDeletionClaimTimeout.Seconds())
+		RETURNING d.id, d.bucket, d.locator, d.attempts, d.claimed_at`, limit, objectDeletionClaimTimeout.Seconds(), bucketNames)
 	if err != nil {
 		return nil, fmt.Errorf("claim object deletions: %w", err)
 	}
@@ -139,9 +144,10 @@ func queueObjectDeletions(ctx context.Context, tx pgx.Tx, bucket domain.ObjectBu
 	return nil
 }
 
-// queueTaskFileDeletions queues the files held by tasks about to be deleted.
+// queueTaskFileDeletions locks the tasks about to be deleted, including those with no file
+// yet, so a concurrent file replace either commits first and is read here or misses the row.
 func queueTaskFileDeletions(ctx context.Context, tx pgx.Tx, where string, args ...any) error {
-	rows, err := tx.Query(ctx, `SELECT file FROM tasks WHERE file IS NOT NULL AND `+where, args...)
+	rows, err := tx.Query(ctx, `SELECT file FROM tasks WHERE `+where+` FOR UPDATE`, args...)
 	if err != nil {
 		return fmt.Errorf("list task files before delete: %w", err)
 	}

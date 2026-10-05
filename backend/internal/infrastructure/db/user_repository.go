@@ -222,10 +222,16 @@ func (r *UserRepository) Delete(ctx context.Context, id string) error {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	rows, err := tx.Query(ctx, `
-		SELECT avatar_url FROM users WHERE id = $1
-		UNION ALL
-		SELECT logo_url FROM user_profiles WHERE user_id = $1`, id)
+	// Locks the user, then its profiles: the order profile logo writes take (lockProfileOwner).
+	var avatarURL *string
+	err = tx.QueryRow(ctx, `SELECT avatar_url FROM users WHERE id = $1 FOR UPDATE`, id).Scan(&avatarURL)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrUserNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("lock user before delete: %w", err)
+	}
+	rows, err := tx.Query(ctx, `SELECT logo_url FROM user_profiles WHERE user_id = $1 FOR UPDATE`, id)
 	if err != nil {
 		return fmt.Errorf("list user files before delete: %w", err)
 	}
@@ -233,7 +239,7 @@ func (r *UserRepository) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("scan user files before delete: %w", err)
 	}
-	if err := queueObjectDeletions(ctx, tx, domain.ObjectBucketLogos, locators...); err != nil {
+	if err := queueObjectDeletions(ctx, tx, domain.ObjectBucketLogos, append(locators, avatarURL)...); err != nil {
 		return err
 	}
 

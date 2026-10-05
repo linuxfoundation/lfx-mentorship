@@ -6,6 +6,7 @@ package service
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"strings"
 	"testing"
@@ -32,6 +33,28 @@ func zipWith(t *testing.T, names ...string) []byte {
 	return buf.Bytes()
 }
 
+// compoundFileWith builds a minimal compound file whose directory holds the named entries (type 2 is a stream).
+func compoundFileWith(entries ...compoundEntry) []byte {
+	data := make([]byte, 512, 512+compoundDirEntrySize*(len(entries)+1))
+	copy(data, compoundFileSignature)
+	for _, e := range append([]compoundEntry{{"Root Entry", 5}}, entries...) {
+		entry := make([]byte, compoundDirEntrySize)
+		name := []rune(e.name + "\x00")
+		for i, r := range name {
+			binary.LittleEndian.PutUint16(entry[i*2:], uint16(r))
+		}
+		binary.LittleEndian.PutUint16(entry[64:], uint16(len(name)*2))
+		entry[66] = e.objectType
+		data = append(data, entry...)
+	}
+	return data
+}
+
+type compoundEntry struct {
+	name       string
+	objectType byte
+}
+
 func TestIdentifyFileType(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -44,7 +67,12 @@ func TestIdentifyFileType(t *testing.T) {
 		{"svg logo rejected", []byte(`<svg xmlns="http://www.w3.org/2000/svg"><script/></svg>`), logoFileTypes, ""},
 		{"pdf as logo rejected", []byte("%PDF-1.7"), logoFileTypes, ""},
 		{"pdf", []byte("%PDF-1.7\n\x00\x01"), taskFileTypes, "application/pdf"},
-		{"doc", []byte("\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1\x00\x00"), taskFileTypes, "application/msword"},
+		{"doc", compoundFileWith(compoundEntry{"\x05SummaryInformation", 2}, compoundEntry{"WordDocument", 2}), taskFileTypes, "application/msword"},
+		{"xls rejected", compoundFileWith(compoundEntry{"Workbook", 2}), taskFileTypes, ""},
+		{"ppt rejected", compoundFileWith(compoundEntry{"PowerPoint Document", 2}), taskFileTypes, ""},
+		{"msi rejected", compoundFileWith(compoundEntry{"\x05SummaryInformation", 2}, compoundEntry{"\u4840\u3f3f\u4577", 2}), taskFileTypes, ""},
+		{"WordDocument storage rejected", compoundFileWith(compoundEntry{"WordDocument", 1}), taskFileTypes, ""},
+		{"compound header alone rejected", []byte(compoundFileSignature + "\x00\x00"), taskFileTypes, ""},
 		{"docx", zipWith(t, "[Content_Types].xml", "word/document.xml"), taskFileTypes, fileTypeDOCX.contentType},
 		{"plain zip rejected", zipWith(t, "[Content_Types].xml", "xl/workbook.xml"), taskFileTypes, ""},
 		{"text", []byte("func main() {}\n"), taskFileTypes, fileTypeText.contentType},
