@@ -1688,8 +1688,14 @@ Submit an application to a term.
 1. Term must have `status = "open"`.
 2. Current date must fall within `application_start_date` and `application_end_date`.
 3. No existing non-withdrawn application for this user+term (reapplication from `declined` is permanently blocked; reapplication from `withdrawn` is allowed while the window is open).
+4. Fewer than 3 withdrawn applications for this user+term — once a user has withdrawn 3, no further application to the term is accepted.
 
 **After creation**: The program's `task_templates` JSONB array is cloned as individual `prerequisite` tasks linked to the new application.
+
+**Reapplication** creates a new `pending` application under a new ID and keeps
+the withdrawn one, unchanged, as history — its reviewer note, evaluation, and
+tasks stay on it. A user may therefore hold several withdrawn applications for a
+term, but at most one that is not withdrawn.
 
 **Request body**
 ```json
@@ -1702,7 +1708,7 @@ The applicant is always the caller. `attendance_type` is ignored; a Program
 Admin sets it on acceptance.
 
 **Response** `201` → `<Application>`  
-**Errors** `400`, `401`, `409` (duplicate / blocked reapplication), `422` (window closed, term not open)
+**Errors** `400`, `401`, `409` (duplicate / blocked reapplication), `422` (window closed, term not open, reapplication limit reached)
 
 ---
 

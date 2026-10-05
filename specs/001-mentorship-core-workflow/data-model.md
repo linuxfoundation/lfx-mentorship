@@ -156,7 +156,7 @@ invited │ requested │ active ──manual-hold──► pending
 | `tasks_submitted` | BOOLEAN | DEFAULT false | set when all prerequisite tasks submitted |
 | `admin_notified` | BOOLEAN | DEFAULT false | notification sent flag |
 
-**Unique**: `(program_term_id, user_id, role)`
+**Unique**: `(program_term_id, user_id, role)` among applications that are not `withdrawn` (partial index `uq_applications_active`); withdrawn applications are kept as history when the user reapplies.
 
 ### Status Lifecycle
 

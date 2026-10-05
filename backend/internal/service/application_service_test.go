@@ -8,6 +8,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,6 +34,7 @@ type stubAppRepo struct {
 	countBlocking     func(context.Context, string) (int, error)
 	countAccepted     func(context.Context, string) (int, error)
 	findByTermAndUser func(context.Context, string, string) (*models.Application, error)
+	countWithdrawn    func(context.Context, string, string) (int, error)
 	bulkDecline       func(context.Context, string) (int, error)
 	listPastMentees   func(context.Context, string) ([]*models.Application, error)
 }
@@ -117,6 +120,12 @@ func (m *stubAppRepo) FindByTermAndUser(ctx context.Context, termID, userID stri
 		return m.findByTermAndUser(ctx, termID, userID)
 	}
 	return nil, nil
+}
+func (m *stubAppRepo) CountWithdrawnByTermAndUser(ctx context.Context, termID, userID string) (int, error) {
+	if m.countWithdrawn != nil {
+		return m.countWithdrawn(ctx, termID, userID)
+	}
+	return 1, nil
 }
 func (m *stubAppRepo) BulkDeclineByTerm(ctx context.Context, termID string) (int, error) {
 	if m.bulkDecline != nil {
@@ -535,6 +544,71 @@ func TestApplicationService_Create_WithdrawnReapply_ReplacesAtomically(t *testin
 	}
 	if replaced != "old" {
 		t.Errorf("old withdrawn application was not atomically replaced; got oldID=%q", replaced)
+	}
+}
+
+func TestApplicationService_Create_WithdrawnReapply_Limit(t *testing.T) {
+	cases := []struct {
+		withdrawn int
+		wantErr   bool
+	}{
+		{withdrawn: 2, wantErr: false},
+		{withdrawn: 3, wantErr: true},
+		{withdrawn: 4, wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(fmt.Sprintf("%d withdrawn", tc.withdrawn), func(t *testing.T) {
+			termRepo := &stubTermRepo{getByID: func(_ context.Context, _ string) (*models.ProgramTerm, error) {
+				return openTerm(time.Now()), nil
+			}}
+			reapplied := false
+			repo := &stubAppRepo{
+				findByTermAndUser: func(_ context.Context, _, _ string) (*models.Application, error) {
+					return &models.Application{ID: "old", Status: models.ApplicationStatusWithdrawn}, nil
+				},
+				countWithdrawn: func(_ context.Context, termID, userID string) (int, error) {
+					if termID != "t1" || userID != "u1" {
+						t.Fatalf("countWithdrawn arguments = term %q, user %q", termID, userID)
+					}
+					return tc.withdrawn, nil
+				},
+				reapply: func(_ context.Context, _, _ string, _ models.ApplicationCreateInput) (*models.Application, error) {
+					reapplied = true
+					return &models.Application{ID: "new", Status: models.ApplicationStatusPending}, nil
+				},
+			}
+			svc := newApplicationSvc(repo, &stubTaskRepo{}, termRepo, &stubProgRepo{})
+			_, err := svc.Create(context.Background(), "t1", models.ApplicationCreateInput{UserID: "u1", Role: models.ApplicationRoleMentee})
+			if tc.wantErr {
+				if !errors.Is(err, domain.ErrIneligible) || !strings.Contains(err.Error(), "reapplication limit reached") {
+					t.Fatalf("err = %v; want ErrIneligible naming the reapplication limit", err)
+				}
+				if reapplied {
+					t.Fatal("a new application was created past the reapplication limit")
+				}
+				return
+			}
+			if err != nil || !reapplied {
+				t.Fatalf("err = %v, reapplied = %v; want a new application", err, reapplied)
+			}
+		})
+	}
+}
+
+func TestApplicationService_Create_CountWithdrawnError(t *testing.T) {
+	termRepo := &stubTermRepo{getByID: func(_ context.Context, _ string) (*models.ProgramTerm, error) {
+		return openTerm(time.Now()), nil
+	}}
+	countErr := errors.New("db down")
+	repo := &stubAppRepo{
+		findByTermAndUser: func(_ context.Context, _, _ string) (*models.Application, error) {
+			return &models.Application{ID: "old", Status: models.ApplicationStatusWithdrawn}, nil
+		},
+		countWithdrawn: func(context.Context, string, string) (int, error) { return 0, countErr },
+	}
+	svc := newApplicationSvc(repo, &stubTaskRepo{}, termRepo, &stubProgRepo{})
+	if _, err := svc.Create(context.Background(), "t1", models.ApplicationCreateInput{UserID: "u1", Role: models.ApplicationRoleMentee}); !errors.Is(err, countErr) {
+		t.Fatalf("err = %v; want the count error", err)
 	}
 }
 

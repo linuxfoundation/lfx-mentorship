@@ -10,6 +10,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
@@ -280,6 +281,64 @@ func TestApplicationRepositoryIntegration_StatusChangeAppliesOnlyFromExpectedSta
 	var status models.ApplicationStatus
 	if err := pool.QueryRow(ctx, `SELECT status FROM applications WHERE id = $1`, applicationID).Scan(&status); err != nil || status != declined {
 		t.Fatalf("status = %q, err = %v; want declined", status, err)
+	}
+}
+
+func TestApplicationRepositoryIntegration_ReapplyKeepsWithdrawnApplication(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	oldID, newID := "00000000-0000-0000-0000-000000000077", "00000000-0000-0000-0000-00000000007b"
+	oldTaskID := "00000000-0000-0000-0000-000000000078"
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status, reviewer_note, evaluation) VALUES ($1, $2, $3, 'mentee', 'withdrawn', 'do not accept', 'partial')`, oldID, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatalf("insert application: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO tasks (id, application_id, program_term_id, assignee_id, status, category, application_status, program_term_status) VALUES ($1, $2, $3, $4, 'incomplete', 'non_prerequisite', 'withdrawn', 'open')`, oldTaskID, oldID, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatalf("insert task: %v", err)
+	}
+	repo := NewApplicationRepository(pool)
+	input := models.ApplicationCreateInput{ID: newID, UserID: fixture.UserID, Role: models.ApplicationRoleMentee, Status: models.ApplicationStatusPending}
+
+	a, err := repo.ReapplyWithTasks(ctx, oldID, fixture.OpenTerm, input, nil)
+	if err != nil {
+		t.Fatalf("ReapplyWithTasks: %v", err)
+	}
+	if a.ID != newID || a.Status != models.ApplicationStatusPending {
+		t.Fatalf("reapplication = id %q status %q; want a new pending application %q", a.ID, a.Status, newID)
+	}
+
+	// The withdrawn application, its reviewer data, and its tasks are kept untouched.
+	old, err := repo.GetByID(ctx, oldID)
+	if err != nil {
+		t.Fatalf("withdrawn application after reapply: %v", err)
+	}
+	if old.Status != models.ApplicationStatusWithdrawn || old.ReviewerNote == nil || *old.ReviewerNote != "do not accept" || old.Evaluation == nil || *old.Evaluation != "partial" {
+		t.Fatalf("withdrawn application = status %q note %v evaluation %v; want it unchanged", old.Status, old.ReviewerNote, old.Evaluation)
+	}
+	var taskParent string
+	if err := pool.QueryRow(ctx, `SELECT application_id FROM tasks WHERE id = $1`, oldTaskID).Scan(&taskParent); err != nil || taskParent != oldID {
+		t.Fatalf("withdrawn application task parent = %q, err = %v; want %q", taskParent, err, oldID)
+	}
+
+	// The reapply guard now sees the live application, not the withdrawn one.
+	current, err := repo.FindByTermAndUser(ctx, fixture.OpenTerm, fixture.UserID)
+	if err != nil || current == nil || current.ID != newID {
+		t.Fatalf("FindByTermAndUser = %+v, err = %v; want %q", current, err, newID)
+	}
+
+	// Only the withdrawn application counts toward the reapplication limit.
+	if n, err := repo.CountWithdrawnByTermAndUser(ctx, fixture.OpenTerm, fixture.UserID); err != nil || n != 1 {
+		t.Fatalf("CountWithdrawnByTermAndUser = %d, err = %v; want 1", n, err)
+	}
+
+	// A second reapply from the same withdrawn application cannot add another live one.
+	input.ID = "00000000-0000-0000-0000-00000000007c"
+	var pgErr *pgconn.PgError
+	if _, err := repo.ReapplyWithTasks(ctx, oldID, fixture.OpenTerm, input, nil); !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+		t.Fatalf("second reapply err = %v; want unique violation", err)
+	}
+	if _, err := repo.ReapplyWithTasks(ctx, newID, fixture.OpenTerm, input, nil); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("reapply from pending err = %v; want ErrConflict", err)
 	}
 }
 

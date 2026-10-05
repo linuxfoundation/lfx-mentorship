@@ -157,6 +157,8 @@ type ApplicationRepository interface {
 	CountByTerm(ctx context.Context, termID string) (int, error)
 	// FindByTermAndUser returns an application for a specific term and user, or nil.
 	FindByTermAndUser(ctx context.Context, termID, userID string) (*models.Application, error)
+	// CountWithdrawnByTermAndUser returns how many withdrawn applications a user holds for a term.
+	CountWithdrawnByTermAndUser(ctx context.Context, termID, userID string) (int, error)
 	// BulkDeclineByTerm moves all pending/submitted applications in a term to declined.
 	BulkDeclineByTerm(ctx context.Context, termID string) (int, error)
 	// ListPastMenteesByTerm returns accepted/graduated application user IDs for a term.
