@@ -290,8 +290,9 @@ func TestApplicationRepositoryIntegration_ReapplyKeepsWithdrawnApplication(t *te
 	ctx := context.Background()
 	oldID, newID := "00000000-0000-0000-0000-000000000077", "00000000-0000-0000-0000-00000000007b"
 	oldTaskID := "00000000-0000-0000-0000-000000000078"
-	// created_on is NULL as on backfilled rows; the user also holds a live mentor application.
-	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status, reviewer_note, evaluation, created_on) VALUES ($1, $2, $3, 'mentee', 'withdrawn', 'do not accept', 'partial', NULL)`, oldID, fixture.OpenTerm, fixture.UserID); err != nil {
+	// The withdrawn application's created_on is later than the reapplication's will be, so the live
+	// application must win on status rather than timestamp. The user also holds a live mentor application.
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status, reviewer_note, evaluation, created_on) VALUES ($1, $2, $3, 'mentee', 'withdrawn', 'do not accept', 'partial', NOW() + INTERVAL '1 day')`, oldID, fixture.OpenTerm, fixture.UserID); err != nil {
 		t.Fatalf("insert application: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ('00000000-0000-0000-0000-000000000079', $1, $2, 'mentor', 'pending')`, fixture.OpenTerm, fixture.UserID); err != nil {
@@ -362,8 +363,8 @@ func TestApplicationRepositoryIntegration_ReapplyEnforcesWithdrawnLimit(t *testi
 	ctx := context.Background()
 	withdrawnIDs := []string{"00000000-0000-0000-0000-000000000081", "00000000-0000-0000-0000-000000000082", "00000000-0000-0000-0000-000000000083"}
 	for _, id := range withdrawnIDs {
-		// NULL created_on, as on backfilled rows, so the list must break the tie on id.
-		if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status, created_on) VALUES ($1, $2, $3, 'mentee', 'withdrawn', NULL)`, id, fixture.OpenTerm, fixture.UserID); err != nil {
+		// Identical created_on, so the list must break the tie on id.
+		if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status, created_on) VALUES ($1, $2, $3, 'mentee', 'withdrawn', '2026-01-01T00:00:00Z')`, id, fixture.OpenTerm, fixture.UserID); err != nil {
 			t.Fatalf("insert withdrawn application: %v", err)
 		}
 	}
