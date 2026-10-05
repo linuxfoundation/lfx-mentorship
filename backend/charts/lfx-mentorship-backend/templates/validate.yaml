@@ -110,13 +110,14 @@ bucket without a CDN prefix, since stored logo columns hold the full CDN URL. */
 {{- fail "values.yaml: config.LOGOS_CDN_URL_PREFIX must be an absolute http(s) URL with no query or fragment when LOGOS_S3_BUCKET is set." }}
 {{- end }}
 {{- end }}
-{{- range $key := list "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" }}
+{{- $awsCredentials := list "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" "AWS_SESSION_TOKEN" }}
+{{- range $key := $awsCredentials }}
 {{- if get $.Values.config $key }}
 {{- fail (printf "values.yaml: config.%s would render a credential into the ConfigMap; supply static credentials through the Secret, and only for the local nats-s3 sidecar." $key) }}
 {{- end }}
 {{- end }}
 {{- range $entry := .Values.env }}
-{{- if and (has $entry.name (list "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY")) $entry.value }}
+{{- if and (has $entry.name $awsCredentials) $entry.value }}
 {{- fail (printf "values.yaml: env %s must come from a Secret (valueFrom), never an inline value." $entry.name) }}
 {{- end }}
 {{- end }}
