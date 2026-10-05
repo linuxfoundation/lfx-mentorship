@@ -422,8 +422,9 @@ func (r *ProgramRepository) GetManagementSummary(ctx context.Context, programID 
 			EXISTS (SELECT 1 FROM program_terms WHERE program_id = $1 AND status = 'open'),
 			EXISTS (SELECT 1 FROM program_terms WHERE program_id = $1 AND status = 'closed'),
 			COUNT(a.id) FILTER (WHERE pt.status = 'open' AND p.status NOT IN ('draft', 'submitted') AND a.role = 'mentee' AND a.status IN ('accepted', 'graduated')),
-			COUNT(a.id) FILTER (WHERE pt.status = 'closed' AND p.status NOT IN ('draft', 'submitted') AND a.role = 'mentee'),
-			COUNT(a.id) FILTER (WHERE p.status NOT IN ('draft', 'submitted') AND a.role = 'mentee'),
+			-- Counted per (term, user): a withdrawn application is kept beside its reapplication.
+			COUNT(DISTINCT (a.program_term_id, a.user_id)) FILTER (WHERE pt.status = 'closed' AND p.status NOT IN ('draft', 'submitted') AND a.role = 'mentee'),
+			COUNT(DISTINCT (a.program_term_id, a.user_id)) FILTER (WHERE p.status NOT IN ('draft', 'submitted') AND a.role = 'mentee'),
 			(SELECT COUNT(*) FROM program_members pm WHERE pm.program_id = $1 AND pm.member_type = 'mentor' AND pm.status = 'active'),
 			(SELECT COUNT(*) FROM program_terms WHERE program_id = $1 AND status <> 'deleted')
 		FROM program_terms pt
