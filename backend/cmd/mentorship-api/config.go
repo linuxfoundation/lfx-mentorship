@@ -300,6 +300,10 @@ func loadStorageConfig() (StorageConfig, error) {
 	if (cfg.Logos.Bucket != "" || cfg.Attachments.Bucket != "") && cfg.Region == "" {
 		return StorageConfig{}, fmt.Errorf("AWS_REGION is required when an S3 bucket is configured")
 	}
+	// The logos bucket is CDN-fronted, so sharing it would make private attachments public.
+	if cfg.Logos.Bucket != "" && cfg.Logos.Bucket == cfg.Attachments.Bucket {
+		return StorageConfig{}, fmt.Errorf("ATTACHMENTS_S3_BUCKET must differ from LOGOS_S3_BUCKET")
+	}
 	if cfg.Logos.Bucket != "" {
 		// Stored logo columns hold the full CDN URL, so the prefix is required, not optional.
 		if u, err := url.Parse(cfg.Logos.CDNURLPrefix); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {

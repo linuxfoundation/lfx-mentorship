@@ -109,6 +109,9 @@ bucket without a CDN prefix, since stored logo columns hold the full CDN URL. */
 {{- if not (regexMatch "^https?://[^/?#]+[^?#]*$" (toString .Values.config.LOGOS_CDN_URL_PREFIX)) }}
 {{- fail "values.yaml: config.LOGOS_CDN_URL_PREFIX must be an absolute http(s) URL with no query or fragment when LOGOS_S3_BUCKET is set." }}
 {{- end }}
+{{- if eq (trim (toString .Values.config.LOGOS_S3_BUCKET)) (trim (toString .Values.config.ATTACHMENTS_S3_BUCKET)) }}
+{{- fail "values.yaml: config.ATTACHMENTS_S3_BUCKET must differ from LOGOS_S3_BUCKET; the logos bucket is CDN-fronted." }}
+{{- end }}
 {{- end }}
 {{- $awsCredentials := list "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" "AWS_SESSION_TOKEN" }}
 {{- range $key := $awsCredentials }}
