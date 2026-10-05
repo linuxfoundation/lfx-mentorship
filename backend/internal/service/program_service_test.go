@@ -871,3 +871,66 @@ func TestProgramService_DeleteSkill_InactiveAdminForbidden(t *testing.T) {
 		t.Fatalf("expected ErrForbidden, got %v", err)
 	}
 }
+
+func TestProgramService_ListMine_ScopesToCaller(t *testing.T) {
+	var gotUser string
+	var gotFilter models.AdministeredProgramFilter
+	repo := &stubProgRepo{
+		listAdministered: func(_ context.Context, userID string, f models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+			gotUser, gotFilter = userID, f
+			return []*models.AdministeredProgram{{ID: "p1"}}, &models.PaginationMeta{Total: 1}, nil
+		},
+	}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	got, meta, err := svc.ListMine(context.Background(), "user-1", models.AdministeredProgramFilter{
+		Limit:  5,
+		Search: "  grid  ",
+		Status: models.AdministeredProgramStatusPendingReview,
+	})
+	if err != nil {
+		t.Fatalf("ListMine: %v", err)
+	}
+	if gotUser != "user-1" {
+		t.Errorf("user = %q; want user-1", gotUser)
+	}
+	want := models.AdministeredProgramFilter{Limit: 5, Search: "grid", Status: models.AdministeredProgramStatusPendingReview}
+	if gotFilter != want {
+		t.Errorf("filter = %+v; want %+v", gotFilter, want)
+	}
+	if len(got) != 1 || meta.Total != 1 {
+		t.Errorf("got %d programs, total %d; want 1, 1", len(got), meta.Total)
+	}
+}
+
+func TestProgramService_ListMine_RejectsBadInput(t *testing.T) {
+	repo := &stubProgRepo{
+		listAdministered: func(context.Context, string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+			t.Fatal("repo must not be called for invalid input")
+			return nil, nil, nil
+		},
+	}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+
+	if _, _, err := svc.ListMine(context.Background(), "", models.AdministeredProgramFilter{}); !errors.Is(err, domain.ErrUnauthorized) {
+		t.Errorf("empty user: got %v; want ErrUnauthorized", err)
+	}
+	// The BFF's display value uses a hyphen; the API value is pending_review.
+	for _, status := range []models.AdministeredProgramStatus{"pending-review", "published", "draft"} {
+		if _, _, err := svc.ListMine(context.Background(), "user-1", models.AdministeredProgramFilter{Status: status}); !errors.Is(err, domain.ErrInvalidInput) {
+			t.Errorf("status %q: got %v; want ErrInvalidInput", status, err)
+		}
+	}
+}
+
+func TestProgramService_ListMine_WrapsRepoError(t *testing.T) {
+	repoErr := errors.New("db down")
+	repo := &stubProgRepo{
+		listAdministered: func(context.Context, string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+			return nil, nil, repoErr
+		},
+	}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	if _, _, err := svc.ListMine(context.Background(), "user-1", models.AdministeredProgramFilter{}); !errors.Is(err, repoErr) {
+		t.Errorf("got %v; want wrapped repo error", err)
+	}
+}

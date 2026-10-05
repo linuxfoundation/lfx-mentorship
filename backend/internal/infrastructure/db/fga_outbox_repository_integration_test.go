@@ -619,6 +619,102 @@ func TestProgramHeaderProjectionIntegration_LeavesActiveTermNilWithoutOpenTerm(t
 	}
 }
 
+func TestProgramListAdministeredIntegration_GroupsStatusAndScopesToActiveAdmin(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	const (
+		completedID  = "00000000-0000-0000-0000-000000000040"
+		pendingID    = "00000000-0000-0000-0000-000000000041"
+		mentorOnlyID = "00000000-0000-0000-0000-000000000042"
+		withdrawnID  = "00000000-0000-0000-0000-000000000043"
+	)
+	for _, q := range []string{
+		`INSERT INTO programs (id, name, slug, status, lf_project_name) VALUES
+			('` + completedID + `', 'Alpha', 'alpha', 'published', 'LF Energy'),
+			('` + pendingID + `', 'beta', 'beta', 'submitted', 'CNCF'),
+			('` + mentorOnlyID + `', 'Mentored', 'mentored', 'published', NULL),
+			('` + withdrawnID + `', 'Withdrawn', 'withdrawn', 'published', NULL)`,
+		`INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES
+			('00000000-0000-0000-0000-000000000044', '` + completedID + `', '` + fixture.UserID + `', 'program_admin', 'active'),
+			('00000000-0000-0000-0000-000000000045', '` + pendingID + `', '` + fixture.UserID + `', 'program_admin', 'active'),
+			('00000000-0000-0000-0000-000000000046', '` + mentorOnlyID + `', '` + fixture.UserID + `', 'mentor', 'active'),
+			('00000000-0000-0000-0000-000000000047', '` + withdrawnID + `', '` + fixture.UserID + `', 'program_admin', 'withdrawn'),
+			('00000000-0000-0000-0000-000000000048', '` + fixture.ProgramID + `', '` + fixture.UserID + `', 'mentor', 'active')`,
+		`INSERT INTO program_terms (id, program_id, name, status, start_date_time) VALUES
+			('00000000-0000-0000-0000-000000000049', '` + completedID + `', 'Spring 2026', 'closed', '2026-01-01'),
+			('00000000-0000-0000-0000-00000000004a', '` + completedID + `', 'Summer 2026', 'closed', '2026-05-01')`,
+		`INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES
+			('00000000-0000-0000-0000-00000000004b', '` + fixture.OpenTerm + `', '` + fixture.UserID + `', 'mentee', 'accepted')`,
+	} {
+		if _, err := pool.Exec(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	repo := NewProgramRepository(pool)
+
+	programs, meta, err := repo.ListAdministeredByUser(ctx, fixture.UserID, models.AdministeredProgramFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Total != 3 || len(programs) != 3 {
+		t.Fatalf("total=%d len=%d; want 3 (mentor-only and withdrawn memberships excluded)", meta.Total, len(programs))
+	}
+	type row struct {
+		id     string
+		status models.AdministeredProgramStatus
+		term   string
+	}
+	want := []row{
+		{completedID, models.AdministeredProgramStatusCompleted, "Summer 2026"},
+		{pendingID, models.AdministeredProgramStatusPendingReview, ""},
+		{fixture.ProgramID, models.AdministeredProgramStatusOpen, "Open"},
+	}
+	for i, w := range want {
+		p := programs[i]
+		term := ""
+		if p.Term != nil {
+			term = p.Term.Name
+			if p.Term.ProgramID != p.ID {
+				t.Errorf("programs[%d].Term.ProgramID = %s; want %s", i, p.Term.ProgramID, p.ID)
+			}
+		}
+		if p.ID != w.id || p.AdminStatus != w.status || term != w.term {
+			t.Errorf("programs[%d] = {%s %s %q}; want %+v", i, p.ID, p.AdminStatus, term, w)
+		}
+	}
+	if programs[0].Term.Status != models.ProgramTermStatusClosed || programs[2].Term.Status != models.ProgramTermStatusOpen {
+		t.Errorf("term statuses = %s, %s; want closed, open", programs[0].Term.Status, programs[2].Term.Status)
+	}
+	if s := programs[2].Stats; s.Mentors != 1 || s.Mentees != 1 || s.Graduated != 0 {
+		t.Errorf("fixture program stats = %+v; want 1 mentor, 1 mentee", s)
+	}
+
+	completed, meta, err := repo.ListAdministeredByUser(ctx, fixture.UserID, models.AdministeredProgramFilter{Status: models.AdministeredProgramStatusCompleted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Total != 1 || len(completed) != 1 || completed[0].ID != completedID {
+		t.Errorf("status=completed: total=%d programs=%+v; want only %s", meta.Total, completed, completedID)
+	}
+
+	byProject, meta, err := repo.ListAdministeredByUser(ctx, fixture.UserID, models.AdministeredProgramFilter{Search: "cncf"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Total != 1 || len(byProject) != 1 || byProject[0].ID != pendingID {
+		t.Errorf("search=cncf: total=%d programs=%+v; want only %s", meta.Total, byProject, pendingID)
+	}
+
+	paged, meta, err := repo.ListAdministeredByUser(ctx, fixture.UserID, models.AdministeredProgramFilter{Limit: 1, Offset: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Total != 3 || len(paged) != 1 || paged[0].ID != pendingID {
+		t.Errorf("limit=1 offset=1: total=%d programs=%+v; want %s of 3", meta.Total, paged, pendingID)
+	}
+}
+
 func TestProgramTermDeleteIntegration_BlocksWhenApplicationsExist(t *testing.T) {
 	pool := integrationPool(t)
 	fixture := seedIntegrationFixture(t, pool)

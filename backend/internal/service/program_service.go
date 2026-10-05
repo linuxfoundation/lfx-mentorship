@@ -233,6 +233,28 @@ func (s *ProgramService) ListCatalogMentees(ctx context.Context, programID strin
 	return mentees, nil
 }
 
+// ListMine returns the programs the caller is an active program admin of.
+func (s *ProgramService) ListMine(ctx context.Context, userID string, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+	ctx, span := programSvcTracer.Start(ctx, "ProgramService.ListMine")
+	defer span.End()
+	span.SetAttributes(attribute.String("user.id", userID))
+
+	if userID == "" {
+		return nil, nil, fmt.Errorf("%w: caller identity is required", domain.ErrUnauthorized)
+	}
+	if filter.Status != "" && !filter.Status.IsValid() {
+		return nil, nil, fmt.Errorf("%w: status must be open, pending_review, completed, rejected, or hidden", domain.ErrInvalidInput)
+	}
+	filter.Search = strings.TrimSpace(filter.Search)
+
+	programs, meta, err := s.repo.ListAdministeredByUser(ctx, userID, filter)
+	if err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("list my programs: %w", err)
+	}
+	return programs, meta, nil
+}
+
 // Create validates input and creates a program.
 func (s *ProgramService) Create(ctx context.Context, input models.ProgramCreateInput) (*models.Program, error) {
 	ctx, span := programSvcTracer.Start(ctx, "ProgramService.Create")

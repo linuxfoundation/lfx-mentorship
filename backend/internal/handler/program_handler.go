@@ -31,6 +31,7 @@ type programService interface {
 	ListCatalog(ctx context.Context, filter models.ProgramFilter) ([]*models.ProgramCatalogItem, *models.PaginationMeta, error)
 	GetCatalog(ctx context.Context, id string) (*models.ProgramCatalogItem, error)
 	ListCatalogMentees(ctx context.Context, programID string) ([]*models.ProgramCatalogMentee, error)
+	ListMine(ctx context.Context, userID string, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error)
 	Create(ctx context.Context, input models.ProgramCreateInput) (*models.Program, error)
 	CreateEnrollment(ctx context.Context, input models.ProgramEnrollmentInput) (*models.Program, error)
 	Update(ctx context.Context, id string, input models.ProgramUpdateInput) (*models.Program, error)
@@ -250,6 +251,31 @@ func (h *ProgramHandler) ListCatalog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	JSON(w, http.StatusOK, map[string]any{"data": items, "meta": meta})
+}
+
+// ListMine handles GET /v1/me/programs — the programs the caller administers.
+// The user is always the principal.
+func (h *ProgramHandler) ListMine(w http.ResponseWriter, r *http.Request) {
+	principal := auth.PrincipalFromContext(r.Context())
+	if principal == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	limit, offset, ok := parsePaginationParams(w, r)
+	if !ok {
+		return
+	}
+	programs, meta, err := h.svc.ListMine(r.Context(), principal.UserID, models.AdministeredProgramFilter{
+		Limit:  limit,
+		Offset: offset,
+		Search: r.URL.Query().Get("search"),
+		Status: models.AdministeredProgramStatus(r.URL.Query().Get("status")),
+	})
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]any{"data": programs, "meta": meta})
 }
 
 // GetCatalog handles GET /v1/programs/{id}/catalog.
