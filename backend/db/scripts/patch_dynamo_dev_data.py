@@ -163,7 +163,7 @@ def main() -> None:
     # earlier run fabricated there; every other row links to --project-uid.
     genuine_repairs: list[tuple[str, str]] = []
     project_repairs = []
-    for row in project_rows:
+    for row in sorted(project_rows, key=lambda project: project["projectId"]):
         genuine = genuine_project_uid(row)
         if genuine:
             if row.get("lfProjectUid") != genuine:
