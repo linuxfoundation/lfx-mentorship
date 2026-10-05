@@ -155,8 +155,10 @@ invited │ requested │ active ──manual-hold──► pending
 | `attendance_type` | VARCHAR(20) | nullable | **required on accept**: `full_time \| part_time` |
 | `tasks_submitted` | BOOLEAN | DEFAULT false | set when all prerequisite tasks submitted |
 | `admin_notified` | BOOLEAN | DEFAULT false | notification sent flag |
+| `created_on` | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | orders a reapplication after its withdrawn history |
+| `updated_on` | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | |
 
-**Unique**: `(program_term_id, user_id, role)`
+**Unique**: `(program_term_id, user_id, role)` among applications that are not `withdrawn` (partial index `uq_applications_active`); withdrawn applications are kept as history when the user reapplies.
 
 ### Status Lifecycle
 
