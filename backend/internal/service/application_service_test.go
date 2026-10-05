@@ -523,8 +523,8 @@ func TestApplicationService_Create_DeclinedReapply_Blocked(t *testing.T) {
 	}
 }
 
-func TestApplicationService_Create_WithdrawnReapply_ReplacesAtomically(t *testing.T) {
-	var replaced string
+func TestApplicationService_Create_WithdrawnReapply_ReappliesFromWithdrawn(t *testing.T) {
+	var reappliedFrom string
 	termRepo := &stubTermRepo{getByID: func(_ context.Context, _ string) (*models.ProgramTerm, error) {
 		return openTerm(time.Now()), nil
 	}}
@@ -533,7 +533,7 @@ func TestApplicationService_Create_WithdrawnReapply_ReplacesAtomically(t *testin
 			return &models.Application{ID: "old", Status: "withdrawn"}, nil
 		},
 		reapply: func(_ context.Context, oldID, _ string, _ models.ApplicationCreateInput) (*models.Application, error) {
-			replaced = oldID
+			reappliedFrom = oldID
 			return &models.Application{ID: "new", Status: "pending"}, nil
 		},
 	}
@@ -542,8 +542,8 @@ func TestApplicationService_Create_WithdrawnReapply_ReplacesAtomically(t *testin
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if replaced != "old" {
-		t.Errorf("old withdrawn application was not atomically replaced; got oldID=%q", replaced)
+	if reappliedFrom != "old" {
+		t.Errorf("reapply was not made from the withdrawn application; got oldID=%q", reappliedFrom)
 	}
 }
 

@@ -64,10 +64,6 @@ func (s *ApplicationService) isActiveReviewer(ctx context.Context, programID, ac
 	return true, nil
 }
 
-// maxWithdrawnApplicationsPerTerm caps reapplication: each reapply keeps the withdrawn application
-// as history, so once a user has withdrawn this many for a term they cannot apply to it again.
-const maxWithdrawnApplicationsPerTerm = 3
-
 // applicationTransitions maps current → allowed next statuses.
 var applicationTransitions = map[models.ApplicationStatus][]models.ApplicationStatus{
 	models.ApplicationStatusPending: {
@@ -249,7 +245,7 @@ func (s *ApplicationService) Create(ctx context.Context, programTermID string, i
 			span.RecordError(err)
 			return nil, fmt.Errorf("count withdrawn applications: %w", err)
 		}
-		if withdrawn >= maxWithdrawnApplicationsPerTerm {
+		if withdrawn >= models.MaxWithdrawnApplicationsPerTerm {
 			return nil, fmt.Errorf("%w: reapplication limit reached: you have withdrawn %d applications for this term and cannot apply to it again", domain.ErrIneligible, withdrawn)
 		}
 		input.ID = uuid.New().String()

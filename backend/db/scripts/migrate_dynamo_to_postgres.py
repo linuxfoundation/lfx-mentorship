@@ -985,7 +985,7 @@ def migrate_mentees(
            start_date_time, end_date_time, tasks_submitted, admin_notified,
            attendance_type, created_on, updated_on)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (program_term_id, user_id, role) DO UPDATE SET
+        ON CONFLICT (id) DO UPDATE SET
           status              = EXCLUDED.status,
           program_term_status = EXCLUDED.program_term_status,
           start_date_time     = EXCLUDED.start_date_time,
@@ -999,8 +999,13 @@ def migrate_mentees(
     )
     log.info("  → %d applications upserted, %d skipped", len(app_rows), skipped)
 
-    # Rebuild index from DB so ON CONFLICT winners are used for task resolution.
-    cur.execute("SELECT program_term_id::text, user_id::text, id::text FROM applications WHERE role = 'mentee'")
+    # Rebuild index from DB so ON CONFLICT winners are used for task resolution. A user can hold
+    # withdrawn applications beside a reapplication (uq_applications_active), so order the live,
+    # newest application last and let it win the (term, user) key.
+    cur.execute(
+        "SELECT program_term_id::text, user_id::text, id::text FROM applications WHERE role = 'mentee'"
+        " ORDER BY status <> 'withdrawn', created_on"
+    )
     application_index = {(row[0], row[1]): row[2] for row in cur.fetchall()}
 
     return application_index

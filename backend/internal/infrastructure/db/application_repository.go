@@ -143,7 +143,12 @@ func (r *ApplicationRepository) ListByProgram(ctx context.Context, programID str
 		offset = 0
 	}
 	args := []any{programID}
-	where := ` WHERE pt.program_id = $1 AND a.role = 'mentee' AND p.status NOT IN ('draft', 'submitted')`
+	// A withdrawn application that was later reapplied from is history, not a separate applicant:
+	// list only the newest application per (term, user), matching GetManagementSummary's counts.
+	where := ` WHERE pt.program_id = $1 AND a.role = 'mentee' AND p.status NOT IN ('draft', 'submitted')
+		AND NOT (a.status = 'withdrawn' AND EXISTS (SELECT 1 FROM applications newer
+			WHERE newer.program_term_id = a.program_term_id AND newer.user_id = a.user_id
+			AND newer.role = a.role AND newer.created_on > a.created_on))`
 	switch filter.Type {
 	case models.ProgramApplicationTypeCurrent:
 		where += ` AND pt.status = 'open'`
@@ -339,6 +344,15 @@ func (r *ApplicationRepository) ReapplyWithTasks(ctx context.Context, oldID, pro
 	}
 	if status != models.ApplicationStatusWithdrawn {
 		return nil, fmt.Errorf("%w: only a withdrawn application can be reapplied (status: %s)", domain.ErrConflict, status)
+	}
+	// Re-check the reapplication limit under the term lock: the service counted before the
+	// transaction, and a reapply-then-withdraw that committed since could have reached the limit.
+	var withdrawn int
+	if err := tx.QueryRow(ctx, countWithdrawnByTermAndUserQuery, programTermID, input.UserID).Scan(&withdrawn); err != nil {
+		return nil, fmt.Errorf("count withdrawn applications for reapply: %w", err)
+	}
+	if withdrawn >= models.MaxWithdrawnApplicationsPerTerm {
+		return nil, fmt.Errorf("%w: reapplication limit reached: you have withdrawn %d applications for this term and cannot apply to it again", domain.ErrIneligible, withdrawn)
 	}
 	// A concurrent reapply that already created the active application fails this insert on
 	// uq_applications_active, which the handler maps to 409.
@@ -848,14 +862,15 @@ func (r *ApplicationRepository) FindByTermAndUser(ctx context.Context, termID, u
 	return a, nil
 }
 
+const countWithdrawnByTermAndUserQuery = `SELECT COUNT(*) FROM applications WHERE program_term_id = $1 AND user_id = $2 AND status = 'withdrawn'`
+
 // CountWithdrawnByTermAndUser returns how many withdrawn applications a user holds for a term.
 func (r *ApplicationRepository) CountWithdrawnByTermAndUser(ctx context.Context, termID, userID string) (int, error) {
 	ctx, span := applicationTracer.Start(ctx, "db.applications.CountWithdrawnByTermAndUser")
 	defer span.End()
 
 	var count int
-	const q = `SELECT COUNT(*) FROM applications WHERE program_term_id = $1 AND user_id = $2 AND status = 'withdrawn'`
-	if err := r.pool.QueryRow(ctx, q, termID, userID).Scan(&count); err != nil {
+	if err := r.pool.QueryRow(ctx, countWithdrawnByTermAndUserQuery, termID, userID).Scan(&count); err != nil {
 		span.RecordError(err)
 		return 0, fmt.Errorf("count withdrawn applications: %w", err)
 	}

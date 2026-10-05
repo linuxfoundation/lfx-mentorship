@@ -331,6 +331,16 @@ func TestApplicationRepositoryIntegration_ReapplyKeepsWithdrawnApplication(t *te
 		t.Fatalf("CountWithdrawnByTermAndUser = %d, err = %v; want 1", n, err)
 	}
 
+	// The applicants list shows the reapplication only, and agrees with the summary count.
+	rows, meta, err := repo.ListByProgram(ctx, fixture.ProgramID, models.ProgramApplicationFilter{})
+	if err != nil || meta.Total != 1 || len(rows) != 1 || rows[0].ApplicationID != newID {
+		t.Fatalf("ListByProgram = %d rows, meta %+v, err = %v; want only %q", len(rows), meta, err, newID)
+	}
+	summary, err := NewProgramRepository(pool).GetManagementSummary(ctx, fixture.ProgramID)
+	if err != nil || summary.Applicants != 1 {
+		t.Fatalf("GetManagementSummary = %+v, err = %v; want 1 applicant", summary, err)
+	}
+
 	// A second reapply from the same withdrawn application cannot add another live one.
 	input.ID = "00000000-0000-0000-0000-00000000007c"
 	var pgErr *pgconn.PgError
@@ -339,6 +349,26 @@ func TestApplicationRepositoryIntegration_ReapplyKeepsWithdrawnApplication(t *te
 	}
 	if _, err := repo.ReapplyWithTasks(ctx, newID, fixture.OpenTerm, input, nil); !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("reapply from pending err = %v; want ErrConflict", err)
+	}
+}
+
+func TestApplicationRepositoryIntegration_ReapplyEnforcesWithdrawnLimit(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	withdrawnIDs := []string{"00000000-0000-0000-0000-000000000081", "00000000-0000-0000-0000-000000000082", "00000000-0000-0000-0000-000000000083"}
+	for _, id := range withdrawnIDs {
+		if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentee', 'withdrawn')`, id, fixture.OpenTerm, fixture.UserID); err != nil {
+			t.Fatalf("insert withdrawn application: %v", err)
+		}
+	}
+	input := models.ApplicationCreateInput{ID: "00000000-0000-0000-0000-000000000084", UserID: fixture.UserID, Role: models.ApplicationRoleMentee, Status: models.ApplicationStatusPending}
+	if _, err := NewApplicationRepository(pool).ReapplyWithTasks(ctx, withdrawnIDs[2], fixture.OpenTerm, input, nil); !errors.Is(err, domain.ErrIneligible) {
+		t.Fatalf("reapply past the limit err = %v; want ErrIneligible", err)
+	}
+	var count int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM applications WHERE id = $1`, input.ID).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("applications created past the limit = %d, err = %v; want 0", count, err)
 	}
 }
 
