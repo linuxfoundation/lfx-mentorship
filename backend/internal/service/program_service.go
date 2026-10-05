@@ -263,6 +263,9 @@ func (s *ProgramService) Create(ctx context.Context, input models.ProgramCreateI
 	if strings.TrimSpace(input.Name) == "" {
 		return nil, fmt.Errorf("%w: name is required", domain.ErrInvalidInput)
 	}
+	if err := reservedFileField("logo_url", input.LogoURL); err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(input.Slug) == "" {
 		return nil, fmt.Errorf("%w: slug is required", domain.ErrInvalidInput)
 	}
@@ -290,6 +293,9 @@ func (s *ProgramService) Create(ctx context.Context, input models.ProgramCreateI
 }
 
 func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.ProgramEnrollmentInput) (*models.Program, error) {
+	if err := reservedFileField("logo_url", input.Program.LogoURL); err != nil {
+		return nil, err
+	}
 	if len(input.Terms) == 0 {
 		return nil, fmt.Errorf("%w: at least one term is required", domain.ErrInvalidInput)
 	}
@@ -437,6 +443,9 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 	}
 	if input.ProgramTermStatus != nil && !input.ProgramTermStatus.IsValid() {
 		return nil, fmt.Errorf("%w: invalid program term status %q", domain.ErrInvalidInput, *input.ProgramTermStatus)
+	}
+	if err := reservedFileField("logo_url", input.LogoURL); err != nil {
+		return nil, err
 	}
 
 	if input.Status != nil {

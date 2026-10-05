@@ -47,6 +47,12 @@ Key notes
   live from an earlier run is removed with FGA delete_access and index deleted
   markers, so its tuples and search document are retracted.
 - All INSERTs use ON CONFLICT … DO UPDATE (idempotent; safe to re-run).
+- File columns (users.avatar_url, user_profiles.logo_url, programs.logo_url,
+  tasks.file) are rewritten from the copy manifest copy_legacy_objects.py
+  writes, so run that first: legacy-bucket URLs become CDN URLs (logos) or
+  object keys (submissions), quarantined or missing objects become NULL,
+  foreign logo URLs carry through and foreign tasks.file values are nulled.
+- profile_links.resumeLink is dropped: resumes are not migrated.
 
 Usage
 -----
@@ -57,8 +63,12 @@ Usage
     export DYNAMODB_TABLE_PREFIX=jobspring-dev  # defaults to jobspring-prod
 
   export PG_DSN="host=localhost port=5432 dbname=mentorship user=postgres password=..."
+  export COPY_MANIFEST=legacy-object-manifest.json
+  export LOGOS_CDN_URL_PREFIX=https://...
+  export LOGOS_S3_BUCKET=... ATTACHMENTS_S3_BUCKET=...   # must match the manifest
 
   pip install boto3 psycopg2-binary
+  python3 backend/db/scripts/copy_legacy_objects.py
   python3 backend/db/scripts/migrate_dynamo_to_postgres.py
 """
 
@@ -75,6 +85,8 @@ import boto3
 import psycopg2
 import psycopg2.extras
 from boto3.dynamodb.types import TypeDeserializer as _TypeDeserializer
+
+import legacy_objects as lo
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -96,6 +108,12 @@ PG_DSN = os.environ.get(
 )
 
 TABLE_PREFIX = os.environ.get("DYNAMODB_TABLE_PREFIX", "jobspring-prod")
+LEGACY_BUCKET = os.environ.get("LEGACY_UPLOADS_BUCKET", f"{TABLE_PREFIX}-uploads")
+COPY_MANIFEST = os.environ.get("COPY_MANIFEST", "legacy-object-manifest.json")
+LOGOS_CDN_URL_PREFIX = os.environ.get("LOGOS_CDN_URL_PREFIX", "")
+# Must name the buckets copy_legacy_objects.py copied into; the manifest records them.
+LOGOS_S3_BUCKET = os.environ.get("LOGOS_S3_BUCKET", "").strip()
+ATTACHMENTS_S3_BUCKET = os.environ.get("ATTACHMENTS_S3_BUCKET", "").strip()
 
 # Stable UUID namespace — must not change between runs to keep IDs deterministic.
 _UUID_NS = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
@@ -183,6 +201,13 @@ def _as_bool(value, default: bool = False) -> bool:
     if isinstance(value, str):
         return value.lower() in ("true", "1", "yes")
     return bool(value)
+
+
+def _without_resume_link(links):
+    """Drop resumeLink: resumes are not migrated (docs/rewrite/02 §file classes)."""
+    if isinstance(links, dict):
+        return {k: v for k, v in links.items() if k != "resumeLink"}
+    return links
 
 
 def _to_jsonb(value) -> str | None:
@@ -300,7 +325,7 @@ def _map_program_term_status(term_status: str | None, dynamo_value: str | None) 
 # ---------------------------------------------------------------------------
 
 
-def migrate_users(cur, users: list) -> set:
+def migrate_users(cur, users: list, files: lo.LegacyFileRewriter) -> set:
     """Upsert users; return set of known user IDs."""
     log.info("Migrating users (%d rows) ...", len(users))
     rows = []
@@ -333,7 +358,7 @@ def migrate_users(cur, users: list) -> set:
                 (u.get("name") or "").strip() or None,
                 (u.get("givenName") or "").strip() or None,
                 (u.get("familyName") or "").strip() or None,
-                (u.get("avatarUrl") or "").strip() or None,
+                files.rewrite("users.avatar_url", lo.LOGO, u.get("avatarUrl")),
                 _parse_ts(u.get("createdAt")),
                 _parse_ts(u.get("updatedAt")),
             )
@@ -366,7 +391,7 @@ def migrate_users(cur, users: list) -> set:
 # ---------------------------------------------------------------------------
 
 
-def migrate_user_profiles(cur, profiles: list, known_user_ids: set) -> dict:
+def migrate_user_profiles(cur, profiles: list, known_user_ids: set, files: lo.LegacyFileRewriter) -> dict:
     """
     Upsert user_profiles; return {user_profile_id: user_id} for program_admins.
     Rows with recordKind='github-profile-reservation' are skipped.
@@ -417,7 +442,7 @@ def migrate_user_profiles(cur, profiles: list, known_user_ids: set) -> dict:
                 (p.get("lastName") or "").strip() or None,
                 (p.get("email") or "").strip() or None,
                 (p.get("phone") or "").strip() or None,
-                (p.get("logoUrl") or "").strip() or None,
+                files.rewrite("user_profiles.logo_url", lo.LOGO, p.get("logoUrl")),
                 (p.get("introduction") or "").strip() or None,
                 _as_bool(p.get("termsAndConditions")),
                 _as_int(p.get("numberOfProjects")),
@@ -425,7 +450,7 @@ def migrate_user_profiles(cur, profiles: list, known_user_ids: set) -> dict:
                 _to_jsonb(p.get("demographics")),
                 _to_jsonb(p.get("socioeconomics")),
                 _to_jsonb(p.get("skillSet")),
-                _to_jsonb(p.get("profileLinks")),
+                _to_jsonb(_without_resume_link(p.get("profileLinks"))),
                 _parse_ts(p.get("createdAt")),
                 _parse_ts(p.get("updatedAt")),
             )
@@ -471,7 +496,7 @@ def migrate_user_profiles(cur, profiles: list, known_user_ids: set) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
+def migrate_programs(cur, projects: list, known_user_ids: set, files: lo.LegacyFileRewriter) -> set:
     """
     Upsert programs from jobspring-prod-projects.
     Also populates program_skills and program_funding_stats.
@@ -550,7 +575,7 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
                 _normalize_program_status(p.get("status")),
                 False,  # is_paid — not captured in DynamoDB; assume false
                 (p.get("description") or "").strip() or None,
-                (p.get("logoUrl") or "").strip() or None,
+                files.rewrite("programs.logo_url", lo.LOGO, p.get("logoUrl")),
                 (p.get("websiteUrl") or "").strip() or None,
                 (p.get("repoLink") or "").strip() or None,
                 (p.get("codeOfConduct") or "").strip() or None,
@@ -1025,6 +1050,7 @@ def migrate_tasks(
     application_index: dict,
     known_term_ids: dict,
     known_user_ids: set,
+    files: lo.LegacyFileRewriter,
 ) -> None:
     """Upsert tasks; resolve application_id via (program_term_id, assignee_id)."""
     log.info("Migrating tasks (%d rows) ...", len(tasks))
@@ -1091,7 +1117,7 @@ def migrate_tasks(
             _map_program_term_status(known_term_ids.get(resolved_term_id), t.get("programTermStatus")),
             _as_bool(t.get("custom")),
             (t.get("submitFile") or "").strip() or None,
-            (t.get("file") or "").strip() or None,
+            files.rewrite("tasks.file", lo.SUBMISSION, t.get("file")),
             due_date,
             (t.get("createdBy") or "").strip() or None,
             _parse_ts(t.get("createdOn")),
@@ -1492,7 +1518,7 @@ def seed_derived_state(cur) -> None:
                 'program_term_status', t.program_term_status,
                 'custom', t.custom,
                 'submit_file', t.submit_file,
-                'file', t.file,
+                'has_file', t.file IS NOT NULL,
                 'due_date', t.due_date,
                 'created_on', t.created_on,
                 'updated_on', t.updated_on
@@ -1548,6 +1574,12 @@ def main() -> None:
     log.info("Connecting to PostgreSQL: %s", _redact_dsn(PG_DSN))
     conn = psycopg2.connect(PG_DSN)
     psycopg2.extras.register_uuid()
+    files = lo.LegacyFileRewriter(
+        COPY_MANIFEST,
+        LOGOS_CDN_URL_PREFIX,
+        lo.legacy_url_prefix(LEGACY_BUCKET),
+        {lo.LOGO: LOGOS_S3_BUCKET, lo.SUBMISSION: ATTACHMENTS_S3_BUCKET},
+    )
 
     try:
         # ── 1. Scan all DynamoDB tables ──────────────────────────────────────
@@ -1562,16 +1594,17 @@ def main() -> None:
         # ── 2. Migrate in FK dependency order ───────────────────────────────
         with conn:  # single transaction: commits on clean exit, rolls back on exception
             with conn.cursor() as cur:
-                known_user_ids    = migrate_users(cur, users_raw)
-                profile_map       = migrate_user_profiles(cur, profiles_raw, known_user_ids)
-                known_program_ids = migrate_programs(cur, projects_raw, known_user_ids)
+                known_user_ids    = migrate_users(cur, users_raw, files)
+                profile_map       = migrate_user_profiles(cur, profiles_raw, known_user_ids, files)
+                known_program_ids = migrate_programs(cur, projects_raw, known_user_ids, files)
                 known_term_ids    = migrate_program_terms(cur, terms_raw, known_program_ids)
                 term_scoped_members = migrate_program_members(cur, members_raw, known_program_ids, known_user_ids)
                 application_index = migrate_mentees(cur, mentees_raw, known_term_ids, known_user_ids)
                 reconcile_term_scoped_members(cur, term_scoped_members)
-                migrate_tasks(cur, tasks_raw, application_index, known_term_ids, known_user_ids)
+                migrate_tasks(cur, tasks_raw, application_index, known_term_ids, known_user_ids, files)
                 seed_derived_state(cur)
 
+        files.report()
         log.info("Migration complete.")
 
     except Exception:

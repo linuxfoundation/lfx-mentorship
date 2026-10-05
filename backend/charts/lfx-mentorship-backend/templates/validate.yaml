@@ -98,6 +98,33 @@ valueFrom is resolved at runtime, so it counts as set without a format check. */
 {{- end }}
 {{- end }}
 
+{{- /* Object storage: the binary refuses to start with a bucket but no region, or a logos
+bucket without a CDN prefix, since stored logo columns hold the full CDN URL. */ -}}
+{{- if or .Values.config.LOGOS_S3_BUCKET .Values.config.ATTACHMENTS_S3_BUCKET }}
+{{- if not .Values.config.AWS_REGION }}
+{{- fail "values.yaml: config.AWS_REGION is required when an S3 bucket is configured." }}
+{{- end }}
+{{- end }}
+{{- if .Values.config.LOGOS_S3_BUCKET }}
+{{- if not (regexMatch "^https?://[^/?#]+[^?#]*$" (toString .Values.config.LOGOS_CDN_URL_PREFIX)) }}
+{{- fail "values.yaml: config.LOGOS_CDN_URL_PREFIX must be an absolute http(s) URL with no query or fragment when LOGOS_S3_BUCKET is set." }}
+{{- end }}
+{{- if eq (trim (toString .Values.config.LOGOS_S3_BUCKET)) (trim (toString .Values.config.ATTACHMENTS_S3_BUCKET)) }}
+{{- fail "values.yaml: config.ATTACHMENTS_S3_BUCKET must differ from LOGOS_S3_BUCKET; the logos bucket is CDN-fronted." }}
+{{- end }}
+{{- end }}
+{{- $awsCredentials := list "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" "AWS_SESSION_TOKEN" }}
+{{- range $key := $awsCredentials }}
+{{- if get $.Values.config $key }}
+{{- fail (printf "values.yaml: config.%s would render a credential into the ConfigMap; supply static credentials through the Secret, and only for the local nats-s3 sidecar." $key) }}
+{{- end }}
+{{- end }}
+{{- range $entry := .Values.env }}
+{{- if and (has $entry.name $awsCredentials) $entry.value }}
+{{- fail (printf "values.yaml: env %s must come from a Secret (valueFrom), never an inline value." $entry.name) }}
+{{- end }}
+{{- end }}
+
 {{/*
 Required runtime configuration. The binary exits at startup without these
 (the database connection variables and MENTOR_INVITE_SECRET are hard-required;

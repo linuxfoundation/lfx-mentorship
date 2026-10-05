@@ -193,8 +193,8 @@ pending ──hold──► hold ──resume──► pending
 | `application_status` | VARCHAR(20) | nullable | denormalised |
 | `program_term_status` | VARCHAR(20) | nullable | denormalised |
 | `custom` | BOOLEAN | DEFAULT false | |
-| `submit_file` | TEXT | nullable | `null \| 'required' \| URL` |
-| `file` | TEXT | nullable | uploaded file URL |
+| `submit_file` | TEXT | nullable | template flag: `null \| 'required'` (never a file reference) |
+| `file` | TEXT | nullable | private-bucket object key of the submission |
 | `due_date` | DATE | nullable | |
 | `created_by` | TEXT | nullable | creator LFID |
 

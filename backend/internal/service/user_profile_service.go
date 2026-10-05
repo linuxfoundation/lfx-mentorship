@@ -5,6 +5,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -74,6 +75,10 @@ func (s *UserProfileService) Create(ctx context.Context, input models.UserProfil
 	ctx, span := userProfileSvcTracer.Start(ctx, "UserProfileService.Create")
 	defer span.End()
 
+	var err error
+	if input.ProfileLinks, err = withoutResumeLink(input.ProfileLinks); err != nil {
+		return nil, err
+	}
 	if err := s.validateCreateInput(ctx, input, true); err != nil {
 		return nil, err
 	}
@@ -93,6 +98,10 @@ func (s *UserProfileService) Create(ctx context.Context, input models.UserProfil
 func (s *UserProfileService) Upsert(ctx context.Context, input models.UserProfileCreateInput) (*models.UserProfile, bool, error) {
 	ctx, span := userProfileSvcTracer.Start(ctx, "UserProfileService.Upsert")
 	defer span.End()
+	var err error
+	if input.ProfileLinks, err = withoutResumeLink(input.ProfileLinks); err != nil {
+		return nil, false, err
+	}
 	if err := s.validateCreateInput(ctx, input, false); err != nil {
 		return nil, false, err
 	}
@@ -110,6 +119,9 @@ func (s *UserProfileService) Upsert(ctx context.Context, input models.UserProfil
 func (s *UserProfileService) validateCreateInput(ctx context.Context, input models.UserProfileCreateInput, enforceUnique bool) error {
 	if input.UserID == "" {
 		return fmt.Errorf("%w: user_id is required", domain.ErrInvalidInput)
+	}
+	if err := reservedFileField("logo_url", input.LogoURL); err != nil {
+		return err
 	}
 	if input.ProfileType == "" {
 		return fmt.Errorf("%w: profile_type is required", domain.ErrInvalidInput)
@@ -138,12 +150,36 @@ func (s *UserProfileService) validateCreateInput(ctx context.Context, input mode
 	return nil
 }
 
+// withoutResumeLink drops profile_links.resumeLink, since resumes are not a file class; a
+// client echoing a migrated profile back still saves.
+func withoutResumeLink(profileLinks json.RawMessage) (json.RawMessage, error) {
+	if len(profileLinks) == 0 {
+		return profileLinks, nil
+	}
+	var links map[string]json.RawMessage
+	if err := json.Unmarshal(profileLinks, &links); err != nil {
+		return nil, fmt.Errorf("%w: profile_links must be an object", domain.ErrInvalidInput)
+	}
+	if _, ok := links["resumeLink"]; !ok {
+		return profileLinks, nil
+	}
+	delete(links, "resumeLink")
+	return json.Marshal(links)
+}
+
 // Update applies changes to the user profile with the given ID.
 func (s *UserProfileService) Update(ctx context.Context, id string, input models.UserProfileUpdateInput) (*models.UserProfile, error) {
 	ctx, span := userProfileSvcTracer.Start(ctx, "UserProfileService.Update")
 	defer span.End()
 	span.SetAttributes(attribute.String("profile.id", id))
 
+	if err := reservedFileField("logo_url", input.LogoURL); err != nil {
+		return nil, err
+	}
+	var err error
+	if input.ProfileLinks, err = withoutResumeLink(input.ProfileLinks); err != nil {
+		return nil, err
+	}
 	p, err := s.repo.Update(ctx, id, input)
 	if err != nil {
 		span.RecordError(err)

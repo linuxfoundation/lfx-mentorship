@@ -67,6 +67,12 @@ heimdall:
 openfga:
   enabled: false
 
+# Gateway limits for the file upload routes. The cap sits above the 20 MB file
+# ceiling to leave room for multipart boundaries and part headers.
+uploads:
+  maxRequestBodyBytes: 22020096
+  timeout: 120s
+
 # Opt-in: restricts backend ingress to the shared gateway so in-cluster callers cannot bypass the RuleSet.
 networkPolicy:
   enabled: false
@@ -155,6 +161,22 @@ config:
   # Crowdfunding is reached through the LFX v2 gateway at
   # https://lfx-api.<domain>/crowdfunding; the transactions route is public.
   CROWDFUNDING_BASE_URL: ""
+  # ── Object storage ─────────────────────────────────────────────────────────
+  # One public (CDN-fronted) bucket for logos and one private bucket for task
+  # submissions; an unset bucket disables its file routes. Credentials come from
+  # IRSA when deployed. Static AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY are for
+  # the local nats-s3 sidecar only and belong in the Secret, never here.
+  AWS_REGION: ""
+  LOGOS_S3_BUCKET: ""
+  # Empty means AWS S3. Local: http://localhost:5222 (nats-s3 sidecar).
+  LOGOS_S3_ENDPOINT_URL: ""
+  # "true" in local values only; deployed buckets are provisioned ahead of time.
+  LOGOS_S3_CREATE_MISSING_BUCKET: "false"
+  # Browser-reachable CDN base URL; required when LOGOS_S3_BUCKET is set.
+  LOGOS_CDN_URL_PREFIX: ""
+  ATTACHMENTS_S3_BUCKET: ""
+  ATTACHMENTS_S3_ENDPOINT_URL: ""
+  ATTACHMENTS_S3_CREATE_MISSING_BUCKET: "false"
   OTEL_EXPORTER_OTLP_ENDPOINT: ""
   OTEL_SERVICE_NAME: "lfx-mentorship-backend"
 

@@ -215,6 +215,9 @@ func (s *TaskService) Update(ctx context.Context, id string, input models.TaskUp
 	if err := validateDueDate(input.DueDate); err != nil {
 		return nil, err
 	}
+	if err := reservedFileField("file", input.File); err != nil {
+		return nil, err
+	}
 
 	// FR-033: enforce state transitions and actor permissions when ActorID is known.
 	if input.Status != nil && input.ActorID != "" {
@@ -225,12 +228,8 @@ func (s *TaskService) Update(ctx context.Context, id string, input models.TaskUp
 		}
 		isAssignee := current.AssigneeID == input.ActorID
 		next := *input.Status
-		effectiveFile := current.File
-		if input.File != nil {
-			effectiveFile = input.File
-		}
-		if next == models.TaskStatusSubmitted && current.SubmitFile != nil && *current.SubmitFile != "" && (effectiveFile == nil || *effectiveFile == "") {
-			return nil, fmt.Errorf("%w: submitted tasks requiring a file must include file", domain.ErrInvalidInput)
+		if next == models.TaskStatusSubmitted && current.SubmitFile != nil && *current.SubmitFile != "" && (current.File == nil || *current.File == "") {
+			return nil, fmt.Errorf("%w: upload the required file before submitting", domain.ErrInvalidInput)
 		}
 
 		// State transition guard: only incomplete (reset) is unrestricted direction-wise.
