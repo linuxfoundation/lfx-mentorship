@@ -852,6 +852,18 @@ func (r *ProgramRepository) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
+	var logoURL *string
+	if err := tx.QueryRow(ctx, `SELECT logo_url FROM programs WHERE id = $1`, id).Scan(&logoURL); errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrProgramNotFound
+	} else if err != nil {
+		return fmt.Errorf("load program logo before delete: %w", err)
+	}
+	if err := queueObjectDeletions(ctx, tx, domain.ObjectBucketLogos, logoURL); err != nil {
+		return err
+	}
+	if err := queueTaskFileDeletions(ctx, tx, "id = ANY($1)", taskIDs); err != nil {
+		return err
+	}
 
 	cmd, err := tx.Exec(ctx, `DELETE FROM programs WHERE id = $1`, id)
 	if err != nil {

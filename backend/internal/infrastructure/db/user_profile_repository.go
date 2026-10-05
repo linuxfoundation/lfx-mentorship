@@ -251,6 +251,7 @@ func (r *UserProfileRepository) UpsertByUserAndType(ctx context.Context, input m
 		return created, true, nil
 	}
 
+	// logo_url is left alone: only the logo routes write it.
 	const updateQ = `
 		UPDATE user_profiles SET
 			slug = $2,
@@ -258,21 +259,20 @@ func (r *UserProfileRepository) UpsertByUserAndType(ctx context.Context, input m
 			last_name = $4,
 			email = $5,
 			phone = $6,
-			logo_url = $7,
-			introduction = $8,
-			terms_and_conditions = $9,
-			number_of_projects = $10,
-			address = $11,
-			demographics = $12,
-			socioeconomics = $13,
-			skill_set = $14,
-			profile_links = $15,
+			introduction = $7,
+			terms_and_conditions = $8,
+			number_of_projects = $9,
+			address = $10,
+			demographics = $11,
+			socioeconomics = $12,
+			skill_set = $13,
+			profile_links = $14,
 			updated_on = NOW()
 		WHERE id = $1
 		RETURNING` + userProfileCols
 	updated, err := scanUserProfile(tx.QueryRow(ctx, updateQ,
 		profiles[0].ID, input.Slug, input.FirstName, input.LastName, input.Email, input.Phone,
-		input.LogoURL, input.Introduction, input.TermsAndConditions, input.NumberOfProjects,
+		input.Introduction, input.TermsAndConditions, input.NumberOfProjects,
 		input.Address, input.Demographics, input.Socioeconomics, input.SkillSet, input.ProfileLinks,
 	))
 	if err != nil {
@@ -327,19 +327,39 @@ func (r *UserProfileRepository) Update(ctx context.Context, id string, input mod
 	return p, nil
 }
 
-// Delete removes the user profile with the given ID.
+// Delete removes the user profile with the given ID, queueing its logo for deletion
+// and clearing the owner's avatar while it still aliases that logo.
 func (r *UserProfileRepository) Delete(ctx context.Context, id string) error {
 	ctx, span := userProfileTracer.Start(ctx, "db.user_profiles.Delete")
 	defer span.End()
 	span.SetAttributes(attribute.String("db.profile_id", id))
 
-	cmd, err := r.pool.Exec(ctx, `DELETE FROM user_profiles WHERE id = $1`, id)
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin delete user profile transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var userID string
+	var logoURL *string
+	err = tx.QueryRow(ctx, `DELETE FROM user_profiles WHERE id = $1 RETURNING user_id, logo_url`, id).Scan(&userID, &logoURL)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrUserProfileNotFound
+	}
 	if err != nil {
 		span.RecordError(err)
 		return fmt.Errorf("delete user profile: %w", err)
 	}
-	if cmd.RowsAffected() == 0 {
-		return domain.ErrUserProfileNotFound
+	if logoURL != nil && *logoURL != "" {
+		if err := clearAvatarAlias(ctx, tx, userID, *logoURL); err != nil {
+			return err
+		}
+		if err := queueObjectDeletions(ctx, tx, domain.ObjectBucketLogos, logoURL); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit delete user profile transaction: %w", err)
 	}
 	return nil
 }

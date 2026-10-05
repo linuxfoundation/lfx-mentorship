@@ -270,6 +270,9 @@ func (r *TaskRepository) Delete(ctx context.Context, id string) error {
 	if cmd.RowsAffected() == 0 {
 		return domain.ErrTaskNotFound
 	}
+	if err := queueObjectDeletions(ctx, tx, domain.ObjectBucketAttachments, current.File); err != nil {
+		return err
+	}
 	if err := enqueueTaskMarker(ctx, tx, current, "delete_access"); err != nil {
 		return err
 	}

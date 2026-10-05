@@ -53,3 +53,49 @@ func TestLoadEmailConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadStorageConfig(t *testing.T) {
+	valid := map[string]string{
+		"AWS_REGION":                     "us-west-2",
+		"LOGOS_S3_BUCKET":                "logos",
+		"LOGOS_S3_ENDPOINT_URL":          "http://localhost:5222",
+		"LOGOS_S3_CREATE_MISSING_BUCKET": "true",
+		"LOGOS_CDN_URL_PREFIX":           "https://cdn.example.org/",
+		"ATTACHMENTS_S3_BUCKET":          "attachments",
+	}
+	for name, tc := range map[string]struct {
+		override map[string]string
+		wantErr  string
+	}{
+		"valid":                           {},
+		"no buckets needs nothing":        {override: map[string]string{"AWS_REGION": "", "LOGOS_S3_BUCKET": "", "ATTACHMENTS_S3_BUCKET": "", "LOGOS_CDN_URL_PREFIX": ""}},
+		"bucket without region":           {override: map[string]string{"AWS_REGION": ""}, wantErr: "AWS_REGION"},
+		"attachments only without region": {override: map[string]string{"AWS_REGION": "", "LOGOS_S3_BUCKET": ""}, wantErr: "AWS_REGION"},
+		"logos without cdn prefix":        {override: map[string]string{"LOGOS_CDN_URL_PREFIX": ""}, wantErr: "LOGOS_CDN_URL_PREFIX"},
+		"relative cdn prefix":             {override: map[string]string{"LOGOS_CDN_URL_PREFIX": "cdn.example.org"}, wantErr: "LOGOS_CDN_URL_PREFIX"},
+		"cdn prefix with query":           {override: map[string]string{"LOGOS_CDN_URL_PREFIX": "https://cdn.example.org?v=1"}, wantErr: "LOGOS_CDN_URL_PREFIX"},
+		"bad create flag":                 {override: map[string]string{"ATTACHMENTS_S3_CREATE_MISSING_BUCKET": "yes please"}, wantErr: "ATTACHMENTS_S3_CREATE_MISSING_BUCKET"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			for k, v := range valid {
+				t.Setenv(k, v)
+			}
+			for k, v := range tc.override {
+				t.Setenv(k, v)
+			}
+			cfg, err := loadStorageConfig()
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want mention of %s", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("err = %v", err)
+			}
+			if name == "valid" && (cfg.Logos.CDNURLPrefix != "https://cdn.example.org" || !cfg.Logos.CreateMissingBucket || cfg.Attachments.CreateMissingBucket) {
+				t.Fatalf("unexpected config %+v", cfg)
+			}
+		})
+	}
+}

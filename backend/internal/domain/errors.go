@@ -17,8 +17,12 @@ var (
 	ErrProgramMemberNotFound = errors.New("program member not found")
 	ErrApplicationNotFound   = errors.New("application not found")
 	ErrTaskNotFound          = errors.New("task not found")
+	ErrFileNotFound          = errors.New("file not found")
 
 	ErrInvalidInput        = errors.New("invalid input")
+	ErrPayloadTooLarge     = errors.New("payload too large")
+	ErrUnsupportedMedia    = errors.New("unsupported media type")
+	ErrRangeNotSatisfiable = errors.New("range not satisfiable")
 	ErrUnauthorized        = errors.New("unauthorized")
 	ErrForbidden           = errors.New("forbidden")
 	ErrConflict            = errors.New("resource conflict")

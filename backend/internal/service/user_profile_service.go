@@ -5,6 +5,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -111,6 +112,9 @@ func (s *UserProfileService) validateCreateInput(ctx context.Context, input mode
 	if input.UserID == "" {
 		return fmt.Errorf("%w: user_id is required", domain.ErrInvalidInput)
 	}
+	if err := validateProfileFileFields(input.LogoURL, input.ProfileLinks); err != nil {
+		return err
+	}
 	if input.ProfileType == "" {
 		return fmt.Errorf("%w: profile_type is required", domain.ErrInvalidInput)
 	}
@@ -138,12 +142,34 @@ func (s *UserProfileService) validateCreateInput(ctx context.Context, input mode
 	return nil
 }
 
+// validateProfileFileFields rejects the logo, which only the logo routes write, and a
+// resume link: resumes are not a file class.
+func validateProfileFileFields(logoURL *string, profileLinks json.RawMessage) error {
+	if err := reservedFileField("logo_url", logoURL); err != nil {
+		return err
+	}
+	if len(profileLinks) == 0 {
+		return nil
+	}
+	var links map[string]json.RawMessage
+	if err := json.Unmarshal(profileLinks, &links); err != nil {
+		return fmt.Errorf("%w: profile_links must be an object", domain.ErrInvalidInput)
+	}
+	if _, ok := links["resumeLink"]; ok {
+		return fmt.Errorf("%w: profile_links.resumeLink is not accepted", domain.ErrInvalidInput)
+	}
+	return nil
+}
+
 // Update applies changes to the user profile with the given ID.
 func (s *UserProfileService) Update(ctx context.Context, id string, input models.UserProfileUpdateInput) (*models.UserProfile, error) {
 	ctx, span := userProfileSvcTracer.Start(ctx, "UserProfileService.Update")
 	defer span.End()
 	span.SetAttributes(attribute.String("profile.id", id))
 
+	if err := validateProfileFileFields(input.LogoURL, input.ProfileLinks); err != nil {
+		return nil, err
+	}
 	p, err := s.repo.Update(ctx, id, input)
 	if err != nil {
 		span.RecordError(err)

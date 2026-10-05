@@ -148,10 +148,13 @@ func (h *TaskHandler) UpdateSubmission(w http.ResponseWriter, r *http.Request) {
 		Error(w, fmt.Errorf("%w: status is required", domain.ErrInvalidInput))
 		return
 	}
+	if input.File != nil {
+		Error(w, fmt.Errorf("%w: upload the file through POST /v1/tasks/{id}/file-upload", domain.ErrInvalidInput))
+		return
+	}
 	input.ActorID = principal.UserID
 	task, err := h.svc.Update(r.Context(), chi.URLParam(r, "id"), models.TaskUpdateInput{
 		Status:  input.Status,
-		File:    input.File,
 		ActorID: input.ActorID,
 	})
 	if err != nil {

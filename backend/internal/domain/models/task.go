@@ -3,7 +3,10 @@
 
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // TaskStatus enumerates valid values for tasks.status.
 type TaskStatus string
@@ -57,11 +60,31 @@ type Task struct {
 	ProgramTermStatus *ProgramTermStatus `json:"program_term_status,omitempty"`
 	Custom            bool               `json:"custom"`
 	SubmitFile        *string            `json:"submit_file,omitempty"`
-	File              *string            `json:"file,omitempty"`
-	DueDate           *string            `json:"due_date,omitempty"` // ISO date string
-	CreatedBy         *string            `json:"created_by,omitempty"`
-	CreatedOn         time.Time          `json:"created_on"`
-	UpdatedOn         time.Time          `json:"updated_on"`
+	// File is the private object key of the submission; responses carry the download route instead.
+	File      *string   `json:"file,omitempty"`
+	DueDate   *string   `json:"due_date,omitempty"` // ISO date string
+	CreatedBy *string   `json:"created_by,omitempty"`
+	CreatedOn time.Time `json:"created_on"`
+	UpdatedOn time.Time `json:"updated_on"`
+}
+
+// TaskFileDownloadPath is the API route that serves a task's submission.
+func TaskFileDownloadPath(taskID string) string {
+	return "/mentorship/v1/tasks/" + taskID + "/file-download"
+}
+
+// MarshalJSON replaces the private object key in file with the download route.
+func (t Task) MarshalJSON() ([]byte, error) {
+	type task Task
+	out := struct {
+		task
+		File *string `json:"file,omitempty"`
+	}{task: task(t)}
+	if t.File != nil && *t.File != "" {
+		route := TaskFileDownloadPath(t.ID)
+		out.File = &route
+	}
+	return json.Marshal(out)
 }
 
 // TaskCreateInput is the request body for creating a task.

@@ -360,6 +360,9 @@ func (r *ApplicationRepository) ReapplyWithTasks(ctx context.Context, oldID, pro
 		taskIDs = append(taskIDs, id)
 	}
 	rows.Close()
+	if err := queueTaskFileDeletions(ctx, tx, "application_id = $1", oldID); err != nil {
+		return nil, err
+	}
 	if _, err := tx.Exec(ctx, `DELETE FROM applications WHERE id = $1`, oldID); err != nil {
 		return nil, fmt.Errorf("delete withdrawn application: %w", err)
 	}
@@ -713,6 +716,9 @@ func (r *ApplicationRepository) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("iterate application tasks before delete: %w", err)
 	}
 	rows.Close()
+	if err := queueTaskFileDeletions(ctx, tx, "application_id = $1", id); err != nil {
+		return err
+	}
 
 	cmd, err := tx.Exec(ctx, `DELETE FROM applications WHERE id = $1`, id)
 	if err != nil {

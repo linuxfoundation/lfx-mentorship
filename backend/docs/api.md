@@ -75,9 +75,10 @@ TEST_DATABASE_DSN='postgres://mentorship:mentorship@localhost:5433/mentorship_te
 11. [Mentor Invite Tokens](#11-mentor-invite-tokens)
 12. [Applications](#12-applications)
 13. [Tasks](#13-tasks)
-14. [Domain State Machines](#14-domain-state-machines)
-15. [Business Rule Reference](#15-business-rule-reference)
-16. [Frontend Integration Guide](#16-frontend-integration-guide)
+14. [Files](#14-files)
+15. [Domain State Machines](#15-domain-state-machines)
+16. [Business Rule Reference](#16-business-rule-reference)
+17. [Frontend Integration Guide](#17-frontend-integration-guide)
 
 ---
 
@@ -201,9 +202,12 @@ All errors return a JSON body:
 | `401 Unauthorized` | Missing or invalid JWT |
 | `403 Forbidden` | Authenticated but not permitted (e.g. wrong actor for task submission) |
 | `404 Not Found` | Resource does not exist (or hidden program for non-owner) |
-| `409 Conflict` | Duplicate resource, invalid state transition, guard blocked transition |
+| `409 Conflict` | Duplicate resource, invalid state transition, guard blocked transition, or a concurrent write won |
+| `413 Payload Too Large` | Upload over the file class's size cap |
+| `415 Unsupported Media Type` | Upload whose bytes are not an allowed type for its file class |
+| `416 Range Not Satisfiable` | Download `Range` outside the object |
 | `422 Unprocessable Entity` | Eligibility or business constraint failure |
-| `503 Service Unavailable` | Database unavailable (`/readyz`) |
+| `503 Service Unavailable` | Database or object storage unavailable (`/readyz`), or object storage not configured |
 | `500 Internal Server Error` | Unexpected server fault |
 
 ---
@@ -302,10 +306,12 @@ Update mutable user fields.
   "lfid":        "new-lfid",
   "name":        "New Name",
   "given_name":  "New",
-  "family_name": "Name",
-  "avatar_url":  "https://..."
+  "family_name": "Name"
 }
 ```
+
+`avatar_url` is rejected: the service sets it from the login identity and the
+profile-logo routes ([Files](#14-files)).
 
 **Response** `200` → `<User>`  
 **Errors** `400`, `404`
@@ -381,7 +387,6 @@ User profiles represent a participant's mentorship identity. `profile_type = men
     "comments": "Eager to learn cloud-native"
   },
   "profile_links": {
-    "resumeLink":     "https://...",
     "linkedinProfileLink": "https://linkedin.com/in/alice",
     "githubProfileLink":   "https://github.com/alice"
   },
@@ -444,7 +449,6 @@ Create a user profile.
   "last_name":    "Smith",
   "email":        "alice@example.com",
   "phone":        "+1-555-0100",
-  "logo_url":     "https://...",
   "introduction": "...",
   "terms_and_conditions": true,
   "address":       { ... },
@@ -1038,7 +1042,6 @@ Update program fields and/or transition status.
 {
   "name":        "Updated Name",
   "description": "Updated description",
-  "logo_url":    "https://...",
   "repo_link":   "https://...",
   "lfid":        "alice",
   "status":      "submitted",
@@ -1046,7 +1049,7 @@ Update program fields and/or transition status.
 }
 ```
 
-**Status transition rules** — see [§14 State Machines](#14-domain-state-machines).
+**Status transition rules** — see [§15 State Machines](#15-domain-state-machines).
 
 | Transition | Guard condition |
 |---|---|
@@ -1743,7 +1746,7 @@ Tasks represent units of work assigned to a mentee. They are either:
   "program_term_status": "open",
   "custom":              false,
   "submit_file":         null,
-  "file":                null,
+  "file":                "/mentorship/v1/tasks/{id}/file-download",
   "due_date":            "2026-02-10",
   "created_by":          "alice",
   "created_on":          "2026-01-15T00:00:00Z",
@@ -1752,6 +1755,10 @@ Tasks represent units of work assigned to a mentee. They are either:
 ```
 
 **`category` values**: `prerequisite`, `non_prerequisite`
+
+**`file`** is the download route of the submission, present only when one is
+uploaded. The stored object key never appears in a response or the search index,
+which carries a `has_file` flag instead. See [Files](#14-files).
 
 **`status` lifecycle**: `incomplete → in_progress → submitted → complete`
 
@@ -1845,10 +1852,12 @@ Update a task's status or metadata.
   "name":        "Updated task name",
   "description": "Updated description",
   "status":      "in_progress",
-  "due_date":    "2026-05-15",
-  "file":        "https://storage.example.com/submission.pdf"
+  "due_date":    "2026-05-15"
 }
 ```
+
+`file` is rejected with `400` here and on `PATCH /v1/tasks/{id}/submission`; the
+submission is written by `POST /v1/tasks/{id}/file-upload`.
 
 **Actor permission rules**:
 
@@ -1879,7 +1888,47 @@ Hard-delete a task.
 
 ---
 
-## 14. Domain State Machines
+## 14. Files
+
+File payloads live in S3-compatible storage, never in a response body or the
+search index. The design is [02 §object storage](../../docs/rewrite/02-target-architecture.md#object-storage)
+and the authorization is [06 §file routes](../../docs/rewrite/06-route-matrix.md#file-routes).
+
+- **Logos** (programs, profiles) go to the public bucket. The column stores the full
+  CDN URL, returned as `public_url`. PNG or JPEG only (never SVG), at most 2 MB.
+- **Task submissions** go to the private bucket. The column stores the object key,
+  which responses replace with the download route. PDF, DOC, DOCX or plain text,
+  at most 20 MB.
+- The type is identified from the payload bytes, not the declared `Content-Type`.
+  An unsupported type returns `415`; an oversized body `413`.
+- Every upload writes a fresh `{uuid}-{filename}` key and never overwrites. The
+  superseded object, and any upload that never commits, are deleted through the
+  `object_deletions` queue.
+- These routes are the only writers of `logo_url`, `avatar_url` and `file`. The
+  generic create and update routes reject those fields with `400`, and reject
+  `profile_links.resumeLink`, since resumes are not a file class.
+
+| Route | Body | Response |
+|---|---|---|
+| `POST /v1/programs/{id}/logo-upload` 🔒 | raw image | `201` `{ public_url, filename, content_type, size }` |
+| `DELETE /v1/programs/{id}/logo` 🔒 | — | `204` |
+| `GET /v1/programs/{id}/logo-download` 🔓 | — | `200` image; a fallback to `public_url` |
+| `POST /v1/me/profiles/by-id/{id}/logo-upload` 🔒 | raw image | `201`; also sets the user's `avatar_url` |
+| `DELETE /v1/me/profiles/by-id/{id}/logo` 🔒 | — | `204`; clears `avatar_url` while it holds that logo |
+| `GET /v1/user-profiles/{id}/logo-download` 🔓 | — | `200` image, publicly listed profiles only |
+| `POST /v1/tasks/{id}/file-upload` 🔒 | `multipart/form-data`, part `file` | `201` `{ filename, content_type, size }` |
+| `GET /v1/tasks/{id}/file-download` 🔒 | — | `200`/`206` attachment, `Cache-Control: private, no-store`, `Range` supported |
+| `DELETE /v1/tasks/{id}/file` 🔒 | — | `204`; only while `incomplete` or `in_progress` |
+
+A task file can be uploaded until the task is `complete`; once `submitted` it is
+replaced through `file-upload`, never deleted, so a task that requires a file
+always keeps one. A concurrent upload to the same record returns `409`, as does an
+upload that took longer than the 15-minute grace period to save. A `Range` outside
+the object returns `416`.
+
+---
+
+## 15. Domain State Machines
 
 ### Program Status
 
@@ -1974,7 +2023,7 @@ incomplete ──► in_progress ──► submitted ──► complete
 
 ---
 
-## 15. Business Rule Reference
+## 16. Business Rule Reference
 
 | ID | Rule | Where enforced |
 |---|---|---|
@@ -2001,7 +2050,7 @@ incomplete ──► in_progress ──► submitted ──► complete
 
 ---
 
-## 16. Frontend Integration Guide
+## 17. Frontend Integration Guide
 
 ### Authentication Flow
 
@@ -2113,8 +2162,9 @@ GET /v1/applications/{appId}/tasks
 # Start work
 PATCH /v1/tasks/{taskId}  Body: { "status": "in_progress" }
 
-# Submit
-PATCH /v1/tasks/{taskId}  Body: { "status": "submitted", "file": "<upload-url>" }
+# Submit: upload the file first when the task requires one
+POST /v1/tasks/{taskId}/file-upload  Body: multipart/form-data, part "file"
+PATCH /v1/tasks/{taskId}/submission  Body: { "status": "submitted" }
 ```
 
 When all prerequisite tasks reach `submitted`/`complete`, the application's `tasks_submitted` flag is set to `true` — poll `GET /v1/applications/{id}` to detect this change.

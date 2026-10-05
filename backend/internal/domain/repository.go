@@ -161,6 +161,34 @@ type ApplicationRepository interface {
 	ListPastMenteesByTerm(ctx context.Context, termID string) ([]*models.Application, error)
 }
 
+// FileReplacement points a file column at a freshly written object.
+type FileReplacement struct {
+	RowID    string
+	Previous *string
+	Next     string
+	// PendingDeletionID is the grace-period entry that reclaims Next if the replace never commits.
+	PendingDeletionID string
+}
+
+// FileRepository writes the file-locator columns that only the file routes may set.
+// Every write is conditional on the column still holding the value the caller read,
+// returning ErrConflict when a concurrent write won, and queues the dropped locator for
+// deletion in the same transaction.
+type FileRepository interface {
+	ReplaceProgramLogo(ctx context.Context, r FileReplacement) error
+	// ReplaceProfileLogo also aliases the owner's users.avatar_url to the new logo.
+	ReplaceProfileLogo(ctx context.Context, r FileReplacement) error
+	// ReplaceTaskFile returns ErrStateLocked once the task is complete.
+	ReplaceTaskFile(ctx context.Context, r FileReplacement) error
+	ClearProgramLogo(ctx context.Context, programID, previous string) error
+	// ClearProfileLogo also nulls users.avatar_url while it still aliases the logo.
+	ClearProfileLogo(ctx context.Context, profileID, previous string) error
+	// ClearTaskFile returns ErrStateLocked unless the task is incomplete or in progress.
+	ClearTaskFile(ctx context.Context, taskID, previous string) error
+	// IsProfilePubliclyListed reports whether the profile backs a public mentor or mentee directory entry.
+	IsProfilePubliclyListed(ctx context.Context, profileID string) (bool, error)
+}
+
 // TaskRepository defines persistence operations for tasks.
 type TaskRepository interface {
 	GetByID(ctx context.Context, id string) (*models.Task, error)
