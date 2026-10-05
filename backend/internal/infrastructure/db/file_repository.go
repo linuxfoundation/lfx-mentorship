@@ -35,12 +35,14 @@ func (r *FileRepository) ReplaceProgramLogo(ctx context.Context, rep domain.File
 	span.SetAttributes(attribute.String("db.program_id", rep.RowID))
 
 	return r.inTx(ctx, "replace program logo", func(tx pgx.Tx) error {
-		cmd, err := tx.Exec(ctx, `UPDATE programs SET logo_url = $3 WHERE id = $1 AND logo_url IS NOT DISTINCT FROM $2`, rep.RowID, rep.Previous, rep.Next)
+		cmd, err := tx.Exec(ctx, `
+			UPDATE programs SET logo_url = $3
+			WHERE id = $1 AND logo_url IS NOT DISTINCT FROM $2 AND status <> $4`, rep.RowID, rep.Previous, rep.Next, models.ProgramStatusArchived)
 		if err != nil {
 			return err
 		}
 		if cmd.RowsAffected() == 0 {
-			return missOrConflict(ctx, tx, `SELECT EXISTS (SELECT 1 FROM programs WHERE id = $1)`, rep.RowID, domain.ErrProgramNotFound)
+			return programLogoMiss(ctx, tx, rep.RowID)
 		}
 		if err := settleReplacement(ctx, tx, domain.ObjectBucketLogos, rep); err != nil {
 			return err
@@ -108,12 +110,14 @@ func (r *FileRepository) ClearProgramLogo(ctx context.Context, programID, previo
 	span.SetAttributes(attribute.String("db.program_id", programID))
 
 	return r.inTx(ctx, "clear program logo", func(tx pgx.Tx) error {
-		cmd, err := tx.Exec(ctx, `UPDATE programs SET logo_url = NULL WHERE id = $1 AND logo_url = $2`, programID, previous)
+		cmd, err := tx.Exec(ctx, `
+			UPDATE programs SET logo_url = NULL
+			WHERE id = $1 AND logo_url = $2 AND status <> $3`, programID, previous, models.ProgramStatusArchived)
 		if err != nil {
 			return err
 		}
 		if cmd.RowsAffected() == 0 {
-			return missOrConflict(ctx, tx, `SELECT EXISTS (SELECT 1 FROM programs WHERE id = $1)`, programID, domain.ErrProgramNotFound)
+			return programLogoMiss(ctx, tx, programID)
 		}
 		if err := queueObjectDeletions(ctx, tx, domain.ObjectBucketLogos, &previous); err != nil {
 			return err
@@ -174,8 +178,8 @@ func (r *FileRepository) ClearTaskFile(ctx context.Context, taskID, previous str
 	})
 }
 
-// IsProfilePubliclyListed implements domain.FileRepository. It mirrors the
-// eligibility filters of the public mentor and mentee directories.
+// IsProfilePubliclyListed implements domain.FileRepository. It mirrors the public mentor
+// and mentee directories, which list only a user's latest profile of each type.
 func (r *FileRepository) IsProfilePubliclyListed(ctx context.Context, profileID string) (bool, error) {
 	ctx, span := fileTracer.Start(ctx, "db.files.IsProfilePubliclyListed")
 	defer span.End()
@@ -185,7 +189,13 @@ func (r *FileRepository) IsProfilePubliclyListed(ctx context.Context, profileID 
 	err := r.pool.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM user_profiles up
-			WHERE up.id = $1 AND (
+			WHERE up.id = $1
+			  AND up.id = (
+				SELECT latest.id FROM user_profiles latest
+				WHERE latest.user_id = up.user_id AND latest.profile_type = up.profile_type
+				ORDER BY latest.updated_on DESC
+				LIMIT 1)
+			  AND (
 				(up.profile_type = 'mentor' AND EXISTS (
 					SELECT 1 FROM program_members pm
 					JOIN programs p ON p.id = pm.program_id
@@ -263,16 +273,20 @@ func clearAvatarAlias(ctx context.Context, tx pgx.Tx, userID, logo string) error
 	return nil
 }
 
-// missOrConflict resolves a conditional update that matched no row into not-found or a lost race.
-func missOrConflict(ctx context.Context, tx pgx.Tx, existsQuery, id string, notFound error) error {
-	var exists bool
-	if err := tx.QueryRow(ctx, existsQuery, id).Scan(&exists); err != nil {
-		return fmt.Errorf("check row after missed file write: %w", err)
+// programLogoMiss resolves a missed program logo write into not-found, an archived program, or a lost race.
+func programLogoMiss(ctx context.Context, tx pgx.Tx, programID string) error {
+	var status models.ProgramStatus
+	err := tx.QueryRow(ctx, `SELECT status FROM programs WHERE id = $1`, programID).Scan(&status)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return domain.ErrProgramNotFound
+	case err != nil:
+		return fmt.Errorf("load program after missed logo write: %w", err)
+	case status == models.ProgramStatusArchived:
+		return fmt.Errorf("%w: an archived program's logo cannot change", domain.ErrStateLocked)
+	default:
+		return fmt.Errorf("%w: logo changed concurrently", domain.ErrConflict)
 	}
-	if !exists {
-		return notFound
-	}
-	return fmt.Errorf("%w: file changed concurrently", domain.ErrConflict)
 }
 
 // taskFileMiss resolves a missed task file write into not-found, a state rule, or a lost race.

@@ -34,8 +34,4 @@ CREATE INDEX IF NOT EXISTS idx_users_avatar_url ON users(avatar_url) WHERE avata
 CREATE INDEX IF NOT EXISTS idx_tasks_file ON tasks(file) WHERE file IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_quarantined_tasks_file ON quarantined_tasks(file) WHERE file IS NOT NULL;
 
--- Resumes are not migrated (docs/rewrite/02 §file classes); drop links an earlier ETL run carried over.
-UPDATE user_profiles SET profile_links = profile_links - 'resumeLink'
-WHERE profile_links ? 'resumeLink';
-
 COMMIT;

@@ -332,6 +332,51 @@ func TestUserProfileRepositoryIntegration_RedactsResumeLink(t *testing.T) {
 	}
 }
 
+func TestFileRepositoryIntegration_ArchivedProgramLogoIsLocked(t *testing.T) {
+	pool, fixture := fileIntegrationPool(t)
+	ctx := context.Background()
+	queue, files := NewObjectDeletionRepository(pool), NewFileRepository(pool)
+	logo := fileTestCDN + "/archived.png"
+	if _, err := pool.Exec(ctx, `UPDATE programs SET status = 'archived', logo_url = $2 WHERE id = $1`, fixture.ProgramID, logo); err != nil {
+		t.Fatal(err)
+	}
+	pending, _ := queue.Schedule(ctx, domain.ObjectBucketLogos, fileTestCDN+"/new.png", time.Hour)
+	err := files.ReplaceProgramLogo(ctx, domain.FileReplacement{RowID: fixture.ProgramID, Previous: &logo, Next: fileTestCDN + "/new.png", PendingDeletionID: pending})
+	if !errors.Is(err, domain.ErrStateLocked) {
+		t.Fatalf("replace err = %v; want ErrStateLocked", err)
+	}
+	if err := files.ClearProgramLogo(ctx, fixture.ProgramID, logo); !errors.Is(err, domain.ErrStateLocked) {
+		t.Fatalf("clear err = %v; want ErrStateLocked", err)
+	}
+}
+
+func TestFileRepositoryIntegration_OnlyTheListedProfileIsPublic(t *testing.T) {
+	pool, fixture := fileIntegrationPool(t)
+	ctx := context.Background()
+	const newer = "00000000-0000-0000-0000-000000000083"
+	if _, err := pool.Exec(ctx, `UPDATE programs SET status = 'published' WHERE id = $1`, fixture.ProgramID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES (gen_random_uuid(), $1, $2, 'mentor', 'active')
+		ON CONFLICT DO NOTHING`, fixture.ProgramID, fixture.UserID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE user_profiles SET updated_on = NOW() - INTERVAL '1 day' WHERE id = $1`, fileTestProfile); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO user_profiles (id, user_id, profile_type) VALUES ($1, $2, 'mentor')`, newer, fixture.UserID); err != nil {
+		t.Fatal(err)
+	}
+	files := NewFileRepository(pool)
+	for id, want := range map[string]bool{newer: true, fileTestProfile: false} {
+		listed, err := files.IsProfilePubliclyListed(ctx, id)
+		if err != nil || listed != want {
+			t.Fatalf("profile %s listed = %v (err %v); want %v", id, listed, err, want)
+		}
+	}
+}
+
 func assertAvatar(t *testing.T, pool *pgxpool.Pool, userID string, want *string) {
 	t.Helper()
 	var got *string
