@@ -223,6 +223,23 @@ func TestFileService_UploadProgramLogo_LostRaceIsConflict(t *testing.T) {
 	}
 }
 
+func TestFileService_ArchivedProgramLogoIsLocked(t *testing.T) {
+	logo := "https://cdn.example.org/mentorship/old.png"
+	d := &fileSvcDeps{logos: &fakeObjectStore{}, programs: &stubProgRepo{getByID: func(_ context.Context, id string) (*models.Program, error) {
+		return &models.Program{ID: id, Status: models.ProgramStatusArchived, LogoURL: &logo}, nil
+	}}}
+	svc := d.build()
+	if _, err := svc.UploadProgramLogo(context.Background(), "p1", pngBytes); !errors.Is(err, domain.ErrStateLocked) {
+		t.Fatalf("upload err = %v; want ErrStateLocked", err)
+	}
+	if err := svc.DeleteProgramLogo(context.Background(), "p1"); !errors.Is(err, domain.ErrStateLocked) {
+		t.Fatalf("delete err = %v; want ErrStateLocked", err)
+	}
+	if len(d.scheduler.entries) != 0 {
+		t.Fatal("a locked upload must not store or schedule anything")
+	}
+}
+
 func TestFileService_UploadProgramLogo_RejectsBeforeStoring(t *testing.T) {
 	tests := []struct {
 		name string

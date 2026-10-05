@@ -96,6 +96,9 @@ func (s *FileService) UploadProgramLogo(ctx context.Context, programID string, d
 	if err != nil {
 		return nil, fmt.Errorf("get program for logo upload: %w", err)
 	}
+	if err := programLogoEditable(program); err != nil {
+		return nil, err
+	}
 	uploaded, err := s.replaceLogo(ctx, data, func(rep domain.FileReplacement) error {
 		rep.RowID, rep.Previous = program.ID, program.LogoURL
 		return s.files.ReplaceProgramLogo(ctx, rep)
@@ -116,6 +119,9 @@ func (s *FileService) DeleteProgramLogo(ctx context.Context, programID string) e
 	program, err := s.programs.GetByID(ctx, programID)
 	if err != nil {
 		return fmt.Errorf("get program for logo removal: %w", err)
+	}
+	if err := programLogoEditable(program); err != nil {
+		return err
 	}
 	if program.LogoURL == nil || *program.LogoURL == "" {
 		return nil
@@ -360,6 +366,15 @@ func (s *FileService) getLogo(ctx context.Context, stored *string, byteRange str
 		obj.CacheControl = publicCacheControl
 	}
 	return obj, nil
+}
+
+// programLogoEditable locks the logo of an archived program, a terminal state. A rejected
+// program stays editable, since resubmitting it requires a logo.
+func programLogoEditable(program *models.Program) error {
+	if program.Status == models.ProgramStatusArchived {
+		return fmt.Errorf("%w: an archived program's logo cannot change", domain.ErrStateLocked)
+	}
+	return nil
 }
 
 func (s *FileService) ownProfile(ctx context.Context, profileID, actorID string) (*models.UserProfile, error) {

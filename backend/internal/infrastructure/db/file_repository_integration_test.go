@@ -221,6 +221,25 @@ func TestObjectDeletionIntegration_ClaimReferenceRetryAndDeadLetter(t *testing.T
 	}
 }
 
+func TestObjectDeletionIntegration_MarkDoneRemovesTheEntry(t *testing.T) {
+	pool, _ := fileIntegrationPool(t)
+	ctx := context.Background()
+	queue := NewObjectDeletionRepository(pool)
+	if _, err := queue.Schedule(ctx, domain.ObjectBucketAttachments, "done-key", 0); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := queue.Claim(ctx, fileTestBuckets, 10)
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim = %+v, %v", claimed, err)
+	}
+	if err := queue.MarkDone(ctx, claimed[0]); err != nil {
+		t.Fatalf("mark done: %v", err)
+	}
+	if got := deletionRows(t, pool); len(got) != 0 {
+		t.Fatalf("queue = %+v; a completed entry must not be retained", got)
+	}
+}
+
 func TestObjectDeletionIntegration_ClaimSkipsUnconfiguredBuckets(t *testing.T) {
 	pool, _ := fileIntegrationPool(t)
 	ctx := context.Background()

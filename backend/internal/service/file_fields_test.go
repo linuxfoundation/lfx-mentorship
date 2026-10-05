@@ -39,11 +39,6 @@ func TestGenericRoutesRejectFileFields(t *testing.T) {
 			_, err := newUserProfileSvc(&stubUserProfileRepo{}).Create(ctx, models.UserProfileCreateInput{UserID: "u1", ProfileType: "mentor", LogoURL: &url})
 			return err
 		},
-		"profile resumeLink": func() error {
-			links := json.RawMessage(`{"githubProfileLink":"https://github.com/x","resumeLink":"https://x/cv.pdf"}`)
-			_, err := newUserProfileSvc(&stubUserProfileRepo{}).Update(ctx, "prof1", models.UserProfileUpdateInput{ProfileLinks: links})
-			return err
-		},
 		"task update file": func() error {
 			_, err := newTaskSvc(&stubTaskRepo{}, &stubAppRepo{}, &stubTermRepo{}, &stubMemberRepo{}).Update(ctx, "t1", models.TaskUpdateInput{File: &url})
 			return err
@@ -62,5 +57,42 @@ func TestProfileLinksWithoutResumeAreAccepted(t *testing.T) {
 	links := json.RawMessage(`{"linkedinProfileLink":"https://linkedin.com/in/x","githubProfileLink":"https://github.com/x"}`)
 	if _, err := newUserProfileSvc(&stubUserProfileRepo{}).Update(context.Background(), "prof1", models.UserProfileUpdateInput{ProfileLinks: links}); err != nil {
 		t.Fatalf("Update: %v", err)
+	}
+}
+
+// A client echoing back a migrated profile still saves; the resume link is dropped, not stored.
+func TestProfileResumeLinkIsDropped(t *testing.T) {
+	links := json.RawMessage(`{"githubProfileLink":"https://github.com/x","resumeLink":"https://x/cv.pdf"}`)
+	var saved json.RawMessage
+	repo := &stubUserProfileRepo{
+		update: func(_ context.Context, id string, in models.UserProfileUpdateInput) (*models.UserProfile, error) {
+			saved = in.ProfileLinks
+			return &models.UserProfile{ID: id}, nil
+		},
+		create: func(_ context.Context, in models.UserProfileCreateInput) (*models.UserProfile, error) {
+			saved = in.ProfileLinks
+			return &models.UserProfile{}, nil
+		},
+	}
+	svc := newUserProfileSvc(repo)
+	for name, call := range map[string]func() error{
+		"update": func() error {
+			_, err := svc.Update(context.Background(), "prof1", models.UserProfileUpdateInput{ProfileLinks: links})
+			return err
+		},
+		"create": func() error {
+			_, err := svc.Create(context.Background(), models.UserProfileCreateInput{UserID: "u1", ProfileType: "mentor", ProfileLinks: links})
+			return err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			saved = nil
+			if err := call(); err != nil {
+				t.Fatalf("err = %v", err)
+			}
+			if string(saved) != `{"githubProfileLink":"https://github.com/x"}` {
+				t.Fatalf("saved profile_links = %s", saved)
+			}
+		})
 	}
 }

@@ -13,13 +13,12 @@ CREATE TABLE IF NOT EXISTS object_deletions (
   bucket          TEXT        NOT NULL CHECK (bucket IN ('logos', 'attachments')),
   -- The value the file column held: a CDN URL for logos, an object key for attachments.
   locator         TEXT        NOT NULL CHECK (locator <> ''),
-  state           TEXT        NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'in_flight', 'done', 'dead_letter')),
+  state           TEXT        NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'in_flight', 'dead_letter')),
   attempts        INTEGER     NOT NULL DEFAULT 0,
   next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_error      TEXT,
   claimed_at      TIMESTAMPTZ,
-  created_on      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  completed_on    TIMESTAMPTZ
+  created_on      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_object_deletions_pending
@@ -27,6 +26,13 @@ CREATE INDEX IF NOT EXISTS idx_object_deletions_pending
 
 CREATE INDEX IF NOT EXISTS idx_object_deletions_in_flight
   ON object_deletions(claimed_at) WHERE state = 'in_flight';
+
+-- The relay checks every file column for a locator before deleting its object.
+CREATE INDEX IF NOT EXISTS idx_programs_logo_url ON programs(logo_url) WHERE logo_url IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_user_profiles_logo_url ON user_profiles(logo_url) WHERE logo_url IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_users_avatar_url ON users(avatar_url) WHERE avatar_url IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_tasks_file ON tasks(file) WHERE file IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_quarantined_tasks_file ON quarantined_tasks(file) WHERE file IS NOT NULL;
 
 -- Resumes are not migrated (docs/rewrite/02 §file classes); drop links an earlier ETL run carried over.
 UPDATE user_profiles SET profile_links = profile_links - 'resumeLink'

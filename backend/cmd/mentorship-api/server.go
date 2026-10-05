@@ -35,8 +35,8 @@ import (
 // objectDeletionRelayInterval paces the object deletion relay; deletes are not latency-sensitive.
 const objectDeletionRelayInterval = 10 * time.Second
 
-// objectStorePingTimeout keeps a hung S3 call from outlasting the readiness probe.
-const objectStorePingTimeout = 3 * time.Second
+// objectDeletionRelayBatch is independent of the FGA and index relays: deletes are cheap and idempotent.
+const objectDeletionRelayBatch = 50
 
 // fileTransferTimeout matches the gateway's upload timeout (chart value uploads.timeout).
 const fileTransferTimeout = 120 * time.Second
@@ -91,15 +91,12 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		pool.Close()
 		return nil, fmt.Errorf("attachments object store: %w", err)
 	}
-	var objectStores []*objectstore.Store
 	var logoBucket *service.LogoBucket
 	if logoStore != nil {
-		objectStores = append(objectStores, logoStore)
 		logoBucket = &service.LogoBucket{Store: logoStore, CDNURLPrefix: cfg.Storage.Logos.CDNURLPrefix}
 	}
 	var attachments domain.ObjectStore
 	if attachmentStore != nil {
-		objectStores = append(objectStores, attachmentStore)
 		attachments = attachmentStore
 	}
 
@@ -167,7 +164,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	fileSvc := service.NewFileService(db.NewFileRepository(pool), objectDeletions, programRepo, userProfileRepo, taskSvc, logoBucket, attachments)
 
 	relayCtx, relayCancel := context.WithCancel(ctx)
-	if len(objectStores) > 0 {
+	if logoStore != nil || attachmentStore != nil {
 		relayBuckets := map[domain.ObjectBucket]objectstore.RelayBucket{}
 		if logoStore != nil {
 			relayBuckets[domain.ObjectBucketLogos] = objectstore.RelayBucket{Store: logoStore, CDNURLPrefix: cfg.Storage.Logos.CDNURLPrefix}
@@ -175,7 +172,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		if attachmentStore != nil {
 			relayBuckets[domain.ObjectBucketAttachments] = objectstore.RelayBucket{Store: attachmentStore}
 		}
-		go objectstore.NewRelay(objectDeletions, relayBuckets, cfg.FGA.RelayBatch, logger).Run(relayCtx, objectDeletionRelayInterval)
+		go objectstore.NewRelay(objectDeletions, relayBuckets, objectDeletionRelayBatch, logger).Run(relayCtx, objectDeletionRelayInterval)
 	}
 	if natsConn != nil {
 		js, jsErr := jetstream.New(natsConn)
@@ -243,18 +240,10 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	probes.Get("/livez", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	probes.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	probes.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		// Object storage is checked at startup only: an S3 outage fails the file routes, not the whole API.
 		if err := pool.Ping(r.Context()); err != nil {
 			handler.JSON(w, http.StatusServiceUnavailable, map[string]any{"error": "db unavailable"})
 			return
-		}
-		for _, store := range objectStores {
-			pingCtx, cancel := context.WithTimeout(r.Context(), objectStorePingTimeout)
-			err := store.Ping(pingCtx)
-			cancel()
-			if err != nil {
-				handler.JSON(w, http.StatusServiceUnavailable, map[string]any{"error": "object store unavailable"})
-				return
-			}
 		}
 		w.WriteHeader(http.StatusOK)
 	})

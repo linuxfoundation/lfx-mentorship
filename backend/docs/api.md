@@ -207,7 +207,7 @@ All errors return a JSON body:
 | `415 Unsupported Media Type` | Upload whose bytes are not an allowed type for its file class |
 | `416 Range Not Satisfiable` | Download `Range` outside the object |
 | `422 Unprocessable Entity` | Eligibility or business constraint failure |
-| `503 Service Unavailable` | Database or object storage unavailable (`/readyz`), or object storage not configured |
+| `503 Service Unavailable` | Database unavailable (`/readyz`), or object storage unavailable or not configured (file routes only) |
 | `500 Internal Server Error` | Unexpected server fault |
 
 ---
@@ -1892,7 +1892,8 @@ Hard-delete a task.
 
 File payloads live in S3-compatible storage, never in a response body or the
 search index. The design is [02 §object storage](../../docs/rewrite/02-target-architecture.md#object-storage)
-and the authorization is [06 §file routes](../../docs/rewrite/06-route-matrix.md#file-routes).
+and the authorization is [06 §file routes](../../docs/rewrite/06-route-matrix.md#file-routes),
+both added by #161.
 
 - **Logos** (programs, profiles) go to the public bucket. The column stores the full
   CDN URL, returned as `public_url`. PNG or JPEG only (never SVG), at most 2 MB.
@@ -1905,8 +1906,11 @@ and the authorization is [06 §file routes](../../docs/rewrite/06-route-matrix.m
   superseded object, and any upload that never commits, are deleted through the
   `object_deletions` queue.
 - These routes are the only writers of `logo_url`, `avatar_url` and `file`. The
-  generic create and update routes reject those fields with `400`, and reject
-  `profile_links.resumeLink`, since resumes are not a file class.
+  generic create and update routes reject those fields with `400`. They drop
+  `profile_links.resumeLink` rather than reject it, since resumes are not a file
+  class and a client may echo back a migrated profile.
+- An archived program's logo cannot change (`409`); a rejected program's can,
+  since resubmitting requires a logo.
 
 | Route | Body | Response |
 |---|---|---|

@@ -75,6 +75,10 @@ func (s *UserProfileService) Create(ctx context.Context, input models.UserProfil
 	ctx, span := userProfileSvcTracer.Start(ctx, "UserProfileService.Create")
 	defer span.End()
 
+	var err error
+	if input.ProfileLinks, err = withoutResumeLink(input.ProfileLinks); err != nil {
+		return nil, err
+	}
 	if err := s.validateCreateInput(ctx, input, true); err != nil {
 		return nil, err
 	}
@@ -94,6 +98,10 @@ func (s *UserProfileService) Create(ctx context.Context, input models.UserProfil
 func (s *UserProfileService) Upsert(ctx context.Context, input models.UserProfileCreateInput) (*models.UserProfile, bool, error) {
 	ctx, span := userProfileSvcTracer.Start(ctx, "UserProfileService.Upsert")
 	defer span.End()
+	var err error
+	if input.ProfileLinks, err = withoutResumeLink(input.ProfileLinks); err != nil {
+		return nil, false, err
+	}
 	if err := s.validateCreateInput(ctx, input, false); err != nil {
 		return nil, false, err
 	}
@@ -112,7 +120,7 @@ func (s *UserProfileService) validateCreateInput(ctx context.Context, input mode
 	if input.UserID == "" {
 		return fmt.Errorf("%w: user_id is required", domain.ErrInvalidInput)
 	}
-	if err := validateProfileFileFields(input.LogoURL, input.ProfileLinks); err != nil {
+	if err := reservedFileField("logo_url", input.LogoURL); err != nil {
 		return err
 	}
 	if input.ProfileType == "" {
@@ -142,23 +150,21 @@ func (s *UserProfileService) validateCreateInput(ctx context.Context, input mode
 	return nil
 }
 
-// validateProfileFileFields rejects the logo, which only the logo routes write, and a
-// resume link: resumes are not a file class.
-func validateProfileFileFields(logoURL *string, profileLinks json.RawMessage) error {
-	if err := reservedFileField("logo_url", logoURL); err != nil {
-		return err
-	}
+// withoutResumeLink drops profile_links.resumeLink, since resumes are not a file class; a
+// client echoing a migrated profile back still saves.
+func withoutResumeLink(profileLinks json.RawMessage) (json.RawMessage, error) {
 	if len(profileLinks) == 0 {
-		return nil
+		return profileLinks, nil
 	}
 	var links map[string]json.RawMessage
 	if err := json.Unmarshal(profileLinks, &links); err != nil {
-		return fmt.Errorf("%w: profile_links must be an object", domain.ErrInvalidInput)
+		return nil, fmt.Errorf("%w: profile_links must be an object", domain.ErrInvalidInput)
 	}
-	if _, ok := links["resumeLink"]; ok {
-		return fmt.Errorf("%w: profile_links.resumeLink is not accepted", domain.ErrInvalidInput)
+	if _, ok := links["resumeLink"]; !ok {
+		return profileLinks, nil
 	}
-	return nil
+	delete(links, "resumeLink")
+	return json.Marshal(links)
 }
 
 // Update applies changes to the user profile with the given ID.
@@ -167,7 +173,11 @@ func (s *UserProfileService) Update(ctx context.Context, id string, input models
 	defer span.End()
 	span.SetAttributes(attribute.String("profile.id", id))
 
-	if err := validateProfileFileFields(input.LogoURL, input.ProfileLinks); err != nil {
+	if err := reservedFileField("logo_url", input.LogoURL); err != nil {
+		return nil, err
+	}
+	var err error
+	if input.ProfileLinks, err = withoutResumeLink(input.ProfileLinks); err != nil {
 		return nil, err
 	}
 	p, err := s.repo.Update(ctx, id, input)

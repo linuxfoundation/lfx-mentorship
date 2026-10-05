@@ -117,7 +117,7 @@ func (s *Store) createIfMissing(ctx context.Context) error {
 	return err
 }
 
-// Ping checks that the bucket is reachable; it backs /readyz.
+// Ping checks that the bucket is reachable.
 func (s *Store) Ping(ctx context.Context) error {
 	_, err := s.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(s.bucket)})
 	return err

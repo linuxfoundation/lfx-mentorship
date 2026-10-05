@@ -17,6 +17,11 @@ import (
 // objectDeletionClaimTimeout is how long an in_flight entry is left to its relay before another may reclaim it.
 const objectDeletionClaimTimeout = 5 * time.Minute
 
+const (
+	objectDeletionMaxAttempts = 10
+	objectDeletionRetryDelay  = time.Minute
+)
+
 // ObjectDeletionRepository implements domain.ObjectDeletionRepository against PostgreSQL.
 type ObjectDeletionRepository struct {
 	pool        *pgxpool.Pool
@@ -26,7 +31,7 @@ type ObjectDeletionRepository struct {
 
 // NewObjectDeletionRepository creates a new ObjectDeletionRepository.
 func NewObjectDeletionRepository(pool *pgxpool.Pool) *ObjectDeletionRepository {
-	return &ObjectDeletionRepository{pool: pool, maxAttempts: 10, retryDelay: time.Minute}
+	return &ObjectDeletionRepository{pool: pool, maxAttempts: objectDeletionMaxAttempts, retryDelay: objectDeletionRetryDelay}
 }
 
 // Schedule implements domain.ObjectDeletionRepository.
@@ -94,11 +99,11 @@ func (r *ObjectDeletionRepository) IsReferenced(ctx context.Context, locator str
 	return referenced, nil
 }
 
-// MarkDone implements domain.ObjectDeletionRepository.
+// MarkDone implements domain.ObjectDeletionRepository. A completed entry is deleted, as
+// fga_outbox acknowledgements are, so the queue holds only outstanding work and dead letters.
 func (r *ObjectDeletionRepository) MarkDone(ctx context.Context, entry domain.ObjectDeletion) error {
 	_, err := r.pool.Exec(ctx, `
-		UPDATE object_deletions
-		SET state = 'done', completed_on = NOW(), claimed_at = NULL, last_error = NULL
+		DELETE FROM object_deletions
 		WHERE id = $1 AND state = 'in_flight' AND claimed_at IS NOT DISTINCT FROM $2`, entry.ID, entry.ClaimedAt)
 	if err != nil {
 		return fmt.Errorf("mark object deletion done: %w", err)
