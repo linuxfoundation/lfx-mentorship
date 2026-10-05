@@ -205,6 +205,9 @@ func (r *TaskRepository) Update(ctx context.Context, id string, input models.Tas
 		return nil, fmt.Errorf("begin update task transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockTaskApplication(ctx, tx, id); err != nil {
+		return nil, err
+	}
 
 	const q = `
 		UPDATE tasks SET
@@ -285,6 +288,32 @@ func (r *TaskRepository) Delete(ctx context.Context, id string) error {
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit delete task transaction: %w", err)
+	}
+	return nil
+}
+
+// errWithdrawnTaskLocked rejects a write to a task whose application is withdrawn. Withdrawn is
+// terminal and the application is kept as history when its applicant reapplies, so its tasks
+// stay as they were at withdrawal.
+var errWithdrawnTaskLocked = fmt.Errorf("%w: a withdrawn application's tasks cannot change", domain.ErrStateLocked)
+
+// lockTaskApplication share-locks the application a task belongs to and returns
+// errWithdrawnTaskLocked when it is withdrawn. It reads the application row rather than the
+// task's denormalised application_status, and withdrawing updates that row, so a withdrawal
+// either commits first and is seen here or waits until this task write commits.
+func lockTaskApplication(ctx context.Context, tx pgx.Tx, taskID string) error {
+	var status models.ApplicationStatus
+	err := tx.QueryRow(ctx, `
+		SELECT a.status FROM tasks t JOIN applications a ON a.id = t.application_id
+		WHERE t.id = $1 FOR SHARE OF a`, taskID).Scan(&status)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		// A missing task, or one with no application, is left to the write itself.
+		return nil
+	case err != nil:
+		return fmt.Errorf("lock task application: %w", err)
+	case status == models.ApplicationStatusWithdrawn:
+		return errWithdrawnTaskLocked
 	}
 	return nil
 }

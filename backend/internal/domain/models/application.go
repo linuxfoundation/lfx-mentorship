@@ -61,6 +61,10 @@ const (
 	ApplicationStatusHold      ApplicationStatus = "hold"
 )
 
+// MaxWithdrawnApplicationsPerTerm caps reapplication: each reapply keeps the withdrawn application
+// as history, so once a user has withdrawn this many for a term they cannot apply to it again.
+const MaxWithdrawnApplicationsPerTerm = 3
+
 // IsValid reports whether the status value is one of the allowed enum members.
 func (s ApplicationStatus) IsValid() bool {
 	switch s {
