@@ -171,6 +171,14 @@ def _as_uuid(value) -> str | None:
         return _uuid5("coerce", s)
 
 
+def _strict_uuid(value) -> str | None:
+    """Return a canonical UUID string, or None; never coerce, so no parent is fabricated."""
+    try:
+        return str(uuid.UUID(str(value).strip())) if value else None
+    except ValueError:
+        return None
+
+
 def _as_int(value, default: int = 0) -> int:
     if value is None:
         return default
@@ -521,15 +529,14 @@ def migrate_programs(cur, projects: list, known_user_ids: set, files: lo.LegacyF
         # inheritance chain. Do not substitute the program ID when the legacy
         # source does not provide an explicit project identifier.
         linked_project = p.get("project") if isinstance(p.get("project"), dict) else {}
-        project_uid = _as_uuid(
-            p.get("projectUid")
-            or p.get("lfProjectUid")
-            or p.get("lfProjectId")
-            or p.get("lfProjectUID")
-            or linked_project.get("id")
+        candidates = (
+            p.get("projectUid"),
+            p.get("lfProjectUid"),
+            p.get("lfProjectId"),
+            p.get("lfProjectUID"),
+            linked_project.get("id"),
         )
-        if project_uid == pid:
-            project_uid = None
+        project_uid = next((uid for uid in map(_strict_uuid, candidates) if uid and uid != pid), None)
         if not project_uid:
             unresolved_project_uids.append(pid)
 

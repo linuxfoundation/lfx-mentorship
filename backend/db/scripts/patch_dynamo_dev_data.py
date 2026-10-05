@@ -142,12 +142,24 @@ def main() -> None:
                 }
             )
 
-    # Rows with a legacy LF project UID keep it; every other row, including one
-    # holding a previously fabricated lfProjectUid, links to --project-uid.
+    # The importer's candidate fields, minus lfProjectUid, which this script owns.
+    def genuine_project_uid(row: dict) -> str | None:
+        linked = row.get("project") if isinstance(row.get("project"), dict) else {}
+        for value in (row.get("projectUid"), row.get("lfProjectId"), row.get("lfProjectUID"), linked.get("id")):
+            uid = str(value or "").strip().lower()
+            if UUID_RE.match(uid) and uid != str(row["projectId"]).lower():
+                return uid
+        return None
+
+    # A genuine legacy UID is copied into lfProjectUid so it outranks any value an
+    # earlier run fabricated there; every other row links to --project-uid.
+    genuine_repairs: list[tuple[str, str]] = []
     project_repairs = []
     for row in project_rows:
-        legacy_uid = str(row.get("projectUid") or row.get("lfProjectId") or row.get("lfProjectUID") or "")
-        if UUID_RE.match(legacy_uid) and legacy_uid != str(row["projectId"]):
+        genuine = genuine_project_uid(row)
+        if genuine:
+            if row.get("lfProjectUid") != genuine:
+                genuine_repairs.append((row["projectId"], genuine))
             continue
         if (row.get("lfProjectUid"), row.get("lfProjectSlug"), row.get("lfProjectName"), row.get("lfProjectLogoUrl")) == (
             args.project_uid, args.project_slug, args.project_name, args.project_logo_url
@@ -161,7 +173,7 @@ def main() -> None:
         if row.get("status") in {"inProgress", "completed"}
         or row.get("category") == "nonPrerequisite"
     ]
-    print(f"projects={len(project_repairs)} synthetic_users={len(synthetic_users)} member_repairs={len(member_repairs)} profile_repairs={len(profile_repairs)} application_repairs={len(application_repairs)} task_repairs={len(task_repairs)} enum_repairs={len(enum_repairs)} apply={args.apply}")
+    print(f"projects={len(project_repairs)} genuine_project_links={len(genuine_repairs)} synthetic_users={len(synthetic_users)} member_repairs={len(member_repairs)} profile_repairs={len(profile_repairs)} application_repairs={len(application_repairs)} task_repairs={len(task_repairs)} enum_repairs={len(enum_repairs)} apply={args.apply}")
     if not args.apply:
         return
 
@@ -198,6 +210,8 @@ def main() -> None:
         project_update += " REMOVE lfProjectLogoUrl"
     for project_id in project_repairs:
         projects.update_item(Key={"projectId": project_id}, UpdateExpression=project_update, ExpressionAttributeValues=project_values)
+    for project_id, uid in genuine_repairs:
+        projects.update_item(Key={"projectId": project_id}, UpdateExpression="SET lfProjectUid = :uid", ExpressionAttributeValues={":uid": uid})
     print("status=applied")
 
 
