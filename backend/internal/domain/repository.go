@@ -78,6 +78,8 @@ type ProgramRepository interface {
 	ListCatalog(ctx context.Context, filter models.ProgramFilter) ([]*models.ProgramCatalogItem, *models.PaginationMeta, error)
 	GetCatalog(ctx context.Context, id string) (*models.ProgramCatalogItem, error)
 	ListCatalogMentees(ctx context.Context, programID string) ([]*models.ProgramCatalogMentee, error)
+	// ListAdministeredByUser returns the programs userID is an active program admin of, by name.
+	ListAdministeredByUser(ctx context.Context, userID string, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error)
 	Create(ctx context.Context, input models.ProgramCreateInput) (*models.Program, error)
 	CreateEnrollment(ctx context.Context, input models.ProgramEnrollmentInput) (*models.Program, error)
 	Update(ctx context.Context, id string, input models.ProgramUpdateInput) (*models.Program, error)

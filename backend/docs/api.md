@@ -20,6 +20,7 @@ The gateway-authorized API uses canonical resource paths:
 - Self-service user and profile mutations use `/me` and `/me/profiles`.
 - User application reads use `/me/applications`.
 - Mentor self-service program requests use `/me/program-memberships`.
+- Program admins list their programs with `/me/programs`.
 - Program-admin collection reads use Query Service
   `/query/resources?v=1&type=mentorship_program&filter_grants=direct`.
 - Term-scoped routes use `/programs/{programUID}/terms/{termID}`.
@@ -1423,6 +1424,65 @@ member also removes their OpenFGA relation.
 
 **Response** `204`  
 **Errors** `403`, `404`
+
+---
+
+### Program admin self-service
+
+#### AdministeredProgram Object
+
+One row of the caller's programs list. `term` is a
+[ProgramTerm](#programterm-object): the latest open term, else the latest
+closed term, and is omitted when the program has no terms. `stats` matches `GET /v1/programs/{id}/header`.
+
+```json
+{
+  "id":           "uuid",
+  "slug":         "gridflow",
+  "name":         "GridFlow: Time-Series Ingestion Pipeline",
+  "project_uid":  "uuid",
+  "project_name": "LF Energy",
+  "logo_url":     "https://...",
+  "status":       "published",
+  "admin_status": "open",
+  "term":         <ProgramTerm>,
+  "stats":        { "mentors": 2, "mentees": 3, "graduated": 6 },
+  "created_on":   "2026-01-01T00:00:00Z",
+  "updated_on":   "2026-01-01T00:00:00Z"
+}
+```
+
+`admin_status` groups `status` with the program's terms:
+
+| `admin_status` | When |
+|---|---|
+| `pending_review` | `status` is `draft` or `submitted` |
+| `open` | `status` is `published` and the program has an open term, or no terms yet |
+| `completed` | `status` is `published` and every term is closed |
+| `rejected` | `status` is `rejected` |
+| `hidden` | `status` is `archived` or `hidden` |
+
+#### `GET /v1/me/programs` 🔒
+
+Lists the programs the caller is an active `program_admin` of, ordered by name.
+The user is always the principal. The gateway requires only a signed-in user
+(`oidc`); see the [route matrix](../../docs/rewrite/06-route-matrix.md) for why
+this is not yet a Query Service collection.
+
+**Query parameters**
+
+| Parameter | Values | Description |
+|---|---|---|
+| `search` | — | Case-insensitive match on program or project name |
+| `status` | `open\|pending_review\|completed\|rejected\|hidden` | Filter by `admin_status` |
+| `limit` / `offset` | — | Pagination (default 20, max 100) |
+
+**Response** `200`
+```json
+{ "data": [<AdministeredProgram>, ...], "meta": {...} }
+```
+
+**Errors** `400` (unknown `status`, non-integer `limit`/`offset`), `401` (no principal, or a machine-to-machine client)
 
 ---
 
