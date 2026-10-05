@@ -147,6 +147,10 @@ def main() -> None:
     # The legacy UID fields, minus lfProjectUid, which this script owns.
     def genuine_project_uid(row: dict) -> str | None:
         linked = row.get("project") if isinstance(row.get("project"), dict) else {}
+        try:
+            program_uid = str(uuid.UUID(str(row.get("projectId", "")).strip()))
+        except ValueError:
+            program_uid = None
         for value in (
             row.get("projectUid"),
             row.get("lfProjectId"),
@@ -154,8 +158,11 @@ def main() -> None:
             row.get("fundspringProjectId"),
             linked.get("id"),
         ):
-            uid = str(value or "").strip().lower()
-            if UUID_RE.match(uid) and uid != str(row["projectId"]).lower():
+            try:
+                uid = str(uuid.UUID(str(value or "").strip()))
+            except ValueError:
+                continue
+            if uid != program_uid:
                 return uid
         return None
 
