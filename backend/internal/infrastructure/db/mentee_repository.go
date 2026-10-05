@@ -452,7 +452,7 @@ func (r *MenteeRepository) loadMentorsByProgram(ctx context.Context, ids []strin
 		LEFT JOIN users u ON u.id = pm.user_id
 		WHERE pm.program_id = ANY($1::uuid[])
 		  AND pm.member_type = 'mentor'
-		  AND pm.status = 'active'
+		  AND pm.status = 'approved'
 		ORDER BY u.name NULLS LAST, pm.created_on`, ids)
 	if err != nil {
 		return nil, fmt.Errorf("list mentee program mentors: %w", err)

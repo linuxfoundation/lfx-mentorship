@@ -85,7 +85,7 @@ func (h *ProgramMemberHandler) List(w http.ResponseWriter, r *http.Request) {
 		Limit:      limit,
 		Offset:     offset,
 		MemberType: string(models.MemberTypeMentor),
-		Status:     string(models.ProgramMemberStatusActive),
+		Status:     string(models.ProgramMemberStatusApproved),
 	})
 	if err != nil {
 		Error(w, err)

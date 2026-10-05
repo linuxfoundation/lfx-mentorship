@@ -34,7 +34,7 @@ Key notes
 - The enrollments table no longer exists; applications now covers the full mentee
   lifecycle (pending → accepted → graduated|withdrawn).
 - attendance_type is not captured in DynamoDB; it is migrated as NULL.
-- DynamoDB member status "approved" maps to program_members.status "active".
+- DynamoDB member status "approved" maps to program_members.status "approved".
 - DynamoDB mentee status "approved" (and "active") maps to applications.status
   "accepted" — applications.status has no "active" value.
 - DynamoDB user-profile type for mentees maps to Postgres profile_type "mentee".
@@ -756,9 +756,9 @@ _MEMBER_TYPE_MAP = {
     "program_admin": "program_admin",
     "mentor": "mentor",
 }
-_VALID_MEMBER_STATUSES = {"invited", "requested", "pending", "active", "declined", "withdrawn"}
-# DynamoDB used "approved" for accepted mentors; Postgres stores that as "active".
-_MEMBER_STATUS_MAP = {"accepted": "active", "approved": "active"}
+_VALID_MEMBER_STATUSES = {"invited", "requested", "pending", "approved", "declined", "withdrawn"}
+# DynamoDB also used "accepted" for granted memberships; Postgres stores both as "approved".
+_MEMBER_STATUS_MAP = {"accepted": "approved"}
 
 
 def migrate_program_members(
@@ -1204,7 +1204,7 @@ def seed_derived_state(cur) -> None:
         FROM programs
         JOIN program_members ON program_members.program_id = programs.id
         JOIN users ON users.id = program_members.user_id
-        WHERE program_members.status = 'active'
+        WHERE program_members.status = 'approved'
           AND program_members.member_type IN ('program_admin', 'mentor')
           AND NULLIF(users.lfid, '') IS NULL
         ORDER BY programs.id, program_members.id
@@ -1277,7 +1277,7 @@ def seed_derived_state(cur) -> None:
           FROM program_members
           JOIN users ON users.id = program_members.user_id
           WHERE program_members.program_id = program.id
-            AND program_members.status = 'active'
+            AND program_members.status = 'approved'
             AND program_members.member_type IN ('program_admin', 'mentor')
             AND NULLIF(users.lfid, '') IS NULL
         )
@@ -1372,7 +1372,7 @@ def seed_derived_state(cur) -> None:
                     'status', status,
                     'logo_url', logo_url,
                     'stats', jsonb_build_object(
-                        'mentors', (SELECT COUNT(*) FROM program_members pm WHERE pm.program_id = programs.id AND pm.member_type = 'mentor' AND pm.status = 'active'),
+                        'mentors', (SELECT COUNT(*) FROM program_members pm WHERE pm.program_id = programs.id AND pm.member_type = 'mentor' AND pm.status = 'approved'),
                         'mentees', (SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE pt.program_id = programs.id AND a.role = 'mentee' AND a.status = 'accepted'),
                         'graduated', (SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE pt.program_id = programs.id AND a.role = 'mentee' AND a.status = 'graduated')
                     ),

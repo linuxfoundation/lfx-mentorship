@@ -63,7 +63,7 @@ func seedIntegrationFixture(t *testing.T, pool *pgxpool.Pool) integrationFixture
 	if _, err := pool.Exec(ctx, `INSERT INTO programs (id, lf_project_uid, name, slug, status) VALUES ($1, '00000000-0000-0000-0000-000000000099', 'Fixture Program', 'fixture-program', 'published')`, fixture.ProgramID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES ('00000000-0000-0000-0000-000000000020', $1, $2, 'program_admin', 'active')`, fixture.ProgramID, fixture.UserID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES ('00000000-0000-0000-0000-000000000020', $1, $2, 'program_admin', 'approved')`, fixture.ProgramID, fixture.UserID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO program_terms (id, program_id, name, status) VALUES ($1, $3, 'Open', 'open'), ($2, $3, 'Closed', 'closed')`, fixture.OpenTerm, fixture.ClosedTerm, fixture.ProgramID); err != nil {
@@ -240,7 +240,7 @@ func TestProgramIndexIntegration_RefreshesPublicStats(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name) VALUES ($1, 'fixture-graduated', 'Fixture Graduated')`, graduatedUserID); err != nil {
 		t.Fatal(err)
 	}
-	active := models.ProgramMemberStatusActive
+	active := models.ProgramMemberStatusApproved
 	if _, err := NewProgramMemberRepository(pool).Create(ctx, fixture.ProgramID, models.ProgramMemberCreateInput{
 		ID:         "00000000-0000-0000-0000-000000000021",
 		UserID:     mentorID,
@@ -586,7 +586,7 @@ func TestProgramHeaderProjectionIntegration_CountsProgramState(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name) VALUES ('00000000-0000-0000-0000-000000000002', 'fixture-user-2', 'Fixture User 2')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES ('00000000-0000-0000-0000-000000000021', $1, $2, 'mentor', 'active')`, fixture.ProgramID, fixture.UserID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES ('00000000-0000-0000-0000-000000000021', $1, $2, 'mentor', 'approved')`, fixture.ProgramID, fixture.UserID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ('00000000-0000-0000-0000-000000000030', $1, $2, 'mentee', 'accepted'), ('00000000-0000-0000-0000-000000000031', $1, '00000000-0000-0000-0000-000000000002', 'mentee', 'graduated')`, fixture.OpenTerm, fixture.UserID); err != nil {

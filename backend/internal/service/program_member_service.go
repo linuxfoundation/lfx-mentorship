@@ -56,21 +56,21 @@ func (s *ProgramMemberService) assertActiveProgramAdmin(ctx context.Context, pro
 // WithdrawMine and RequestMentorship.
 var memberTransitions = map[models.ProgramMemberStatus]map[models.ProgramMemberStatus]bool{
 	models.ProgramMemberStatusInvited: {
-		models.ProgramMemberStatusActive:   true,
+		models.ProgramMemberStatusApproved: true,
 		models.ProgramMemberStatusDeclined: true,
 		models.ProgramMemberStatusPending:  true,
 	},
 	models.ProgramMemberStatusRequested: {
-		models.ProgramMemberStatusActive:   true,
+		models.ProgramMemberStatusApproved: true,
 		models.ProgramMemberStatusDeclined: true,
 		models.ProgramMemberStatusPending:  true,
 	},
-	models.ProgramMemberStatusActive: {
+	models.ProgramMemberStatusApproved: {
 		models.ProgramMemberStatusWithdrawn: true,
 		models.ProgramMemberStatusPending:   true,
 	},
 	models.ProgramMemberStatusPending: {
-		models.ProgramMemberStatusActive:   true,
+		models.ProgramMemberStatusApproved: true,
 		models.ProgramMemberStatusDeclined: true,
 	},
 	models.ProgramMemberStatusDeclined:  {},
@@ -141,9 +141,9 @@ func (s *ProgramMemberService) Create(ctx context.Context, programID string, inp
 		return nil, fmt.Errorf("%w: program must be published before adding members", domain.ErrInvalidInput)
 	}
 
-	// Mentors are placed in 'invited' status and notified; program_admins are 'active' immediately.
+	// Mentors are placed in 'invited' status and notified; program_admins are 'approved' immediately.
 	if input.Status == nil {
-		defaultStatus := models.ProgramMemberStatusActive
+		defaultStatus := models.ProgramMemberStatusApproved
 		if input.MemberType == models.MemberTypeMentor {
 			defaultStatus = models.ProgramMemberStatusInvited
 		}
@@ -363,7 +363,7 @@ func (s *ProgramMemberService) Update(ctx context.Context, programID, id string,
 	return m, nil
 }
 
-// AcceptInvite validates a mentor invite token and transitions the member to active.
+// AcceptInvite validates a mentor invite token and transitions the member to approved.
 func (s *ProgramMemberService) AcceptInvite(ctx context.Context, token, actorID string) (*models.ProgramMember, error) {
 	ctx, span := programMemberSvcTracer.Start(ctx, "ProgramMemberService.AcceptInvite")
 	defer span.End()
@@ -398,8 +398,8 @@ func (s *ProgramMemberService) AcceptInvite(ctx context.Context, token, actorID 
 		return nil, fmt.Errorf("%w: no pending invite found for this user", domain.ErrInvalidInput)
 	}
 
-	activeStatus := models.ProgramMemberStatusActive
-	m, err := s.repo.UpdateIfStatus(ctx, memberID, []models.ProgramMemberStatus{models.ProgramMemberStatusInvited}, models.ProgramMemberUpdateInput{Status: &activeStatus})
+	approvedStatus := models.ProgramMemberStatusApproved
+	m, err := s.repo.UpdateIfStatus(ctx, memberID, []models.ProgramMemberStatus{models.ProgramMemberStatusInvited}, models.ProgramMemberUpdateInput{Status: &approvedStatus})
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("accept invite: %w", err)

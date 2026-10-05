@@ -67,7 +67,7 @@ func (m *stubMemberRepo) FindActiveReviewerByProgramAndUser(ctx context.Context,
 		}
 		return nil, domain.ErrProgramMemberNotFound
 	}
-	if member.Status == nil || *member.Status != models.ProgramMemberStatusActive || (member.MemberType != models.MemberTypeMentor && member.MemberType != models.MemberTypeProgramAdmin) {
+	if member.Status == nil || *member.Status != models.ProgramMemberStatusApproved || (member.MemberType != models.MemberTypeMentor && member.MemberType != models.MemberTypeProgramAdmin) {
 		return nil, domain.ErrProgramMemberNotFound
 	}
 	return member, nil
@@ -83,7 +83,7 @@ func (m *stubMemberRepo) FindActiveProgramAdminByProgramAndUser(ctx context.Cont
 		}
 		return nil, domain.ErrProgramMemberNotFound
 	}
-	if member.Status == nil || *member.Status != models.ProgramMemberStatusActive || member.MemberType != models.MemberTypeProgramAdmin {
+	if member.Status == nil || *member.Status != models.ProgramMemberStatusApproved || member.MemberType != models.MemberTypeProgramAdmin {
 		return nil, domain.ErrProgramMemberNotFound
 	}
 	return member, nil
@@ -243,7 +243,7 @@ func TestTaskService_Update_NonAssignee_CannotMarkInProgress(t *testing.T) {
 func TestTaskService_Update_Reviewer_CanMarkComplete_WhenActiveMember(t *testing.T) {
 	appID := "app-1"
 	termID := "term-1"
-	activeStatus := models.ProgramMemberStatusActive
+	activeStatus := models.ProgramMemberStatusApproved
 	taskRepo := &stubTaskRepo{
 		getByID: func(_ context.Context, id string) (*models.Task, error) {
 			return &models.Task{ID: id, AssigneeID: "mentee-1", Status: "submitted", ApplicationID: &appID}, nil
@@ -358,7 +358,7 @@ func TestTaskService_Update_Reviewer_MembershipLookupFailure_Propagates(t *testi
 func TestTaskService_Update_Reviewer_CannotMarkComplete_WrongRole(t *testing.T) {
 	appID := "app-1"
 	termID := "term-1"
-	activeStatus := models.ProgramMemberStatusActive
+	activeStatus := models.ProgramMemberStatusApproved
 	taskRepo := &stubTaskRepo{
 		getByID: func(_ context.Context, id string) (*models.Task, error) {
 			return &models.Task{ID: id, AssigneeID: "mentee-1", Status: "submitted", ApplicationID: &appID}, nil
@@ -482,7 +482,7 @@ func TestTaskService_InvalidCategory_Rejected(t *testing.T) {
 func TestTaskService_Delete_ReviewerCanDeleteWhenActiveMember(t *testing.T) {
 	appID := "app-1"
 	termID := "term-1"
-	activeStatus := models.ProgramMemberStatusActive
+	activeStatus := models.ProgramMemberStatusApproved
 	deleteCalled := false
 
 	taskRepo := &stubTaskRepo{
@@ -576,7 +576,7 @@ func TestTaskService_Delete_MissingActorForbidden(t *testing.T) {
 func TestTaskService_Delete_OrphanedApplication_UsesTaskProgramTermFallback(t *testing.T) {
 	appID := "app-1"
 	termID := "term-1"
-	activeStatus := models.ProgramMemberStatusActive
+	activeStatus := models.ProgramMemberStatusApproved
 	deleteCalled := false
 
 	taskRepo := &stubTaskRepo{
@@ -636,7 +636,7 @@ func TestTaskService_GetByIDForActor_AssigneeAllowed(t *testing.T) {
 func TestTaskService_GetByIDForActor_ReviewerAllowed(t *testing.T) {
 	appID := "app-1"
 	termID := "term-1"
-	active := models.ProgramMemberStatusActive
+	active := models.ProgramMemberStatusApproved
 	svc := newTaskSvc(&stubTaskRepo{
 		getByID: func(_ context.Context, id string) (*models.Task, error) {
 			return &models.Task{ID: id, AssigneeID: "mentee-1", ApplicationID: &appID}, nil
@@ -662,7 +662,7 @@ func TestTaskService_GetByIDForActor_ReviewerAllowed(t *testing.T) {
 
 func TestTaskService_GetByIDForActor_ReviewerAllowedWithoutApplication(t *testing.T) {
 	termID := "term-1"
-	active := models.ProgramMemberStatusActive
+	active := models.ProgramMemberStatusApproved
 	svc := newTaskSvc(&stubTaskRepo{
 		getByID: func(_ context.Context, id string) (*models.Task, error) {
 			return &models.Task{ID: id, AssigneeID: "mentee-1", ProgramTermID: &termID}, nil
@@ -782,7 +782,7 @@ func TestTaskService_ListByProgramTermForActor_InactiveMemberForcesAssigneeFilte
 }
 
 func TestTaskService_ListByProgramTermForActor_ReviewerKeepsAssigneeFilter(t *testing.T) {
-	active := models.ProgramMemberStatusActive
+	active := models.ProgramMemberStatusApproved
 	svc := newTaskSvc(&stubTaskRepo{
 		listByProgramTerm: func(_ context.Context, _ string, f models.TaskFilter) ([]*models.Task, *models.PaginationMeta, error) {
 			if f.AssigneeID != "explicit-assignee" {

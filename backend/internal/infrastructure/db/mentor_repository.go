@@ -46,7 +46,7 @@ const mentorEligibleCTE = `
 		FROM program_members pm
 		JOIN programs p ON p.id = pm.program_id
 		WHERE pm.member_type = 'mentor'
-		  AND pm.status = 'active'
+		  AND pm.status = 'approved'
 		  AND p.status = 'published'
 	),
 	joined AS (
@@ -265,7 +265,7 @@ func (r *MentorRepository) loadMentorPrograms(ctx context.Context, userID string
 		JOIN programs p ON p.id = pm.program_id
 		WHERE pm.user_id = $1
 		  AND pm.member_type = 'mentor'
-		  AND pm.status = 'active'
+		  AND pm.status = 'approved'
 		  AND p.status = 'published'
 		ORDER BY p.name, p.id`, userID)
 	if err != nil {
@@ -384,7 +384,7 @@ func (r *MentorRepository) loadMentorsByProgram(ctx context.Context, ids []strin
 		LEFT JOIN users u ON u.id = pm.user_id
 		WHERE pm.program_id = ANY($1::uuid[])
 		  AND pm.member_type = 'mentor'
-		  AND pm.status = 'active'
+		  AND pm.status = 'approved'
 		ORDER BY u.name NULLS LAST, pm.created_on`, ids)
 	if err != nil {
 		return nil, fmt.Errorf("list mentor program mentors: %w", err)
@@ -414,7 +414,7 @@ func (r *MentorRepository) loadMentorMentees(ctx context.Context, mentorUserID s
 		JOIN program_members pm ON pm.program_id = p.id
 			AND pm.user_id = $1
 			AND pm.member_type = 'mentor'
-			AND pm.status = 'active'
+			AND pm.status = 'approved'
 		LEFT JOIN users u ON u.id = a.user_id
 		LEFT JOIN LATERAL (
 			SELECT introduction, logo_url, first_name, last_name

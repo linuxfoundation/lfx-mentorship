@@ -678,7 +678,7 @@ Through the gateway this is the one service-owned collection route: Heimdall aut
 }
 ```
 
-Nested `terms` omit soft-deleted terms. Nested `mentors` are `member_type = mentor` and `status = active`, joined to `users` for name and avatar, and to the mentor `user_profiles` row for `introduction`.
+Nested `terms` omit soft-deleted terms. Nested `mentors` are `member_type = mentor` and `status = approved`, joined to `users` for name and avatar, and to the mentor `user_profiles` row for `introduction`.
 
 LF project / foundation is not included yet — `programs.lfid` remains the owner username.
 
@@ -945,7 +945,7 @@ Aggregated marketing/landing counts plus a small graduated-mentee preview. All c
 
 - `program_count` — number of published programs.
 - `accepting_program_count` — subset of published programs with at least one open term whose `application_start_date` ≤ `NOW()` ≤ `application_end_date`.
-- `mentor_count` — distinct users who are an `active` `mentor` member of any published program.
+- `mentor_count` — distinct users who are an `approved` `mentor` member of any published program.
 - `graduated_mentee_count` — distinct users with at least one mentee application in status `graduated` on a non-deleted term of a published program.
 - `stipends_paid` — total amount spent by published programs.
 - `graduated_mentee_users` — up to four most recently graduated mentees (`name`, `avatar_url`) for the landing hero.
@@ -1317,14 +1317,14 @@ Tracks the relationship between a user and a program as either `program_admin` o
 
 **`member_type` values**: `program_admin`, `mentor`
 
-**`status` values**: `invited`, `requested`, `pending`, `active`, `declined`, `withdrawn`
+**`status` values**: `invited`, `requested`, `pending`, `approved`, `declined`, `withdrawn`
 
 | Status | Meaning |
 |---|---|
 | `invited` | Program Admin sent an invitation; awaiting mentor response |
 | `requested` | Mentor self-requested participation; awaiting program_admin approval |
 | `pending` | Manual hold set by program_admin |
-| `active` | Member is confirmed and participating |
+| `approved` | Member is confirmed and participating |
 | `declined` | Invitation or request was declined |
 | `withdrawn` | Removed from the program, or the mentor withdrew their own request |
 
@@ -1332,12 +1332,12 @@ Tracks the relationship between a user and a program as either `program_admin` o
 
 #### `GET /v1/programs/{id}/members` 🔓
 
-Public roster. Returns `active` members only, with `email` omitted from every row.
+Public roster. Returns `approved` members only, with `email` omitted from every row.
 `{id}` may be a UUID or a slug. A hidden program returns `404`, matching
 `GET /v1/programs/{id}`. The owner exception described under FR-009 does not
 apply on this route yet — see the note there.
 
-There is no `status` filter: the status is pinned to `active` so an anonymous
+There is no `status` filter: the status is pinned to `approved` so an anonymous
 caller cannot widen the roster to `invited`, `requested`, `pending`, `declined`,
 or `withdrawn` members.
 
@@ -1372,7 +1372,7 @@ Add a member to a program.
   `POST /v1/me/program-memberships`.
 
 **Program Admin flow** (`member_type = "program_admin"`):
-- Record is created with `status = "active"`.
+- Record is created with `status = "approved"`.
 
 **Request body**
 ```json
@@ -1396,7 +1396,7 @@ Update a member's status or email.
 **Request body**
 ```json
 {
-  "status": "active",
+  "status": "approved",
   "email":  "new@example.com"
 }
 ```
@@ -1405,7 +1405,7 @@ When this endpoint moves a mentor's request to `declined` (`requested → declin
 
 A mentor's request belongs to the mentor: only they can create it or withdraw
 it, through the [mentor self-service](#mentor-self-service) routes. A program
-admin approves a request (`active`), declines it (`declined`), or deletes it.
+admin approves a request (`approved`), declines it (`declined`), or deletes it.
 This endpoint therefore refuses `requested`/`pending` → `withdrawn` and
 `withdrawn` → `requested` with `409`.
 
@@ -1547,7 +1547,7 @@ the program, that row is reset to `requested` instead. No invite email is sent.
 | `400` | `program_id` is not a UUID, or the program is a `draft` |
 | `401` | No signed-in user |
 | `404` | The program does not exist, or is not visible to every signed-in user (`submitted`, `rejected`, `archived`, `hidden`) |
-| `409` | The caller already has a mentor row in `invited`, `requested`, `pending`, `active`, or `declined`, or the row changed concurrently |
+| `409` | The caller already has a mentor row in `invited`, `requested`, `pending`, `approved`, or `declined`, or the row changed concurrently |
 
 ---
 
@@ -1582,7 +1582,7 @@ These endpoints are called by the LFX Self Serve page that the invite email link
 
 Accept a mentor invitation. No request body.
 
-**Effect**: Sets the matching `program_members` record's `status` from `invited` to `active`, and emails the program's active Program Admins (`NotifyAdminMentorAccepted`).
+**Effect**: Sets the matching `program_members` record's `status` from `invited` to `approved`, and emails the program's active Program Admins (`NotifyAdminMentorAccepted`).
 
 **Response** `200` → `<ProgramMember>`  
 **Errors** `400` (invalid or expired token, or no pending invite — including one already answered), `401` (no JWT), `403` (the token belongs to another user), `409` (the row changed concurrently)
@@ -2095,7 +2095,7 @@ GET /v1/programs/catalog?limit=20
 GET /v1/programs/{id}
 GET /v1/programs/{id}/terms
 GET /v1/programs/{id}/skills
-GET /v1/programs/{id}/members?member_type=mentor&status=active
+GET /v1/programs/{id}/members?member_type=mentor&status=approved
 GET /v1/programs/{id}/transactions?categoryType=mentorship&limit=25&offset=0
 ```
 
@@ -2225,7 +2225,7 @@ Body: { "user_id": "<uid>", "member_type": "mentor", "status": "requested" }
 The program_admin then approves or declines:
 ```
 PATCH /v1/programs/{programId}/members/{memberId}
-Body: { "status": "active" }   // approve
+Body: { "status": "approved" }   // approve
 Body: { "status": "declined" } // decline
 ```
 
