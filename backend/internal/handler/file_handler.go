@@ -218,6 +218,7 @@ func readMultipartFile(w http.ResponseWriter, r *http.Request, limit int64) (str
 		if part.FormName() != taskFileFormField {
 			continue
 		}
+		defer func() { _ = part.Close() }()
 		data, err := io.ReadAll(io.LimitReader(part, limit+1))
 		if err != nil {
 			Error(w, uploadReadError(err, limit))
@@ -241,7 +242,7 @@ func uploadReadError(err error, limit int64) error {
 
 // byteRange passes a single bytes Range header through to the store, for PDF viewers.
 func byteRange(r *http.Request) string {
-	if v := r.Header.Get("Range"); strings.HasPrefix(v, "bytes=") {
+	if v := r.Header.Get("Range"); strings.HasPrefix(v, "bytes=") && !strings.Contains(v, ",") {
 		return v
 	}
 	return ""

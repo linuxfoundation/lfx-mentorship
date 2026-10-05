@@ -336,6 +336,14 @@ func TestFileHandler_DownloadTaskFile(t *testing.T) {
 	if w.Body.String() != "PDF" {
 		t.Fatalf("body = %q", w.Body.String())
 	}
+
+	// A multi-range request is served whole rather than forwarded.
+	r = httptest.NewRequest(http.MethodGet, "/v1/tasks/t1/file-download", nil)
+	r.Header.Set("Range", "bytes=0-1,4-5")
+	h.DownloadTaskFile(httptest.NewRecorder(), withPrincipal(requestWithChiParam(r, "id", "t1"), "reviewer"))
+	if gotRange != "" {
+		t.Fatalf("multi-range forwarded as %q; want none", gotRange)
+	}
 }
 
 func TestFileHandler_DownloadTaskFile_MapsErrors(t *testing.T) {
