@@ -79,13 +79,12 @@ class Copier:
         decoded = unquote(raw)
         return [raw] if decoded == raw else [raw, decoded]
 
-    def _already_done(self, file_class: str, candidates: list) -> dict | None:
-        for key in candidates:
-            if _head(self.dest, self.buckets[file_class], key):
-                return {"status": lo.COPIED, "key": key}
-            quarantine_key = lo.QUARANTINE_PREFIX[file_class] + key
-            if _head(self.dest, self.attachments, quarantine_key):
-                return {"status": lo.QUARANTINED, "key": quarantine_key}
+    def _already_done(self, file_class: str, key: str) -> dict | None:
+        if _head(self.dest, self.buckets[file_class], key):
+            return {"status": lo.COPIED, "key": key}
+        quarantine_key = lo.QUARANTINE_PREFIX[file_class] + key
+        if _head(self.dest, self.attachments, quarantine_key):
+            return {"status": lo.QUARANTINED, "key": quarantine_key}
         return None
 
     def _copy(self, bucket: str, key: str, source_key: str, content_type: str, cache_control: str) -> None:
@@ -99,11 +98,11 @@ class Copier:
         )
 
     def resolve(self, file_class: str, raw: str) -> dict:
-        candidates = self._candidates(raw)
-        done = self._already_done(file_class, candidates)
-        if done:
-            return done
-        for key in candidates:
+        # The decoded key is a fallback only for a raw key absent from both sides.
+        for key in self._candidates(raw):
+            done = self._already_done(file_class, key)
+            if done:
+                return done
             head = _head(self.source, self.legacy_bucket, key)
             if head:
                 break

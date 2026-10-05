@@ -72,8 +72,18 @@ func (r *FileRepository) ReplaceProfileLogo(ctx context.Context, rep domain.File
 			return fmt.Errorf("%w: file changed concurrently", domain.ErrConflict)
 		}
 		// Directory reads prefer avatar_url over the profile logo, so keep it aliased.
+		var oldAvatar *string
+		if err := tx.QueryRow(ctx, `SELECT avatar_url FROM users WHERE id = $1`, userID).Scan(&oldAvatar); err != nil {
+			return fmt.Errorf("read user avatar: %w", err)
+		}
 		if _, err := tx.Exec(ctx, `UPDATE users SET avatar_url = $2 WHERE id = $1`, userID, rep.Next); err != nil {
 			return fmt.Errorf("alias user avatar to profile logo: %w", err)
+		}
+		if oldAvatar != nil && rep.Previous != nil && *oldAvatar == *rep.Previous {
+			oldAvatar = nil
+		}
+		if err := queueObjectDeletions(ctx, tx, domain.ObjectBucketLogos, oldAvatar); err != nil {
+			return err
 		}
 		return settleReplacement(ctx, tx, domain.ObjectBucketLogos, rep)
 	})

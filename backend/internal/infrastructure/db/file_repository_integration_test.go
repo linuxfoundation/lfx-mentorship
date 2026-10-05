@@ -165,6 +165,25 @@ func TestFileRepositoryIntegration_ProfileLogoKeepsAvatarAliased(t *testing.T) {
 	}
 }
 
+func TestFileRepositoryIntegration_ProfileLogoQueuesOverwrittenAvatar(t *testing.T) {
+	pool, fixture := fileIntegrationPool(t)
+	ctx := context.Background()
+	queue, files := NewObjectDeletionRepository(pool), NewFileRepository(pool)
+	migrated, logo := fileTestCDN+"/migrated-avatar.png", fileTestCDN+"/abc-logo.png"
+	if _, err := pool.Exec(ctx, `UPDATE users SET avatar_url = $2 WHERE id = $1`, fixture.UserID, migrated); err != nil {
+		t.Fatal(err)
+	}
+
+	pending, _ := queue.Schedule(ctx, domain.ObjectBucketLogos, logo, time.Hour)
+	if err := files.ReplaceProfileLogo(ctx, domain.FileReplacement{RowID: fileTestProfile, Next: logo, PendingDeletionID: pending}); err != nil {
+		t.Fatalf("replace: %v", err)
+	}
+	assertAvatar(t, pool, fixture.UserID, &logo)
+	if got := deletionRows(t, pool); len(got) != 1 || got[0] != (deletionRow{"logos", migrated, "pending"}) {
+		t.Fatalf("queue = %+v; want the overwritten avatar", got)
+	}
+}
+
 func TestFileRepositoryIntegration_ParentDeletesQueueHeldFiles(t *testing.T) {
 	pool, fixture := fileIntegrationPool(t)
 	ctx := context.Background()
