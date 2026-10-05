@@ -747,18 +747,28 @@ func TestProgramHandler_ListMine_ScopesToPrincipal(t *testing.T) {
 	}
 }
 
-func TestProgramHandler_ListMine_RequiresPrincipal(t *testing.T) {
+func TestProgramHandler_ListMine_RequiresUserPrincipal(t *testing.T) {
 	h := handler.NewProgramHandler(&stubProgramSvc{
 		listMine: func(context.Context, string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
-			t.Fatal("service must not be called without a principal")
+			t.Fatal("service must not be called without a user principal")
 			return nil, nil, nil
 		},
 	})
-	r := httptest.NewRequest(http.MethodGet, "/v1/me/programs", nil)
-	w := httptest.NewRecorder()
-	h.ListMine(w, r)
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("got %d; want 401", w.Code)
+	for name, principal := range map[string]*models.Principal{
+		"none": nil,
+		"m2m":  {UserID: "client-id@clients", Username: "client-id@clients"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "/v1/me/programs", nil)
+			if principal != nil {
+				r = r.WithContext(auth.ContextWithPrincipal(r.Context(), principal))
+			}
+			w := httptest.NewRecorder()
+			h.ListMine(w, r)
+			if w.Code != http.StatusUnauthorized {
+				t.Errorf("got %d; want 401", w.Code)
+			}
+		})
 	}
 }
 

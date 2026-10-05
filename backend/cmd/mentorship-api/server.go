@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -325,7 +324,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 				return
 			}
 			// M2M principals are authorization identities, not local human users.
-			if strings.HasSuffix(principal.Username, "@clients") {
+			if principal.IsM2M() {
 				next.ServeHTTP(w, req)
 				return
 			}

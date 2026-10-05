@@ -1479,7 +1479,7 @@ this is not yet a Query Service collection.
 { "data": [<AdministeredProgram>, ...], "meta": {...} }
 ```
 
-**Errors** `400` (unknown `status`, non-integer `limit`/`offset`), `401`
+**Errors** `400` (unknown `status`, non-integer `limit`/`offset`), `401` (no principal, or a machine-to-machine client)
 
 ---
 

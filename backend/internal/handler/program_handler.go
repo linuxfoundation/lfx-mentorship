@@ -254,10 +254,11 @@ func (h *ProgramHandler) ListCatalog(w http.ResponseWriter, r *http.Request) {
 }
 
 // ListMine handles GET /v1/me/programs — the programs the caller administers.
-// The user is always the principal.
+// The user is always the principal; M2M principals have no local user and are
+// rejected.
 func (h *ProgramHandler) ListMine(w http.ResponseWriter, r *http.Request) {
 	principal := auth.PrincipalFromContext(r.Context())
-	if principal == nil {
+	if principal == nil || principal.IsM2M() {
 		Error(w, domain.ErrUnauthorized)
 		return
 	}
