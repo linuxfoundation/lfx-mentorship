@@ -1934,14 +1934,15 @@ submission is written by `POST /v1/tasks/{id}/file-upload`.
 | `submitted → complete` | **Non-assignee** (program_admin or mentor) only |
 | Any state → `incomplete` (reset) | **Non-assignee** (program_admin or mentor) only |
 
-Invalid forward transitions (e.g. `incomplete → complete`) return `409`.
+Invalid forward transitions (e.g. `incomplete → complete`) return `409`. A task whose
+application is `withdrawn` is kept as history and cannot change: any update returns `409`.
 
 **Side effect**: When the last `prerequisite` task for an application reaches `submitted` or `complete`, the system:
 1. Sets `applications.tasks_submitted = true`.
 2. Fires `NotifyAdminTasksSubmitted` to notify the program admin.
 
 **Response** `200` → `<Task>`  
-**Errors** `400`, `401`, `403` (wrong actor), `404`, `409` (invalid transition)
+**Errors** `400`, `401`, `403` (wrong actor), `404`, `409` (invalid transition, withdrawn application)
 
 ---
 
@@ -1992,7 +1993,8 @@ both added by #161.
 
 A task file can be uploaded until the task is `complete`; once `submitted` it is
 replaced through `file-upload`, never deleted, so a task that requires a file
-always keeps one. A concurrent upload to the same record returns `409`, as does an
+always keeps one. A task whose application is `withdrawn` keeps its file: upload and
+delete return `409`. A concurrent upload to the same record returns `409`, as does an
 upload that took longer than the 15-minute grace period to save. A `Range` outside
 the object returns `416`.
 

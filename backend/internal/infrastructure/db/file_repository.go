@@ -96,6 +96,9 @@ func (r *FileRepository) ReplaceTaskFile(ctx context.Context, rep domain.FileRep
 	span.SetAttributes(attribute.String("db.task_id", rep.RowID))
 
 	return r.inTx(ctx, "replace task file", func(tx pgx.Tx) error {
+		if err := lockTaskApplication(ctx, tx, rep.RowID); err != nil {
+			return err
+		}
 		t, err := scanTask(tx.QueryRow(ctx, `
 			UPDATE tasks SET file = $3
 			WHERE id = $1 AND file IS NOT DISTINCT FROM $2 AND status <> $4
@@ -171,6 +174,9 @@ func (r *FileRepository) ClearTaskFile(ctx context.Context, taskID, previous str
 		return s == models.TaskStatusIncomplete || s == models.TaskStatusInProgress
 	}
 	return r.inTx(ctx, "clear task file", func(tx pgx.Tx) error {
+		if err := lockTaskApplication(ctx, tx, taskID); err != nil {
+			return err
+		}
 		t, err := scanTask(tx.QueryRow(ctx, `
 			UPDATE tasks SET file = NULL
 			WHERE id = $1 AND file = $2 AND status IN ($3, $4)

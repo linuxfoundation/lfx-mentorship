@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -396,6 +397,111 @@ func TestApplicationRepositoryIntegration_ReapplyRejectsClosedTerm(t *testing.T)
 	input := models.ApplicationCreateInput{ID: "00000000-0000-0000-0000-000000000086", UserID: fixture.UserID, Role: models.ApplicationRoleMentee, Status: models.ApplicationStatusPending}
 	if _, err := NewApplicationRepository(pool).ReapplyWithTasks(ctx, oldID, fixture.ClosedTerm, input, nil); !errors.Is(err, domain.ErrIneligible) {
 		t.Fatalf("reapply to a closed term err = %v; want ErrIneligible", err)
+	}
+}
+
+// A withdrawal that commits while a reapply waits must count toward the limit: with two withdrawn
+// applications and a live one being withdrawn, the reapply sees three and creates nothing.
+func TestApplicationRepositoryIntegration_ReapplyCountsConcurrentWithdrawal(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	oldID, liveID := "00000000-0000-0000-0000-000000000092", "00000000-0000-0000-0000-000000000093"
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES
+		('00000000-0000-0000-0000-000000000091', $1, $2, 'mentee', 'withdrawn'),
+		($3, $1, $2, 'mentee', 'withdrawn'),
+		($4, $1, $2, 'mentee', 'pending')`, fixture.OpenTerm, fixture.UserID, oldID, liveID); err != nil {
+		t.Fatalf("insert applications: %v", err)
+	}
+
+	withdrawal, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin withdrawal: %v", err)
+	}
+	defer func() { _ = withdrawal.Rollback(ctx) }()
+	if _, err := withdrawal.Exec(ctx, `UPDATE applications SET status = 'withdrawn' WHERE id = $1`, liveID); err != nil {
+		t.Fatalf("withdraw live application: %v", err)
+	}
+
+	reapplied := make(chan error, 1)
+	go func() {
+		input := models.ApplicationCreateInput{ID: "00000000-0000-0000-0000-000000000094", UserID: fixture.UserID, Role: models.ApplicationRoleMentee, Status: models.ApplicationStatusPending}
+		_, err := NewApplicationRepository(pool).ReapplyWithTasks(ctx, oldID, fixture.OpenTerm, input, nil)
+		reapplied <- err
+	}()
+	waitForLockWait(t, pool, reapplied)
+	if err := withdrawal.Commit(ctx); err != nil {
+		t.Fatalf("commit withdrawal: %v", err)
+	}
+
+	if err := <-reapplied; !errors.Is(err, domain.ErrIneligible) {
+		t.Fatalf("reapply racing a withdrawal err = %v; want ErrIneligible", err)
+	}
+	var count int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM applications WHERE user_id = $1`, fixture.UserID).Scan(&count); err != nil {
+		t.Fatalf("count applications: %v", err)
+	}
+	if count != 3 {
+		t.Fatalf("applications = %d; want the 3 withdrawn and no reapplication", count)
+	}
+}
+
+// waitForLockWait returns once another session is blocked on a row lock, failing if the
+// operation reported on done finishes first or nothing blocks in time.
+func waitForLockWait(t *testing.T, pool *pgxpool.Pool, done <-chan error) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		select {
+		case err := <-done:
+			t.Fatalf("operation finished without waiting for the lock: %v", err)
+		default:
+		}
+		var waiting bool
+		if err := pool.QueryRow(context.Background(), `SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+			WHERE datname = current_database() AND wait_event_type = 'Lock')`).Scan(&waiting); err != nil {
+			t.Fatalf("read lock waits: %v", err)
+		}
+		if waiting {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("timed out waiting for the operation to block on a lock")
+}
+
+// A withdrawn application is kept as history when its applicant reapplies, so its tasks and their
+// files cannot change. The check reads the application itself, not the task's denormalised status.
+func TestTaskRepositoryIntegration_WithdrawnApplicationTasksAreLocked(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	applicationID, taskID := "00000000-0000-0000-0000-000000000095", "00000000-0000-0000-0000-000000000096"
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentee', 'withdrawn')`, applicationID, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatalf("insert application: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO tasks (id, application_id, program_term_id, assignee_id, status, file, application_status) VALUES ($1, $2, $3, $4, 'in_progress', 'evidence', 'pending')`, taskID, applicationID, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatalf("insert task: %v", err)
+	}
+
+	submitted := models.TaskStatusSubmitted
+	if _, err := NewTaskRepository(pool).Update(ctx, taskID, models.TaskUpdateInput{Status: &submitted}); !errors.Is(err, domain.ErrStateLocked) {
+		t.Fatalf("update err = %v; want ErrStateLocked", err)
+	}
+	files := NewFileRepository(pool)
+	if err := files.ReplaceTaskFile(ctx, domain.FileReplacement{RowID: taskID, Previous: ptrTo("evidence"), Next: "replacement"}); !errors.Is(err, domain.ErrStateLocked) {
+		t.Fatalf("replace file err = %v; want ErrStateLocked", err)
+	}
+	if err := files.ClearTaskFile(ctx, taskID, "evidence"); !errors.Is(err, domain.ErrStateLocked) {
+		t.Fatalf("clear file err = %v; want ErrStateLocked", err)
+	}
+
+	var status, file string
+	if err := pool.QueryRow(ctx, `SELECT status, file FROM tasks WHERE id = $1`, taskID).Scan(&status, &file); err != nil {
+		t.Fatalf("read task: %v", err)
+	}
+	if status != string(models.TaskStatusInProgress) || file != "evidence" {
+		t.Fatalf("task = status %q file %q; want it unchanged", status, file)
 	}
 }
 
