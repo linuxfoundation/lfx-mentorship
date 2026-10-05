@@ -523,6 +523,7 @@ def migrate_programs(cur, projects: list, known_user_ids: set, files: lo.LegacyF
         pid = _as_uuid(p.get("projectId"))
         if not pid:
             continue
+        pid_canonical = _strict_uuid(pid)
         program_ids.add(pid)
 
         # project_uid is the LF project parent used by the authorization
@@ -536,7 +537,7 @@ def migrate_programs(cur, projects: list, known_user_ids: set, files: lo.LegacyF
             p.get("lfProjectUID"),
             linked_project.get("id"),
         )
-        project_uid = next((uid for uid in map(_strict_uuid, candidates) if uid and uid != pid), None)
+        project_uid = next((uid for uid in map(_strict_uuid, candidates) if uid and uid != pid_canonical), None)
         if not project_uid:
             unresolved_project_uids.append(pid)
 

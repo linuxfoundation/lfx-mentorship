@@ -60,12 +60,14 @@ def main() -> None:
     parser.add_argument("--table-prefix", default="jobspring-dev")
     parser.add_argument("--apply", action="store_true", help="write changes; default is dry-run")
     # FGA inherits program access from the project, so it must exist in project-service.
-    parser.add_argument("--project-uid", required=True, help="real dev LF project UID for programs without one")
-    parser.add_argument("--project-slug", required=True)
-    parser.add_argument("--project-name", required=True)
+    parser.add_argument("--project-uid", help="real dev LF project UID for programs without one")
+    parser.add_argument("--project-slug")
+    parser.add_argument("--project-name")
     parser.add_argument("--project-logo-url")
     args = parser.parse_args()
-    if not UUID_RE.match(args.project_uid):
+    if args.apply and not all((args.project_uid, args.project_slug, args.project_name)):
+        parser.error("--project-uid, --project-slug, and --project-name are required with --apply")
+    if args.project_uid and not UUID_RE.match(args.project_uid):
         parser.error("--project-uid must be a UUID")
 
     dynamo = cast(DynamoResource, boto3.resource("dynamodb", region_name=args.region))
@@ -142,10 +144,16 @@ def main() -> None:
                 }
             )
 
-    # The importer's candidate fields, minus lfProjectUid, which this script owns.
+    # The legacy UID fields, minus lfProjectUid, which this script owns.
     def genuine_project_uid(row: dict) -> str | None:
         linked = row.get("project") if isinstance(row.get("project"), dict) else {}
-        for value in (row.get("projectUid"), row.get("lfProjectId"), row.get("lfProjectUID"), linked.get("id")):
+        for value in (
+            row.get("projectUid"),
+            row.get("lfProjectId"),
+            row.get("lfProjectUID"),
+            row.get("fundspringProjectId"),
+            linked.get("id"),
+        ):
             uid = str(value or "").strip().lower()
             if UUID_RE.match(uid) and uid != str(row["projectId"]).lower():
                 return uid
@@ -161,7 +169,9 @@ def main() -> None:
             if row.get("lfProjectUid") != genuine:
                 genuine_repairs.append((row["projectId"], genuine))
             continue
-        if (row.get("lfProjectUid"), row.get("lfProjectSlug"), row.get("lfProjectName"), row.get("lfProjectLogoUrl")) == (
+        if all((args.project_uid, args.project_slug, args.project_name)) and (
+            row.get("lfProjectUid"), row.get("lfProjectSlug"), row.get("lfProjectName"), row.get("lfProjectLogoUrl")
+        ) == (
             args.project_uid, args.project_slug, args.project_name, args.project_logo_url
         ):
             continue
