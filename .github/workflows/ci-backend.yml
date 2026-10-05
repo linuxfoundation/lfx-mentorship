@@ -62,6 +62,12 @@ jobs:
         working-directory: backend
         run: go test -race -count=1 ./...
 
+      - name: Run integration tests
+        working-directory: backend
+        env:
+          TEST_DATABASE_DSN: postgres://mentorship:mentorship@localhost:5432/mentorship?sslmode=disable
+        run: go test -race -count=1 -tags=integration ./internal/infrastructure/db
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
