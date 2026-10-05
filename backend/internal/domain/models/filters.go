@@ -55,6 +55,14 @@ type ProgramFilter struct {
 	SortBy          string // catalog only: accepting_first | completed_first | name_asc | name_desc | updated_oldest | updated_newest
 }
 
+// AdministeredProgramFilter constrains the caller's administered programs list.
+type AdministeredProgramFilter struct {
+	Limit  int
+	Offset int
+	Search string                    // ilike on program or project name
+	Status AdministeredProgramStatus // empty for every status
+}
+
 // ProgramEnrollmentTemplate contains the fields needed to prefill enrollment.
 type ProgramEnrollmentTemplate struct {
 	Program       Program         `json:"program"`

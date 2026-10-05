@@ -4,7 +4,10 @@
 // Package models defines the domain model types shared across the application.
 package models
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // User maps to the public.users table.
 type User struct {
@@ -51,4 +54,13 @@ type Principal struct {
 	GivenName     string
 	FamilyName    string
 	Picture       string
+}
+
+// m2mUsernameSuffix marks a machine-to-machine (client credentials) principal.
+const m2mUsernameSuffix = "@clients"
+
+// IsM2M reports whether the principal is a machine-to-machine client rather
+// than a human user. M2M principals have no local user row.
+func (p *Principal) IsM2M() bool {
+	return strings.HasSuffix(p.Username, m2mUsernameSuffix)
 }

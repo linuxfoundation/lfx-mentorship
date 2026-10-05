@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -25,6 +26,7 @@ type stubProgramSvc struct {
 	getManagementSummary       func(context.Context, string) (*models.ProgramManagementSummary, error)
 	nameAvailable              func(context.Context, string, string) (bool, error)
 	listMentees                func(context.Context, string) ([]*models.ProgramCatalogMentee, error)
+	listMine                   func(context.Context, string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error)
 	listSkills                 func(context.Context, string) ([]*models.ProgramSkill, error)
 	deleteSkill                func(context.Context, string, string, string) error
 	getCategorizedTransactions func(context.Context, string, string, bool, int, int) (*models.ProgramCategorizedTransactions, error)
@@ -81,6 +83,12 @@ func (s *stubProgramSvc) ListCatalogMentees(ctx context.Context, id string) ([]*
 		return s.listMentees(ctx, id)
 	}
 	return []*models.ProgramCatalogMentee{}, nil
+}
+func (s *stubProgramSvc) ListMine(ctx context.Context, userID string, f models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+	if s.listMine != nil {
+		return s.listMine(ctx, userID, f)
+	}
+	return []*models.AdministeredProgram{}, &models.PaginationMeta{}, nil
 }
 func (s *stubProgramSvc) Create(context.Context, models.ProgramCreateInput) (*models.Program, error) {
 	return &models.Program{}, nil
@@ -691,5 +699,89 @@ func TestProgramHandler_DeleteSkill_DeletesWhenSkillBelongsToProgram(t *testing.
 	}
 	if !deleteCalled {
 		t.Fatal("expected delete to be called")
+	}
+}
+
+func TestProgramHandler_ListMine_ScopesToPrincipal(t *testing.T) {
+	var gotUser string
+	var gotFilter models.AdministeredProgramFilter
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		listMine: func(_ context.Context, userID string, f models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+			gotUser, gotFilter = userID, f
+			return []*models.AdministeredProgram{{
+				ID:          "p1",
+				Name:        "GridFlow",
+				AdminStatus: models.AdministeredProgramStatusOpen,
+				Term:        &models.ProgramTerm{ID: "t1", ProgramID: "p1", Name: "Fall 2026", Status: models.ProgramTermStatusOpen},
+				Stats:       models.ProgramHeaderStats{Mentors: 2, Mentees: 3, Graduated: 6},
+			}}, &models.PaginationMeta{Total: 1, Limit: 5, Offset: 10}, nil
+		},
+	})
+	r := httptest.NewRequest(http.MethodGet, "/v1/me/programs?search=grid&status=open&limit=5&offset=10", nil)
+	r = requestWithPrincipal(r, "caller-user")
+	w := httptest.NewRecorder()
+	h.ListMine(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d; want 200: %s", w.Code, w.Body.String())
+	}
+	if gotUser != "caller-user" {
+		t.Errorf("user = %q; want caller-user", gotUser)
+	}
+	want := models.AdministeredProgramFilter{Limit: 5, Offset: 10, Search: "grid", Status: models.AdministeredProgramStatusOpen}
+	if gotFilter != want {
+		t.Errorf("filter = %+v; want %+v", gotFilter, want)
+	}
+	var body struct {
+		Data []models.AdministeredProgram `json:"data"`
+		Meta models.PaginationMeta        `json:"meta"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.Data) != 1 || body.Data[0].ID != "p1" || body.Data[0].Stats.Graduated != 6 || body.Meta.Total != 1 {
+		t.Fatalf("unexpected body: %+v", body)
+	}
+	if term := body.Data[0].Term; term == nil || term.ID != "t1" || term.Name != "Fall 2026" || term.Status != models.ProgramTermStatusOpen {
+		t.Errorf("term = %+v; want open term t1 Fall 2026", term)
+	}
+}
+
+func TestProgramHandler_ListMine_RequiresUserPrincipal(t *testing.T) {
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		listMine: func(context.Context, string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+			t.Fatal("service must not be called without a user principal")
+			return nil, nil, nil
+		},
+	})
+	for name, principal := range map[string]*models.Principal{
+		"none": nil,
+		"m2m":  {UserID: "client-id@clients", Username: "client-id@clients"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "/v1/me/programs", nil)
+			if principal != nil {
+				r = r.WithContext(auth.ContextWithPrincipal(r.Context(), principal))
+			}
+			w := httptest.NewRecorder()
+			h.ListMine(w, r)
+			if w.Code != http.StatusUnauthorized {
+				t.Errorf("got %d; want 401", w.Code)
+			}
+		})
+	}
+}
+
+func TestProgramHandler_ListMine_InvalidStatus(t *testing.T) {
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		listMine: func(context.Context, string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+			return nil, nil, fmt.Errorf("%w: bad status", domain.ErrInvalidInput)
+		},
+	})
+	r := requestWithPrincipal(httptest.NewRequest(http.MethodGet, "/v1/me/programs?status=bogus", nil), "caller-user")
+	w := httptest.NewRecorder()
+	h.ListMine(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("got %d; want 400", w.Code)
 	}
 }
