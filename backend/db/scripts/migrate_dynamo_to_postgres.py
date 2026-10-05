@@ -65,6 +65,7 @@ Usage
   export PG_DSN="host=localhost port=5432 dbname=mentorship user=postgres password=..."
   export COPY_MANIFEST=legacy-object-manifest.json
   export LOGOS_CDN_URL_PREFIX=https://...
+  export LOGOS_S3_BUCKET=... ATTACHMENTS_S3_BUCKET=...   # must match the manifest
 
   pip install boto3 psycopg2-binary
   python3 backend/db/scripts/copy_legacy_objects.py
@@ -110,6 +111,9 @@ TABLE_PREFIX = os.environ.get("DYNAMODB_TABLE_PREFIX", "jobspring-prod")
 LEGACY_BUCKET = os.environ.get("LEGACY_UPLOADS_BUCKET", f"{TABLE_PREFIX}-uploads")
 COPY_MANIFEST = os.environ.get("COPY_MANIFEST", "legacy-object-manifest.json")
 LOGOS_CDN_URL_PREFIX = os.environ.get("LOGOS_CDN_URL_PREFIX", "")
+# Must name the buckets copy_legacy_objects.py copied into; the manifest records them.
+LOGOS_S3_BUCKET = os.environ.get("LOGOS_S3_BUCKET", "").strip()
+ATTACHMENTS_S3_BUCKET = os.environ.get("ATTACHMENTS_S3_BUCKET", "").strip()
 
 # Stable UUID namespace — must not change between runs to keep IDs deterministic.
 _UUID_NS = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
@@ -1570,7 +1574,12 @@ def main() -> None:
     log.info("Connecting to PostgreSQL: %s", _redact_dsn(PG_DSN))
     conn = psycopg2.connect(PG_DSN)
     psycopg2.extras.register_uuid()
-    files = lo.LegacyFileRewriter(COPY_MANIFEST, LOGOS_CDN_URL_PREFIX, lo.legacy_url_prefix(LEGACY_BUCKET))
+    files = lo.LegacyFileRewriter(
+        COPY_MANIFEST,
+        LOGOS_CDN_URL_PREFIX,
+        lo.legacy_url_prefix(LEGACY_BUCKET),
+        {lo.LOGO: LOGOS_S3_BUCKET, lo.SUBMISSION: ATTACHMENTS_S3_BUCKET},
+    )
 
     try:
         # ── 1. Scan all DynamoDB tables ──────────────────────────────────────

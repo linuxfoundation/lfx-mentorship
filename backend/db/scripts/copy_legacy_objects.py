@@ -153,7 +153,7 @@ def main() -> None:
             status = entries[(file_class, value)]["status"]
             per_column[status] = per_column.get(status, 0) + 1
 
-    lo.write_manifest(COPY_MANIFEST, prefix, sorted(entries.values(), key=lambda e: (e["class"], e["value"])))
+    lo.write_manifest(COPY_MANIFEST, prefix, buckets, sorted(entries.values(), key=lambda e: (e["class"], e["value"])))
     for column, outcomes in counts.items():
         log.info("%-24s %s", column, ", ".join(f"{k}={v}" for k, v in sorted(outcomes.items())) or "no values")
     log.info("Wrote %d manifest entries to %s", len(entries), COPY_MANIFEST)

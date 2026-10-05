@@ -119,20 +119,21 @@ def identify(file_class: str, data: bytes) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def write_manifest(path: str, prefix: str, entries: list) -> None:
+def write_manifest(path: str, prefix: str, buckets: dict, entries: list) -> None:
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump({"legacy_url_prefix": prefix, "entries": entries}, f, indent=1, sort_keys=True)
+        json.dump({"legacy_url_prefix": prefix, "buckets": buckets, "entries": entries}, f, indent=1, sort_keys=True)
     os.replace(tmp, path)
 
 
 class LegacyFileRewriter:
     """Rewrites legacy file column values from the copy manifest (03 §S3 objects, step 3)."""
 
-    def __init__(self, manifest_path: str, cdn_url_prefix: str, legacy_prefix: str):
+    def __init__(self, manifest_path: str, cdn_url_prefix: str, legacy_prefix: str, buckets: dict):
         self._manifest_path = manifest_path
         self._cdn_url_prefix = cdn_url_prefix.rstrip("/")
         self._legacy_prefix = legacy_prefix
+        self._buckets = buckets
         self._entries: dict | None = None
         self.counts: dict = {}
 
@@ -144,6 +145,11 @@ class LegacyFileRewriter:
                 manifest = json.load(f)
             if manifest.get("legacy_url_prefix") != self._legacy_prefix:
                 raise RuntimeError(f"copy manifest was written for {manifest.get('legacy_url_prefix')}, not {self._legacy_prefix}")
+            # Keys are only valid in the buckets they were copied to.
+            if not all(self._buckets.get(c) for c in (LOGO, SUBMISSION)):
+                raise RuntimeError("LOGOS_S3_BUCKET and ATTACHMENTS_S3_BUCKET are required to rewrite legacy file values")
+            if manifest.get("buckets") != self._buckets:
+                raise RuntimeError(f"copy manifest was written for buckets {manifest.get('buckets')}, not {self._buckets}")
             self._entries = {(e["class"], e["value"]): e for e in manifest["entries"]}
         entry = self._entries.get((file_class, value))
         if entry is None:
