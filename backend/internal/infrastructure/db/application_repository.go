@@ -347,7 +347,10 @@ func (r *ApplicationRepository) ReapplyWithTasks(ctx context.Context, oldID, pro
 		return nil, fmt.Errorf("lock program term for reapply: %w", err)
 	}
 	// Blocks new tasks on the withdrawn application while its task files are queued.
-	if _, err := tx.Exec(ctx, `SELECT 1 FROM applications WHERE id = $1 FOR UPDATE`, oldID); err != nil {
+var locked int
+	if err := tx.QueryRow(ctx, `SELECT 1 FROM applications WHERE id = $1 FOR UPDATE`, oldID).Scan(&locked); errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrApplicationNotFound
+	} else if err != nil {
 		return nil, fmt.Errorf("lock withdrawn application for reapply: %w", err)
 	}
 	var taskIDs []string
