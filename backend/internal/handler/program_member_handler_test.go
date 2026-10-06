@@ -26,12 +26,12 @@ type stubProgramMemberSvc struct {
 	withdrawMine   func(context.Context, string, string) error
 	delete         func(context.Context, string, string, string) error
 	resendInvite   func(context.Context, string, string, string) error
-	search         func(context.Context, string) ([]*models.MentorCandidate, error)
+	search         func(context.Context, string, string) ([]*models.MentorCandidate, error)
 }
 
-func (s *stubProgramMemberSvc) SearchCandidates(ctx context.Context, query string) ([]*models.MentorCandidate, error) {
+func (s *stubProgramMemberSvc) SearchCandidates(ctx context.Context, programID, query string) ([]*models.MentorCandidate, error) {
 	if s.search != nil {
-		return s.search(ctx, query)
+		return s.search(ctx, programID, query)
 	}
 	return []*models.MentorCandidate{}, nil
 }
@@ -95,11 +95,11 @@ func (s *stubProgramMemberSvc) WithdrawMine(ctx context.Context, id, userID stri
 }
 
 func TestProgramMemberHandler_SearchCandidates(t *testing.T) {
-	var query string
+	var programID, query string
 	name := "Ada"
 	h := handler.NewProgramMemberHandler(&stubProgramMemberSvc{
-		search: func(_ context.Context, q string) ([]*models.MentorCandidate, error) {
-			query = q
+		search: func(_ context.Context, id, q string) ([]*models.MentorCandidate, error) {
+			programID, query = id, q
 			return []*models.MentorCandidate{{LFID: "ada", Name: &name}}, nil
 		},
 	}, &stubProgramSvc{})
@@ -111,8 +111,8 @@ func TestProgramMemberHandler_SearchCandidates(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("got %d; want 200", w.Code)
 	}
-	if query != "ada@example.org" {
-		t.Errorf("query = %q; want ada@example.org", query)
+	if programID != "p1" || query != "ada@example.org" {
+		t.Errorf("program, query = %q, %q; want p1, ada@example.org", programID, query)
 	}
 	if body := w.Body.String(); !strings.Contains(body, `"lfid":"ada"`) || strings.Contains(body, "email") {
 		t.Errorf("body = %s; want the candidate without email", body)
@@ -130,7 +130,7 @@ func TestProgramMemberHandler_SearchCandidates_Errors(t *testing.T) {
 		"auth-service down": {true, domain.ErrUpstreamUnavailable, http.StatusServiceUnavailable},
 	} {
 		h := handler.NewProgramMemberHandler(&stubProgramMemberSvc{
-			search: func(context.Context, string) ([]*models.MentorCandidate, error) { return nil, tc.err },
+			search: func(context.Context, string, string) ([]*models.MentorCandidate, error) { return nil, tc.err },
 		}, &stubProgramSvc{})
 		r := requestWithChiParam(httptest.NewRequest(http.MethodGet, "/v1/programs/p1/mentor-candidates?search=a", nil), "id", "p1")
 		if tc.principal {

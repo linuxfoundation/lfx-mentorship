@@ -86,10 +86,13 @@ func TestErrors(t *testing.T) {
 		conn *stubConn
 		want error
 	}{
-		"not found":  {&stubConn{replies: allReplies(notFound)}, domain.ErrAccountNotFound},
-		"failure":    {&stubConn{replies: allReplies(`{"success":false,"error":"management API timeout"}`)}, domain.ErrUpstreamUnavailable},
-		"no reply":   {&stubConn{err: nats.ErrNoResponders}, domain.ErrUpstreamUnavailable},
-		"empty data": {&stubConn{replies: allReplies(`{"success":true}`)}, domain.ErrUpstreamUnavailable},
+		"not found":                 {&stubConn{replies: allReplies(notFound)}, domain.ErrAccountNotFound},
+		"not found without success": {&stubConn{replies: allReplies(`{"error":"user not found"}`)}, domain.ErrAccountNotFound},
+		"other not found error":     {&stubConn{replies: allReplies(`{"success":false,"error":"handler not found"}`)}, domain.ErrUpstreamUnavailable},
+		"error without success":     {&stubConn{replies: allReplies(`{"error":"management API timeout"}`)}, domain.ErrUpstreamUnavailable},
+		"failure":                   {&stubConn{replies: allReplies(`{"success":false,"error":"management API timeout"}`)}, domain.ErrUpstreamUnavailable},
+		"no reply":                  {&stubConn{err: nats.ErrNoResponders}, domain.ErrUpstreamUnavailable},
+		"empty data":                {&stubConn{replies: allReplies(`{"success":true}`)}, domain.ErrUpstreamUnavailable},
 	} {
 		for call, fn := range calls {
 			if name == "empty data" && call == "user_metadata" {

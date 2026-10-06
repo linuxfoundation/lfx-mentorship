@@ -83,6 +83,8 @@ func mapError(err error) (int, string) {
 		return http.StatusForbidden, "forbidden"
 	case errors.Is(err, domain.ErrConflict):
 		return http.StatusConflict, "conflict"
+	case errors.Is(err, domain.ErrEmailInUse):
+		return http.StatusConflict, err.Error()
 	case errors.Is(err, domain.ErrInvalidStateTransition):
 		return http.StatusConflict, err.Error()
 	case errors.Is(err, domain.ErrStateLocked):

@@ -19,6 +19,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/auth"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"golang.org/x/sync/errgroup"
 )
 
 var programMemberSvcTracer = otel.Tracer("program-members-service")
@@ -187,7 +188,7 @@ func (s *ProgramMemberService) Create(ctx context.Context, programID string, inp
 		if inviteeEmail != "" {
 			user, err = s.userByEmail(ctx, inviteeEmail)
 		} else {
-			user, err = s.userByLFID(ctx, input.LFID)
+			user, err = s.userByLFID(ctx, input.LFID, false)
 		}
 		if err != nil {
 			span.RecordError(err)
@@ -229,75 +230,102 @@ func (s *ProgramMemberService) userByEmail(ctx context.Context, email string) (*
 	if err != nil {
 		return nil, fmt.Errorf("look up LF account by email: %w", err)
 	}
-	return s.userByLFID(ctx, username)
+	return s.userByLFID(ctx, username, true)
 }
 
 // userByLFID returns the Mentorship user for an LF account, creating it from the
 // account directory when the person has never signed in; sign-in upserts the same row.
-func (s *ProgramMemberService) userByLFID(ctx context.Context, lfid string) (*models.User, error) {
+// canonical reports whether lfid already has the casing auth-service stores.
+func (s *ProgramMemberService) userByLFID(ctx context.Context, lfid string, canonical bool) (*models.User, error) {
 	user, err := s.users.GetByLFID(ctx, lfid)
-	found := err == nil
-	if !found && !errors.Is(err, domain.ErrUserNotFound) {
+	if err == nil {
+		return user, nil
+	}
+	if !errors.Is(err, domain.ErrUserNotFound) {
 		return nil, fmt.Errorf("resolve lfid: %w", err)
 	}
 	if s.directory == nil {
-		if found {
-			return user, nil
-		}
 		return nil, fmt.Errorf("%w: lfid %q has no Mentorship account; they must sign in once before they can be invited", domain.ErrIneligible, lfid)
 	}
 	if !isLFID(lfid) {
 		return nil, fmt.Errorf("%w: lfid %q is not a valid LF username", domain.ErrInvalidInput, lfid)
 	}
-	// The invitation is sent to users.email, so it must match the account's current primary email.
-	email, err := s.directory.PrimaryEmail(ctx, lfid)
-	if errors.Is(err, domain.ErrAccountNotFound) {
+
+	var (
+		email   string
+		account *models.LFAccount
+	)
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() (err error) {
+		email, err = s.directory.PrimaryEmail(gctx, lfid)
+		return err
+	})
+	g.Go(func() (err error) {
+		account, err = s.directory.Account(gctx, lfid)
+		return err
+	})
+	if err := g.Wait(); errors.Is(err, domain.ErrAccountNotFound) {
 		return nil, fmt.Errorf("%w: lfid %q has no LF account", domain.ErrIneligible, lfid)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("look up LF account email: %w", err)
-	}
-	if found {
-		if user.Email != nil && *user.Email == email {
-			return user, nil
-		}
-		user, err = s.users.UpsertByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email})
-		if err != nil {
-			return nil, fmt.Errorf("refresh email for lfid %q: %w", lfid, err)
-		}
-		return user, nil
-	}
-	account, err := s.directory.Account(ctx, lfid)
-	if errors.Is(err, domain.ErrAccountNotFound) {
-		return nil, fmt.Errorf("%w: lfid %q has no LF account", domain.ErrIneligible, lfid)
-	}
-	if err != nil {
+	} else if err != nil {
 		return nil, fmt.Errorf("look up LF account: %w", err)
 	}
+
+	username := lfid
+	if !canonical {
+		// Sign-in keys the row by the stored username, which email_to_username returns as stored.
+		username, err = s.directory.UsernameByEmail(ctx, email)
+		if err != nil {
+			return nil, fmt.Errorf("look up LF username: %w", err)
+		}
+		if username != lfid {
+			user, err = s.users.GetByLFID(ctx, username)
+			if err == nil {
+				return user, nil
+			}
+			if !errors.Is(err, domain.ErrUserNotFound) {
+				return nil, fmt.Errorf("resolve lfid: %w", err)
+			}
+		}
+	}
+
 	user, err = s.users.UpsertByLFID(ctx, models.UserCreateInput{
-		LFID:       &account.Username,
+		LFID:       &username,
 		Email:      &email,
 		Name:       account.Name,
 		GivenName:  account.GivenName,
 		FamilyName: account.FamilyName,
 		AvatarURL:  account.AvatarURL,
 	})
+	if errors.Is(err, domain.ErrEmailInUse) {
+		return nil, fmt.Errorf("%w: the primary email of lfid %q belongs to another Mentorship user", domain.ErrIneligible, username)
+	}
 	if err != nil {
-		return nil, fmt.Errorf("create user for lfid %q: %w", lfid, err)
+		return nil, fmt.Errorf("create user for lfid %q: %w", username, err)
 	}
 	return user, nil
 }
 
-// SearchCandidates returns people a Program Admin can invite: for a whole email,
-// only the LF account auth-service resolves it to; otherwise Mentorship users by
-// name or LFID prefix, then any LF account whose LFID is the query.
-func (s *ProgramMemberService) SearchCandidates(ctx context.Context, query string) ([]*models.MentorCandidate, error) {
+// SearchCandidates returns people a Program Admin can invite to a published
+// program: for a whole email, only the LF account auth-service resolves it to;
+// otherwise Mentorship users by name or LFID prefix, then any LF account whose
+// LFID is the query.
+func (s *ProgramMemberService) SearchCandidates(ctx context.Context, programID, query string) ([]*models.MentorCandidate, error) {
 	ctx, span := programMemberSvcTracer.Start(ctx, "ProgramMemberService.SearchCandidates")
 	defer span.End()
+	span.SetAttributes(attribute.String("program.id", programID))
 
 	query = strings.TrimSpace(query)
 	if utf8.RuneCountInString(query) < minCandidateQueryLen {
 		return nil, fmt.Errorf("%w: search must be at least %d characters", domain.ErrInvalidInput, minCandidateQueryLen)
+	}
+
+	prog, err := s.programRepo.GetByID(ctx, programID)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("get program: %w", err)
+	}
+	if prog.Status != models.ProgramStatusPublished {
+		return nil, fmt.Errorf("%w: program must be published before adding members", domain.ErrInvalidInput)
 	}
 
 	// users.email is self-editable, so only auth-service can say who owns an address.
@@ -342,13 +370,9 @@ func (s *ProgramMemberService) SearchCandidates(ctx context.Context, query strin
 		return candidates, nil
 	}
 	if err != nil {
+		// The local matches are still useful when auth-service is unavailable.
 		span.RecordError(err)
-		return nil, err
-	}
-	for _, c := range candidates {
-		if strings.EqualFold(c.LFID, account.Username) {
-			return candidates, nil
-		}
+		return candidates, nil
 	}
 	if len(candidates) >= maxCandidates {
 		candidates = candidates[:maxCandidates-1]

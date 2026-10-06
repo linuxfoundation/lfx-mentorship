@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
@@ -18,6 +19,11 @@ import (
 )
 
 var userTracer = otel.Tracer("users-db")
+
+const (
+	uniqueViolation = "23505"
+	usersEmailKey   = "users_email_key"
+)
 
 // UserRepository implements domain.UserRepository against PostgreSQL.
 type UserRepository struct {
@@ -86,6 +92,9 @@ func (r *UserRepository) UpsertByLFID(ctx context.Context, input models.UserCrea
 		RETURNING id, email, lfid, name, given_name, family_name, avatar_url, created_on, updated_on`,
 		input.Email, input.LFID, input.Name, input.GivenName, input.FamilyName, input.AvatarURL,
 	).Scan(&u.ID, &u.Email, &u.LFID, &u.Name, &u.GivenName, &u.FamilyName, &u.AvatarURL, &u.CreatedOn, &u.UpdatedOn)
+	if pgErr := (*pgconn.PgError)(nil); errors.As(err, &pgErr) && pgErr.Code == uniqueViolation && pgErr.ConstraintName == usersEmailKey {
+		return nil, domain.ErrEmailInUse
+	}
 	if err != nil {
 		return nil, fmt.Errorf("upsert user by LFID: %w", err)
 	}

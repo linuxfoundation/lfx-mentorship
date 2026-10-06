@@ -27,17 +27,12 @@ func newMemberSvc(memberRepo *stubMemberRepo, progRepo *stubProgRepo, notifier *
 
 type stubLFIDUsers struct {
 	stubUserRepository
-	ids    map[string]string
-	emails map[string]string
+	ids map[string]string
 }
 
 func (s *stubLFIDUsers) GetByLFID(_ context.Context, lfid string) (*models.User, error) {
 	if id, ok := s.ids[lfid]; ok {
-		u := &models.User{ID: id}
-		if email, ok := s.emails[lfid]; ok {
-			u.Email = &email
-		}
-		return u, nil
+		return &models.User{ID: id}, nil
 	}
 	return nil, domain.ErrUserNotFound
 }

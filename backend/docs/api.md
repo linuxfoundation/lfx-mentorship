@@ -1413,31 +1413,34 @@ Add a member to a program.
 
 Anyone with an LF account can be invited, whether or not they have used
 Mentorship. An `email` is resolved to its LF account through auth-service,
-matching the account's primary or linked emails. When the account has no
-Mentorship user yet, one is created from auth-service (LFID, name, avatar and
-primary email); their first sign-in updates that same row. The invite email
-goes to the account's primary email.
+matching the account's primary or linked emails. A person who already has a
+Mentorship user is invited as that user, without calling auth-service, and the
+invite email goes to their stored email. Otherwise a user is created from
+auth-service (LFID in the casing auth-service stores, name, avatar and primary
+email); their first sign-in updates that same row, and the invite email goes to
+the account's primary email.
 
 **Response** `201` → `<ProgramMember>`  
-**Errors** `400`, `404` (program not found), `409` (the user already has a row of this `member_type` on the program, or another Mentorship user already holds the account's primary email), `422` (no LF account has that `lfid` or `email`), `503` (auth-service is unreachable)
+**Errors** `400`, `404` (program not found), `409` (the user already has a row of this `member_type` on the program), `422` (no LF account has that `lfid` or `email`, or another Mentorship user already holds the account's primary email), `503` (auth-service is unreachable)
 
 ---
 
 #### `GET /v1/programs/{id}/mentor-candidates?search=` 🔒
 
-Typeahead for the invite dialog; requires program `writer`. `search` must be at
-least 2 characters. A whole email is resolved only through auth-service and
-returns at most the one LF account that owns it, because Mentorship users can
-edit their stored email. Any other `search` returns up to 10 Mentorship users
-matching part of a name or an LFID prefix; when none is an exact LFID match and
-`search` is an LFID, the matching LF account from auth-service is listed first.
-Emails are never returned.
+Typeahead for the invite dialog; requires program `writer`, and the program must
+be published. `search` must be at least 2 characters. A whole email is resolved
+only through auth-service and returns at most the one LF account that owns it,
+because Mentorship users can edit their stored email. Any other `search` returns
+up to 10 Mentorship users matching part of a name or an LFID prefix; when none
+is an exact LFID match and `search` is an LFID, the matching LF account from
+auth-service is listed first. If auth-service fails for a non-email `search`,
+the local matches are still returned. Emails are never returned.
 
 **Response** `200`
 ```json
 { "data": [ { "lfid": "alice", "name": "Alice Example", "avatar_url": "https://…" } ] }
 ```
-**Errors** `400` (search too short), `401`, `403`, `503` (auth-service is unreachable)
+**Errors** `400` (search too short, or the program is not published), `401`, `403`, `404` (program not found), `503` (auth-service is unreachable for an email `search`)
 
 ---
 

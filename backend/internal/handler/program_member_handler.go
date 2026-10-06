@@ -18,7 +18,7 @@ type programMemberService interface {
 	ListByProgram(ctx context.Context, programID string, filter models.ProgramMemberFilter) ([]*models.ProgramMember, *models.PaginationMeta, error)
 	ListMentorManagement(ctx context.Context, programID string, filter models.ProgramMemberFilter) ([]*models.ProgramMentorManagementRow, *models.PaginationMeta, error)
 	Create(ctx context.Context, programID string, input models.ProgramMemberCreateInput) (*models.ProgramMember, error)
-	SearchCandidates(ctx context.Context, query string) ([]*models.MentorCandidate, error)
+	SearchCandidates(ctx context.Context, programID, query string) ([]*models.MentorCandidate, error)
 	Update(ctx context.Context, programID, id string, input models.ProgramMemberUpdateInput, actorID string) (*models.ProgramMember, error)
 	Delete(ctx context.Context, programID, id, actorID string) error
 	ResendInvite(ctx context.Context, programID, id, actorID string) error
@@ -130,7 +130,7 @@ func (h *ProgramMemberHandler) SearchCandidates(w http.ResponseWriter, r *http.R
 		Error(w, domain.ErrUnauthorized)
 		return
 	}
-	candidates, err := h.svc.SearchCandidates(r.Context(), r.URL.Query().Get("search"))
+	candidates, err := h.svc.SearchCandidates(r.Context(), chi.URLParam(r, "id"), r.URL.Query().Get("search"))
 	if err != nil {
 		Error(w, err)
 		return

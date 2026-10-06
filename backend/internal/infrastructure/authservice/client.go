@@ -26,6 +26,9 @@ const (
 	subjectUserMetadataRead = "lfx.auth-service.user_metadata.read"
 	subjectUserEmailsRead   = "lfx.auth-service.user_emails.read"
 
+	// errUserNotFound is the error auth-service replies with when no account matches.
+	errUserNotFound = "user not found"
+
 	defaultTimeout = 5 * time.Second
 )
 
@@ -59,10 +62,10 @@ type statusReply struct {
 }
 
 func (r statusReply) err(subject string) error {
-	if r.Success == nil || *r.Success {
+	if (r.Success == nil || *r.Success) && r.Error == "" {
 		return nil
 	}
-	if strings.Contains(strings.ToLower(r.Error), "not found") {
+	if strings.TrimSpace(r.Error) == errUserNotFound {
 		return domain.ErrAccountNotFound
 	}
 	return fmt.Errorf("%w: %s: %s", domain.ErrUpstreamUnavailable, subject, r.Error)

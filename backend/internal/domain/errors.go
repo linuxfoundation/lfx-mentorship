@@ -27,6 +27,7 @@ var (
 	ErrUnauthorized        = errors.New("unauthorized")
 	ErrForbidden           = errors.New("forbidden")
 	ErrConflict            = errors.New("resource conflict")
+	ErrEmailInUse          = errors.New("email already belongs to another user")
 	ErrUpstreamUnavailable = errors.New("upstream service unavailable")
 
 	ErrInvalidStateTransition = errors.New("invalid state transition")
