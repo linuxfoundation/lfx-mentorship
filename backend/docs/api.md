@@ -1035,7 +1035,9 @@ The caller resolves the LF project from Project Service and passes its UID, slug
 
 #### `PATCH /v1/programs/{id}` 🔒
 
-Update program fields and/or transition status.
+Update program fields. Status cannot be changed here: a body with `status` returns
+`400`; use [`POST /v1/programs/{id}/submit`](#post-v1programsidsubmit-) and
+[`POST /v1/programs/{id}/decision`](#post-v1programsiddecision-).
 
 **Request body** (all optional)
 ```json
@@ -1044,20 +1046,41 @@ Update program fields and/or transition status.
   "description": "Updated description",
   "repo_link":   "https://...",
   "lfid":        "alice",
-  "status":      "submitted",
   "task_templates": [...]
 }
 ```
 
-**Status transition rules** — see [§15 State Machines](#15-domain-state-machines).
+**Response** `200` → `<Program>`  
+**Errors** `400`, `404`
 
-| Transition | Guard condition |
-|---|---|
-| `pending → submitted` | `lfid`, `description`, `repo_link`, and `logo_url` must all be non-empty; at least 1 skill tag; at least 1 open term |
-| `published → hidden` | No `pending`, `accepted`, or `graduated` applications on the program |
+---
+
+#### `POST /v1/programs/{id}/submit` 🔒
+
+Submit a `pending` or `rejected` program for review (`→ submitted`). No request body.
+See [§15 State Machines](#15-domain-state-machines).
+
+**Guard**: a linked LF project, `description`, `repo_link` and `logo_url` are
+non-empty; at least 1 skill tag; at least 1 open term.
 
 **Response** `200` → `<Program>`  
-**Errors** `400`, `404`, `409` (invalid transition or guard blocked)
+**Errors** `404`, `409` (invalid transition or guard blocked)
+
+---
+
+#### `POST /v1/programs/{id}/decision` 🔒
+
+Publish or reject a `submitted` program. Approver team only.
+
+**Request body**
+```json
+{ "status": "published" }
+```
+
+`status` is required and must be `published` or `rejected`.
+
+**Response** `200` → `<Program>`  
+**Errors** `400` (missing or other `status`), `404`, `409` (program is not `submitted`)
 
 ---
 
@@ -2312,7 +2335,7 @@ Body: { "status": "declined" } // decline
    ```
 5. Submit for review:
    ```
-   PATCH /v1/programs/{id}  Body: { "status": "submitted" }
+   POST /v1/programs/{id}/submit
    ```
    Returns `409` with a descriptive error if any required field or guard condition is not met.
 
