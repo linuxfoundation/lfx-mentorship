@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
@@ -125,6 +126,7 @@ func (s *ProgramMemberService) Create(ctx context.Context, programID string, inp
 	ctx, span := programMemberSvcTracer.Start(ctx, "ProgramMemberService.Create")
 	defer span.End()
 
+	input.LFID = strings.TrimSpace(input.LFID)
 	if input.UserID == "" && input.LFID == "" {
 		return nil, fmt.Errorf("%w: user_id or lfid is required", domain.ErrInvalidInput)
 	}
@@ -147,6 +149,9 @@ func (s *ProgramMemberService) Create(ctx context.Context, programID string, inp
 
 	if input.LFID != "" {
 		user, err := s.users.GetByLFID(ctx, input.LFID)
+		if errors.Is(err, domain.ErrUserNotFound) {
+			return nil, fmt.Errorf("%w: lfid %q has no Mentorship account; they must sign in once before they can be invited", domain.ErrIneligible, input.LFID)
+		}
 		if err != nil {
 			span.RecordError(err)
 			return nil, fmt.Errorf("resolve lfid: %w", err)
@@ -395,20 +400,10 @@ func (s *ProgramMemberService) AcceptInvite(ctx context.Context, token, actorID 
 	)
 
 	// Find the invited member record.
-	members, _, err := s.repo.ListByProgram(ctx, programID, models.ProgramMemberFilter{Limit: 100})
+	memberID, err := s.findInvitedMentor(ctx, programID, userID)
 	if err != nil {
 		span.RecordError(err)
-		return nil, fmt.Errorf("lookup member for invite: %w", err)
-	}
-	var memberID string
-	for _, m := range members {
-		if m.UserID == userID && m.Status != nil && *m.Status == models.ProgramMemberStatusInvited {
-			memberID = m.ID
-			break
-		}
-	}
-	if memberID == "" {
-		return nil, fmt.Errorf("%w: no pending invite found for this user", domain.ErrInvalidInput)
+		return nil, err
 	}
 
 	activeStatus := models.ProgramMemberStatusActive
@@ -439,20 +434,10 @@ func (s *ProgramMemberService) DeclineInvite(ctx context.Context, token, actorID
 		attribute.String("user.id", userID),
 	)
 
-	members, _, err := s.repo.ListByProgram(ctx, programID, models.ProgramMemberFilter{Limit: 100})
+	memberID, err := s.findInvitedMentor(ctx, programID, userID)
 	if err != nil {
 		span.RecordError(err)
-		return fmt.Errorf("lookup member for decline: %w", err)
-	}
-	var memberID string
-	for _, m := range members {
-		if m.UserID == userID && m.Status != nil && *m.Status == models.ProgramMemberStatusInvited {
-			memberID = m.ID
-			break
-		}
-	}
-	if memberID == "" {
-		return fmt.Errorf("%w: no pending invite found for this user", domain.ErrInvalidInput)
+		return err
 	}
 
 	declinedStatus := models.ProgramMemberStatusDeclined
@@ -462,6 +447,18 @@ func (s *ProgramMemberService) DeclineInvite(ctx context.Context, token, actorID
 	}
 	s.notifier.NotifyAdminMentorDeclined(ctx, programID, userID)
 	return nil
+}
+
+// findInvitedMentor returns the ID of the user's invited mentor row on the program.
+func (s *ProgramMemberService) findInvitedMentor(ctx context.Context, programID, userID string) (string, error) {
+	m, err := s.repo.FindByProgramUserAndType(ctx, programID, userID, models.MemberTypeMentor)
+	if err != nil && !errors.Is(err, domain.ErrProgramMemberNotFound) {
+		return "", fmt.Errorf("lookup invited mentor: %w", err)
+	}
+	if m == nil || m.Status == nil || *m.Status != models.ProgramMemberStatusInvited {
+		return "", fmt.Errorf("%w: no pending invite found for this user", domain.ErrInvalidInput)
+	}
+	return m.ID, nil
 }
 
 // Delete removes a program member.
@@ -514,6 +511,15 @@ func (s *ProgramMemberService) ResendInvite(ctx context.Context, programID, id, 
 	}
 	if member.MemberType != models.MemberTypeMentor || member.Status == nil || *member.Status != models.ProgramMemberStatusInvited {
 		return fmt.Errorf("%w: only an invited mentor can be sent the invite again", domain.ErrInvalidStateTransition)
+	}
+	// FR-018 / FR-023: invites are only for a published program.
+	prog, err := s.programRepo.GetByID(ctx, programID)
+	if err != nil {
+		span.RecordError(err)
+		return fmt.Errorf("get program for resend: %w", err)
+	}
+	if prog.Status != models.ProgramStatusPublished {
+		return fmt.Errorf("%w: program must be published to resend an invite", domain.ErrInvalidStateTransition)
 	}
 
 	token, err := auth.GenerateInviteToken(programID, member.UserID, s.inviteSecret)

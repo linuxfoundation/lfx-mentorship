@@ -1404,7 +1404,7 @@ Add a member to a program.
 **Request body** (identify the user with `user_id` or `lfid`; sending both is a `400`)
 ```json
 {
-  "lfid":        "alice",      // or "user_id": "uuid"; an lfid resolves to an existing user, 404 if they have never signed in
+  "lfid":        "alice",      // or "user_id": "uuid"; surrounding whitespace is trimmed; 422 if they have never signed in
   "member_type": "mentor",     // required; "program_admin" | "mentor"
   "status":      "requested",  // optional; if omitted, defaults per member_type above
   "email":       "mentor@example.com"
@@ -1412,7 +1412,7 @@ Add a member to a program.
 ```
 
 **Response** `201` → `<ProgramMember>`  
-**Errors** `400`, `404` (unknown `lfid`), `409` (the user already has a row of this `member_type` on the program)
+**Errors** `400`, `404` (program not found), `409` (the user already has a row of this `member_type` on the program), `422` (the `lfid` has no Mentorship account: they must sign in once before they can be invited)
 
 ---
 
@@ -1461,7 +1461,7 @@ request body.
 
 **Response** `204`  
 **Errors** `403` (not a Program Admin), `404`, `409` (the member is not an
-`invited` mentor), `503` (invites are not configured)
+`invited` mentor, or the program is not `published`), `503` (invites are not configured)
 
 ---
 
