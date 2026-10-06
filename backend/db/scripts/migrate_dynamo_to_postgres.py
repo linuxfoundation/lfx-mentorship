@@ -562,6 +562,18 @@ def migrate_user_profiles(cur, profiles: list, known_user_ids: set, files: lo.Le
             )
         )
 
+    # A rerun can pick a different keeper than an earlier run stored.
+    if mentee_keeper:
+        cur.execute(
+            """
+            DELETE FROM user_profiles AS p
+            USING unnest(%s::uuid[], %s::uuid[]) AS k(user_id, id)
+            WHERE p.profile_type = 'mentee' AND p.user_id = k.user_id AND p.id <> k.id
+            """,
+            (list(mentee_keeper), [pid for _, pid in mentee_keeper.values()]),
+        )
+        duplicates += cur.rowcount
+
     psycopg2.extras.execute_batch(
         cur,
         """

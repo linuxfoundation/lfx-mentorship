@@ -144,7 +144,8 @@ DUPLICATE_PROFILES = [
 def test_user_keeps_only_newest_mentee_profile(monkeypatch):
     captured = []
     monkeypatch.setattr(m.psycopg2.extras, "execute_batch", lambda cur, sql, rows, page_size=0: captured.append(rows))
-    m.migrate_user_profiles(None, DUPLICATE_PROFILES, {USER}, _Files())
+    cur = types.SimpleNamespace(execute=lambda sql, args: None, rowcount=0)
+    m.migrate_user_profiles(cur, DUPLICATE_PROFILES, {USER}, _Files())
     assert sorted((row[0], row[2]) for row in captured[0]) == [(NEW_MENTEE, "mentee"), (MENTOR, "mentor")]
 
 
@@ -186,6 +187,13 @@ def test_upsert_replaces_metadata_when_parent_changes(cursor):
 
 
 def test_duplicate_mentee_profiles_import_under_unique_index(cursor):
+    m.migrate_user_profiles(cursor, DUPLICATE_PROFILES, set(), _Files())
+    cursor.execute("SELECT id::text, profile_type FROM user_profiles WHERE user_id = %s ORDER BY profile_type", (USER,))
+    assert cursor.fetchall() == [(NEW_MENTEE, "mentee"), (MENTOR, "mentor")]
+
+
+def test_rerun_replaces_mentee_profile_when_keeper_changes(cursor):
+    m.migrate_user_profiles(cursor, DUPLICATE_PROFILES[1:], set(), _Files())
     m.migrate_user_profiles(cursor, DUPLICATE_PROFILES, set(), _Files())
     cursor.execute("SELECT id::text, profile_type FROM user_profiles WHERE user_id = %s ORDER BY profile_type", (USER,))
     assert cursor.fetchall() == [(NEW_MENTEE, "mentee"), (MENTOR, "mentor")]
