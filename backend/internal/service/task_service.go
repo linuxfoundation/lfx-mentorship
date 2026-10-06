@@ -190,9 +190,28 @@ func (s *TaskService) Create(ctx context.Context, applicationID string, input mo
 	return t, nil
 }
 
-// Update applies changes to a task.
+// validateTaskUpdate checks the enum fields of a task update and refuses a direct file write.
+func validateTaskUpdate(input models.TaskUpdateInput) error {
+	if input.Status != nil && !input.Status.IsValid() {
+		return fmt.Errorf("%w: invalid status %q", domain.ErrInvalidInput, *input.Status)
+	}
+	if input.ApplicationStatus != nil && !input.ApplicationStatus.IsValid() {
+		return fmt.Errorf("%w: invalid application status %q", domain.ErrInvalidInput, *input.ApplicationStatus)
+	}
+	if input.ProgramTermStatus != nil && !input.ProgramTermStatus.IsValid() {
+		return fmt.Errorf("%w: invalid program term status %q", domain.ErrInvalidInput, *input.ProgramTermStatus)
+	}
+	if input.Category != nil && !input.Category.IsValid() {
+		return fmt.Errorf("%w: invalid category %q", domain.ErrInvalidInput, *input.Category)
+	}
+	return reservedFileField("file", input.File)
+}
+
+// Update applies the assignee's submission or a reviewer's review to a task.
 // Permission rules:
-//   - Only the task's assignee may mark it complete/submitted.
+//   - Only the task's assignee may mark it in_progress/submitted, moving forward one step.
+//   - Only an active reviewer who is not the assignee may mark it complete, reset it to
+//     incomplete, or set its denormalised application and program term statuses.
 //   - When every prerequisite task is submitted or complete, the application is flagged
 //     tasks_submitted and program admins are notified the first time only.
 func (s *TaskService) Update(ctx context.Context, id string, input models.TaskUpdateInput) (*models.Task, error) {
@@ -200,69 +219,17 @@ func (s *TaskService) Update(ctx context.Context, id string, input models.TaskUp
 	defer span.End()
 	span.SetAttributes(attribute.String("task.id", id))
 
-	if input.Status != nil && !input.Status.IsValid() {
-		return nil, fmt.Errorf("%w: invalid status %q", domain.ErrInvalidInput, *input.Status)
-	}
-	if input.ApplicationStatus != nil && !input.ApplicationStatus.IsValid() {
-		return nil, fmt.Errorf("%w: invalid application status %q", domain.ErrInvalidInput, *input.ApplicationStatus)
-	}
-	if input.ProgramTermStatus != nil && !input.ProgramTermStatus.IsValid() {
-		return nil, fmt.Errorf("%w: invalid program term status %q", domain.ErrInvalidInput, *input.ProgramTermStatus)
-	}
-	if input.Category != nil && !input.Category.IsValid() {
-		return nil, fmt.Errorf("%w: invalid category %q", domain.ErrInvalidInput, *input.Category)
+	if err := validateTaskUpdate(input); err != nil {
+		return nil, err
 	}
 	if err := validateDueDate(input.DueDate); err != nil {
 		return nil, err
 	}
-	if err := reservedFileField("file", input.File); err != nil {
-		return nil, err
-	}
 
-	// FR-033: enforce state transitions and actor permissions when ActorID is known.
-	if input.Status != nil && input.ActorID != "" {
-		current, err := s.repo.GetByID(ctx, id)
-		if err != nil {
+	if input.ActorID != "" {
+		if err := s.authorizeUpdate(ctx, id, input); err != nil {
 			span.RecordError(err)
-			return nil, fmt.Errorf("get task for permission check: %w", err)
-		}
-		isAssignee := current.AssigneeID == input.ActorID
-		next := *input.Status
-		if next == models.TaskStatusSubmitted && current.SubmitFile != nil && *current.SubmitFile != "" && (current.File == nil || *current.File == "") {
-			return nil, fmt.Errorf("%w: upload the required file before submitting", domain.ErrInvalidInput)
-		}
-
-		// State transition guard: only incomplete (reset) is unrestricted direction-wise.
-		if next != models.TaskStatusIncomplete {
-			var validTransition bool
-			switch current.Status {
-			case models.TaskStatusIncomplete:
-				validTransition = next == models.TaskStatusInProgress
-			case models.TaskStatusInProgress:
-				validTransition = next == models.TaskStatusSubmitted
-			case models.TaskStatusSubmitted:
-				validTransition = next == models.TaskStatusComplete
-			}
-			if !validTransition {
-				return nil, fmt.Errorf("%w: cannot transition task from %q to %q", domain.ErrInvalidStateTransition, current.Status, next)
-			}
-		}
-
-		// Actor permission: mentee (assignee) may only advance; reviewer may complete or reset.
-		switch next {
-		case models.TaskStatusInProgress, models.TaskStatusSubmitted:
-			if !isAssignee {
-				return nil, fmt.Errorf("%w: only the task assignee may mark it %s", domain.ErrForbidden, next)
-			}
-		case models.TaskStatusComplete, models.TaskStatusIncomplete:
-			if isAssignee {
-				return nil, fmt.Errorf("%w: only a reviewer may mark a task %s", domain.ErrForbidden, next)
-			}
-			// Principle VII-4: verify the actor holds an active mentor/admin role on this program.
-			if err := s.assertReviewer(ctx, current, input.ActorID); err != nil {
-				span.RecordError(err)
-				return nil, err
-			}
+			return nil, err
 		}
 	}
 
@@ -277,6 +244,102 @@ func (s *TaskService) Update(ctx context.Context, id string, input models.TaskUp
 		s.markTasksSubmitted(ctx, *t.ApplicationID)
 	}
 
+	return t, nil
+}
+
+// authorizeUpdate enforces FR-033 for Update: the status transition guard and who may make it.
+func (s *TaskService) authorizeUpdate(ctx context.Context, id string, input models.TaskUpdateInput) error {
+	current, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return fmt.Errorf("get task for permission check: %w", err)
+	}
+	// The denormalised application and program term statuses are reviewer-owned whatever status
+	// the request carries, and a review that leaves status alone can only be setting them.
+	reviewerOnly := input.Status == nil || input.ApplicationStatus != nil || input.ProgramTermStatus != nil
+	if reviewerOnly {
+		if err := s.assertNonAssigneeReviewer(ctx, current, input.ActorID); err != nil {
+			return err
+		}
+	}
+	if input.Status == nil {
+		return nil
+	}
+	next := *input.Status
+	if next == models.TaskStatusSubmitted && current.SubmitFile != nil && *current.SubmitFile != "" && (current.File == nil || *current.File == "") {
+		return fmt.Errorf("%w: upload the required file before submitting", domain.ErrInvalidInput)
+	}
+
+	// State transition guard: only incomplete (reset) is unrestricted direction-wise.
+	if next != models.TaskStatusIncomplete {
+		var validTransition bool
+		switch current.Status {
+		case models.TaskStatusIncomplete:
+			validTransition = next == models.TaskStatusInProgress
+		case models.TaskStatusInProgress:
+			validTransition = next == models.TaskStatusSubmitted
+		case models.TaskStatusSubmitted:
+			validTransition = next == models.TaskStatusComplete
+		}
+		if !validTransition {
+			return fmt.Errorf("%w: cannot transition task from %q to %q", domain.ErrInvalidStateTransition, current.Status, next)
+		}
+	}
+
+	// Actor permission: mentee (assignee) may only advance; reviewer may complete or reset.
+	switch next {
+	case models.TaskStatusInProgress, models.TaskStatusSubmitted:
+		if current.AssigneeID != input.ActorID {
+			return fmt.Errorf("%w: only the task assignee may mark it %s", domain.ErrForbidden, next)
+		}
+	case models.TaskStatusComplete, models.TaskStatusIncomplete:
+		if !reviewerOnly {
+			return s.assertNonAssigneeReviewer(ctx, current, input.ActorID)
+		}
+	}
+	return nil
+}
+
+// Edit applies a reviewer's full edit of a task: any field, and any status from any status, with
+// no transition guard. Only an active mentor or program admin of the task's program may edit, and
+// never the task's own assignee, who goes through Update. An empty submit_file or due_date clears it.
+func (s *TaskService) Edit(ctx context.Context, id string, input models.TaskUpdateInput) (*models.Task, error) {
+	ctx, span := taskSvcTracer.Start(ctx, "TaskService.Edit")
+	defer span.End()
+	span.SetAttributes(attribute.String("task.id", id))
+
+	if err := validateTaskUpdate(input); err != nil {
+		return nil, err
+	}
+	if input.DueDate != nil && *input.DueDate != "" {
+		if err := validateDueDate(input.DueDate); err != nil {
+			return nil, err
+		}
+	}
+	if input.ActorID == "" {
+		return nil, fmt.Errorf("%w: actor identity is required", domain.ErrForbidden)
+	}
+
+	current, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("get task for edit permission check: %w", err)
+	}
+	if err := s.assertNonAssigneeReviewer(ctx, current, input.ActorID); err != nil {
+		span.RecordError(err)
+		return nil, err
+	}
+
+	t, err := s.repo.Update(ctx, id, input)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("edit task: %w", err)
+	}
+
+	// FR-034: a new status or category can complete the prerequisite set. A move back out of
+	// submitted or complete leaves tasks_submitted set: it records the first full submission.
+	if (input.Status != nil || input.Category != nil) && t.ApplicationID != nil {
+		s.markTasksSubmitted(ctx, *t.ApplicationID)
+	}
 	return t, nil
 }
 
@@ -329,6 +392,16 @@ func (s *TaskService) assertReviewer(ctx context.Context, task *models.Task, act
 		return fmt.Errorf("find program member for reviewer check: %w", err)
 	}
 	return nil
+}
+
+// assertNonAssigneeReviewer verifies that actorID is an active reviewer of the task's program
+// and not the task's assignee, so no one reviews or edits their own task.
+func (s *TaskService) assertNonAssigneeReviewer(ctx context.Context, task *models.Task, actorID string) error {
+	if task.AssigneeID == actorID {
+		return fmt.Errorf("%w: the task assignee cannot review or edit their own task", domain.ErrForbidden)
+	}
+	// Principle VII-4: verify the actor holds an active mentor/admin role on this program.
+	return s.assertReviewer(ctx, task, actorID)
 }
 
 // Delete removes a task. Only an active mentor or program admin in the
