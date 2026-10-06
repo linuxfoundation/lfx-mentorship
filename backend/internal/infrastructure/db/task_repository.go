@@ -195,7 +195,8 @@ func (r *TaskRepository) Create(ctx context.Context, applicationID string, input
 	return t, nil
 }
 
-// Update patches a task's mutable fields.
+// Update patches a task's mutable fields. A nil field is left unchanged; an empty submit_file
+// or due_date clears it.
 func (r *TaskRepository) Update(ctx context.Context, id string, input models.TaskUpdateInput) (*models.Task, error) {
 	ctx, span := taskTracer.Start(ctx, "db.tasks.Update")
 	defer span.End()
@@ -218,12 +219,13 @@ func (r *TaskRepository) Update(ctx context.Context, id string, input models.Tas
 			application_status = COALESCE($6,  application_status),
 			program_term_status= COALESCE($7,  program_term_status),
 			custom             = COALESCE($8,  custom),
-			submit_file        = COALESCE($9,  submit_file),
+			submit_file        = CASE WHEN $9 = '' THEN NULL ELSE COALESCE($9,  submit_file) END,
 			file               = COALESCE($10, file),
-			due_date           = COALESCE($11, due_date)
+			due_date           = CASE WHEN $11 = '' THEN NULL ELSE COALESCE($11, due_date) END
 		WHERE id = $1
-		  -- A task that requires a file cannot be submitted without one, even if it was just cleared.
-		  AND NOT (COALESCE($5, '') = $12
+		  -- A task that requires a file cannot be submitted without one, whether it is being
+		  -- submitted or its file requirement is being turned on.
+		  AND NOT (COALESCE($5, CASE WHEN $9::text IS NOT NULL THEN status END, '') = $12
 		           AND COALESCE($9, submit_file, '') <> ''
 		           AND COALESCE($10, file, '') = '')
 		RETURNING ` + taskCols
@@ -318,8 +320,8 @@ func lockTaskApplication(ctx context.Context, tx pgx.Tx, taskID string) error {
 	return nil
 }
 
-// missOrRequiredFile resolves an update that matched no row into not-found or a submit
-// blocked by a missing required file.
+// missOrRequiredFile resolves an update that matched no row into not-found or a submitted task
+// left without its required file.
 func missOrRequiredFile(ctx context.Context, tx pgx.Tx, id string) error {
 	var exists bool
 	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM tasks WHERE id = $1)`, id).Scan(&exists); err != nil {
@@ -328,7 +330,7 @@ func missOrRequiredFile(ctx context.Context, tx pgx.Tx, id string) error {
 	if !exists {
 		return domain.ErrTaskNotFound
 	}
-	return fmt.Errorf("%w: upload the required file before submitting", domain.ErrInvalidInput)
+	return fmt.Errorf("%w: a submitted task that requires a file must have one uploaded", domain.ErrInvalidInput)
 }
 
 func enqueueTaskMarker(ctx context.Context, tx pgx.Tx, task *models.Task, operation string) error {

@@ -103,7 +103,8 @@ type TaskCreateInput struct {
 	CreatedBy     *string       `json:"created_by,omitempty"`
 }
 
-// TaskUpdateInput is the request body for updating a task.
+// TaskUpdateInput is the request body for updating a task. A nil field is left unchanged; an
+// empty SubmitFile or DueDate clears it.
 type TaskUpdateInput struct {
 	Name              *string            `json:"name,omitempty"`
 	Description       *string            `json:"description,omitempty"`

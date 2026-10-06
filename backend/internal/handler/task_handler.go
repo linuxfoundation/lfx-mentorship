@@ -23,6 +23,7 @@ type taskService interface {
 	ListByProgramTermForActor(ctx context.Context, programTermID string, filter models.TaskFilter, actorID string) ([]*models.Task, *models.PaginationMeta, error)
 	Create(ctx context.Context, applicationID string, input models.TaskCreateInput) (*models.Task, error)
 	Update(ctx context.Context, id string, input models.TaskUpdateInput) (*models.Task, error)
+	Edit(ctx context.Context, id string, input models.TaskUpdateInput) (*models.Task, error)
 	Delete(ctx context.Context, id string, actorID string) error
 }
 
@@ -215,7 +216,8 @@ func (h *TaskHandler) Create(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusCreated, task)
 }
 
-// Update handles PATCH /v1/tasks/{id} — requires JWT.
+// Update handles PATCH /v1/tasks/{id}: a mentor's or program admin's full edit of a task,
+// including any status change and the file requirement.
 func (h *TaskHandler) Update(w http.ResponseWriter, r *http.Request) {
 	principal := auth.PrincipalFromContext(r.Context())
 	if principal == nil {
@@ -228,14 +230,17 @@ func (h *TaskHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &input) {
 		return
 	}
-	if input.Status != nil || input.ApplicationStatus != nil || input.ProgramTermStatus != nil || input.SubmitFile != nil || input.File != nil {
-		Error(w, fmt.Errorf("%w: task lifecycle states are handled by dedicated submission and review routes", domain.ErrInvalidInput))
+	if input.ApplicationStatus != nil || input.ProgramTermStatus != nil {
+		Error(w, fmt.Errorf("%w: application and program term statuses are set through PATCH /v1/tasks/{id}/review", domain.ErrInvalidInput))
 		return
 	}
-	// Propagate caller identity for assignee permission check.
+	if input.File != nil {
+		Error(w, fmt.Errorf("%w: upload the file through POST /v1/tasks/{id}/file-upload", domain.ErrInvalidInput))
+		return
+	}
 	input.ActorID = principal.UserID
 
-	task, err := h.svc.Update(r.Context(), id, input)
+	task, err := h.svc.Edit(r.Context(), id, input)
 	if err != nil {
 		Error(w, err)
 		return

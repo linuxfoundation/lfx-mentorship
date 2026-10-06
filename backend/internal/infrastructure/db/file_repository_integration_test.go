@@ -336,6 +336,42 @@ func TestTaskRepositoryIntegration_SubmitRequiresFileAtomically(t *testing.T) {
 	}
 }
 
+func TestTaskRepositoryIntegration_RequiringFileOnSubmittedTaskNeedsOne(t *testing.T) {
+	pool, _ := fileIntegrationPool(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `UPDATE tasks SET status = 'submitted' WHERE id = $1`, fileTestTask); err != nil {
+		t.Fatal(err)
+	}
+	repo := NewTaskRepository(pool)
+	if _, err := repo.Update(ctx, fileTestTask, models.TaskUpdateInput{SubmitFile: ptrTo("required")}); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("require file on fileless submitted task err = %v; want ErrInvalidInput", err)
+	}
+	// Moving the task out of submitted in the same write is allowed.
+	inProgress := models.TaskStatusInProgress
+	task, err := repo.Update(ctx, fileTestTask, models.TaskUpdateInput{Status: &inProgress, SubmitFile: ptrTo("required")})
+	if err != nil || task.SubmitFile == nil || *task.SubmitFile != "required" {
+		t.Fatalf("require file while reopening = %+v, %v", task, err)
+	}
+}
+
+func TestTaskRepositoryIntegration_EmptyValueClearsSubmitFileAndDueDate(t *testing.T) {
+	pool, _ := fileIntegrationPool(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `UPDATE tasks SET submit_file = 'required', due_date = '2026-05-01' WHERE id = $1`, fileTestTask); err != nil {
+		t.Fatal(err)
+	}
+	repo := NewTaskRepository(pool)
+	name := "renamed"
+	task, err := repo.Update(ctx, fileTestTask, models.TaskUpdateInput{Name: &name})
+	if err != nil || task.SubmitFile == nil || task.DueDate == nil {
+		t.Fatalf("absent fields must be kept: %+v, %v", task, err)
+	}
+	task, err = repo.Update(ctx, fileTestTask, models.TaskUpdateInput{SubmitFile: ptrTo(""), DueDate: ptrTo("")})
+	if err != nil || task.SubmitFile != nil || task.DueDate != nil {
+		t.Fatalf("empty fields must clear: %+v, %v", task, err)
+	}
+}
+
 func TestUserProfileRepositoryIntegration_RedactsResumeLink(t *testing.T) {
 	pool, _ := fileIntegrationPool(t)
 	ctx := context.Background()

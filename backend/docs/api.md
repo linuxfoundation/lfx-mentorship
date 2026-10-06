@@ -1850,14 +1850,15 @@ Tasks represent units of work assigned to a mentee. They are either:
 uploaded. The stored object key never appears in a response or the search index,
 which carries a `has_file` flag instead. See [Files](#14-files).
 
-**`status` lifecycle**: `incomplete → in_progress → submitted → complete`
+**`status` lifecycle**: the mentee moves `incomplete → in_progress → submitted`, a
+reviewer completes; a mentor or program admin can also set any status directly.
 
 **`due_date`** is an ISO 8601 date string (`YYYY-MM-DD`) for compatibility with
 legacy task data. Writes with any other format are rejected with `400`.
 Consumers performing date arithmetic should parse it as a
 date rather than comparing it to a PostgreSQL timestamp directly.
 
-Backward reset to `incomplete` is always possible (by a reviewer only).
+Backward moves are made by a reviewer only.
 
 ### Endpoints
 
@@ -1934,39 +1935,98 @@ Create a non-prerequisite task and assign it to an accepted mentee.
 
 #### `PATCH /v1/tasks/{id}` 🔒
 
-Update a task's status or metadata.
+A mentor's or program admin's full edit of a task: its content, its file
+requirement, and its status.
 
 **Request body** (all optional)
 ```json
 {
   "name":        "Updated task name",
   "description": "Updated description",
+  "category":    "non_prerequisite",
+  "custom":      true,
   "status":      "in_progress",
+  "submit_file": "required",
   "due_date":    "2026-05-15"
 }
 ```
 
-`file` is rejected with `400` here and on `PATCH /v1/tasks/{id}/submission`; the
-submission is written by `POST /v1/tasks/{id}/file-upload`.
+An omitted field is left unchanged. An empty string clears `submit_file` (no file
+required) or `due_date`.
 
-**Actor permission rules**:
+**Actor**: an active `mentor` or `program_admin` of the task's program, who is not
+the task's assignee. Every other caller gets `403`, whatever fields the body holds.
 
-| Transition | Required actor |
-|---|---|
-| `incomplete → in_progress` | Task **assignee** (mentee) only |
-| `in_progress → submitted` | Task **assignee** (mentee) only |
-| `submitted → complete` | **Non-assignee** (program_admin or mentor) only |
-| Any state → `incomplete` (reset) | **Non-assignee** (program_admin or mentor) only |
+**Status**: the caller may set any of `incomplete`, `in_progress`, `submitted` or
+`complete`, from any current status — for example reopen a completed task, or
+complete one that was never submitted. The one refusal is a task left `submitted`
+while it requires a file and has none: setting `status: "submitted"`, or turning
+`submit_file` on for a `submitted` task, returns `400` until the mentee uploads the
+file. Moving the task to another status in the same request is allowed.
 
-Invalid forward transitions (e.g. `incomplete → complete`) return `409`. A task whose
-application is `withdrawn` is kept as history and cannot change: any update returns `409`.
+`file` is rejected with `400`: the submission is written by
+`POST /v1/tasks/{id}/file-upload`. `application_status` and `program_term_status`
+are rejected with `400`: they are set through `PATCH /v1/tasks/{id}/review`.
 
-**Side effect**: When the last `prerequisite` task for an application reaches `submitted` or `complete`, the system:
+**Side effect**: when a new `status` or `category` leaves every `prerequisite` task
+on the application `submitted` or `complete`, the system:
 1. Sets `applications.tasks_submitted = true`.
 2. Fires `NotifyAdminTasksSubmitted` to notify the program admin.
 
+`tasks_submitted` records the first full submission. Moving a task back out of
+`submitted` or `complete` leaves it set; the applicants list reads the tasks
+themselves.
+
 **Response** `200` → `<Task>`  
-**Errors** `400`, `401`, `403` (wrong actor), `404`, `409` (invalid transition, withdrawn application)
+**Errors** `400`, `401`, `403`, `404`, `409` (withdrawn application)
+
+---
+
+#### `PATCH /v1/tasks/{id}/submission` 🔒
+
+The assignee (mentee) moves their task forward.
+
+**Request body**: `{ "status": "in_progress" | "submitted" }`
+
+| Transition | Required actor |
+|---|---|
+| `incomplete → in_progress` | Task **assignee** only |
+| `in_progress → submitted` | Task **assignee** only; a required file must be uploaded first |
+
+Any other transition returns `409`. `file` is rejected with `400`. The
+`tasks_submitted` side effect above applies.
+
+**Response** `200` → `<Task>`  
+**Errors** `400`, `401`, `403`, `404`, `409`
+
+---
+
+#### `PATCH /v1/tasks/{id}/review` 🔒
+
+A reviewer's decision on a submitted task.
+
+**Request body** (at least one field)
+```json
+{
+  "status":              "complete" | "incomplete",
+  "application_status":  "accepted",
+  "program_term_status": "open"
+}
+```
+
+The caller must be an active `mentor` or `program_admin` of the task's program, and
+not its assignee, for every field.
+
+| Transition | Required actor |
+|---|---|
+| `submitted → complete` | Reviewer |
+| Any state → `incomplete` (reset) | Reviewer |
+
+Any other transition returns `409` or `403`; use `PATCH /v1/tasks/{id}` to set
+any status.
+
+**Response** `200` → `<Task>`  
+**Errors** `400`, `401`, `403`, `404`, `409`
 
 ---
 
@@ -2116,6 +2176,7 @@ incomplete ──► in_progress ──► submitted ──► complete
 | `in_progress` | `submitted` | Assignee (mentee) |
 | `submitted` | `complete` | Reviewer (non-assignee) |
 | Any | `incomplete` | Reviewer (non-assignee) — reset |
+| Any | Any | Reviewer (non-assignee) — full edit through `PATCH /v1/tasks/{id}` |
 
 ---
 
@@ -2256,7 +2317,7 @@ Foundations and stipend totals are not on this endpoint yet — keep those as st
 GET /v1/applications/{appId}/tasks
 
 # Start work
-PATCH /v1/tasks/{taskId}  Body: { "status": "in_progress" }
+PATCH /v1/tasks/{taskId}/submission  Body: { "status": "in_progress" }
 
 # Submit: upload the file first when the task requires one
 POST /v1/tasks/{taskId}/file-upload  Body: multipart/form-data, part "file"
