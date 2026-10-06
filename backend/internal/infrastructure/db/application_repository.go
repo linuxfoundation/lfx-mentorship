@@ -134,6 +134,12 @@ func (r *ApplicationRepository) ListByProgramTerm(ctx context.Context, programTe
 	return apps, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, nil
 }
 
+// prerequisitesDone holds for an application with no prerequisite task outstanding: either
+// MarkTasksSubmitted flagged every one submitted, or it has none to submit. It splits pending into
+// the applicants list's applied and tasks_submitted.
+const prerequisitesDone = `(COALESCE(a.tasks_submitted, false) OR NOT EXISTS (SELECT 1 FROM tasks t
+	WHERE t.application_id = a.id AND t.category = 'prerequisite'))`
+
 func (r *ApplicationRepository) ListByProgram(ctx context.Context, programID string, filter models.ProgramApplicationFilter) ([]*models.ProgramApplicationRow, *models.PaginationMeta, error) {
 	limit, offset := filter.Limit, filter.Offset
 	if limit <= 0 || limit > 50 {
@@ -161,9 +167,9 @@ func (r *ApplicationRepository) ListByProgram(ctx context.Context, programID str
 	switch filter.Status {
 	case "":
 	case models.ProgramApplicationStatusApplied:
-		where += ` AND a.status = 'pending' AND NOT a.tasks_submitted`
+		where += ` AND a.status = 'pending' AND NOT ` + prerequisitesDone
 	case models.ProgramApplicationStatusTasksSubmitted:
-		where += ` AND a.status = 'pending' AND a.tasks_submitted`
+		where += ` AND a.status = 'pending' AND ` + prerequisitesDone
 	default:
 		args = append(args, filter.Status)
 		where += fmt.Sprintf(` AND a.status = $%d`, len(args))
@@ -176,11 +182,11 @@ func (r *ApplicationRepository) ListByProgram(ctx context.Context, programID str
 		args = append(args, "%"+filter.Search+"%")
 		where += fmt.Sprintf(` AND (u.name ILIKE $%d OR u.email ILIKE $%d)`, len(args), len(args))
 	}
-	// Furthest-along applicants first; pending splits on tasks_submitted as the status filter does.
+	// Furthest-along applicants first; pending splits on prerequisitesDone as the status filter does.
 	const orderBy = ` ORDER BY CASE
 		WHEN a.status = 'graduated' THEN 1
 		WHEN a.status = 'accepted' THEN 2
-		WHEN a.status = 'pending' AND a.tasks_submitted THEN 3
+		WHEN a.status = 'pending' AND ` + prerequisitesDone + ` THEN 3
 		WHEN a.status = 'pending' THEN 4
 		WHEN a.status = 'hold' THEN 5
 		WHEN a.status = 'declined' THEN 6

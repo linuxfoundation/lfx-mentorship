@@ -540,19 +540,22 @@ func TestApplicationRepositoryIntegration_ListByProgramStatusFilterAndOrder(t *t
 	pool := integrationPool(t)
 	fixture := seedIntegrationFixture(t, pool)
 	ctx := context.Background()
-	// One applicant per status, inserted in reverse of the expected order with ascending created_on,
-	// so neither insertion order nor recency alone yields the status ranking.
+	// One applicant per rank, inserted in reverse of the expected order with ascending created_on,
+	// so neither insertion order nor recency alone yields the status ranking. Both tasks_submitted
+	// applicants share a rank, so within it the newer one comes first.
 	applicants := []struct {
 		id, status     string
 		tasksSubmitted bool
+		prerequisite   bool // holds an incomplete prerequisite task
 	}{
-		{"00000000-0000-0000-0000-0000000000c7", "withdrawn", false},
-		{"00000000-0000-0000-0000-0000000000c6", "declined", false},
-		{"00000000-0000-0000-0000-0000000000c5", "hold", false},
-		{"00000000-0000-0000-0000-0000000000c4", "pending", false},
-		{"00000000-0000-0000-0000-0000000000c3", "pending", true},
-		{"00000000-0000-0000-0000-0000000000c2", "accepted", false},
-		{"00000000-0000-0000-0000-0000000000c1", "graduated", false},
+		{"00000000-0000-0000-0000-0000000000c8", "withdrawn", false, false},
+		{"00000000-0000-0000-0000-0000000000c7", "declined", false, false},
+		{"00000000-0000-0000-0000-0000000000c6", "hold", false, false},
+		{"00000000-0000-0000-0000-0000000000c5", "pending", false, true},  // applied
+		{"00000000-0000-0000-0000-0000000000c4", "pending", false, false}, // tasks_submitted: none to submit
+		{"00000000-0000-0000-0000-0000000000c3", "pending", true, false},  // tasks_submitted: flagged
+		{"00000000-0000-0000-0000-0000000000c2", "accepted", false, false},
+		{"00000000-0000-0000-0000-0000000000c1", "graduated", false, false},
 	}
 	for i, a := range applicants {
 		userID := "00000000-0000-0000-0000-0000000000d" + a.id[len(a.id)-1:]
@@ -563,6 +566,12 @@ func TestApplicationRepositoryIntegration_ListByProgramStatusFilterAndOrder(t *t
 			VALUES ($1, $2, $3, 'mentee', $4, $5, '2026-01-01T00:00:00Z'::timestamptz + make_interval(days => $6))`,
 			a.id, fixture.OpenTerm, userID, a.status, a.tasksSubmitted, i); err != nil {
 			t.Fatalf("insert %s application: %v", a.status, err)
+		}
+		if a.prerequisite {
+			if _, err := pool.Exec(ctx, `INSERT INTO tasks (id, application_id, program_term_id, assignee_id, status, category, application_status, program_term_status)
+				VALUES ('00000000-0000-0000-0000-0000000000e1', $1, $2, $3, 'incomplete', 'prerequisite', 'pending', 'open')`, a.id, fixture.OpenTerm, userID); err != nil {
+				t.Fatalf("insert prerequisite task: %v", err)
+			}
 		}
 	}
 	repo := NewApplicationRepository(pool)
@@ -577,18 +586,20 @@ func TestApplicationRepositoryIntegration_ListByProgramStatusFilterAndOrder(t *t
 		}
 	}
 
-	for status, want := range map[models.ProgramApplicationStatus]string{
-		models.ProgramApplicationStatusApplied:        "00000000-0000-0000-0000-0000000000c4",
-		models.ProgramApplicationStatusTasksSubmitted: "00000000-0000-0000-0000-0000000000c3",
+	for status, want := range map[models.ProgramApplicationStatus][]string{
+		models.ProgramApplicationStatusApplied:                           {"00000000-0000-0000-0000-0000000000c5"},
+		models.ProgramApplicationStatusTasksSubmitted:                    {"00000000-0000-0000-0000-0000000000c3", "00000000-0000-0000-0000-0000000000c4"},
+		models.ProgramApplicationStatus(models.ApplicationStatusPending): {"00000000-0000-0000-0000-0000000000c3", "00000000-0000-0000-0000-0000000000c4", "00000000-0000-0000-0000-0000000000c5"},
 	} {
-		rows, meta, err := repo.ListByProgram(ctx, fixture.ProgramID, models.ProgramApplicationFilter{Status: status})
-		if err != nil || meta.Total != 1 || len(rows) != 1 || rows[0].ApplicationID != want {
-			t.Fatalf("ListByProgram(status %q) = %d rows, meta %+v, err = %v; want only %q", status, len(rows), meta, err, want)
+		rows, meta, err := repo.ListByProgram(ctx, fixture.ProgramID, models.ProgramApplicationFilter{Status: status, Limit: 50})
+		if err != nil || meta.Total != len(want) || len(rows) != len(want) {
+			t.Fatalf("ListByProgram(status %q) = %d rows, meta %+v, err = %v; want %v", status, len(rows), meta, err, want)
 		}
-	}
-	rows, meta, err := repo.ListByProgram(ctx, fixture.ProgramID, models.ProgramApplicationFilter{Status: models.ProgramApplicationStatus(models.ApplicationStatusPending), Limit: 50})
-	if err != nil || meta.Total != 2 || len(rows) != 2 || rows[0].ApplicationID != "00000000-0000-0000-0000-0000000000c3" {
-		t.Fatalf("ListByProgram(status pending) = %d rows, meta %+v, err = %v; want both pending, tasks submitted first", len(rows), meta, err)
+		for i, row := range rows {
+			if row.ApplicationID != want[i] {
+				t.Fatalf("ListByProgram(status %q) row %d = %q; want %q", status, i, row.ApplicationID, want[i])
+			}
+		}
 	}
 }
 

@@ -77,8 +77,8 @@ func (s ApplicationStatus) IsValid() bool {
 }
 
 // ProgramApplicationStatus is the applicants-list status filter. It accepts every ApplicationStatus
-// and adds two that split pending on applications.tasks_submitted: applied (prerequisite tasks
-// outstanding) and tasks_submitted (all prerequisite tasks submitted).
+// and adds two that split pending: applied (prerequisite tasks outstanding) and tasks_submitted
+// (every prerequisite task submitted, or none to submit).
 type ProgramApplicationStatus string
 
 const (

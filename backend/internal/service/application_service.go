@@ -152,7 +152,7 @@ func (s *ApplicationService) ListByProgram(ctx context.Context, programID string
 		return nil, nil, fmt.Errorf("%w: type must be current, past, or all", domain.ErrInvalidInput)
 	}
 	if filter.Status != "" && !filter.Status.IsValid() {
-		return nil, nil, fmt.Errorf("%w: invalid application status", domain.ErrInvalidInput)
+		return nil, nil, fmt.Errorf("%w: status must be applied, tasks_submitted, or an application status", domain.ErrInvalidInput)
 	}
 	return s.repo.ListByProgram(ctx, programID, filter)
 }
