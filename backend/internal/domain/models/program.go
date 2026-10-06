@@ -5,6 +5,7 @@ package models
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -59,6 +60,20 @@ type Program struct {
 	TaskTemplates      json.RawMessage    `json:"task_templates,omitempty"`
 	CreatedOn          time.Time          `json:"created_on"`
 	UpdatedOn          time.Time          `json:"updated_on"`
+}
+
+// PubliclyVisibleAt reports whether the program may be served to anyone when
+// requested by ref, its UUID or slug. Published programs always are. A draft is
+// unlisted: it is visible only when ref is its own UUID, so sharing the UUID
+// link works while the name-derived slug cannot be guessed into it.
+func (p *Program) PubliclyVisibleAt(ref string) bool {
+	switch p.Status {
+	case ProgramStatusPublished:
+		return true
+	case ProgramStatusDraft:
+		return strings.EqualFold(p.ID, ref)
+	}
+	return false
 }
 
 // ProgramCreateInput is the request body for creating a program.

@@ -519,21 +519,79 @@ func TestProgramHandler_ResolveID_SubmittedReturns404ToAnonymous(t *testing.T) {
 	}
 }
 
-func TestProgramHandler_GetCatalog_DraftReturnsOK(t *testing.T) {
+func TestProgramHandler_PublicReads_DraftBySlugReturns404ToNonOwner(t *testing.T) {
+	owner := "owner"
+	svc := &stubProgramSvc{
+		getBySlug: func(_ context.Context, slug string) (*models.Program, error) {
+			return &models.Program{ID: "draft-uuid", Slug: slug, Status: models.ProgramStatusDraft, LFID: &owner}, nil
+		},
+		listSkills: func(context.Context, string) ([]*models.ProgramSkill, error) {
+			t.Fatal("skills must not be read for a draft program")
+			return nil, nil
+		},
+	}
+	h := handler.NewProgramHandler(svc)
+	principals := map[string]*models.Principal{
+		"anonymous":          {UserID: "_anonymous"},
+		"authenticated user": {UserID: "someone", Username: "someone"},
+	}
+	for who, principal := range principals {
+		for name, serve := range map[string]http.HandlerFunc{
+			"program":       h.GetByID,
+			"skills":        h.ListSkills,
+			"funding-stats": h.GetFundingStats,
+			"header":        h.GetHeaderProjection,
+		} {
+			t.Run(who+"/"+name, func(t *testing.T) {
+				r := httptest.NewRequest(http.MethodGet, "/v1/programs/my-draft/"+name, nil)
+				r = requestWithChiParam(r, "id", "my-draft")
+				r = r.WithContext(auth.ContextWithPrincipal(r.Context(), principal))
+				w := httptest.NewRecorder()
+				serve(w, r)
+				if w.Code != http.StatusNotFound {
+					t.Fatalf("got %d; want 404", w.Code)
+				}
+			})
+		}
+	}
+}
+
+func TestProgramHandler_DraftByUUIDVisibleToAnonymous(t *testing.T) {
+	const draftID = "3f2b9c1e-8d4a-4b6f-9e21-5c7a0d9ea71d"
 	h := handler.NewProgramHandler(&stubProgramSvc{
-		getCatalog: func(_ context.Context, id string) (*models.ProgramCatalogItem, error) {
-			return &models.ProgramCatalogItem{
-				Program: models.Program{ID: id, Name: "Draft Program", Status: models.ProgramStatusDraft},
-				Skills:  []string{},
-				Terms:   []models.ProgramCatalogTerm{},
-				Mentors: []models.ProgramCatalogMentor{},
-			}, nil
+		getByID: func(_ context.Context, id string) (*models.Program, error) {
+			return &models.Program{ID: draftID, Slug: "my-draft", Status: models.ProgramStatusDraft}, nil
 		},
 	})
-	r := httptest.NewRequest(http.MethodGet, "/v1/programs/draft-1/catalog", nil)
-	r = requestWithChiParam(r, "id", "draft-1")
+	for name, serve := range map[string]http.HandlerFunc{
+		"program": h.GetByID,
+		"resolve": h.ResolveID,
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "/v1/programs/"+draftID, nil)
+			r = requestWithChiParam(r, "id", draftID)
+			r = r.WithContext(auth.ContextWithPrincipal(r.Context(), &models.Principal{UserID: "_anonymous"}))
+			w := httptest.NewRecorder()
+			serve(w, r)
+			if w.Code != http.StatusOK {
+				t.Fatalf("got %d; want 200", w.Code)
+			}
+		})
+	}
+}
+
+func TestProgramHandler_GetByID_DraftVisibleToOwner(t *testing.T) {
+	owner := "owner"
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		getBySlug: func(_ context.Context, slug string) (*models.Program, error) {
+			return &models.Program{ID: "draft-uuid", Slug: slug, Status: models.ProgramStatusDraft, LFID: &owner}, nil
+		},
+	})
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/my-draft", nil)
+	r = requestWithChiParam(r, "id", "my-draft")
+	r = r.WithContext(auth.ContextWithPrincipal(r.Context(), &models.Principal{UserID: "owner-user", Username: owner}))
 	w := httptest.NewRecorder()
-	h.GetCatalog(w, r)
+	h.GetByID(w, r)
 	if w.Code != http.StatusOK {
 		t.Fatalf("got %d; want 200", w.Code)
 	}

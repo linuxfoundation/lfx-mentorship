@@ -386,19 +386,20 @@ func TestProgramService_GetCatalog_NotFound(t *testing.T) {
 	}
 }
 
-func TestProgramService_GetCatalog_DraftReturnsOK(t *testing.T) {
+func TestProgramService_GetCatalog_Draft(t *testing.T) {
+	const draftID = "3f2b9c1e-8d4a-4b6f-9e21-5c7a0d9ea71d"
 	repo := &stubProgRepo{
-		getCatalog: func(_ context.Context, id string) (*models.ProgramCatalogItem, error) {
-			return &models.ProgramCatalogItem{Program: models.Program{ID: id, Status: models.ProgramStatusDraft}}, nil
+		getCatalog: func(context.Context, string) (*models.ProgramCatalogItem, error) {
+			return &models.ProgramCatalogItem{Program: models.Program{ID: draftID, Slug: "my-draft", Status: models.ProgramStatusDraft}}, nil
 		},
 	}
 	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
-	item, err := svc.GetCatalog(context.Background(), "p1")
-	if err != nil {
-		t.Fatalf("expected nil error for draft, got %v", err)
+
+	if _, err := svc.GetCatalog(context.Background(), draftID); err != nil {
+		t.Errorf("by UUID: expected nil error, got %v", err)
 	}
-	if item.ID != "p1" {
-		t.Errorf("id = %q; want p1", item.ID)
+	if _, err := svc.GetCatalog(context.Background(), "my-draft"); !errors.Is(err, domain.ErrProgramNotFound) {
+		t.Errorf("by slug: expected ErrProgramNotFound, got %v", err)
 	}
 }
 

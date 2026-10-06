@@ -29,7 +29,12 @@ if (error.value) {
 
 const title = computed(() => program.value?.name ?? 'Program');
 const descriptionFallback = 'Explore this mentorship program on LFX Mentorship.';
-const canonicalPath = computed(() => programPath(program.value?.slug || program.value?.id || programId.value));
+// A draft is unlisted: reachable only by its UUID link, so it must not be
+// canonicalised to its slug (which 404s) or indexed.
+const isDraft = computed(() => program.value?.status === 'pending');
+const canonicalPath = computed(() =>
+  programPath(isDraft.value ? program.value!.id : program.value?.slug || program.value?.id || programId.value),
+);
 
 const { canonical, image } = usePublicSeo({
   title,
@@ -37,6 +42,7 @@ const { canonical, image } = usePublicSeo({
   descriptionFallback,
   path: canonicalPath,
   image: computed(() => program.value?.logoUrl),
+  noindex: isDraft,
 });
 
 useJsonLd(

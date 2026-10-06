@@ -528,7 +528,7 @@ Programs are the top-level entity for a mentorship offering.
 
 | Status | Meaning |
 |---|---|
-| `draft` | Being configured; not visible to public |
+| `draft` | Being configured; unlisted — public reads succeed only when addressed by UUID (slug lookups 404, never in lists) |
 | `submitted` | Under reviewer inspection |
 | `published` | Live; accepts applications |
 | `hidden` | Soft-hidden; only visible to owner |
