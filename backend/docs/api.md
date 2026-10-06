@@ -1414,10 +1414,11 @@ Add a member to a program.
 Anyone with an LF account can be invited, whether or not they have used
 Mentorship. An `email` is resolved to its LF account through auth-service,
 matching the account's primary or linked emails. A person who already has a
-Mentorship user is invited as that user, without calling auth-service, and the
-invite email goes to their stored email. Otherwise a user is created from
+Mentorship user is invited as that user, and their stored email is first
+updated to the account's primary email from auth-service; a legacy LFID that
+auth-service cannot look up keeps its stored email. Otherwise a user is created from
 auth-service (LFID in the casing auth-service stores, name, avatar and primary
-email); their first sign-in updates that same row, and the invite email goes to
+email); their first sign-in updates that same row. Either way the invite email goes to
 the account's primary email.
 
 **Response** `201` → `<ProgramMember>`  
@@ -1434,13 +1435,13 @@ because Mentorship users can edit their stored email. Any other `search` returns
 up to 10 Mentorship users matching part of a name or an LFID prefix; when none
 is an exact LFID match and `search` is an LFID, the matching LF account from
 auth-service is listed first. If auth-service fails for a non-email `search`,
-the local matches are still returned. Emails are never returned.
+the local matches are still returned, or `503` when there are none. Emails are never returned.
 
 **Response** `200`
 ```json
 { "data": [ { "lfid": "alice", "name": "Alice Example", "avatar_url": "https://…" } ] }
 ```
-**Errors** `400` (search too short, or the program is not published), `401`, `403`, `404` (program not found), `503` (auth-service is unreachable for an email `search`)
+**Errors** `400` (search too short, or the program is not published), `401`, `403`, `404` (program not found), `503` (auth-service is unreachable for an email `search`, or for an LFID `search` with no local matches)
 
 ---
 

@@ -238,17 +238,29 @@ func (s *ProgramMemberService) userByEmail(ctx context.Context, email string) (*
 // canonical reports whether lfid already has the casing auth-service stores.
 func (s *ProgramMemberService) userByLFID(ctx context.Context, lfid string, canonical bool) (*models.User, error) {
 	user, err := s.users.GetByLFID(ctx, lfid)
-	if err == nil {
-		return user, nil
-	}
-	if !errors.Is(err, domain.ErrUserNotFound) {
+	if err != nil && !errors.Is(err, domain.ErrUserNotFound) {
 		return nil, fmt.Errorf("resolve lfid: %w", err)
+	}
+	// Auth-service cannot look up a legacy LFID, so its stored email is all there is.
+	if user != nil && (s.directory == nil || !isLFID(lfid)) {
+		return user, nil
 	}
 	if s.directory == nil {
 		return nil, fmt.Errorf("%w: lfid %q has no Mentorship account; they must sign in once before they can be invited", domain.ErrIneligible, lfid)
 	}
 	if !isLFID(lfid) {
 		return nil, fmt.Errorf("%w: lfid %q is not a valid LF username", domain.ErrInvalidInput, lfid)
+	}
+
+	if user != nil {
+		email, err := s.directory.PrimaryEmail(ctx, lfid)
+		if errors.Is(err, domain.ErrAccountNotFound) {
+			return nil, fmt.Errorf("%w: lfid %q has no LF account", domain.ErrIneligible, lfid)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("look up LF account: %w", err)
+		}
+		return s.refreshEmail(ctx, user, email)
 	}
 
 	var (
@@ -280,7 +292,7 @@ func (s *ProgramMemberService) userByLFID(ctx context.Context, lfid string, cano
 		if username != lfid {
 			user, err = s.users.GetByLFID(ctx, username)
 			if err == nil {
-				return user, nil
+				return s.refreshEmail(ctx, user, email)
 			}
 			if !errors.Is(err, domain.ErrUserNotFound) {
 				return nil, fmt.Errorf("resolve lfid: %w", err)
@@ -303,6 +315,21 @@ func (s *ProgramMemberService) userByLFID(ctx context.Context, lfid string, cano
 		return nil, fmt.Errorf("create user for lfid %q: %w", username, err)
 	}
 	return user, nil
+}
+
+// refreshEmail stores the account's primary email, which the invite email is sent to.
+func (s *ProgramMemberService) refreshEmail(ctx context.Context, user *models.User, email string) (*models.User, error) {
+	if user.Email != nil && *user.Email == email {
+		return user, nil
+	}
+	updated, err := s.users.UpsertByLFID(ctx, models.UserCreateInput{LFID: user.LFID, Email: &email})
+	if errors.Is(err, domain.ErrEmailInUse) {
+		return nil, fmt.Errorf("%w: the primary email of lfid %q belongs to another Mentorship user", domain.ErrIneligible, *user.LFID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("refresh email of lfid %q: %w", *user.LFID, err)
+	}
+	return updated, nil
 }
 
 // SearchCandidates returns people a Program Admin can invite to a published
@@ -370,9 +397,13 @@ func (s *ProgramMemberService) SearchCandidates(ctx context.Context, programID, 
 		return candidates, nil
 	}
 	if err != nil {
-		// The local matches are still useful when auth-service is unavailable.
 		span.RecordError(err)
-		return candidates, nil
+		// The local matches are still useful when auth-service is unavailable; an
+		// empty list would read as "no LF account".
+		if len(candidates) > 0 {
+			return candidates, nil
+		}
+		return nil, err
 	}
 	if len(candidates) >= maxCandidates {
 		candidates = candidates[:maxCandidates-1]
