@@ -53,11 +53,14 @@ Key notes
   object keys (submissions), quarantined or missing objects become NULL,
   foreign logo URLs carry through and foreign tasks.file values are nulled.
 - profile_links.resumeLink is dropped: resumes are not migrated.
-- programs.lf_project_uid comes from lfProjectId, a v1 Salesforce ID translated to
-  the v2 project UID over NATS (lfx.lookup_v1_mapping); lf_project_slug and
-  lf_project_name come from project-service for that UID. lf_project_logo_url
-  comes from lfProjectLogo. An ID with no v2 mapping is reported as
-  UNMAPPED_PROGRAM, and an existing program keeps its current parent.
+- programs.lf_project_uid comes from the first project identifier that
+  project-service confirms exists: lfProjectId first (a v1 Salesforce ID,
+  translated over NATS lfx.lookup_v1_mapping), then legacy UUID fields.
+  lf_project_slug and lf_project_name come from project-service, and
+  lf_project_logo_url from lfProjectLogo when lfProjectId is the parent. A
+  program with no confirmed parent is reported as UNMAPPED_PROGRAM; an existing
+  one keeps its current parent. A project-service error other than not_found
+  aborts the import.
 
 Usage
 -----
@@ -71,7 +74,7 @@ Usage
   export COPY_MANIFEST=legacy-object-manifest.json
   export LOGOS_CDN_URL_PREFIX=https://...
   export LOGOS_S3_BUCKET=... ATTACHMENTS_S3_BUCKET=...   # must match the manifest
-  export NATS_URL=nats://...   # platform NATS, to translate lfProjectId; unset leaves programs unmapped
+  export NATS_URL=nats://...   # platform NATS, to verify project parents; unset leaves programs unmapped
 
   pip install boto3 psycopg2-binary nats-py
   python3 backend/db/scripts/copy_legacy_objects.py
@@ -187,39 +190,60 @@ def _strict_uuid(value) -> str | None:
         return None
 
 
+def _project_candidates(p: dict) -> list[tuple[str, str]]:
+    """(field, raw value) pairs that may name the program's LF project, in priority order."""
+    linked = p.get("project") if isinstance(p.get("project"), dict) else {}
+    fields = [(f, p.get(f)) for f in ("lfProjectId", "projectUid", "lfProjectUid", "lfProjectUID")] + [("project.id", linked.get("id"))]
+    return [(f, str(v).strip()) for f, v in fields if v and str(v).strip()]
+
+
 def resolve_lf_projects(projects: list) -> dict:
-    """Map each lfProjectId (v1 SFID or v2 UID) to its v2 (uid, slug, name) over NATS."""
-    ids = sorted({str(p.get("lfProjectId")).strip() for p in projects if p.get("lfProjectId")})
-    if not ids:
+    """Map each candidate project identifier to a verified v2 (uid, slug, name), or None.
+
+    A v1 SFID is translated over lfx.lookup_v1_mapping; a UUID is taken as-is. Either
+    way project-service must confirm the project exists, so an identifier fabricated
+    by an older patch run, or naming a deleted project, resolves to None.
+    """
+    values = sorted({v for p in projects for _, v in _project_candidates(p)})
+    if not values:
         return {}
     if not NATS_URL:
-        log.warning("NATS_URL is not set: %d lfProjectId values cannot be resolved to v2 projects", len(ids))
+        log.warning("NATS_URL is not set: %d project identifiers cannot be verified; programs stay unmapped", len(values))
         return {}
 
     async def lookup() -> dict:
-        import nats  # imported lazily so runs without lfProjectId values need no NATS client
+        import nats  # imported lazily so runs without project identifiers need no NATS client
 
         nc = await nats.connect(NATS_URL)
         try:
             async def ask(subject: str, body: str) -> str:
                 return (await nc.request(subject, body.encode(), timeout=5)).data.decode().strip()
 
-            resolved = {}
-            for lf_id in ids:
-                uid = _strict_uuid(lf_id) or _strict_uuid(await ask("lfx.lookup_v1_mapping", f"project.sfid.{lf_id}"))
-                if not uid:
-                    log.warning("UNMAPPED_LF_PROJECT lf_project_id=%s", lf_id)
-                    continue
-                slug = await ask("lfx.projects-api.get_slug", uid)
-                name = await ask("lfx.projects-api.get_name", uid)
+            async def project_field(subject: str, uid: str) -> str | None:
+                reply = await ask(subject, uid)
+                if not reply.startswith("{"):
+                    return reply
                 # project-service answers failures with a JSON error body instead of a value.
-                resolved[lf_id] = (uid, None if slug.startswith("{") else slug, None if name.startswith("{") else name)
+                error = json.loads(reply).get("error")
+                if error == "not_found":
+                    return None
+                raise RuntimeError(f"{subject} {uid}: {reply}")
+
+            resolved: dict = {}
+            for value in values:
+                uid = _strict_uuid(value) or _strict_uuid(await ask("lfx.lookup_v1_mapping", f"project.sfid.{value}"))
+                slug = await project_field("lfx.projects-api.get_slug", uid) if uid else None
+                if not slug:
+                    log.warning("UNMAPPED_LF_PROJECT project_identifier=%s", value)
+                    resolved[value] = None
+                    continue
+                resolved[value] = (uid, slug, await project_field("lfx.projects-api.get_name", uid))
             return resolved
         finally:
             await nc.close()
 
     resolved = asyncio.run(lookup())
-    log.info("  → %d of %d lfProjectId values resolved to v2 projects", len(resolved), len(ids))
+    log.info("  → %d of %d project identifiers verified in project-service", sum(1 for r in resolved.values() if r), len(values))
     return resolved
 
 
@@ -574,38 +598,16 @@ def migrate_programs(cur, projects: list, known_user_ids: set, files: lo.LegacyF
         # project_uid is the LF project parent used by the authorization
         # inheritance chain. Do not substitute the program ID when the legacy
         # source does not provide an explicit project identifier.
-        linked_project = p.get("project") if isinstance(p.get("project"), dict) else {}
-        lf_project = lf_projects.get(str(p.get("lfProjectId") or "").strip())
-        candidates = (
-            lf_project[0] if lf_project else None,
-            p.get("lfProjectId"),
-            p.get("projectUid"),
-            p.get("lfProjectUid"),
-            p.get("lfProjectUID"),
-            linked_project.get("id"),
+        # Only a parent project-service confirms is imported; slug and name come from it too.
+        chosen_field, lf_project = next(
+            ((f, lf_projects[v]) for f, v in _project_candidates(p) if lf_projects.get(v) and lf_projects[v][0] != pid),
+            (None, None),
         )
-        project_uid = next((uid for uid in map(_strict_uuid, candidates) if uid and uid != pid), None)
+        project_uid, project_slug, project_name = lf_project or (None, None, None)
         if not project_uid:
             unresolved_project_uids.append(pid)
-
-        # project-service names match the resolved UID; the legacy copies may be stale.
-        project_slug = (
-            (lf_project[1] if lf_project else None)
-            or p.get("projectSlug")
-            or p.get("lfProjectSlug")
-            or p.get("project_slug")
-            or linked_project.get("slug")
-        )
-        project_name = (
-            (lf_project[2] if lf_project else None)
-            or p.get("lfProjectName")
-            or p.get("projectName")
-            or p.get("project_name")
-            or linked_project.get("name")
-        )
-        project_slug = str(project_slug).strip() if project_slug else None
-        project_name = str(project_name).strip() if project_name else None
-        project_logo_url = str(p.get("lfProjectLogo") or p.get("projectLogoUrl") or p.get("lfProjectLogoUrl") or p.get("project_logo_url") or "").strip() or None
+        # lfProjectLogo describes the lfProjectId project, so it only applies when that field won.
+        project_logo_url = str(p.get("lfProjectLogo") or "").strip() or None if chosen_field == "lfProjectId" else None
         if not project_uid or not project_slug or not project_name:
             unresolved_project_mappings.append((pid, project_uid, project_slug, project_name))
 
