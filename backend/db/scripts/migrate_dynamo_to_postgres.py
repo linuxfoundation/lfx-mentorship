@@ -523,7 +523,6 @@ def migrate_programs(cur, projects: list, known_user_ids: set, files: lo.LegacyF
         pid = _as_uuid(p.get("projectId"))
         if not pid:
             continue
-        pid_canonical = _strict_uuid(pid)
         program_ids.add(pid)
 
         # project_uid is the LF project parent used by the authorization
@@ -537,7 +536,7 @@ def migrate_programs(cur, projects: list, known_user_ids: set, files: lo.LegacyF
             p.get("lfProjectUID"),
             linked_project.get("id"),
         )
-        project_uid = next((uid for uid in map(_strict_uuid, candidates) if uid and uid != pid_canonical), None)
+        project_uid = next((uid for uid in map(_strict_uuid, candidates) if uid and uid != pid), None)
         if not project_uid:
             unresolved_project_uids.append(pid)
 
@@ -628,8 +627,8 @@ def migrate_programs(cur, projects: list, known_user_ids: set, files: lo.LegacyF
 
     if unresolved_project_uids:
         log.warning(
-            "%d programs are missing an explicit project UID and will be imported "
-            "without an authorization parent",
+            "%d programs are missing an explicit project UID; new ones are imported "
+            "without an authorization parent and existing ones keep theirs",
             len(unresolved_project_uids),
         )
         for program_id in unresolved_project_uids:
@@ -654,10 +653,11 @@ def migrate_programs(cur, projects: list, known_user_ids: set, files: lo.LegacyF
            created_on, updated_on)
                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         ON CONFLICT (id) DO UPDATE SET
-                    lf_project_uid     = EXCLUDED.lf_project_uid,
-          lf_project_slug        = EXCLUDED.lf_project_slug,
-          lf_project_name        = EXCLUDED.lf_project_name,
-          lf_project_logo_url   = EXCLUDED.lf_project_logo_url,
+                    -- An unmapped re-import keeps the existing parent: OpenFGA already holds it, and the sync cannot clear a project reference.
+                    lf_project_uid     = COALESCE(EXCLUDED.lf_project_uid, programs.lf_project_uid),
+          lf_project_slug        = CASE WHEN EXCLUDED.lf_project_uid IS NULL THEN programs.lf_project_slug ELSE EXCLUDED.lf_project_slug END,
+          lf_project_name        = CASE WHEN EXCLUDED.lf_project_uid IS NULL THEN programs.lf_project_name ELSE EXCLUDED.lf_project_name END,
+          lf_project_logo_url   = CASE WHEN EXCLUDED.lf_project_uid IS NULL THEN programs.lf_project_logo_url ELSE EXCLUDED.lf_project_logo_url END,
           name                = EXCLUDED.name,
           slug                = EXCLUDED.slug,
           status              = EXCLUDED.status,

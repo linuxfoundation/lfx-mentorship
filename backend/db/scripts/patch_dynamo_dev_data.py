@@ -155,7 +155,6 @@ def main() -> None:
             row.get("projectUid"),
             row.get("lfProjectId"),
             row.get("lfProjectUID"),
-            row.get("fundspringProjectId"),
             linked.get("id"),
         ):
             try:
@@ -220,6 +219,7 @@ def main() -> None:
             tasks.update_item(Key={"id": row["id"]}, UpdateExpression=expr, ExpressionAttributeNames=names, ExpressionAttributeValues={f":{key}": value for key, value in values.items()})
     project_values = {":uid": args.project_uid, ":slug": args.project_slug, ":name": args.project_name}
     project_update = "SET lfProjectUid = :uid, lfProjectSlug = :slug, lfProjectName = :name"
+    # The logo belongs to the project link being replaced, so a stale one must not survive it.
     if args.project_logo_url:
         project_values[":logo"] = args.project_logo_url
         project_update += ", lfProjectLogoUrl = :logo"
