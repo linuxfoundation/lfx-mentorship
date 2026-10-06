@@ -536,6 +536,62 @@ func assertTermProjectionStatus(t *testing.T, pool *pgxpool.Pool, termID, want s
 	}
 }
 
+func TestApplicationRepositoryIntegration_ListByProgramStatusFilterAndOrder(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	// One applicant per status, inserted in reverse of the expected order with ascending created_on,
+	// so neither insertion order nor recency alone yields the status ranking.
+	applicants := []struct {
+		id, status     string
+		tasksSubmitted bool
+	}{
+		{"00000000-0000-0000-0000-0000000000c7", "withdrawn", false},
+		{"00000000-0000-0000-0000-0000000000c6", "declined", false},
+		{"00000000-0000-0000-0000-0000000000c5", "hold", false},
+		{"00000000-0000-0000-0000-0000000000c4", "pending", false},
+		{"00000000-0000-0000-0000-0000000000c3", "pending", true},
+		{"00000000-0000-0000-0000-0000000000c2", "accepted", false},
+		{"00000000-0000-0000-0000-0000000000c1", "graduated", false},
+	}
+	for i, a := range applicants {
+		userID := "00000000-0000-0000-0000-0000000000d" + a.id[len(a.id)-1:]
+		if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name) VALUES ($1, $1, $1)`, userID); err != nil {
+			t.Fatalf("insert user: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status, tasks_submitted, created_on)
+			VALUES ($1, $2, $3, 'mentee', $4, $5, '2026-01-01T00:00:00Z'::timestamptz + make_interval(days => $6))`,
+			a.id, fixture.OpenTerm, userID, a.status, a.tasksSubmitted, i); err != nil {
+			t.Fatalf("insert %s application: %v", a.status, err)
+		}
+	}
+	repo := NewApplicationRepository(pool)
+
+	rows, _, err := repo.ListByProgram(ctx, fixture.ProgramID, models.ProgramApplicationFilter{Limit: 50})
+	if err != nil || len(rows) != len(applicants) {
+		t.Fatalf("ListByProgram = %d rows, err = %v; want %d", len(rows), err, len(applicants))
+	}
+	for i, row := range rows {
+		if want := applicants[len(applicants)-1-i].id; row.ApplicationID != want {
+			t.Fatalf("row %d = %q (%s); want %q", i, row.ApplicationID, row.Status, want)
+		}
+	}
+
+	for status, want := range map[models.ProgramApplicationStatus]string{
+		models.ProgramApplicationStatusApplied:        "00000000-0000-0000-0000-0000000000c4",
+		models.ProgramApplicationStatusTasksSubmitted: "00000000-0000-0000-0000-0000000000c3",
+	} {
+		rows, meta, err := repo.ListByProgram(ctx, fixture.ProgramID, models.ProgramApplicationFilter{Status: status})
+		if err != nil || meta.Total != 1 || len(rows) != 1 || rows[0].ApplicationID != want {
+			t.Fatalf("ListByProgram(status %q) = %d rows, meta %+v, err = %v; want only %q", status, len(rows), meta, err, want)
+		}
+	}
+	rows, meta, err := repo.ListByProgram(ctx, fixture.ProgramID, models.ProgramApplicationFilter{Status: models.ProgramApplicationStatus(models.ApplicationStatusPending), Limit: 50})
+	if err != nil || meta.Total != 2 || len(rows) != 2 || rows[0].ApplicationID != "00000000-0000-0000-0000-0000000000c3" {
+		t.Fatalf("ListByProgram(status pending) = %d rows, meta %+v, err = %v; want both pending, tasks submitted first", len(rows), meta, err)
+	}
+}
+
 func indexOutboxFixtureRecord(objectType, objectUID string) domain.IndexOutboxRecord {
 	return domain.IndexOutboxRecord{ObjectType: objectType, ObjectUID: objectUID, Action: "updated", Headers: []byte(`{}`), Data: []byte(`{}`), IndexingConfig: []byte(`{}`)}
 }
