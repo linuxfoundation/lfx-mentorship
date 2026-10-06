@@ -7,8 +7,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/mail"
+	"regexp"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
@@ -20,18 +23,27 @@ import (
 
 var programMemberSvcTracer = otel.Tracer("program-members-service")
 
+const (
+	minCandidateQueryLen = 2
+	maxCandidates        = 10
+)
+
+var lfidPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{1,99}$`)
+
 // ProgramMemberService orchestrates program member reads and writes.
 type ProgramMemberService struct {
 	repo         domain.ProgramMemberRepository
 	programRepo  domain.ProgramRepository
 	users        domain.UserRepository
+	directory    domain.AccountDirectory
 	notifier     domain.Notifier
 	inviteSecret string
 }
 
-// NewProgramMemberService returns a ProgramMemberService.
-func NewProgramMemberService(repo domain.ProgramMemberRepository, programRepo domain.ProgramRepository, users domain.UserRepository, notifier domain.Notifier, inviteSecret string) *ProgramMemberService {
-	return &ProgramMemberService{repo: repo, programRepo: programRepo, users: users, notifier: notifier, inviteSecret: inviteSecret}
+// NewProgramMemberService returns a ProgramMemberService. A nil directory limits
+// invites and candidate search to people who already have a Mentorship user.
+func NewProgramMemberService(repo domain.ProgramMemberRepository, programRepo domain.ProgramRepository, users domain.UserRepository, directory domain.AccountDirectory, notifier domain.Notifier, inviteSecret string) *ProgramMemberService {
+	return &ProgramMemberService{repo: repo, programRepo: programRepo, users: users, directory: directory, notifier: notifier, inviteSecret: inviteSecret}
 }
 
 func (s *ProgramMemberService) assertActiveProgramAdmin(ctx context.Context, programID, actorID string) error {
@@ -127,11 +139,23 @@ func (s *ProgramMemberService) Create(ctx context.Context, programID string, inp
 	defer span.End()
 
 	input.LFID = strings.TrimSpace(input.LFID)
-	if input.UserID == "" && input.LFID == "" {
-		return nil, fmt.Errorf("%w: user_id or lfid is required", domain.ErrInvalidInput)
+	if input.Email != nil {
+		trimmed := strings.TrimSpace(*input.Email)
+		input.Email = &trimmed
+	}
+	// Email identifies the invitee only when no user_id or lfid does.
+	var inviteeEmail string
+	if input.UserID == "" && input.LFID == "" && input.Email != nil {
+		inviteeEmail = *input.Email
+	}
+	if input.UserID == "" && input.LFID == "" && inviteeEmail == "" {
+		return nil, fmt.Errorf("%w: user_id, lfid or email is required", domain.ErrInvalidInput)
 	}
 	if input.UserID != "" && input.LFID != "" {
 		return nil, fmt.Errorf("%w: set user_id or lfid, not both", domain.ErrInvalidInput)
+	}
+	if inviteeEmail != "" && !isEmail(inviteeEmail) {
+		return nil, fmt.Errorf("%w: email is not a valid address", domain.ErrInvalidInput)
 	}
 	if !input.MemberType.IsValid() {
 		return nil, fmt.Errorf("%w: member_type must be program_admin or mentor", domain.ErrInvalidInput)
@@ -147,14 +171,16 @@ func (s *ProgramMemberService) Create(ctx context.Context, programID string, inp
 		return nil, fmt.Errorf("%w: program must be published before adding members", domain.ErrInvalidInput)
 	}
 
-	if input.LFID != "" {
-		user, err := s.users.GetByLFID(ctx, input.LFID)
-		if errors.Is(err, domain.ErrUserNotFound) {
-			return nil, fmt.Errorf("%w: lfid %q has no Mentorship account; they must sign in once before they can be invited", domain.ErrIneligible, input.LFID)
+	if input.UserID == "" {
+		var user *models.User
+		if inviteeEmail != "" {
+			user, err = s.userByEmail(ctx, inviteeEmail)
+		} else {
+			user, err = s.userByLFID(ctx, input.LFID)
 		}
 		if err != nil {
 			span.RecordError(err)
-			return nil, fmt.Errorf("resolve lfid: %w", err)
+			return nil, err
 		}
 		input.UserID = user.ID
 	}
@@ -190,6 +216,145 @@ func (s *ProgramMemberService) Create(ctx context.Context, programID string, inp
 	}
 
 	return m, nil
+}
+
+func (s *ProgramMemberService) userByEmail(ctx context.Context, email string) (*models.User, error) {
+	if s.directory == nil {
+		return nil, fmt.Errorf("%w: LF account lookup is not configured", domain.ErrUpstreamUnavailable)
+	}
+	username, err := s.directory.UsernameByEmail(ctx, email)
+	if errors.Is(err, domain.ErrAccountNotFound) {
+		return nil, fmt.Errorf("%w: no LF account uses email %q", domain.ErrIneligible, email)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("look up LF account by email: %w", err)
+	}
+	return s.userByLFID(ctx, username)
+}
+
+// userByLFID returns the Mentorship user for an LF account, creating it from the
+// account directory when the person has never signed in; sign-in upserts the same row.
+func (s *ProgramMemberService) userByLFID(ctx context.Context, lfid string) (*models.User, error) {
+	user, err := s.users.GetByLFID(ctx, lfid)
+	if err == nil {
+		return user, nil
+	}
+	if !errors.Is(err, domain.ErrUserNotFound) {
+		return nil, fmt.Errorf("resolve lfid: %w", err)
+	}
+	if s.directory == nil {
+		return nil, fmt.Errorf("%w: lfid %q has no Mentorship account; they must sign in once before they can be invited", domain.ErrIneligible, lfid)
+	}
+	if !isLFID(lfid) {
+		return nil, fmt.Errorf("%w: lfid %q is not a valid LF username", domain.ErrInvalidInput, lfid)
+	}
+	account, err := s.directory.Account(ctx, lfid)
+	if errors.Is(err, domain.ErrAccountNotFound) {
+		return nil, fmt.Errorf("%w: lfid %q has no LF account", domain.ErrIneligible, lfid)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("look up LF account: %w", err)
+	}
+	email, err := s.directory.PrimaryEmail(ctx, lfid)
+	if err != nil {
+		return nil, fmt.Errorf("look up LF account email: %w", err)
+	}
+	user, err = s.users.UpsertByLFID(ctx, models.UserCreateInput{
+		LFID:       &account.Username,
+		Email:      &email,
+		Name:       account.Name,
+		GivenName:  account.GivenName,
+		FamilyName: account.FamilyName,
+		AvatarURL:  account.AvatarURL,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create user for lfid %q: %w", lfid, err)
+	}
+	return user, nil
+}
+
+// SearchCandidates returns people a Program Admin can invite: Mentorship users
+// by name, LFID prefix or exact email, then any LF account whose exact email
+// or LFID is the query.
+func (s *ProgramMemberService) SearchCandidates(ctx context.Context, query string) ([]*models.MentorCandidate, error) {
+	ctx, span := programMemberSvcTracer.Start(ctx, "ProgramMemberService.SearchCandidates")
+	defer span.End()
+
+	query = strings.TrimSpace(query)
+	if utf8.RuneCountInString(query) < minCandidateQueryLen {
+		return nil, fmt.Errorf("%w: search must be at least %d characters", domain.ErrInvalidInput, minCandidateQueryLen)
+	}
+
+	users, err := s.users.SearchCandidates(ctx, query, maxCandidates)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("search users: %w", err)
+	}
+	candidates := make([]*models.MentorCandidate, 0, len(users)+1)
+	exact := false
+	for _, u := range users {
+		var lfid, email string
+		if u.LFID != nil {
+			lfid = *u.LFID
+		}
+		if u.Email != nil {
+			email = *u.Email
+		}
+		if strings.EqualFold(lfid, query) || strings.EqualFold(email, query) {
+			exact = true
+		}
+		candidates = append(candidates, &models.MentorCandidate{LFID: lfid, Name: u.Name, AvatarURL: u.AvatarURL})
+	}
+	if exact || s.directory == nil {
+		return candidates, nil
+	}
+
+	account, err := s.lookupAccount(ctx, query)
+	if errors.Is(err, domain.ErrAccountNotFound) {
+		return candidates, nil
+	}
+	if err != nil {
+		span.RecordError(err)
+		return nil, err
+	}
+	for _, c := range candidates {
+		if strings.EqualFold(c.LFID, account.Username) {
+			return candidates, nil
+		}
+	}
+	return append([]*models.MentorCandidate{{LFID: account.Username, Name: account.Name, AvatarURL: account.AvatarURL}}, candidates...), nil
+}
+
+func (s *ProgramMemberService) lookupAccount(ctx context.Context, query string) (*models.LFAccount, error) {
+	username := query
+	switch {
+	case isEmail(query):
+		u, err := s.directory.UsernameByEmail(ctx, query)
+		if err != nil {
+			return nil, fmt.Errorf("look up LF account by email: %w", err)
+		}
+		username = u
+	case !isLFID(query):
+		return nil, domain.ErrAccountNotFound
+	}
+	account, err := s.directory.Account(ctx, username)
+	if err != nil {
+		return nil, fmt.Errorf("look up LF account: %w", err)
+	}
+	return account, nil
+}
+
+func isEmail(s string) bool {
+	addr, err := mail.ParseAddress(s)
+	return err == nil && addr.Name == "" && addr.Address == s
+}
+
+// isLFID also rejects UUIDs, which auth-service would treat as a subject identifier.
+func isLFID(s string) bool {
+	if _, err := uuid.Parse(s); err == nil {
+		return false
+	}
+	return lfidPattern.MatchString(s)
 }
 
 // ListMine returns the caller's own memberships in any status.

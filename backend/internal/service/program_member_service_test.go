@@ -22,7 +22,7 @@ func newMemberSvc(memberRepo *stubMemberRepo, progRepo *stubProgRepo, notifier *
 			return &models.ProgramMember{ProgramID: programID, UserID: userID, MemberType: models.MemberTypeProgramAdmin, Status: &active}, nil
 		}
 	}
-	return service.NewProgramMemberService(memberRepo, progRepo, &stubLFIDUsers{ids: map[string]string{"mentor-lfid": "mentor-1"}}, notifier, "test-secret")
+	return service.NewProgramMemberService(memberRepo, progRepo, &stubLFIDUsers{ids: map[string]string{"mentor-lfid": "mentor-1"}}, nil, notifier, "test-secret")
 }
 
 type stubLFIDUsers struct {

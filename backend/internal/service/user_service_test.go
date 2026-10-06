@@ -38,6 +38,10 @@ func (s *stubUserRepository) UpsertByLFID(context.Context, models.UserCreateInpu
 	return &models.User{}, nil
 }
 
+func (s *stubUserRepository) SearchCandidates(context.Context, string, int) ([]*models.User, error) {
+	return []*models.User{}, nil
+}
+
 func (s *stubUserRepository) Update(ctx context.Context, id string, input models.UserUpdateInput) (*models.User, error) {
 	if s.update != nil {
 		return s.update(ctx, id, input)

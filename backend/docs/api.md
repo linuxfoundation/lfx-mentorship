@@ -1401,18 +1401,42 @@ Add a member to a program.
 **Program Admin flow** (`member_type = "program_admin"`):
 - Record is created with `status = "active"`.
 
-**Request body** (identify the user with `user_id` or `lfid`; sending both is a `400`)
+**Request body** (identify the person with exactly one of `user_id`, `lfid` or, when neither is set, `email`; sending `user_id` and `lfid` together is a `400`)
 ```json
 {
-  "lfid":        "alice",      // or "user_id": "uuid"; surrounding whitespace is trimmed; 422 if they have never signed in
+  "lfid":        "alice",      // or "user_id": "uuid", or only "email"; surrounding whitespace is trimmed
   "member_type": "mentor",     // required; "program_admin" | "mentor"
   "status":      "requested",  // optional; if omitted, defaults per member_type above
   "email":       "mentor@example.com"
 }
 ```
 
+Anyone with an LF account can be invited, whether or not they have used
+Mentorship. An `email` is resolved to its LF account through auth-service,
+matching the account's primary or linked emails. When the account has no
+Mentorship user yet, one is created from auth-service (LFID, name, avatar and
+primary email); their first sign-in updates that same row. The invite email
+goes to the account's primary email.
+
 **Response** `201` → `<ProgramMember>`  
-**Errors** `400`, `404` (program not found), `409` (the user already has a row of this `member_type` on the program), `422` (the `lfid` has no Mentorship account: they must sign in once before they can be invited)
+**Errors** `400`, `404` (program not found), `409` (the user already has a row of this `member_type` on the program, or another Mentorship user already holds the account's primary email), `422` (no LF account has that `lfid` or `email`), `503` (auth-service is unreachable)
+
+---
+
+#### `GET /v1/programs/{id}/mentor-candidates?search=` 🔒
+
+Typeahead for the invite dialog; requires program `writer`. `search` must be at
+least 2 characters. Returns up to 10 Mentorship users matching part of a name,
+an LFID prefix or a whole email. When none of them is an exact LFID or email
+match and `search` is a whole email or an LFID, the matching LF account from
+auth-service is listed first, so people who have never used Mentorship are
+found by exact email or LFID only. Emails are never returned.
+
+**Response** `200`
+```json
+{ "data": [ { "lfid": "alice", "name": "Alice Example", "avatar_url": "https://…" } ] }
+```
+**Errors** `400` (search too short), `401`, `403`, `503` (auth-service is unreachable)
 
 ---
 

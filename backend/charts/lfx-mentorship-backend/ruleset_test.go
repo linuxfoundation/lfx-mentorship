@@ -282,6 +282,29 @@ func TestResendInviteRequiresProgramWriter(t *testing.T) {
 	}
 }
 
+func TestMentorCandidatesRequiresProgramWriter(t *testing.T) {
+	block := ruleBlock(t, "program-mentor-candidates")
+	if strings.Count(block, "- path:") != 1 || !strings.Contains(block, "- path: /mentorship/v1/programs/:id/mentor-candidates\n") {
+		t.Errorf("mentor-candidates rule must cover only its route:\n%s", block)
+	}
+	if !strings.Contains(block, "methods: [GET]\n") {
+		t.Errorf("mentor-candidates rule must allow only GET:\n%s", block)
+	}
+	for _, want := range []string{
+		"- authenticator: oidc",
+		"- authorizer: openfga_check",
+		`object: 'mentorship_program:{{ "{{- .Request.URL.Captures.id -}}" }}'`,
+		"relation: writer",
+	} {
+		if !strings.Contains(block, want) {
+			t.Errorf("mentor-candidates rule lacks %q:\n%s", want, block)
+		}
+	}
+	if strings.Contains(block, "anonymous_authenticator") || strings.Contains(block, "allow_all") {
+		t.Errorf("mentor-candidates rule must not admit anonymous or unchecked callers:\n%s", block)
+	}
+}
+
 func TestMeProgramMembershipRulesNeedOnlyASignedInUser(t *testing.T) {
 	for id, route := range map[string]string{
 		"me-program-memberships":         "/mentorship/v1/me/program-memberships",
