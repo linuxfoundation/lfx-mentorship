@@ -221,6 +221,8 @@ def resolve_lf_projects(projects: list) -> dict:
 
             async def project_field(subject: str, uid: str) -> str | None:
                 reply = await ask(subject, uid)
+                if not reply:
+                    raise RuntimeError(f"{subject} {uid}: empty reply")
                 if not reply.startswith("{"):
                     return reply
                 # project-service answers failures with a JSON error body instead of a value.
@@ -229,9 +231,16 @@ def resolve_lf_projects(projects: list) -> dict:
                     return None
                 raise RuntimeError(f"{subject} {uid}: {reply}")
 
+            async def v1_project_uid(sfid: str) -> str | None:
+                reply = await ask("lfx.lookup_v1_mapping", f"project.sfid.{sfid}")
+                # An empty reply means no mapping; anything else that is not a UUID is a lookup failure.
+                if reply and not _strict_uuid(reply):
+                    raise RuntimeError(f"lfx.lookup_v1_mapping project.sfid.{sfid}: {reply}")
+                return _strict_uuid(reply)
+
             resolved: dict = {}
             for value in values:
-                uid = _strict_uuid(value) or _strict_uuid(await ask("lfx.lookup_v1_mapping", f"project.sfid.{value}"))
+                uid = _strict_uuid(value) or await v1_project_uid(value)
                 slug = await project_field("lfx.projects-api.get_slug", uid) if uid else None
                 if not slug:
                     log.warning("UNMAPPED_LF_PROJECT project_identifier=%s", value)
