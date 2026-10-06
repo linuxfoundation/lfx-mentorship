@@ -102,7 +102,7 @@ func (r *UserRepository) SearchCandidates(ctx context.Context, query string, lim
 		SELECT id, email, lfid, name, given_name, family_name, avatar_url, created_on, updated_on
 		FROM users
 		WHERE lfid IS NOT NULL
-		  AND (name ILIKE '%' || $1 || '%' OR lfid ILIKE $1 || '%' OR lower(email) = lower($2))
+		  AND (name ILIKE '%' || $1 || '%' OR lfid ILIKE $1 || '%')
 		ORDER BY lower(lfid) = lower($2) DESC, name NULLS LAST, lfid
 		LIMIT $3`, pattern, query, limit)
 	if err != nil {

@@ -32,7 +32,7 @@ func TestUserRepository_SearchCandidates(t *testing.T) {
 		"name substring":          {"hopper", []string{"cand_grace"}},
 		"lfid prefix":             {"cand", []string{"cand_grace", "candxgracie"}},
 		"underscore is literal":   {"cand_", []string{"cand_grace"}},
-		"whole email":             {"GRACE.cand@example.org", []string{"cand_grace"}},
+		"whole email no match":    {"GRACE.cand@example.org", nil},
 		"partial email no match":  {"cand@example.org", nil},
 		"rows without lfid omit":  {"nolfid", nil},
 		"exact lfid ranked first": {"candxgracie", []string{"candxgracie"}},

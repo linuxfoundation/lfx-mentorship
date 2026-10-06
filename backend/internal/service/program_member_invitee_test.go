@@ -208,18 +208,22 @@ func TestProgramMemberService_SearchCandidates(t *testing.T) {
 		}
 	})
 
-	t.Run("exact local match skips auth-service", func(t *testing.T) {
-		dir := newDirectory()
-		got, err := newInviteSvc(&stubInviteeUsers{found: []*models.User{local}}, dir, &stubMemberRepo{}, &stubNotifier{}).SearchCandidates(context.Background(), "ADA.local@example.org")
-		if err != nil || len(got) != 1 || got[0].LFID != "ada-local" || dir.calls != 0 {
-			t.Fatalf("got %v, err %v, calls %d; want only ada-local and no auth-service call", got, err, dir.calls)
+	t.Run("email resolves only to the account auth-service names", func(t *testing.T) {
+		claimed := &models.User{LFID: ptr("impostor"), Name: ptr("Impostor"), Email: ptr("ada@example.org")}
+		got, err := newInviteSvc(&stubInviteeUsers{found: []*models.User{claimed, local}}, newDirectory(), &stubMemberRepo{}, &stubNotifier{}).SearchCandidates(context.Background(), "ada@example.org")
+		if err != nil || len(got) != 1 || got[0].LFID != "ada" || *got[0].Name != "Ada Lovelace" {
+			t.Fatalf("got %v, err %v; want only ada", got, err)
 		}
 	})
 
-	t.Run("email finds an LF account first", func(t *testing.T) {
-		got, err := newInviteSvc(&stubInviteeUsers{found: []*models.User{local}}, newDirectory(), &stubMemberRepo{}, &stubNotifier{}).SearchCandidates(context.Background(), "ada@example.org")
-		if err != nil || len(got) != 2 || got[0].LFID != "ada" || *got[0].Name != "Ada Lovelace" || got[1].LFID != "ada-local" {
-			t.Fatalf("got %v, err %v; want ada then ada-local", got, err)
+	t.Run("email errors", func(t *testing.T) {
+		got, err := newInviteSvc(&stubInviteeUsers{found: []*models.User{local}}, newDirectory(), &stubMemberRepo{}, &stubNotifier{}).SearchCandidates(context.Background(), "ada.local@example.org")
+		if err != nil || len(got) != 0 {
+			t.Errorf("unknown email: got %v, err %v; want empty", got, err)
+		}
+		_, err = newInviteSvc(&stubInviteeUsers{found: []*models.User{local}}, nil, &stubMemberRepo{}, &stubNotifier{}).SearchCandidates(context.Background(), "ada.local@example.org")
+		if !errors.Is(err, domain.ErrUpstreamUnavailable) {
+			t.Errorf("no directory: err = %v; want ErrUpstreamUnavailable", err)
 		}
 	})
 

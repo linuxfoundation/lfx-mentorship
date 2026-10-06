@@ -288,9 +288,9 @@ func (s *ProgramMemberService) userByLFID(ctx context.Context, lfid string) (*mo
 	return user, nil
 }
 
-// SearchCandidates returns people a Program Admin can invite: Mentorship users
-// by name, LFID prefix or exact email, then any LF account whose exact email
-// or LFID is the query.
+// SearchCandidates returns people a Program Admin can invite: for a whole email,
+// only the LF account auth-service resolves it to; otherwise Mentorship users by
+// name or LFID prefix, then any LF account whose LFID is the query.
 func (s *ProgramMemberService) SearchCandidates(ctx context.Context, query string) ([]*models.MentorCandidate, error) {
 	ctx, span := programMemberSvcTracer.Start(ctx, "ProgramMemberService.SearchCandidates")
 	defer span.End()
@@ -298,6 +298,22 @@ func (s *ProgramMemberService) SearchCandidates(ctx context.Context, query strin
 	query = strings.TrimSpace(query)
 	if utf8.RuneCountInString(query) < minCandidateQueryLen {
 		return nil, fmt.Errorf("%w: search must be at least %d characters", domain.ErrInvalidInput, minCandidateQueryLen)
+	}
+
+	// users.email is self-editable, so only auth-service can say who owns an address.
+	if isEmail(query) {
+		if s.directory == nil {
+			return nil, fmt.Errorf("%w: LF account lookup is not configured", domain.ErrUpstreamUnavailable)
+		}
+		account, err := s.lookupAccount(ctx, query)
+		if errors.Is(err, domain.ErrAccountNotFound) {
+			return []*models.MentorCandidate{}, nil
+		}
+		if err != nil {
+			span.RecordError(err)
+			return nil, err
+		}
+		return []*models.MentorCandidate{{LFID: account.Username, Name: account.Name, AvatarURL: account.AvatarURL}}, nil
 	}
 
 	users, err := s.users.SearchCandidates(ctx, query, maxCandidates)
@@ -308,14 +324,11 @@ func (s *ProgramMemberService) SearchCandidates(ctx context.Context, query strin
 	candidates := make([]*models.MentorCandidate, 0, len(users)+1)
 	exact := false
 	for _, u := range users {
-		var lfid, email string
+		var lfid string
 		if u.LFID != nil {
 			lfid = *u.LFID
 		}
-		if u.Email != nil {
-			email = *u.Email
-		}
-		if strings.EqualFold(lfid, query) || strings.EqualFold(email, query) {
+		if strings.EqualFold(lfid, query) {
 			exact = true
 		}
 		candidates = append(candidates, &models.MentorCandidate{LFID: lfid, Name: u.Name, AvatarURL: u.AvatarURL})

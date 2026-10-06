@@ -1426,11 +1426,12 @@ goes to the account's primary email.
 #### `GET /v1/programs/{id}/mentor-candidates?search=` 🔒
 
 Typeahead for the invite dialog; requires program `writer`. `search` must be at
-least 2 characters. Returns up to 10 Mentorship users matching part of a name,
-an LFID prefix or a whole email. When none of them is an exact LFID or email
-match and `search` is a whole email or an LFID, the matching LF account from
-auth-service is listed first, so people who have never used Mentorship are
-found by exact email or LFID only. Emails are never returned.
+least 2 characters. A whole email is resolved only through auth-service and
+returns at most the one LF account that owns it, because Mentorship users can
+edit their stored email. Any other `search` returns up to 10 Mentorship users
+matching part of a name or an LFID prefix; when none is an exact LFID match and
+`search` is an LFID, the matching LF account from auth-service is listed first.
+Emails are never returned.
 
 **Response** `200`
 ```json

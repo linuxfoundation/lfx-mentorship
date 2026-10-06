@@ -16,7 +16,7 @@ type UserRepository interface {
 	List(ctx context.Context, filter models.UserFilter) ([]*models.User, *models.PaginationMeta, error)
 	Create(ctx context.Context, input models.UserCreateInput) (*models.User, error)
 	UpsertByLFID(ctx context.Context, input models.UserCreateInput) (*models.User, error)
-	// SearchCandidates matches part of a name, an LFID prefix, or a whole email, never part of an email.
+	// SearchCandidates matches part of a name or an LFID prefix, never an email.
 	SearchCandidates(ctx context.Context, query string, limit int) ([]*models.User, error)
 	Update(ctx context.Context, id string, input models.UserUpdateInput) (*models.User, error)
 	Delete(ctx context.Context, id string) error
