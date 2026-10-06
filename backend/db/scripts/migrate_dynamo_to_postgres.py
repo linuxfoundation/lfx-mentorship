@@ -242,11 +242,13 @@ def resolve_lf_projects(projects: list) -> dict:
             for value in values:
                 uid = _strict_uuid(value) or await v1_project_uid(value)
                 slug = await project_field("lfx.projects-api.get_slug", uid) if uid else None
-                if not slug:
+                # A project deleted between the two lookups answers get_name with not_found.
+                name = await project_field("lfx.projects-api.get_name", uid) if slug else None
+                if not name:
                     log.warning("UNMAPPED_LF_PROJECT project_identifier=%s", value)
                     resolved[value] = None
                     continue
-                resolved[value] = (uid, slug, await project_field("lfx.projects-api.get_name", uid))
+                resolved[value] = (uid, slug, name)
             return resolved
         finally:
             await nc.close()
