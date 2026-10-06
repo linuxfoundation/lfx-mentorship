@@ -171,6 +171,17 @@ func (s *ProgramMemberService) Create(ctx context.Context, programID string, inp
 		return nil, fmt.Errorf("%w: program must be published before adding members", domain.ErrInvalidInput)
 	}
 
+	// Mentors are placed in 'invited' status and notified; program_admins are 'active' immediately.
+	if input.Status == nil {
+		defaultStatus := models.ProgramMemberStatusActive
+		if input.MemberType == models.MemberTypeMentor {
+			defaultStatus = models.ProgramMemberStatusInvited
+		}
+		input.Status = &defaultStatus
+	} else if !input.Status.IsValid() {
+		return nil, fmt.Errorf("%w: invalid member status %q", domain.ErrInvalidInput, *input.Status)
+	}
+
 	if input.UserID == "" {
 		var user *models.User
 		if inviteeEmail != "" {
@@ -183,17 +194,6 @@ func (s *ProgramMemberService) Create(ctx context.Context, programID string, inp
 			return nil, err
 		}
 		input.UserID = user.ID
-	}
-
-	// Mentors are placed in 'invited' status and notified; program_admins are 'active' immediately.
-	if input.Status == nil {
-		defaultStatus := models.ProgramMemberStatusActive
-		if input.MemberType == models.MemberTypeMentor {
-			defaultStatus = models.ProgramMemberStatusInvited
-		}
-		input.Status = &defaultStatus
-	} else if !input.Status.IsValid() {
-		return nil, fmt.Errorf("%w: invalid member status %q", domain.ErrInvalidInput, *input.Status)
 	}
 
 	input.ID = uuid.New().String()

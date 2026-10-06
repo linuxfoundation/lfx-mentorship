@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
@@ -159,6 +160,7 @@ func TestProgramMemberService_Create_RefreshesExistingUserEmail(t *testing.T) {
 }
 
 func TestProgramMemberService_Create_InviteeErrors(t *testing.T) {
+	badStatus := models.ProgramMemberStatus("bogus")
 	for name, tc := range map[string]struct {
 		input     models.ProgramMemberCreateInput
 		directory *stubDirectory
@@ -174,6 +176,8 @@ func TestProgramMemberService_Create_InviteeErrors(t *testing.T) {
 		"email without dir":             {input: models.ProgramMemberCreateInput{Email: ptr("ada@example.org")}, noDir: true, want: domain.ErrUpstreamUnavailable},
 		"lfid without dir":              {input: models.ProgramMemberCreateInput{LFID: "ada"}, noDir: true, want: domain.ErrIneligible},
 		"nothing identifies":            {input: models.ProgramMemberCreateInput{Email: ptr("  ")}, directory: newDirectory(), want: domain.ErrInvalidInput},
+		"invalid status, new lfid":      {input: models.ProgramMemberCreateInput{LFID: "ada", Status: &badStatus}, directory: newDirectory(), want: domain.ErrInvalidInput},
+		"invalid status, email":         {input: models.ProgramMemberCreateInput{Email: ptr("mentor@example.org"), Status: &badStatus}, directory: newDirectory(), want: domain.ErrInvalidInput},
 	} {
 		tc.input.MemberType = models.MemberTypeMentor
 		created := false
@@ -192,8 +196,8 @@ func TestProgramMemberService_Create_InviteeErrors(t *testing.T) {
 		if !errors.Is(err, tc.want) || created || users.upserted != nil {
 			t.Errorf("%s: err = %v, created = %v, upserted = %v; want %v and no writes", name, err, created, users.upserted != nil, tc.want)
 		}
-		if name == "uuid lfid" && tc.directory.calls != 0 {
-			t.Errorf("uuid lfid reached auth-service %d times", tc.directory.calls)
+		if (name == "uuid lfid" || strings.HasPrefix(name, "invalid status")) && tc.directory.calls != 0 {
+			t.Errorf("%s reached auth-service %d times", name, tc.directory.calls)
 		}
 	}
 }
