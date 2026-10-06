@@ -396,7 +396,7 @@ User profiles represent a participant's mentorship identity. `profile_type = men
 }
 ```
 
-The `address`, `demographics`, `socioeconomics`, `skill_set`, and `profile_links` fields are free-form JSON objects stored as JSONB. `skill_set.skills` and `skill_set.improvementSkills`, when present, must be arrays of non-empty strings; any other shape is rejected with `400`.
+The `address`, `demographics`, `socioeconomics`, `skill_set`, and `profile_links` fields are free-form JSON objects stored as JSONB. `skill_set` must be an object or `null`, and `skill_set.skills` and `skill_set.improvementSkills` must each be absent, `null`, or an array of non-empty strings; any other shape is rejected with `400`.
 
 ### Endpoints
 
