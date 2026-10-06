@@ -149,6 +149,15 @@ def test_user_keeps_only_newest_mentee_profile(monkeypatch):
     assert sorted((row[0], row[2]) for row in captured[0]) == [(NEW_MENTEE, "mentee"), (MENTOR, "mentor")]
 
 
+def test_created_at_tie_keeps_highest_id(monkeypatch):
+    captured = []
+    monkeypatch.setattr(m.psycopg2.extras, "execute_batch", lambda cur, sql, rows, page_size=0: captured.append(rows))
+    cur = types.SimpleNamespace(execute=lambda sql, args: None, rowcount=0)
+    tied = [{"id": pid, "userId": USER, "type": "mentee", "createdAt": "2024-02-01T00:00:00Z"} for pid in (NEW_MENTEE, OLD_MENTEE)]
+    m.migrate_user_profiles(cur, tied, {USER}, _Files())
+    assert [row[0] for row in captured[0]] == [NEW_MENTEE]
+
+
 DSN = os.environ.get("MIGRATION_TEST_PG_DSN")
 
 
