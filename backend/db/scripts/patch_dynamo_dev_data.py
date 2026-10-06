@@ -59,20 +59,10 @@ def main() -> None:
     parser.add_argument("--region", default="us-east-1")
     parser.add_argument("--table-prefix", default="jobspring-dev")
     parser.add_argument("--apply", action="store_true", help="write changes; default is dry-run")
-    # FGA inherits program access from the project, so it must exist in project-service.
-    parser.add_argument("--project-uid", help="real dev LF project UID for programs without one")
-    parser.add_argument("--project-slug")
-    parser.add_argument("--project-name")
-    parser.add_argument("--project-logo-url")
     args = parser.parse_args()
-    if args.apply and not all((args.project_uid, args.project_slug, args.project_name)):
-        parser.error("--project-uid, --project-slug, and --project-name are required with --apply")
-    if args.project_uid and not UUID_RE.match(args.project_uid):
-        parser.error("--project-uid must be a UUID")
 
     dynamo = cast(DynamoResource, boto3.resource("dynamodb", region_name=args.region))
     table = lambda suffix: dynamo.Table(f"{args.table_prefix}-{suffix}")
-    projects = table("projects")
     members = table("project-members")
     terms = table("program-terms")
     mentees = table("program-term-mentees")
@@ -80,7 +70,6 @@ def main() -> None:
     profiles = table("user-profiles")
     users = table("users")
 
-    project_rows = scan(projects)
     member_rows = scan(members)
     term_rows = scan(terms)
     mentee_rows = scan(mentees)
@@ -144,52 +133,15 @@ def main() -> None:
                 }
             )
 
-    # The legacy UID fields, minus lfProjectUid, which this script owns.
-    def genuine_project_uid(row: dict) -> str | None:
-        linked = row.get("project") if isinstance(row.get("project"), dict) else {}
-        try:
-            program_uid = str(uuid.UUID(str(row.get("projectId", "")).strip()))
-        except ValueError:
-            program_uid = None
-        for value in (
-            row.get("projectUid"),
-            row.get("lfProjectId"),
-            row.get("lfProjectUID"),
-            linked.get("id"),
-        ):
-            try:
-                uid = str(uuid.UUID(str(value or "").strip()))
-            except ValueError:
-                continue
-            if uid != program_uid:
-                return uid
-        return None
-
-    # A genuine legacy UID is copied into lfProjectUid so it outranks any value an
-    # earlier run fabricated there; every other row links to --project-uid.
-    genuine_repairs: list[tuple[str, str]] = []
-    project_repairs = []
-    for row in sorted(project_rows, key=lambda project: project["projectId"]):
-        genuine = genuine_project_uid(row)
-        if genuine:
-            if row.get("lfProjectUid") != genuine:
-                genuine_repairs.append((row["projectId"], genuine))
-            continue
-        if all((args.project_uid, args.project_slug, args.project_name)) and (
-            row.get("lfProjectUid"), row.get("lfProjectSlug"), row.get("lfProjectName"), row.get("lfProjectLogoUrl")
-        ) == (
-            args.project_uid, args.project_slug, args.project_name, args.project_logo_url
-        ):
-            continue
-        project_repairs.append(row["projectId"])
-
+    # Program project links are not repaired here: lfProjectId, lfProjectName and
+    # lfProjectLogo are the source fields, and the importer resolves lfProjectId.
     enum_repairs = [
         row["id"]
         for row in task_rows
         if row.get("status") in {"inProgress", "completed"}
         or row.get("category") == "nonPrerequisite"
     ]
-    print(f"projects={len(project_repairs)} genuine_project_links={len(genuine_repairs)} synthetic_users={len(synthetic_users)} member_repairs={len(member_repairs)} profile_repairs={len(profile_repairs)} application_repairs={len(application_repairs)} task_repairs={len(task_repairs)} enum_repairs={len(enum_repairs)} apply={args.apply}")
+    print(f"synthetic_users={len(synthetic_users)} member_repairs={len(member_repairs)} profile_repairs={len(profile_repairs)} application_repairs={len(application_repairs)} task_repairs={len(task_repairs)} enum_repairs={len(enum_repairs)} apply={args.apply}")
     if not args.apply:
         return
 
@@ -217,18 +169,6 @@ def main() -> None:
             names = {f"#{key}": key for key in values}
             expr = "SET " + ", ".join(f"#{key} = :{key}" for key in values)
             tasks.update_item(Key={"id": row["id"]}, UpdateExpression=expr, ExpressionAttributeNames=names, ExpressionAttributeValues={f":{key}": value for key, value in values.items()})
-    project_values = {":uid": args.project_uid, ":slug": args.project_slug, ":name": args.project_name}
-    project_update = "SET lfProjectUid = :uid, lfProjectSlug = :slug, lfProjectName = :name"
-    # The logo belongs to the project link being replaced, so a stale one must not survive it.
-    if args.project_logo_url:
-        project_values[":logo"] = args.project_logo_url
-        project_update += ", lfProjectLogoUrl = :logo"
-    else:
-        project_update += " REMOVE lfProjectLogoUrl"
-    for project_id in project_repairs:
-        projects.update_item(Key={"projectId": project_id}, UpdateExpression=project_update, ExpressionAttributeValues=project_values)
-    for project_id, uid in genuine_repairs:
-        projects.update_item(Key={"projectId": project_id}, UpdateExpression="SET lfProjectUid = :uid", ExpressionAttributeValues={":uid": uid})
     print("status=applied")
 
 
