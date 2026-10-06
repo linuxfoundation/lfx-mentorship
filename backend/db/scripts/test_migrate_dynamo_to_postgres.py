@@ -128,6 +128,36 @@ def test_selection_skips_rejected_and_self_referencing_candidates(monkeypatch):
     assert rows[projects[2]["projectId"]][1:5] == (TPG, "test-project-group", "TPG", None)
 
 
+USER = "22222222-2222-4222-8222-222222222222"
+OLD_MENTEE = "33333333-3333-4333-8333-333333333333"
+NEW_MENTEE = "44444444-4444-4444-8444-444444444444"
+UNDATED_MENTEE = "55555555-5555-4555-8555-555555555555"
+MENTOR = "66666666-6666-4666-8666-666666666666"
+DUPLICATE_PROFILES = [
+    {"id": NEW_MENTEE, "userId": USER, "type": "mentee", "createdAt": "2024-02-01T00:00:00Z"},
+    {"id": OLD_MENTEE, "userId": USER, "type": "mentee", "createdAt": "2023-01-01T00:00:00Z"},
+    {"id": UNDATED_MENTEE, "userId": USER, "type": "mentee"},
+    {"id": MENTOR, "userId": USER, "type": "mentor", "createdAt": "2022-01-01T00:00:00Z"},
+]
+
+
+def test_user_keeps_only_newest_mentee_profile(monkeypatch):
+    captured = []
+    monkeypatch.setattr(m.psycopg2.extras, "execute_batch", lambda cur, sql, rows, page_size=0: captured.append(rows))
+    cur = types.SimpleNamespace(execute=lambda sql, args: None, rowcount=0)
+    m.migrate_user_profiles(cur, DUPLICATE_PROFILES, {USER}, _Files())
+    assert sorted((row[0], row[2]) for row in captured[0]) == [(NEW_MENTEE, "mentee"), (MENTOR, "mentor")]
+
+
+def test_created_at_tie_keeps_highest_id(monkeypatch):
+    captured = []
+    monkeypatch.setattr(m.psycopg2.extras, "execute_batch", lambda cur, sql, rows, page_size=0: captured.append(rows))
+    cur = types.SimpleNamespace(execute=lambda sql, args: None, rowcount=0)
+    tied = [{"id": pid, "userId": USER, "type": "mentee", "createdAt": "2024-02-01T00:00:00Z"} for pid in (NEW_MENTEE, OLD_MENTEE)]
+    m.migrate_user_profiles(cur, tied, {USER}, _Files())
+    assert [row[0] for row in captured[0]] == [NEW_MENTEE]
+
+
 DSN = os.environ.get("MIGRATION_TEST_PG_DSN")
 
 
@@ -163,3 +193,16 @@ def test_upsert_keeps_logo_when_same_parent_resolves_through_another_field(curso
 def test_upsert_replaces_metadata_when_parent_changes(cursor):
     upsert(cursor, {SFID: (CNCF, "cncf", "CNCF")}, lfProjectId=SFID, lfProjectLogo="https://logo/a.svg")
     assert upsert(cursor, {TPG: (TPG, "test-project-group", "TPG")}, lfProjectUid=TPG) == (TPG, "test-project-group", "TPG", None)
+
+
+def test_duplicate_mentee_profiles_import_under_unique_index(cursor):
+    m.migrate_user_profiles(cursor, DUPLICATE_PROFILES, set(), _Files())
+    cursor.execute("SELECT id::text, profile_type FROM user_profiles WHERE user_id = %s ORDER BY profile_type", (USER,))
+    assert cursor.fetchall() == [(NEW_MENTEE, "mentee"), (MENTOR, "mentor")]
+
+
+def test_rerun_replaces_mentee_profile_when_keeper_changes(cursor):
+    m.migrate_user_profiles(cursor, DUPLICATE_PROFILES[1:], set(), _Files())
+    m.migrate_user_profiles(cursor, DUPLICATE_PROFILES, set(), _Files())
+    cursor.execute("SELECT id::text, profile_type FROM user_profiles WHERE user_id = %s ORDER BY profile_type", (USER,))
+    assert cursor.fetchall() == [(NEW_MENTEE, "mentee"), (MENTOR, "mentor")]

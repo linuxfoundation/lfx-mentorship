@@ -341,7 +341,7 @@ func (r *ApplicationRepository) Reapply(ctx context.Context, oldID, programTermI
 // is left untouched — its reviewer note, evaluation, and tasks stay on it as history — because
 // reapplying is an applicant-driven action, and the applicant holds no relation that permits
 // writing (or even reading) reviewer-owned data. Deleting or rewriting the old row here would let
-// the applicant erase it. Coexistence is allowed by uq_applications_active (migration 006), which
+// the applicant erase it. Coexistence is allowed by uq_applications_active (migration 001), which
 // keeps one non-withdrawn application per (term, user, role) and any number of withdrawn ones.
 func (r *ApplicationRepository) ReapplyWithTasks(ctx context.Context, oldID, programTermID string, input models.ApplicationCreateInput, tasks []models.TaskCreateInput) (*models.Application, error) {
 	ctx, span := applicationTracer.Start(ctx, "db.applications.Reapply")

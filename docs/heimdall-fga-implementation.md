@@ -329,10 +329,10 @@ reported row. Reports include:
 
 The most recent dev import observed at least 34 programs without `project_uid`
 and 366 tasks without `application_id`. Those objects cannot have complete
-authorization inheritance and must not be treated as cutover-ready. Migration
-004 moves parentless tasks into `quarantined_tasks` and makes
-`tasks.application_id` `NOT NULL`; the importer writes unmatched tasks there
-too. A repaired task is restored by inserting it into `tasks` with its
+authorization inheritance and must not be treated as cutover-ready. The
+schema (`001_initial.up.sql`) defines `quarantined_tasks` and makes
+`tasks.application_id` `NOT NULL`; the importer writes parentless tasks there.
+A repaired task is restored by inserting it into `tasks` with its
 application and deleting its quarantine row.
 
 The relays must be running before the seed commits so that new writes and seed
@@ -436,7 +436,7 @@ Not yet validated end to end:
 
 - [ ] Resolve every missing program `project_uid` or explicitly quarantine the
   program from gateway-backed workflows.
-- [ ] Repair or accept the tasks migration 004 moves into `quarantined_tasks`.
+- [ ] Repair or accept the tasks the importer holds in `quarantined_tasks`.
 - [ ] Resolve all missing LFIDs reported for members, applicants, assignees, and
   approvers.
 - [ ] Resolve historical ambiguous mentor rows; do not turn pending invitations
