@@ -62,13 +62,15 @@ const mentorEligibleCTE = `
 			COALESCE(u.avatar_url, up.logo_url) AS avatar_url,
 			up.introduction,
 			COALESCE((
-				SELECT ARRAY_AGG(s ORDER BY s)
-				FROM jsonb_array_elements_text(
+				SELECT ARRAY_AGG(e #>> '{}' ORDER BY e #>> '{}')
+				FROM jsonb_array_elements(
 					CASE
 						WHEN jsonb_typeof(up.skill_set->'skills') = 'array' THEN up.skill_set->'skills'
 						ELSE '[]'::jsonb
 					END
-				) AS s
+				) AS e
+				-- A null element would scan as NULL into []string and fail the whole page.
+				WHERE jsonb_typeof(e) = 'string'
 			), '{}') AS skills
 		FROM joined j
 		LEFT JOIN users u ON u.id = j.user_id
