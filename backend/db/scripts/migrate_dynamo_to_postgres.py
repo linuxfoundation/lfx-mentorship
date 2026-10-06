@@ -484,13 +484,26 @@ def migrate_users(cur, users: list, files: lo.LegacyFileRewriter) -> set:
 def migrate_user_profiles(cur, profiles: list, known_user_ids: set, files: lo.LegacyFileRewriter) -> dict:
     """
     Upsert user_profiles; return {user_profile_id: user_id} for program_admins.
-    Rows with recordKind='github-profile-reservation' are skipped.
+    Rows with recordKind='github-profile-reservation' are skipped, and a user
+    with several mentee profiles keeps only the newest by (createdAt, id).
     """
     log.info("Migrating user_profiles (%d raw rows) ...", len(profiles))
     rows = []
     profile_map: dict = {}  # profile_id → user_id
     seen_slugs: set = set()
     skipped = 0
+    duplicates = 0
+
+    # uq_user_profiles_user_type allows one mentee profile per user.
+    mentee_keeper: dict = {}  # user_id → (created_on, profile_id)
+    for p in profiles:
+        if p.get("recordKind") == "github-profile-reservation" or _map_profile_type(p.get("type")) != "mentee":
+            continue
+        pid, uid = _as_uuid(p.get("id")), _as_uuid(p.get("userId"))
+        if pid and uid:
+            key = (_parse_ts(p.get("createdAt")) or datetime.min.replace(tzinfo=timezone.utc), pid)
+            if uid not in mentee_keeper or key > mentee_keeper[uid]:
+                mentee_keeper[uid] = key
 
     for p in profiles:
         if p.get("recordKind") == "github-profile-reservation":
@@ -500,6 +513,9 @@ def migrate_user_profiles(cur, profiles: list, known_user_ids: set, files: lo.Le
         uid = _as_uuid(p.get("userId"))
         if not pid:
             skipped += 1
+            continue
+        if uid in mentee_keeper and _map_profile_type(p.get("type")) == "mentee" and mentee_keeper[uid][1] != pid:
+            duplicates += 1
             continue
         # Insert placeholder user if user_id is referenced but not in users table
         if uid and uid not in known_user_ids:
@@ -577,7 +593,7 @@ def migrate_user_profiles(cur, profiles: list, known_user_ids: set, files: lo.Le
         rows,
         page_size=500,
     )
-    log.info("  → %d user_profiles upserted, %d skipped", len(rows), skipped)
+    log.info("  → %d user_profiles upserted, %d skipped, %d duplicate mentee profiles dropped", len(rows), skipped, duplicates)
     return profile_map
 
 
