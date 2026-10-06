@@ -69,7 +69,7 @@ complete before any story work begins.
 
 ## Phase 3: User Story 1 — Program & Term Lifecycle (Priority: P1) 🎯 MVP
 
-**Goal**: Program Admins can take a program through the full lifecycle (draft → published →
+**Goal**: Program Admins can take a program through the full lifecycle (pending → published →
 hidden → archived), terms enforce the 4-open cap and close guard, and terms return a
 computed discovery label.
 

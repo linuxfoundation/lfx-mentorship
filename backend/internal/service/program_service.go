@@ -57,10 +57,10 @@ func (s *ProgramService) SetCrowdfundingClient(client clients.CrowdfundingClient
 
 // programTransitions defines the valid next states for each program status.
 var programTransitions = map[models.ProgramStatus][]models.ProgramStatus{
-	models.ProgramStatusDraft:     {models.ProgramStatusSubmitted},
+	models.ProgramStatusPending:   {models.ProgramStatusSubmitted},
 	models.ProgramStatusSubmitted: {models.ProgramStatusPublished, models.ProgramStatusRejected},
 	models.ProgramStatusPublished: {models.ProgramStatusArchived, models.ProgramStatusHidden},
-	models.ProgramStatusRejected:  {models.ProgramStatusSubmitted}, // resubmit directly; no detour through draft
+	models.ProgramStatusRejected:  {models.ProgramStatusSubmitted}, // resubmit directly; no detour through pending
 	models.ProgramStatusArchived:  {},
 	models.ProgramStatusHidden:    {models.ProgramStatusPublished, models.ProgramStatusArchived},
 }
@@ -212,7 +212,7 @@ func (s *ProgramService) GetCatalog(ctx context.Context, id string) (*models.Pro
 		span.RecordError(err)
 		return nil, fmt.Errorf("get program catalog: %w", err)
 	}
-	if item.Status != models.ProgramStatusPublished && item.Status != models.ProgramStatusDraft {
+	if item.Status != models.ProgramStatusPublished && item.Status != models.ProgramStatusPending {
 		return nil, fmt.Errorf("get program catalog: %w", domain.ErrProgramNotFound)
 	}
 	applyCatalogLabels([]*models.ProgramCatalogItem{item}, time.Now())
@@ -281,7 +281,7 @@ func (s *ProgramService) Create(ctx context.Context, input models.ProgramCreateI
 	if err := normalizeProjectMetadata(&input); err != nil {
 		return nil, err
 	}
-	input.Status = models.ProgramStatusDraft // programs always start as draft
+	input.Status = models.ProgramStatusPending // programs always start as pending
 	input.ID = uuid.New().String()
 
 	p, err := s.repo.Create(ctx, input)
@@ -401,7 +401,7 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 	if err := normalizeProjectMetadata(&input.Program); err != nil {
 		return nil, err
 	}
-	input.Program.Status = models.ProgramStatusDraft
+	input.Program.Status = models.ProgramStatusPending
 	input.Program.ID = uuid.New().String()
 	return s.repo.CreateEnrollment(ctx, input)
 }

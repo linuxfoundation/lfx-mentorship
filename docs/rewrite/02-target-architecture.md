@@ -120,7 +120,7 @@ erDiagram
         uuid id PK
         text name
         text slug
-        text status "draft | submitted | published | rejected | archived | hidden"
+        text status "pending | submitted | published | rejected | archived | hidden"
         text project_uid "LF project this program belongs to"
         uuid cf_initiative_id "link to Crowdfunding initiative"
     }

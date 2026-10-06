@@ -138,7 +138,7 @@ func resolveVisibleProgram(w http.ResponseWriter, r *http.Request, svc programLo
 	if !ok {
 		return nil, false
 	}
-	if program.Status != models.ProgramStatusPublished && program.Status != models.ProgramStatusDraft {
+	if program.Status != models.ProgramStatusPublished && program.Status != models.ProgramStatusPending {
 		principal := auth.PrincipalFromContext(r.Context())
 		if auth.IsGatewayPrincipal(r.Context()) && principal != nil && principal.UserID != "_anonymous" {
 			return program, true
@@ -353,7 +353,7 @@ func (h *ProgramHandler) NameAvailable(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, map[string]bool{"available": available})
 }
 
-// Submit transitions a program from draft or rejected to submitted.
+// Submit transitions a program from pending or rejected to submitted.
 func (h *ProgramHandler) Submit(w http.ResponseWriter, r *http.Request) {
 	if auth.PrincipalFromContext(r.Context()) == nil {
 		Error(w, domain.ErrUnauthorized)

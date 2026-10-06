@@ -649,7 +649,7 @@ func TestProgramListAdministeredIntegration_GroupsStatusAndScopesToActiveAdmin(t
 			('` + archivedID + `', 'Iota', 'iota', 'archived', NULL),
 			('` + noTermsID + `', 'Kappa', 'kappa', 'published', NULL),
 			('` + deletedTermID + `', 'Lambda', 'lambda', 'published', NULL),
-			('` + otherAdminID + `', 'Other', 'other', 'draft', NULL)`,
+			('` + otherAdminID + `', 'Other', 'other', 'pending', NULL)`,
 		`INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES
 			('00000000-0000-0000-0000-000000000044', '` + completedID + `', '` + fixture.UserID + `', 'program_admin', 'active'),
 			('00000000-0000-0000-0000-000000000045', '` + pendingID + `', '` + fixture.UserID + `', 'program_admin', 'active'),
@@ -930,7 +930,7 @@ func TestEnrollmentIntegration_RollsBackWhenSkillInsertFails(t *testing.T) {
 	}
 	repo := NewProgramRepository(pool)
 	projectUID := "00000000-0000-0000-0000-000000000099"
-	_, err := repo.CreateEnrollment(ctx, models.ProgramEnrollmentInput{Program: models.ProgramCreateInput{ID: "00000000-0000-0000-0000-000000000061", CreatorUserID: "00000000-0000-0000-0000-000000000060", ProjectUID: &projectUID, Name: "Rollback", Slug: "rollback", Status: models.ProgramStatusDraft}, Skills: []string{"Go", "Go"}})
+	_, err := repo.CreateEnrollment(ctx, models.ProgramEnrollmentInput{Program: models.ProgramCreateInput{ID: "00000000-0000-0000-0000-000000000061", CreatorUserID: "00000000-0000-0000-0000-000000000060", ProjectUID: &projectUID, Name: "Rollback", Slug: "rollback", Status: models.ProgramStatusPending}, Skills: []string{"Go", "Go"}})
 	if err == nil {
 		t.Fatal("expected duplicate skill failure")
 	}
@@ -950,7 +950,7 @@ func TestEnrollmentIntegration_PersistsProjectMetadataInIndexSnapshot(t *testing
 		t.Fatal(err)
 	}
 	projectUID, projectSlug, projectName, projectLogo := "00000000-0000-0000-0000-000000000099", "enroll-project", "Enroll Project", "https://example.com/logo.svg"
-	program, err := NewProgramRepository(pool).CreateEnrollment(ctx, models.ProgramEnrollmentInput{Program: models.ProgramCreateInput{ID: "00000000-0000-0000-0000-000000000061", CreatorUserID: "00000000-0000-0000-0000-000000000060", ProjectUID: &projectUID, ProjectSlug: &projectSlug, ProjectName: &projectName, ProjectLogoURL: &projectLogo, Name: "Enroll", Slug: "enroll", Status: models.ProgramStatusDraft}, Skills: []string{"Go"}})
+	program, err := NewProgramRepository(pool).CreateEnrollment(ctx, models.ProgramEnrollmentInput{Program: models.ProgramCreateInput{ID: "00000000-0000-0000-0000-000000000061", CreatorUserID: "00000000-0000-0000-0000-000000000060", ProjectUID: &projectUID, ProjectSlug: &projectSlug, ProjectName: &projectName, ProjectLogoURL: &projectLogo, Name: "Enroll", Slug: "enroll", Status: models.ProgramStatusPending}, Skills: []string{"Go"}})
 	if err != nil {
 		t.Fatalf("create enrollment: %v", err)
 	}

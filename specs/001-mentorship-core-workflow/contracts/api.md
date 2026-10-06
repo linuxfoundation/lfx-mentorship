@@ -19,14 +19,14 @@ PATCH /v1/programs/{id}
 Authorization: Bearer {token}
 Content-Type: application/json
 
-{ "status": "submitted" | "published" | "rejected" | "hidden" | "archived" | "draft" }
+{ "status": "submitted" | "published" | "rejected" | "hidden" | "archived" | "pending" }
 ```
 
 **Valid transitions** (all others → 409):
 
 | From | To | Notes |
 |------|----|-------|
-| `draft` | `submitted` | Requires ≥1 open term and all required fields |
+| `pending` | `submitted` | Requires ≥1 open term and all required fields |
 | `submitted` | `published` | Reviewer only |
 | `submitted` | `rejected` | Reviewer only |
 | `rejected` | `submitted` | Program Admin resubmit |

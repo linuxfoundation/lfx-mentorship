@@ -13,7 +13,7 @@ Authoritative entity reference. Schema source of truth: `backend/db/migrations/0
 | `id` | UUID | PK | |
 | `name` | TEXT | NOT NULL | unique enforced in application layer |
 | `slug` | TEXT | NOT NULL UNIQUE | URL-safe identifier |
-| `status` | VARCHAR(20) | NOT NULL DEFAULT `draft` | see lifecycle below |
+| `status` | VARCHAR(20) | NOT NULL DEFAULT `pending` | see lifecycle below |
 | `is_paid` | BOOLEAN | NOT NULL DEFAULT false | stipend flag |
 | `description` | TEXT | nullable | required before submission |
 | `logo_url` | TEXT | nullable | required before submission |
@@ -33,7 +33,7 @@ Authoritative entity reference. Schema source of truth: `backend/db/migrations/0
 ### Status Lifecycle
 
 ```
-draft ──submit──► submitted ──approve──► published ◄──unhide──┐
+pending ─submit─► submitted ──approve──► published ◄──unhide──┐
                              └──reject──► rejected             │
                                          rejected ──resubmit──► submitted
 published ──hide──► hidden ──────────────────────────────────►─┘

@@ -48,7 +48,7 @@ type MentorFilter struct {
 type ProgramFilter struct {
 	Limit           int
 	Offset          int
-	Status          string // programs.status: draft | submitted | published | hidden | rejected | archived
+	Status          string // programs.status: pending | submitted | published | hidden | rejected | archived
 	Search          string // ilike on name
 	Skill           string // catalog only: case-insensitive exact match on a program skill
 	DiscoveryStatus string // catalog only: acceptance | in-progress | completed
