@@ -1401,11 +1401,10 @@ Add a member to a program.
 **Program Admin flow** (`member_type = "program_admin"`):
 - Record is created with `status = "active"`.
 
-**Request body**
+**Request body** (identify the user with `user_id` or `lfid`; sending both is a `400`)
 ```json
 {
-  "user_id":     "uuid",       // user_id or lfid is required, not both
-  "lfid":        "alice",      // resolved to an existing user; 404 if they have never signed in
+  "lfid":        "alice",      // or "user_id": "uuid"; an lfid resolves to an existing user, 404 if they have never signed in
   "member_type": "mentor",     // required; "program_admin" | "mentor"
   "status":      "requested",  // optional; if omitted, defaults per member_type above
   "email":       "mentor@example.com"

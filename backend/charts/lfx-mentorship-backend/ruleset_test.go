@@ -259,6 +259,29 @@ func TestMentorModuleRoutesAreCoveredByHeimdall(t *testing.T) {
 	}
 }
 
+func TestResendInviteRequiresProgramWriter(t *testing.T) {
+	block := ruleBlock(t, "program-member-resend-invite")
+	if strings.Count(block, "- path:") != 1 || !strings.Contains(block, "- path: /mentorship/v1/programs/:id/members/:memberId/resend-invite\n") {
+		t.Errorf("resend-invite rule must cover only its route:\n%s", block)
+	}
+	if !strings.Contains(block, "methods: [POST]\n") {
+		t.Errorf("resend-invite rule must allow only POST:\n%s", block)
+	}
+	for _, want := range []string{
+		"- authenticator: oidc",
+		"- authorizer: openfga_check",
+		`object: 'mentorship_program:{{ "{{- .Request.URL.Captures.id -}}" }}'`,
+		"relation: writer",
+	} {
+		if !strings.Contains(block, want) {
+			t.Errorf("resend-invite rule lacks %q:\n%s", want, block)
+		}
+	}
+	if strings.Contains(block, "anonymous_authenticator") || strings.Contains(block, "allow_all") {
+		t.Errorf("resend-invite rule must not admit anonymous or unchecked callers:\n%s", block)
+	}
+}
+
 func TestMeProgramMembershipRulesNeedOnlyASignedInUser(t *testing.T) {
 	for id, route := range map[string]string{
 		"me-program-memberships":         "/mentorship/v1/me/program-memberships",
