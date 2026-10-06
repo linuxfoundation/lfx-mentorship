@@ -12,21 +12,8 @@ Proposal-level plan, modeled on the Crowdfunding cutover ([lfx-crowdfunding/back
 
 The schema is a single migration, `backend/db/migrations/001_initial.up.sql`,
 which the Helm migration hook applies; `001_initial.down.sql` drops the
-Mentorship schema. They replace an earlier 002–006 chain and produce the same
-schema.
-
-A database migrated under the old chain records version 6 in
-`public.schema_migrations`. The hook cannot apply anything from that version,
-so each existing environment (dev, then staging and production on their first
-release with this change) needs a one-time, metadata-only cutover when the new
-image is deployed, and not before, or a redeploy of an older image would try
-to reapply 002–006:
-
-```sql
-UPDATE public.schema_migrations SET version = 1, dirty = false;  -- same as `migrate force 1`
-```
-
-New databases, including local ones, start at version 1 and need nothing.
+Mentorship schema. Every environment records version 1 in
+`public.schema_migrations`.
 
 A schema reset is only for disposable databases; do not use it
 against an environment with data. For a reset, export the database, drop the
