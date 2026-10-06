@@ -253,9 +253,16 @@ func (s *TaskService) authorizeUpdate(ctx context.Context, id string, input mode
 	if err != nil {
 		return fmt.Errorf("get task for permission check: %w", err)
 	}
-	// A review that leaves status alone still sets the reviewer-owned denormalised statuses.
+	// The denormalised application and program term statuses are reviewer-owned whatever status
+	// the request carries, and a review that leaves status alone can only be setting them.
+	reviewerOnly := input.Status == nil || input.ApplicationStatus != nil || input.ProgramTermStatus != nil
+	if reviewerOnly {
+		if err := s.assertNonAssigneeReviewer(ctx, current, input.ActorID); err != nil {
+			return err
+		}
+	}
 	if input.Status == nil {
-		return s.assertNonAssigneeReviewer(ctx, current, input.ActorID)
+		return nil
 	}
 	next := *input.Status
 	if next == models.TaskStatusSubmitted && current.SubmitFile != nil && *current.SubmitFile != "" && (current.File == nil || *current.File == "") {
@@ -285,7 +292,9 @@ func (s *TaskService) authorizeUpdate(ctx context.Context, id string, input mode
 			return fmt.Errorf("%w: only the task assignee may mark it %s", domain.ErrForbidden, next)
 		}
 	case models.TaskStatusComplete, models.TaskStatusIncomplete:
-		return s.assertNonAssigneeReviewer(ctx, current, input.ActorID)
+		if !reviewerOnly {
+			return s.assertNonAssigneeReviewer(ctx, current, input.ActorID)
+		}
 	}
 	return nil
 }
