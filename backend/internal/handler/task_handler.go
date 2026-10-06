@@ -180,6 +180,11 @@ func (h *TaskHandler) UpdateReview(w http.ResponseWriter, r *http.Request) {
 		Error(w, fmt.Errorf("%w: review state is required", domain.ErrInvalidInput))
 		return
 	}
+	// A review completes or resets a task; the assignee's own steps go through /submission.
+	if input.Status != nil && *input.Status != models.TaskStatusComplete && *input.Status != models.TaskStatusIncomplete {
+		Error(w, fmt.Errorf("%w: a review sets status to %q or %q", domain.ErrInvalidInput, models.TaskStatusComplete, models.TaskStatusIncomplete))
+		return
+	}
 	input.ActorID = principal.UserID
 	task, err := h.svc.Update(r.Context(), chi.URLParam(r, "id"), models.TaskUpdateInput{
 		Status:            input.Status,

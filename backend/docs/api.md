@@ -2022,8 +2022,9 @@ not its assignee, for every field.
 | `submitted → complete` | Reviewer |
 | Any state → `incomplete` (reset) | Reviewer |
 
-Any other transition returns `409` or `403`; use `PATCH /v1/tasks/{id}` to set
-any status.
+Any other `status` value returns `400`: the assignee's own steps go through
+`PATCH /v1/tasks/{id}/submission`, and `PATCH /v1/tasks/{id}` sets any status.
+Completing a task that is not `submitted` returns `409`.
 
 **Response** `200` → `<Task>`  
 **Errors** `400`, `401`, `403`, `404`, `409`

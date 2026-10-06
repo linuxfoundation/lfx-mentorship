@@ -15,9 +15,10 @@ import (
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/handler"
 )
 
-// stubTaskSvc implements the handler's task service; only Edit is exercised.
+// stubTaskSvc implements the handler's task service; only Edit and Update are exercised.
 type stubTaskSvc struct {
-	edit func(context.Context, string, models.TaskUpdateInput) (*models.Task, error)
+	edit   func(context.Context, string, models.TaskUpdateInput) (*models.Task, error)
+	update func(context.Context, string, models.TaskUpdateInput) (*models.Task, error)
 }
 
 func (s *stubTaskSvc) GetByID(context.Context, string) (*models.Task, error) { return nil, nil }
@@ -39,8 +40,8 @@ func (s *stubTaskSvc) ListByProgramTermForActor(context.Context, string, models.
 func (s *stubTaskSvc) Create(context.Context, string, models.TaskCreateInput) (*models.Task, error) {
 	return nil, nil
 }
-func (s *stubTaskSvc) Update(context.Context, string, models.TaskUpdateInput) (*models.Task, error) {
-	return nil, nil
+func (s *stubTaskSvc) Update(ctx context.Context, id string, in models.TaskUpdateInput) (*models.Task, error) {
+	return s.update(ctx, id, in)
 }
 func (s *stubTaskSvc) Edit(ctx context.Context, id string, in models.TaskUpdateInput) (*models.Task, error) {
 	return s.edit(ctx, id, in)
@@ -93,6 +94,26 @@ func TestTaskHandler_Update_RejectsReviewAndFileFields(t *testing.T) {
 	} {
 		if w := patchTask(t, svc, body, true); w.Code != http.StatusBadRequest {
 			t.Errorf("%s: code = %d; want 400", body, w.Code)
+		}
+	}
+}
+
+func TestTaskHandler_UpdateReview_AcceptsOnlyCompleteOrIncomplete(t *testing.T) {
+	for status, want := range map[string]int{
+		"complete":    http.StatusOK,
+		"incomplete":  http.StatusOK,
+		"in_progress": http.StatusBadRequest,
+		"submitted":   http.StatusBadRequest,
+	} {
+		svc := &stubTaskSvc{update: func(_ context.Context, id string, in models.TaskUpdateInput) (*models.Task, error) {
+			return &models.Task{ID: id, Status: *in.Status}, nil
+		}}
+		r := httptest.NewRequest(http.MethodPatch, "/v1/tasks/task-1/review", strings.NewReader(`{"status":"`+status+`"}`))
+		r = requestWithPrincipal(requestWithChiParam(r, "id", "task-1"), "reviewer-1")
+		w := httptest.NewRecorder()
+		handler.NewTaskHandler(svc).UpdateReview(w, r)
+		if w.Code != want {
+			t.Errorf("%s: code = %d, body %s; want %d", status, w.Code, w.Body, want)
 		}
 	}
 }
