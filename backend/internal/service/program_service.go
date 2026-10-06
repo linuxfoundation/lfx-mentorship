@@ -432,7 +432,6 @@ func normalizeProjectMetadata(input *models.ProgramCreateInput) error {
 	return nil
 }
 
-// Update validates and applies changes to the program with the given ID.
 // Decide publishes or rejects a submitted program.
 func (s *ProgramService) Decide(ctx context.Context, id string, status models.ProgramStatus) (*models.Program, error) {
 	if status != models.ProgramStatusPublished && status != models.ProgramStatusRejected {
@@ -448,6 +447,7 @@ func (s *ProgramService) Decide(ctx context.Context, id string, status models.Pr
 	return s.Update(ctx, id, models.ProgramUpdateInput{Status: &status})
 }
 
+// Update validates and applies changes to the program with the given ID.
 func (s *ProgramService) Update(ctx context.Context, id string, input models.ProgramUpdateInput) (*models.Program, error) {
 	ctx, span := programSvcTracer.Start(ctx, "ProgramService.Update")
 	defer span.End()
