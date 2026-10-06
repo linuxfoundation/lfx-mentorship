@@ -53,6 +53,14 @@ Key notes
   object keys (submissions), quarantined or missing objects become NULL,
   foreign logo URLs carry through and foreign tasks.file values are nulled.
 - profile_links.resumeLink is dropped: resumes are not migrated.
+- programs.lf_project_uid comes from the first project identifier that
+  project-service confirms exists: lfProjectId first (a v1 Salesforce ID,
+  translated over NATS lfx.lookup_v1_mapping), then legacy UUID fields.
+  lf_project_slug and lf_project_name come from project-service, and
+  lf_project_logo_url from lfProjectLogo when lfProjectId is the parent. A
+  program with no confirmed parent is reported as UNMAPPED_PROGRAM; an existing
+  one keeps its current parent. A project-service error other than not_found
+  aborts the import.
 
 Usage
 -----
@@ -66,13 +74,15 @@ Usage
   export COPY_MANIFEST=legacy-object-manifest.json
   export LOGOS_CDN_URL_PREFIX=https://...
   export LOGOS_S3_BUCKET=... ATTACHMENTS_S3_BUCKET=...   # must match the manifest
+  export NATS_URL=nats://...   # platform NATS, to verify project parents; unset leaves programs unmapped
 
-  pip install boto3 psycopg2-binary
+  pip install boto3 psycopg2-binary nats-py
   python3 backend/db/scripts/copy_legacy_objects.py
   python3 backend/db/scripts/migrate_dynamo_to_postgres.py
 """
 
 import json
+import asyncio
 import logging
 import os
 import re
@@ -114,6 +124,7 @@ LOGOS_CDN_URL_PREFIX = os.environ.get("LOGOS_CDN_URL_PREFIX", "")
 # Must name the buckets copy_legacy_objects.py copied into; the manifest records them.
 LOGOS_S3_BUCKET = os.environ.get("LOGOS_S3_BUCKET", "").strip()
 ATTACHMENTS_S3_BUCKET = os.environ.get("ATTACHMENTS_S3_BUCKET", "").strip()
+NATS_URL = os.environ.get("NATS_URL", "").strip()
 
 # Stable UUID namespace — must not change between runs to keep IDs deterministic.
 _UUID_NS = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
@@ -169,6 +180,85 @@ def _as_uuid(value) -> str | None:
         return str(uuid.UUID(s))
     except ValueError:
         return _uuid5("coerce", s)
+
+
+def _strict_uuid(value) -> str | None:
+    """Return a canonical UUID string, or None; never coerce, so no parent is fabricated."""
+    try:
+        return str(uuid.UUID(str(value).strip())) if value else None
+    except ValueError:
+        return None
+
+
+def _project_candidates(p: dict) -> list[tuple[str, str]]:
+    """(field, raw value) pairs that may name the program's LF project, in priority order."""
+    linked = p.get("project") if isinstance(p.get("project"), dict) else {}
+    fields = [(f, p.get(f)) for f in ("lfProjectId", "projectUid", "lfProjectUid", "lfProjectUID")] + [("project.id", linked.get("id"))]
+    return [(f, str(v).strip()) for f, v in fields if v and str(v).strip()]
+
+
+def resolve_lf_projects(projects: list) -> dict:
+    """Map each candidate project identifier to a verified v2 (uid, slug, name), or None.
+
+    A v1 SFID is translated over lfx.lookup_v1_mapping; a UUID is taken as-is. Either
+    way project-service must confirm the project exists, so an identifier fabricated
+    by an older patch run, or naming a deleted project, resolves to None.
+    """
+    values = sorted({v for p in projects for _, v in _project_candidates(p)})
+    if not values:
+        return {}
+    if not NATS_URL:
+        log.warning("NATS_URL is not set: %d project identifiers cannot be verified; programs stay unmapped", len(values))
+        return {}
+
+    async def lookup() -> dict:
+        import nats  # imported lazily so runs without project identifiers need no NATS client
+
+        nc = await nats.connect(NATS_URL)
+        try:
+            async def ask(subject: str, body: str) -> str:
+                return (await nc.request(subject, body.encode(), timeout=5)).data.decode().strip()
+
+            async def project_field(subject: str, uid: str) -> str | None:
+                reply = await ask(subject, uid)
+                if not reply:
+                    raise RuntimeError(f"{subject} {uid}: empty reply")
+                # project-service answers failures with a JSON error body instead of a value.
+                try:
+                    body = json.loads(reply)
+                except ValueError:
+                    return reply
+                if not isinstance(body, dict):
+                    return reply
+                if body.get("error") == "not_found":
+                    return None
+                raise RuntimeError(f"{subject} {uid}: {reply}")
+
+            async def v1_project_uid(sfid: str) -> str | None:
+                reply = await ask("lfx.lookup_v1_mapping", f"project.sfid.{sfid}")
+                # An empty reply means no mapping; anything else that is not a UUID is a lookup failure.
+                if reply and not _strict_uuid(reply):
+                    raise RuntimeError(f"lfx.lookup_v1_mapping project.sfid.{sfid}: {reply}")
+                return _strict_uuid(reply)
+
+            resolved: dict = {}
+            for value in values:
+                uid = _strict_uuid(value) or await v1_project_uid(value)
+                slug = await project_field("lfx.projects-api.get_slug", uid) if uid else None
+                # A project deleted between the two lookups answers get_name with not_found.
+                name = await project_field("lfx.projects-api.get_name", uid) if slug else None
+                if not name:
+                    log.warning("UNMAPPED_LF_PROJECT project_identifier=%s", value)
+                    resolved[value] = None
+                    continue
+                resolved[value] = (uid, slug, name)
+            return resolved
+        finally:
+            await nc.close()
+
+    resolved = asyncio.run(lookup())
+    log.info("  → %d of %d project identifiers verified in project-service", sum(1 for r in resolved.values() if r), len(values))
+    return resolved
 
 
 def _as_int(value, default: int = 0) -> int:
@@ -496,12 +586,14 @@ def migrate_user_profiles(cur, profiles: list, known_user_ids: set, files: lo.Le
 # ---------------------------------------------------------------------------
 
 
-def migrate_programs(cur, projects: list, known_user_ids: set, files: lo.LegacyFileRewriter) -> set:
+def migrate_programs(cur, projects: list, known_user_ids: set, files: lo.LegacyFileRewriter, lf_projects: dict | None = None) -> set:
     """
     Upsert programs from jobspring-prod-projects.
     Also populates program_skills and program_funding_stats.
+    lf_projects maps an lfProjectId (v1 SFID) to its (uid, slug, name) in v2.
     Returns set of known program IDs.
     """
+    lf_projects = lf_projects or {}
     log.info("Migrating programs (%d rows) ...", len(projects))
     prog_rows = []
     skill_rows = []
@@ -520,32 +612,16 @@ def migrate_programs(cur, projects: list, known_user_ids: set, files: lo.LegacyF
         # project_uid is the LF project parent used by the authorization
         # inheritance chain. Do not substitute the program ID when the legacy
         # source does not provide an explicit project identifier.
-        linked_project = p.get("project") if isinstance(p.get("project"), dict) else {}
-        project_uid = _as_uuid(
-            p.get("projectUid")
-            or p.get("lfProjectUid")
-            or p.get("lfProjectId")
-            or p.get("lfProjectUID")
-            or linked_project.get("id")
+        # Only a parent project-service confirms is imported; slug and name come from it too.
+        chosen_field, lf_project = next(
+            ((f, lf_projects[v]) for f, v in _project_candidates(p) if lf_projects.get(v) and lf_projects[v][0] != pid),
+            (None, None),
         )
+        project_uid, project_slug, project_name = lf_project or (None, None, None)
         if not project_uid:
             unresolved_project_uids.append(pid)
-
-        project_slug = (
-            p.get("projectSlug")
-            or p.get("lfProjectSlug")
-            or p.get("project_slug")
-            or linked_project.get("slug")
-        )
-        project_name = (
-            p.get("projectName")
-            or p.get("lfProjectName")
-            or p.get("project_name")
-            or linked_project.get("name")
-        )
-        project_slug = str(project_slug).strip() if project_slug else None
-        project_name = str(project_name).strip() if project_name else None
-        project_logo_url = (p.get("projectLogoUrl") or p.get("lfProjectLogoUrl") or p.get("project_logo_url") or "").strip() or None
+        # lfProjectLogo describes the lfProjectId project, so it only applies when that field won.
+        project_logo_url = str(p.get("lfProjectLogo") or "").strip() or None if chosen_field == "lfProjectId" else None
         if not project_uid or not project_slug or not project_name:
             unresolved_project_mappings.append((pid, project_uid, project_slug, project_name))
 
@@ -618,8 +694,8 @@ def migrate_programs(cur, projects: list, known_user_ids: set, files: lo.LegacyF
 
     if unresolved_project_uids:
         log.warning(
-            "%d programs are missing an explicit project UID and will be imported "
-            "without an authorization parent",
+            "%d programs are missing an explicit project UID; new ones are imported "
+            "without an authorization parent and existing ones keep theirs",
             len(unresolved_project_uids),
         )
         for program_id in unresolved_project_uids:
@@ -644,10 +720,13 @@ def migrate_programs(cur, projects: list, known_user_ids: set, files: lo.LegacyF
            created_on, updated_on)
                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         ON CONFLICT (id) DO UPDATE SET
-                    lf_project_uid     = EXCLUDED.lf_project_uid,
-          lf_project_slug        = EXCLUDED.lf_project_slug,
-          lf_project_name        = EXCLUDED.lf_project_name,
-          lf_project_logo_url   = EXCLUDED.lf_project_logo_url,
+                    -- An unmapped re-import keeps the existing parent: OpenFGA already holds it, and the sync cannot clear a project reference.
+                    lf_project_uid     = COALESCE(EXCLUDED.lf_project_uid, programs.lf_project_uid),
+          lf_project_slug        = CASE WHEN EXCLUDED.lf_project_uid IS NULL THEN programs.lf_project_slug ELSE EXCLUDED.lf_project_slug END,
+          lf_project_name        = CASE WHEN EXCLUDED.lf_project_uid IS NULL THEN programs.lf_project_name ELSE EXCLUDED.lf_project_name END,
+          lf_project_logo_url   = CASE WHEN EXCLUDED.lf_project_uid IS NULL
+                                         OR (EXCLUDED.lf_project_logo_url IS NULL AND EXCLUDED.lf_project_uid = programs.lf_project_uid)
+                                       THEN programs.lf_project_logo_url ELSE EXCLUDED.lf_project_logo_url END,
           name                = EXCLUDED.name,
           slug                = EXCLUDED.slug,
           status              = EXCLUDED.status,
@@ -1617,7 +1696,7 @@ def main() -> None:
             with conn.cursor() as cur:
                 known_user_ids    = migrate_users(cur, users_raw, files)
                 profile_map       = migrate_user_profiles(cur, profiles_raw, known_user_ids, files)
-                known_program_ids = migrate_programs(cur, projects_raw, known_user_ids, files)
+                known_program_ids = migrate_programs(cur, projects_raw, known_user_ids, files, resolve_lf_projects(projects_raw))
                 known_term_ids    = migrate_program_terms(cur, terms_raw, known_program_ids)
                 term_scoped_members = migrate_program_members(cur, members_raw, known_program_ids, known_user_ids)
                 application_index = migrate_mentees(cur, mentees_raw, known_term_ids, known_user_ids)
