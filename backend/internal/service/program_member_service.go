@@ -23,13 +23,14 @@ var programMemberSvcTracer = otel.Tracer("program-members-service")
 type ProgramMemberService struct {
 	repo         domain.ProgramMemberRepository
 	programRepo  domain.ProgramRepository
+	users        domain.UserRepository
 	notifier     domain.Notifier
 	inviteSecret string
 }
 
 // NewProgramMemberService returns a ProgramMemberService.
-func NewProgramMemberService(repo domain.ProgramMemberRepository, programRepo domain.ProgramRepository, notifier domain.Notifier, inviteSecret string) *ProgramMemberService {
-	return &ProgramMemberService{repo: repo, programRepo: programRepo, notifier: notifier, inviteSecret: inviteSecret}
+func NewProgramMemberService(repo domain.ProgramMemberRepository, programRepo domain.ProgramRepository, users domain.UserRepository, notifier domain.Notifier, inviteSecret string) *ProgramMemberService {
+	return &ProgramMemberService{repo: repo, programRepo: programRepo, users: users, notifier: notifier, inviteSecret: inviteSecret}
 }
 
 func (s *ProgramMemberService) assertActiveProgramAdmin(ctx context.Context, programID, actorID string) error {
@@ -124,8 +125,11 @@ func (s *ProgramMemberService) Create(ctx context.Context, programID string, inp
 	ctx, span := programMemberSvcTracer.Start(ctx, "ProgramMemberService.Create")
 	defer span.End()
 
-	if input.UserID == "" {
-		return nil, fmt.Errorf("%w: user_id is required", domain.ErrInvalidInput)
+	if input.UserID == "" && input.LFID == "" {
+		return nil, fmt.Errorf("%w: user_id or lfid is required", domain.ErrInvalidInput)
+	}
+	if input.UserID != "" && input.LFID != "" {
+		return nil, fmt.Errorf("%w: set user_id or lfid, not both", domain.ErrInvalidInput)
 	}
 	if !input.MemberType.IsValid() {
 		return nil, fmt.Errorf("%w: member_type must be program_admin or mentor", domain.ErrInvalidInput)
@@ -139,6 +143,15 @@ func (s *ProgramMemberService) Create(ctx context.Context, programID string, inp
 	}
 	if prog.Status != models.ProgramStatusPublished {
 		return nil, fmt.Errorf("%w: program must be published before adding members", domain.ErrInvalidInput)
+	}
+
+	if input.LFID != "" {
+		user, err := s.users.GetByLFID(ctx, input.LFID)
+		if err != nil {
+			span.RecordError(err)
+			return nil, fmt.Errorf("resolve lfid: %w", err)
+		}
+		input.UserID = user.ID
 	}
 
 	// Mentors are placed in 'invited' status and notified; program_admins are 'active' immediately.
@@ -474,5 +487,40 @@ func (s *ProgramMemberService) Delete(ctx context.Context, programID, id, actorI
 		span.RecordError(err)
 		return fmt.Errorf("delete program member: %w", err)
 	}
+	return nil
+}
+
+// ResendInvite signs a fresh invite token for an invited mentor and emails it again.
+func (s *ProgramMemberService) ResendInvite(ctx context.Context, programID, id, actorID string) error {
+	ctx, span := programMemberSvcTracer.Start(ctx, "ProgramMemberService.ResendInvite")
+	defer span.End()
+	span.SetAttributes(attribute.String("program.id", programID), attribute.String("member.id", id), attribute.String("actor.id", actorID))
+
+	if err := s.assertActiveProgramAdmin(ctx, programID, actorID); err != nil {
+		span.RecordError(err)
+		return err
+	}
+	if s.inviteSecret == "" {
+		return fmt.Errorf("%w: mentor invites are not configured", domain.ErrUpstreamUnavailable)
+	}
+
+	member, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		span.RecordError(err)
+		return fmt.Errorf("get member for resend: %w", err)
+	}
+	if member.ProgramID != programID {
+		return domain.ErrProgramMemberNotFound
+	}
+	if member.MemberType != models.MemberTypeMentor || member.Status == nil || *member.Status != models.ProgramMemberStatusInvited {
+		return fmt.Errorf("%w: only an invited mentor can be sent the invite again", domain.ErrInvalidStateTransition)
+	}
+
+	token, err := auth.GenerateInviteToken(programID, member.UserID, s.inviteSecret)
+	if err != nil {
+		span.RecordError(err)
+		return fmt.Errorf("generate invite token: %w", err)
+	}
+	s.notifier.NotifyMentorInvited(ctx, programID, member.UserID, token)
 	return nil
 }

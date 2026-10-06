@@ -22,7 +22,99 @@ func newMemberSvc(memberRepo *stubMemberRepo, progRepo *stubProgRepo, notifier *
 			return &models.ProgramMember{ProgramID: programID, UserID: userID, MemberType: models.MemberTypeProgramAdmin, Status: &active}, nil
 		}
 	}
-	return service.NewProgramMemberService(memberRepo, progRepo, notifier, "test-secret")
+	return service.NewProgramMemberService(memberRepo, progRepo, &stubLFIDUsers{ids: map[string]string{"mentor-lfid": "mentor-1"}}, notifier, "test-secret")
+}
+
+type stubLFIDUsers struct {
+	stubUserRepository
+	ids map[string]string
+}
+
+func (s *stubLFIDUsers) GetByLFID(_ context.Context, lfid string) (*models.User, error) {
+	if id, ok := s.ids[lfid]; ok {
+		return &models.User{ID: id}, nil
+	}
+	return nil, domain.ErrUserNotFound
+}
+
+func TestProgramMemberService_Create_ResolvesLFID(t *testing.T) {
+	var captured models.ProgramMemberCreateInput
+	memberRepo := &stubMemberRepo{
+		create: func(_ context.Context, _ string, in models.ProgramMemberCreateInput) (*models.ProgramMember, error) {
+			captured = in
+			return &models.ProgramMember{UserID: in.UserID, Status: in.Status}, nil
+		},
+	}
+	n := &stubNotifier{}
+	_, err := newMemberSvc(memberRepo, publishedProgRepo(), n).Create(context.Background(), "prog-1", models.ProgramMemberCreateInput{LFID: "mentor-lfid", MemberType: models.MemberTypeMentor})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if captured.UserID != "mentor-1" {
+		t.Errorf("user_id = %q; want mentor-1", captured.UserID)
+	}
+	if n.mentorInvitedCalls != 1 {
+		t.Errorf("NotifyMentorInvited called %d times; want 1", n.mentorInvitedCalls)
+	}
+}
+
+func TestProgramMemberService_Create_LFIDErrors(t *testing.T) {
+	for name, tc := range map[string]struct {
+		input models.ProgramMemberCreateInput
+		want  error
+	}{
+		"unknown lfid": {models.ProgramMemberCreateInput{LFID: "nobody", MemberType: models.MemberTypeMentor}, domain.ErrUserNotFound},
+		"both ids":     {models.ProgramMemberCreateInput{UserID: "mentor-1", LFID: "mentor-lfid", MemberType: models.MemberTypeMentor}, domain.ErrInvalidInput},
+	} {
+		created := false
+		memberRepo := &stubMemberRepo{
+			create: func(context.Context, string, models.ProgramMemberCreateInput) (*models.ProgramMember, error) {
+				created = true
+				return &models.ProgramMember{}, nil
+			},
+		}
+		_, err := newMemberSvc(memberRepo, publishedProgRepo(), &stubNotifier{}).Create(context.Background(), "prog-1", tc.input)
+		if !errors.Is(err, tc.want) || created {
+			t.Errorf("%s: err = %v, created = %v; want %v and no row", name, err, created, tc.want)
+		}
+	}
+}
+
+func TestProgramMemberService_ResendInvite(t *testing.T) {
+	invited, active := models.ProgramMemberStatusInvited, models.ProgramMemberStatusActive
+	for name, tc := range map[string]struct {
+		member  models.ProgramMember
+		want    error
+		invites int
+	}{
+		"invited mentor":  {models.ProgramMember{ProgramID: "prog-1", UserID: "mentor-1", MemberType: models.MemberTypeMentor, Status: &invited}, nil, 1},
+		"active mentor":   {models.ProgramMember{ProgramID: "prog-1", UserID: "mentor-1", MemberType: models.MemberTypeMentor, Status: &active}, domain.ErrInvalidStateTransition, 0},
+		"program admin":   {models.ProgramMember{ProgramID: "prog-1", UserID: "admin-2", MemberType: models.MemberTypeProgramAdmin, Status: &invited}, domain.ErrInvalidStateTransition, 0},
+		"another program": {models.ProgramMember{ProgramID: "prog-2", UserID: "mentor-1", MemberType: models.MemberTypeMentor, Status: &invited}, domain.ErrProgramMemberNotFound, 0},
+	} {
+		member := tc.member
+		memberRepo := &stubMemberRepo{
+			getByID: func(context.Context, string) (*models.ProgramMember, error) { return &member, nil },
+		}
+		n := &stubNotifier{}
+		err := newMemberSvc(memberRepo, &stubProgRepo{}, n).ResendInvite(context.Background(), "prog-1", "member-1", "admin-1")
+		if tc.want == nil && err != nil || tc.want != nil && !errors.Is(err, tc.want) || n.mentorInvitedCalls != tc.invites {
+			t.Errorf("%s: err = %v, invites = %d; want %v, %d", name, err, n.mentorInvitedCalls, tc.want, tc.invites)
+		}
+	}
+}
+
+func TestProgramMemberService_ResendInvite_RequiresProgramAdmin(t *testing.T) {
+	memberRepo := &stubMemberRepo{
+		findByProgramUser: func(context.Context, string, string) (*models.ProgramMember, error) {
+			return nil, domain.ErrProgramMemberNotFound
+		},
+	}
+	n := &stubNotifier{}
+	err := newMemberSvc(memberRepo, &stubProgRepo{}, n).ResendInvite(context.Background(), "prog-1", "member-1", "someone")
+	if !errors.Is(err, domain.ErrForbidden) || n.mentorInvitedCalls != 0 {
+		t.Fatalf("err = %v, invites = %d; want ErrForbidden and none", err, n.mentorInvitedCalls)
+	}
 }
 
 // ── Create ────────────────────────────────────────────────────────────────────

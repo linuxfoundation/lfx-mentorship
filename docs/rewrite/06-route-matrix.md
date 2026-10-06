@@ -94,6 +94,7 @@ Per [04 §decision 7](./04-authorization-model.md), `user` has no relations of i
 | `POST /v1/programs/{uid}/members` | required | `mentorship_program:{uid}` | `writer` | Emits `member_put` on accept, not here — a pending invitation has no tuple ([04 §decision 4](./04-authorization-model.md)) |
 | `PATCH /v1/programs/{uid}/members/{memberId}` | required | `mentorship_program:{uid}` | `writer` | Parent-child invariant (rule 2) — already enforced |
 | `DELETE /v1/programs/{uid}/members/{memberId}` | required | `mentorship_program:{uid}` | `writer` | As above. Emit `member_remove` **naming the relation** (`mentor` or `writer`) |
+| `POST /v1/programs/{uid}/members/{memberId}/resend-invite` | required | `mentorship_program:{uid}` | `writer` | Only an `invited` mentor; signs a fresh token and re-sends `mentor_invited`. No tuple change |
 
 ## Term routes
 

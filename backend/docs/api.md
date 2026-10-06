@@ -1404,7 +1404,8 @@ Add a member to a program.
 **Request body**
 ```json
 {
-  "user_id":     "uuid",       // required
+  "user_id":     "uuid",       // user_id or lfid is required, not both
+  "lfid":        "alice",      // resolved to an existing user; 404 if they have never signed in
   "member_type": "mentor",     // required; "program_admin" | "mentor"
   "status":      "requested",  // optional; if omitted, defaults per member_type above
   "email":       "mentor@example.com"
@@ -1412,7 +1413,7 @@ Add a member to a program.
 ```
 
 **Response** `201` → `<ProgramMember>`  
-**Errors** `400`, `409`
+**Errors** `400`, `404` (unknown `lfid`), `409` (the user already has a row of this `member_type` on the program)
 
 ---
 
@@ -1444,10 +1445,24 @@ This endpoint therefore refuses `requested`/`pending` → `withdrawn` and
 #### `DELETE /v1/programs/{id}/members/{memberId}` 🔒
 
 Deletes the member row, in any status, and returns `204`. Removing an active
-member also removes their OpenFGA relation.
+member also removes their OpenFGA relation. Deleting an invited, declined or
+withdrawn mentor frees the user to be invited again. To remove an active mentor
+but keep the record, `PATCH` the status to `withdrawn` instead.
 
 **Response** `204`  
 **Errors** `403`, `404`
+
+---
+
+#### `POST /v1/programs/{id}/members/{memberId}/resend-invite` 🔒
+
+Signs a fresh 7-day invite token for an `invited` mentor and sends the
+`mentor_invited` email again. Earlier tokens stay valid until they expire. No
+request body.
+
+**Response** `204`  
+**Errors** `403` (not a Program Admin), `404`, `409` (the member is not an
+`invited` mentor), `503` (invites are not configured)
 
 ---
 

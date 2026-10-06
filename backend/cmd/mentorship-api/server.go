@@ -151,7 +151,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		}))
 	}
 	programTermSvc := service.NewProgramTermService(programTermRepo, applicationRepo)
-	programMemberSvc := service.NewProgramMemberService(programMemberRepo, programRepo, notifier, cfg.Local.InviteSecret)
+	programMemberSvc := service.NewProgramMemberService(programMemberRepo, programRepo, userRepo, notifier, cfg.Local.InviteSecret)
 	applicationSvc := service.NewApplicationService(applicationRepo, taskRepo, programTermRepo, programRepo, programMemberRepo, notifier)
 	taskSvc := service.NewTaskService(taskRepo, applicationRepo, programTermRepo, programMemberRepo, notifier)
 	menteeSvc := service.NewMenteeService(menteeRepo)
@@ -337,6 +337,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			r.Post("/programs/{id}/members", programMemberH.Create)
 			r.Patch("/programs/{id}/members/{memberId}", programMemberH.Update)
 			r.Delete("/programs/{id}/members/{memberId}", programMemberH.Delete)
+			r.Post("/programs/{id}/members/{memberId}/resend-invite", programMemberH.ResendInvite)
 
 			// Program terms
 			r.Post("/programs/{id}/terms", programTermH.Create)
