@@ -137,8 +137,11 @@ watch(error, (err) => {
 });
 
 const activeTab = ref(DEFAULT_PROGRAM_DETAIL_TAB);
-const menteesEnabled = computed(() => activeTab.value === 'mentees');
-const sponsorsEnabled = computed(() => activeTab.value === 'sponsors');
+// A draft has no mentees or sponsors yet, and those reads are not open to its
+// UUID link the way the catalog is, so the tabs show their empty state.
+const isDraft = computed(() => program.value?.status === 'pending');
+const menteesEnabled = computed(() => activeTab.value === 'mentees' && !isDraft.value);
+const sponsorsEnabled = computed(() => activeTab.value === 'sponsors' && !isDraft.value);
 const {
   data: mentees,
   isLoading: isMenteesLoading,

@@ -101,7 +101,10 @@ which applies access filtering over indexed objects. Public collections are the
 exception: `GET /programs`, `/programs/catalog`, `/mentors`, `/mentees`, their
 summaries, `/summary`, and `/funding-stats/total` are anonymous `allow_all`
 routes whose services return only published programs and publicly listable
-profiles.
+profiles. `GET /programs/{id}/catalog` is the one object read that is also
+`allow_all`: the public program page loads an unlisted draft by its UUID link,
+so the service serves published programs and drafts addressed by UUID, and
+404s everything else.
 
 ### Write and Derived-State Path
 

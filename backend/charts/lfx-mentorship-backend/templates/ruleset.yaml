@@ -65,6 +65,24 @@ spec:
             values:
               aud: {{ .Values.app.audience | quote }}
 
+    # The public program page. Not FGA-checked: a draft is not FGA-public (that
+    # flag also drives search listing), yet must load by its UUID link. The
+    # service is the gate — published by UUID or slug, a draft by UUID only.
+    - id: rule:lfx:lfx-mentorship-backend:programs-catalog-item-public
+      allow_encoded_slashes: "off"
+      match:
+        methods: [GET]
+        routes:
+          - path: /mentorship/v1/programs/:id/catalog
+      execute:
+        - authenticator: oidc
+        - authenticator: anonymous_authenticator
+        - authorizer: allow_all
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
     # Public directory collections and aggregates. No object UID to check; the
     # service returns only published programs and publicly listable profiles.
     # The summaries are listed explicitly rather than relying on /mentors/:id.
@@ -96,7 +114,6 @@ spec:
         methods: [GET]
         routes:
           - path: /mentorship/v1/programs/:id
-          - path: /mentorship/v1/programs/:id/catalog
           - path: /mentorship/v1/programs/:id/skills
           - path: /mentorship/v1/programs/:id/mentees
           - path: /mentorship/v1/programs/:id/members

@@ -76,6 +76,31 @@ func TestPublicCatalogRuleIsAnonymousReadOnly(t *testing.T) {
 	assertAnonymousReadOnly(t, "public catalog", block)
 }
 
+// The program page must load a draft by its UUID link, which FGA's viewer
+// check would refuse, so its catalog read is gated by the service instead.
+// The other program reads stay FGA-checked.
+func TestProgramCatalogItemRuleIsAnonymousReadOnly(t *testing.T) {
+	const route = "- path: /mentorship/v1/programs/:id/catalog\n"
+	block := ruleBlock(t, "programs-catalog-item-public")
+	if strings.Count(block, "- path:") != 1 || !strings.Contains(block, route) {
+		t.Fatalf("program catalog item rule must cover only the catalog item:\n%s", block)
+	}
+	assertAnonymousReadOnly(t, "program catalog item", block)
+
+	public := ruleBlock(t, "programs-public")
+	if strings.Contains(public, route) {
+		t.Error("programs-public must not also match the catalog item")
+	}
+	for _, path := range []string{"/mentorship/v1/programs/:id/mentees", "/mentorship/v1/programs/:id/sponsors"} {
+		if !strings.Contains(public, "- path: "+path+"\n") {
+			t.Errorf("programs-public is missing %q", path)
+		}
+	}
+	if !strings.Contains(public, "relation: viewer") {
+		t.Error("programs-public must require the viewer relation")
+	}
+}
+
 func TestPublicCollectionsRuleIsAnonymousReadOnly(t *testing.T) {
 	block := ruleBlock(t, "public-collections")
 	paths := []string{

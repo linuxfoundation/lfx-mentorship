@@ -42,7 +42,7 @@ Public collections are service-owned and reach the gateway through `allow_all` r
 | `GET /v1/programs/catalog` | anonymous | — | `allow_all` | **Pin `status = published` in the service**, whatever the caller sends — the edge performs no object check. Nested terms, skills, and mentors must stay public fields |
 | `GET /v1/programs/resolve/{id}` | anonymous | — | `allow_all` | **The slug→UID resolver, and the one route that must accept a slug.** Rule 1 depends on it existing. It must not leak non-public programs: resolve only to UIDs the caller could read anyway |
 | `GET /v1/programs/{uid}` | anonymous | `mentorship_program:{uid}` | `viewer` | — |
-| `GET /v1/programs/{uid}/catalog` | anonymous | `mentorship_program:{uid}` | `viewer` | — |
+| `GET /v1/programs/{uid}/catalog` | anonymous | — | `allow_all` | **Serve published programs by UID or slug and a draft by UID only; 404 everything else.** The public program page loads a draft by its UUID link, which `viewer` would refuse — a draft carries no `viewer@user:*`, because that flag also lists it in search |
 | `GET /v1/programs/{uid}/header` | anonymous | `mentorship_program:{uid}` | `viewer` | — |
 | `GET /v1/programs/{uid}/skills` | anonymous | `mentorship_program:{uid}` | `viewer` | — |
 | `GET /v1/programs/{uid}/mentees` | anonymous | `mentorship_program:{uid}` | `viewer` | Keep the accepted/graduated filter — `viewer` admits the public, so the *set* of mentees returned is a payload decision, not an access one |
