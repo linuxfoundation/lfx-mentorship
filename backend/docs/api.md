@@ -2,9 +2,8 @@
 
 ## Status Mapping
 
-Program creation persists the canonical backend status `draft`. BFF consumers
-map `draft` and `submitted` to their pending-review display state; this API does
-not expose a separate persisted `pending` program status.
+Program creation persists the canonical backend status `pending`. The BFF catalog
+mapping shows a `pending` program in its pending-review display state.
 
 **Base URL**: `https://lfx-api.<environment>/mentorship/v1` through the Heimdall gateway.
 **Content-Type**: `application/json` for all request and response bodies  
@@ -524,11 +523,12 @@ Programs are the top-level entity for a mentorship offering.
 }
 ```
 
-**Status lifecycle**: `draft → submitted → published ↔ hidden | rejected → archived`
+**Status lifecycle**: `pending → submitted → published | rejected`; `rejected → submitted`;
+`published ↔ hidden`; `published | hidden → archived`. See [§15](#15-domain-state-machines).
 
 | Status | Meaning |
 |---|---|
-| `draft` | Being configured; not visible to public |
+| `pending` | Being configured; not visible to public |
 | `submitted` | Under reviewer inspection |
 | `published` | Live; accepts applications |
 | `hidden` | Soft-hidden; only visible to owner |
@@ -605,11 +605,12 @@ Programs are the top-level entity for a mentorship offering.
 
 #### `GET /v1/programs` 🔓
 
+Always returns `published` programs.
+
 **Query parameters**
 
 | Parameter | Values | Description |
 |---|---|---|
-| `status` | `draft\|submitted\|published\|hidden\|rejected\|archived` | Filter by status |
 | `search` | string | Case-insensitive match on program name |
 | `limit` / `offset` | — | Pagination |
 
@@ -634,7 +635,7 @@ Paginated public catalog of programs with nested skills, terms, and active mento
 | `sort_by` / `sortBy` | `accepting_first\|completed_first\|name_asc\|name_desc\|updated_oldest\|updated_newest` | Sort order. Defaults to `accepting_first`. |
 | `limit` / `offset` | — | Pagination |
 
-Always returns `status = published` programs. Draft, hidden, and other statuses are omitted.
+Always returns `status = published` programs. Pending, hidden, and other statuses are omitted.
 
 Through the gateway this is the one service-owned collection route: Heimdall authenticates optionally and applies `allow_all`, so the published pin in the service is the only filter.
 
@@ -1000,7 +1001,7 @@ Resolve a program UUID or slug to the canonical program UUID.
 
 #### `POST /v1/programs` 🔒
 
-Create a program with its first terms, skills, and prerequisites in one transaction. New programs start in `draft` status and the slug is derived from `name`.
+Create a program with its first terms, skills, and prerequisites in one transaction. New programs start in `pending` status and the slug is derived from `name`.
 
 The caller resolves the LF project from Project Service and passes its UID, slug, name, and logo. They are persisted with the program and feed its search index snapshot (`project_slug`, `project_name`, `project_logo_url`).
 
@@ -1036,7 +1037,9 @@ The caller resolves the LF project from Project Service and passes its UID, slug
 
 #### `PATCH /v1/programs/{id}` 🔒
 
-Update program fields and/or transition status.
+Update program fields. Status cannot be changed here: a body with `status` returns
+`400`; use [`POST /v1/programs/{id}/submit`](#post-v1programsidsubmit-) and
+[`POST /v1/programs/{id}/decision`](#post-v1programsiddecision-).
 
 **Request body** (all optional)
 ```json
@@ -1045,20 +1048,41 @@ Update program fields and/or transition status.
   "description": "Updated description",
   "repo_link":   "https://...",
   "lfid":        "alice",
-  "status":      "submitted",
   "task_templates": [...]
 }
 ```
 
-**Status transition rules** — see [§15 State Machines](#15-domain-state-machines).
+**Response** `200` → `<Program>`  
+**Errors** `400`, `404`
 
-| Transition | Guard condition |
-|---|---|
-| `draft → submitted` | `lfid`, `description`, `repo_link`, and `logo_url` must all be non-empty; at least 1 skill tag; at least 1 open term |
-| `published → hidden` | No `pending`, `accepted`, or `graduated` applications on the program |
+---
+
+#### `POST /v1/programs/{id}/submit` 🔒
+
+Submit a `pending` or `rejected` program for review (`→ submitted`). No request body.
+See [§15 State Machines](#15-domain-state-machines).
+
+**Guard**: a linked LF project, `description`, `repo_link` and `logo_url` are
+non-empty; at least 1 skill tag; at least 1 open term.
 
 **Response** `200` → `<Program>`  
-**Errors** `400`, `404`, `409` (invalid transition or guard blocked)
+**Errors** `404`, `409` (invalid transition or guard blocked)
+
+---
+
+#### `POST /v1/programs/{id}/decision` 🔒
+
+Publish or reject a `submitted` program. Approver team only.
+
+**Request body**
+```json
+{ "status": "published" }
+```
+
+`status` is required and must be `published` or `rejected`.
+
+**Response** `200` → `<Program>`  
+**Errors** `400` (missing or other `status`), `404`, `409` (program is not `submitted`)
 
 ---
 
@@ -1456,7 +1480,7 @@ closed term, and is omitted when the program has no terms. `stats` matches `GET 
 
 | `admin_status` | When |
 |---|---|
-| `pending_review` | `status` is `draft` or `submitted` |
+| `pending_review` | `status` is `pending` or `submitted` |
 | `open` | `status` is `published` and the program has an open term, or no terms yet |
 | `completed` | `status` is `published` and every term is closed |
 | `rejected` | `status` is `rejected` |
@@ -1547,7 +1571,7 @@ the program, that row is reset to `requested` instead. No invite email is sent.
 
 | Status | When |
 |---|---|
-| `400` | `program_id` is not a UUID, or the program is a `draft` |
+| `400` | `program_id` is not a UUID, or the program is `pending` |
 | `401` | No signed-in user |
 | `404` | The program does not exist, or is not visible to every signed-in user (`submitted`, `rejected`, `archived`, `hidden`) |
 | `409` | The caller already has a mentor row in `invited`, `requested`, `pending`, `active`, or `declined`, or the row changed concurrently |
@@ -2005,7 +2029,7 @@ the object returns `416`.
 ### Program Status
 
 ```
-draft ──────────────────────────────────► submitted
+pending ────────────────────────────────► submitted
                                               │
                               ┌───────────────┼─────────────────┐
                               ▼               ▼                 │
@@ -2022,7 +2046,7 @@ draft ────────────────────────�
 
 | From | To | Notes |
 |---|---|---|
-| `draft` | `submitted` | All required fields present (lfid, description, repo_link, logo_url, ≥1 skill, ≥1 open term) |
+| `pending` | `submitted` | All required fields present (linked LF project, description, repo_link, logo_url, ≥1 skill, ≥1 open term) |
 | `submitted` | `published` | Reviewer approves |
 | `submitted` | `rejected` | Reviewer declines |
 | `published` | `hidden` | No pending/accepted/graduated applications |
@@ -2293,7 +2317,7 @@ Body: { "status": "declined" } // decline
 
 #### Program Submission Workflow (Program Admin)
 
-1. Create program in draft:
+1. Create program in pending:
    ```
    POST /v1/programs
    ```
@@ -2313,7 +2337,7 @@ Body: { "status": "declined" } // decline
    ```
 5. Submit for review:
    ```
-   PATCH /v1/programs/{id}  Body: { "status": "submitted" }
+   POST /v1/programs/{id}/submit
    ```
    Returns `409` with a descriptive error if any required field or guard condition is not met.
 

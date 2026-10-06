@@ -108,10 +108,10 @@ func TestProgramMemberHandler_List_HidesUnpublishedProgram(t *testing.T) {
 		},
 	}, &stubProgramSvc{
 		getByID: func(context.Context, string) (*models.Program, error) {
-			return &models.Program{ID: "p1", Status: models.ProgramStatusDraft}, nil
+			return &models.Program{ID: "p1", Status: models.ProgramStatusPending}, nil
 		},
 		getBySlug: func(context.Context, string) (*models.Program, error) {
-			return &models.Program{ID: "p1", Status: models.ProgramStatusDraft}, nil
+			return &models.Program{ID: "p1", Status: models.ProgramStatusPending}, nil
 		},
 	})
 	r := httptest.NewRequest(http.MethodGet, "/v1/programs/p1/members", nil)

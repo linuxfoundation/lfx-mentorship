@@ -99,6 +99,9 @@ func (s *stubProgramSvc) CreateEnrollment(ctx context.Context, input models.Prog
 func (s *stubProgramSvc) Update(context.Context, string, models.ProgramUpdateInput) (*models.Program, error) {
 	return &models.Program{}, nil
 }
+func (s *stubProgramSvc) Decide(context.Context, string, models.ProgramStatus) (*models.Program, error) {
+	return &models.Program{}, nil
+}
 func (s *stubProgramSvc) Delete(context.Context, string) error { return nil }
 func (s *stubProgramSvc) ListSkills(ctx context.Context, programID string) ([]*models.ProgramSkill, error) {
 	if s.listSkills != nil {
@@ -442,15 +445,15 @@ func TestProgramHandler_ResolveID_HiddenReturns404(t *testing.T) {
 	}
 }
 
-func TestProgramHandler_ResolveID_DraftReturns404ToAnonymous(t *testing.T) {
+func TestProgramHandler_ResolveID_PendingReturns404ToAnonymous(t *testing.T) {
 	h := handler.NewProgramHandler(&stubProgramSvc{
 		getBySlug: func(_ context.Context, slug string) (*models.Program, error) {
-			return &models.Program{ID: "draft-uuid", Slug: slug, Status: models.ProgramStatusDraft}, nil
+			return &models.Program{ID: "pending-uuid", Slug: slug, Status: models.ProgramStatusPending}, nil
 		},
 	})
 
-	r := httptest.NewRequest(http.MethodGet, "/v1/programs/resolve/my-draft", nil)
-	r = requestWithChiParam(r, "id", "my-draft")
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/resolve/my-pending", nil)
+	r = requestWithChiParam(r, "id", "my-pending")
 	w := httptest.NewRecorder()
 	h.ResolveID(w, r)
 
@@ -459,15 +462,15 @@ func TestProgramHandler_ResolveID_DraftReturns404ToAnonymous(t *testing.T) {
 	}
 }
 
-func TestProgramHandler_ResolveID_DraftReturns404ToAuthenticatedNonOwner(t *testing.T) {
+func TestProgramHandler_ResolveID_PendingReturns404ToAuthenticatedNonOwner(t *testing.T) {
 	owner := "owner"
 	h := handler.NewProgramHandler(&stubProgramSvc{
 		getBySlug: func(_ context.Context, slug string) (*models.Program, error) {
-			return &models.Program{ID: "draft-uuid", Slug: slug, Status: models.ProgramStatusDraft, LFID: &owner}, nil
+			return &models.Program{ID: "pending-uuid", Slug: slug, Status: models.ProgramStatusPending, LFID: &owner}, nil
 		},
 	})
-	r := httptest.NewRequest(http.MethodGet, "/v1/programs/resolve/my-draft", nil)
-	r = requestWithChiParam(r, "id", "my-draft")
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/resolve/my-pending", nil)
+	r = requestWithChiParam(r, "id", "my-pending")
 	r = r.WithContext(auth.ContextWithPrincipal(r.Context(), &models.Principal{UserID: "someone", Username: "someone"}))
 	w := httptest.NewRecorder()
 	h.ResolveID(w, r)
@@ -476,16 +479,16 @@ func TestProgramHandler_ResolveID_DraftReturns404ToAuthenticatedNonOwner(t *test
 	}
 }
 
-func TestProgramHandler_ResolveID_DraftResolvesForOwner(t *testing.T) {
+func TestProgramHandler_ResolveID_PendingResolvesForOwner(t *testing.T) {
 	owner := "owner"
 	h := handler.NewProgramHandler(&stubProgramSvc{
 		getBySlug: func(_ context.Context, slug string) (*models.Program, error) {
-			return &models.Program{ID: "draft-uuid", Slug: slug, Status: models.ProgramStatusDraft, LFID: &owner}, nil
+			return &models.Program{ID: "pending-uuid", Slug: slug, Status: models.ProgramStatusPending, LFID: &owner}, nil
 		},
 	})
 
-	r := httptest.NewRequest(http.MethodGet, "/v1/programs/resolve/my-draft", nil)
-	r = requestWithChiParam(r, "id", "my-draft")
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/resolve/my-pending", nil)
+	r = requestWithChiParam(r, "id", "my-pending")
 	r = r.WithContext(auth.ContextWithPrincipal(r.Context(), &models.Principal{UserID: "owner-user", Username: owner}))
 	w := httptest.NewRecorder()
 	h.ResolveID(w, r)
@@ -497,8 +500,8 @@ func TestProgramHandler_ResolveID_DraftResolvesForOwner(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if body["id"] != "draft-uuid" {
-		t.Fatalf("id = %q; want draft-uuid", body["id"])
+	if body["id"] != "pending-uuid" {
+		t.Fatalf("id = %q; want pending-uuid", body["id"])
 	}
 }
 
@@ -519,19 +522,19 @@ func TestProgramHandler_ResolveID_SubmittedReturns404ToAnonymous(t *testing.T) {
 	}
 }
 
-func TestProgramHandler_GetCatalog_DraftReturnsOK(t *testing.T) {
+func TestProgramHandler_GetCatalog_PendingReturnsOK(t *testing.T) {
 	h := handler.NewProgramHandler(&stubProgramSvc{
 		getCatalog: func(_ context.Context, id string) (*models.ProgramCatalogItem, error) {
 			return &models.ProgramCatalogItem{
-				Program: models.Program{ID: id, Name: "Draft Program", Status: models.ProgramStatusDraft},
+				Program: models.Program{ID: id, Name: "Pending Program", Status: models.ProgramStatusPending},
 				Skills:  []string{},
 				Terms:   []models.ProgramCatalogTerm{},
 				Mentors: []models.ProgramCatalogMentor{},
 			}, nil
 		},
 	})
-	r := httptest.NewRequest(http.MethodGet, "/v1/programs/draft-1/catalog", nil)
-	r = requestWithChiParam(r, "id", "draft-1")
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/pending-1/catalog", nil)
+	r = requestWithChiParam(r, "id", "pending-1")
 	w := httptest.NewRecorder()
 	h.GetCatalog(w, r)
 	if w.Code != http.StatusOK {

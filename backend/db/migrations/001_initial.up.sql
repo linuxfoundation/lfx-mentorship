@@ -80,7 +80,7 @@ CREATE TABLE IF NOT EXISTS programs (
   id                   UUID         PRIMARY KEY,
   name                 TEXT         NOT NULL,
   slug                 TEXT         NOT NULL UNIQUE,
-  status               VARCHAR(20)  NOT NULL DEFAULT 'draft',    -- draft | submitted | published | rejected | archived | hidden
+  status               VARCHAR(20)  NOT NULL DEFAULT 'pending',  -- pending | submitted | published | rejected | archived | hidden
   is_paid              BOOLEAN      NOT NULL DEFAULT false,        -- stipend paid to mentees
   description          TEXT,
   logo_url             TEXT,
@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS programs (
   lf_project_slug      TEXT,
   lf_project_name      TEXT,
   lf_project_logo_url  TEXT,
-  CONSTRAINT programs_status_check CHECK (status IN ('draft', 'submitted', 'published', 'rejected', 'archived', 'hidden'))
+  CONSTRAINT programs_status_check CHECK (status IN ('pending', 'submitted', 'published', 'rejected', 'archived', 'hidden'))
 );
 
 -- ============================================

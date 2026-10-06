@@ -30,7 +30,7 @@ func newMemberSvc(memberRepo *stubMemberRepo, progRepo *stubProgRepo, notifier *
 func TestProgramMemberService_Create_NonPublishedProgram(t *testing.T) {
 	progRepo := &stubProgRepo{
 		getByID: func(_ context.Context, _ string) (*models.Program, error) {
-			return &models.Program{ID: "prog-1", Status: models.ProgramStatusDraft}, nil
+			return &models.Program{ID: "prog-1", Status: models.ProgramStatusPending}, nil
 		},
 	}
 	svc := newMemberSvc(&stubMemberRepo{}, progRepo, &stubNotifier{})
@@ -563,7 +563,7 @@ func TestProgramMemberService_RequestMentorship_ProgramVisibility(t *testing.T) 
 		status models.ProgramStatus
 		want   error
 	}{
-		{models.ProgramStatusDraft, domain.ErrInvalidInput},
+		{models.ProgramStatusPending, domain.ErrInvalidInput},
 		{models.ProgramStatusSubmitted, domain.ErrProgramNotFound},
 		{models.ProgramStatusRejected, domain.ErrProgramNotFound},
 		{models.ProgramStatusArchived, domain.ErrProgramNotFound},

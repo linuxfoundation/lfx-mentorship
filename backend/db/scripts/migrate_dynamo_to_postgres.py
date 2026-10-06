@@ -365,17 +365,17 @@ def _redact_dsn(dsn: str) -> str:
 def _normalize_program_status(status: str | None) -> str:
     """Map DynamoDB project status to Postgres programs.status."""
     if not status:
-        return "draft"
+        return "pending"
     m = {
-        "draft": "draft",
-        "pending": "draft",       # legacy DynamoDB value
+        "draft": "pending",
+        "pending": "pending",
         "submitted": "submitted",
         "published": "published",
         "rejected": "rejected",
         "archived": "archived",
         "hidden": "hidden",
     }
-    return m.get(status.lower(), "draft")
+    return m.get(status.lower(), "pending")
 
 
 _VALID_APP_STATUSES = {"pending", "accepted", "declined", "withdrawn", "graduated", "hold"}

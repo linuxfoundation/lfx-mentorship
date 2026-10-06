@@ -33,7 +33,7 @@ Valid transitions enforced in `ProgramService.Update`:
 
 | `from` | `to` | Actor |
 |--------|------|-------|
-| `draft` | `submitted` | program_admin |
+| `pending` | `submitted` | program_admin |
 | `submitted` | `published` | reviewer |
 | `submitted` | `rejected` | reviewer |
 | `rejected` | `submitted` | program_admin (resubmit) |

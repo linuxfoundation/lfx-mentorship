@@ -105,6 +105,14 @@ class _Files:
         return None
 
 
+@pytest.mark.parametrize(
+    "legacy, expected",
+    [("draft", "pending"), ("pending", "pending"), ("DRAFT", "pending"), (None, "pending"), ("", "pending"), ("unknown", "pending"), ("published", "published")],
+)
+def test_program_status_maps_legacy_values(legacy, expected):
+    assert m._normalize_program_status(legacy) == expected
+
+
 def program_rows(monkeypatch, projects, resolved):
     captured = []
     monkeypatch.setattr(m.psycopg2.extras, "execute_batch", lambda cur, sql, rows, page_size=0: captured.append(rows) if "INSERT INTO programs" in sql else None)

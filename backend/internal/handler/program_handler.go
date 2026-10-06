@@ -35,6 +35,7 @@ type programService interface {
 	Create(ctx context.Context, input models.ProgramCreateInput) (*models.Program, error)
 	CreateEnrollment(ctx context.Context, input models.ProgramEnrollmentInput) (*models.Program, error)
 	Update(ctx context.Context, id string, input models.ProgramUpdateInput) (*models.Program, error)
+	Decide(ctx context.Context, id string, status models.ProgramStatus) (*models.Program, error)
 	Delete(ctx context.Context, id string) error
 	ListSkills(ctx context.Context, programID string) ([]*models.ProgramSkill, error)
 	AddSkill(ctx context.Context, programID string, input models.ProgramSkillCreateInput) (*models.ProgramSkill, error)
@@ -138,7 +139,7 @@ func resolveVisibleProgram(w http.ResponseWriter, r *http.Request, svc programLo
 	if !ok {
 		return nil, false
 	}
-	if program.Status != models.ProgramStatusPublished && program.Status != models.ProgramStatusDraft {
+	if program.Status != models.ProgramStatusPublished && program.Status != models.ProgramStatusPending {
 		principal := auth.PrincipalFromContext(r.Context())
 		if auth.IsGatewayPrincipal(r.Context()) && principal != nil && principal.UserID != "_anonymous" {
 			return program, true
@@ -353,7 +354,7 @@ func (h *ProgramHandler) NameAvailable(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, map[string]bool{"available": available})
 }
 
-// Submit transitions a program from draft or rejected to submitted.
+// Submit transitions a program from pending or rejected to submitted.
 func (h *ProgramHandler) Submit(w http.ResponseWriter, r *http.Request) {
 	if auth.PrincipalFromContext(r.Context()) == nil {
 		Error(w, domain.ErrUnauthorized)
@@ -382,11 +383,7 @@ func (h *ProgramHandler) Decision(w http.ResponseWriter, r *http.Request) {
 		Error(w, fmt.Errorf("%w: status is required", domain.ErrInvalidInput))
 		return
 	}
-	if *input.Status != models.ProgramStatusPublished && *input.Status != models.ProgramStatusRejected {
-		Error(w, fmt.Errorf("%w: decision must publish or reject a submitted program", domain.ErrInvalidInput))
-		return
-	}
-	program, err := h.svc.Update(r.Context(), chi.URLParam(r, "id"), models.ProgramUpdateInput{Status: input.Status})
+	program, err := h.svc.Decide(r.Context(), chi.URLParam(r, "id"), *input.Status)
 	if err != nil {
 		Error(w, err)
 		return

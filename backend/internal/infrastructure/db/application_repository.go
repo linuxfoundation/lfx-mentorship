@@ -153,7 +153,7 @@ func (r *ApplicationRepository) ListByProgram(ctx context.Context, programID str
 	// Withdrawn applications kept beside a reapplication are history, not separate applicants: list
 	// one application per (term, user) — the live one, else the newest withdrawn — matching
 	// GetManagementSummary's counts. Equal created_on values break the tie on id.
-	where := ` WHERE pt.program_id = $1 AND a.role = 'mentee' AND p.status NOT IN ('draft', 'submitted')
+	where := ` WHERE pt.program_id = $1 AND a.role = 'mentee' AND p.status NOT IN ` + sqlUnreviewedProgramStatuses + `
 		AND NOT (a.status = 'withdrawn' AND EXISTS (SELECT 1 FROM applications other
 			WHERE other.program_term_id = a.program_term_id AND other.user_id = a.user_id
 			AND other.role = a.role AND other.id <> a.id

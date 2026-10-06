@@ -192,6 +192,9 @@ func (r *ProgramRepository) GetHeaderProjection(ctx context.Context, programID s
 	return projection, nil
 }
 
+// sqlUnreviewedProgramStatuses lists program statuses that have not passed review.
+const sqlUnreviewedProgramStatuses = `('` + string(models.ProgramStatusPending) + `', '` + string(models.ProgramStatusSubmitted) + `')`
+
 // administeredProgramsFrom selects the programs $1 is an active program admin
 // of, with the ID of the term shown on the list (the latest open term, else the
 // latest closed one) and the admin status. A published program with no open
@@ -203,7 +206,7 @@ const administeredProgramsFrom = `
 			programs.logo_url, programs.status, programs.created_on, programs.updated_on,
 			COALESCE(open_term.id, closed_term.id) AS term_id,
 			CASE
-				WHEN programs.status IN ('draft', 'submitted') THEN 'pending_review'
+				WHEN programs.status IN ` + sqlUnreviewedProgramStatuses + ` THEN 'pending_review'
 				WHEN programs.status = 'published' AND open_term.id IS NULL AND closed_term.id IS NOT NULL THEN 'completed'
 				WHEN programs.status = 'published' THEN 'open'
 				WHEN programs.status = 'rejected' THEN 'rejected'
@@ -421,10 +424,10 @@ func (r *ProgramRepository) GetManagementSummary(ctx context.Context, programID 
 		SELECT
 			EXISTS (SELECT 1 FROM program_terms WHERE program_id = $1 AND status = 'open'),
 			EXISTS (SELECT 1 FROM program_terms WHERE program_id = $1 AND status = 'closed'),
-			COUNT(a.id) FILTER (WHERE pt.status = 'open' AND p.status NOT IN ('draft', 'submitted') AND a.role = 'mentee' AND a.status IN ('accepted', 'graduated')),
+			COUNT(a.id) FILTER (WHERE pt.status = 'open' AND p.status NOT IN ` + sqlUnreviewedProgramStatuses + ` AND a.role = 'mentee' AND a.status IN ('accepted', 'graduated')),
 			-- Counted per (term, user): a withdrawn application is kept beside its reapplication.
-			COUNT(DISTINCT (a.program_term_id, a.user_id)) FILTER (WHERE pt.status = 'closed' AND p.status NOT IN ('draft', 'submitted') AND a.role = 'mentee'),
-			COUNT(DISTINCT (a.program_term_id, a.user_id)) FILTER (WHERE p.status NOT IN ('draft', 'submitted') AND a.role = 'mentee'),
+			COUNT(DISTINCT (a.program_term_id, a.user_id)) FILTER (WHERE pt.status = 'closed' AND p.status NOT IN ` + sqlUnreviewedProgramStatuses + ` AND a.role = 'mentee'),
+			COUNT(DISTINCT (a.program_term_id, a.user_id)) FILTER (WHERE p.status NOT IN ` + sqlUnreviewedProgramStatuses + ` AND a.role = 'mentee'),
 			(SELECT COUNT(*) FROM program_members pm WHERE pm.program_id = $1 AND pm.member_type = 'mentor' AND pm.status = 'active'),
 			(SELECT COUNT(*) FROM program_terms WHERE program_id = $1 AND status <> 'deleted')
 		FROM program_terms pt
@@ -1259,7 +1262,7 @@ func (r *ProgramRepository) ListFundingSyncProgramIDs(ctx context.Context) ([]st
 	const q = `
 		SELECT programs.id
 		FROM programs
-		WHERE status NOT IN ('archived', 'draft')
+		WHERE status NOT IN ('` + string(models.ProgramStatusArchived) + `', '` + string(models.ProgramStatusPending) + `')
 		ORDER BY programs.id`
 
 	rows, err := r.pool.Query(ctx, q)
