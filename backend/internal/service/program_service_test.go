@@ -147,6 +147,30 @@ func TestProgramService_Update_InvalidTransition(t *testing.T) {
 	}
 }
 
+func TestProgramService_Decide(t *testing.T) {
+	for _, tc := range []struct {
+		current, next models.ProgramStatus
+		want          error
+	}{
+		{models.ProgramStatusSubmitted, models.ProgramStatusPublished, nil},
+		{models.ProgramStatusSubmitted, models.ProgramStatusRejected, nil},
+		{models.ProgramStatusHidden, models.ProgramStatusPublished, domain.ErrInvalidStateTransition},
+		{models.ProgramStatusPending, models.ProgramStatusPublished, domain.ErrInvalidStateTransition},
+		{models.ProgramStatusSubmitted, models.ProgramStatusHidden, domain.ErrInvalidInput},
+	} {
+		repo := &stubProgRepo{
+			getByID: func(_ context.Context, id string) (*models.Program, error) {
+				return &models.Program{ID: id, Status: tc.current}, nil
+			},
+		}
+		svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+		_, err := svc.Decide(context.Background(), "prog-1", tc.next)
+		if tc.want == nil && err != nil || tc.want != nil && !errors.Is(err, tc.want) {
+			t.Errorf("%s→%s: got %v; want %v", tc.current, tc.next, err, tc.want)
+		}
+	}
+}
+
 func TestProgramService_Update_ArchivedTerminal(t *testing.T) {
 	repo := &stubProgRepo{
 		getByID: func(_ context.Context, id string) (*models.Program, error) {

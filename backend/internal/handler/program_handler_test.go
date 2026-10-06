@@ -99,6 +99,9 @@ func (s *stubProgramSvc) CreateEnrollment(ctx context.Context, input models.Prog
 func (s *stubProgramSvc) Update(context.Context, string, models.ProgramUpdateInput) (*models.Program, error) {
 	return &models.Program{}, nil
 }
+func (s *stubProgramSvc) Decide(context.Context, string, models.ProgramStatus) (*models.Program, error) {
+	return &models.Program{}, nil
+}
 func (s *stubProgramSvc) Delete(context.Context, string) error { return nil }
 func (s *stubProgramSvc) ListSkills(ctx context.Context, programID string) ([]*models.ProgramSkill, error) {
 	if s.listSkills != nil {

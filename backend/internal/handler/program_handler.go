@@ -35,6 +35,7 @@ type programService interface {
 	Create(ctx context.Context, input models.ProgramCreateInput) (*models.Program, error)
 	CreateEnrollment(ctx context.Context, input models.ProgramEnrollmentInput) (*models.Program, error)
 	Update(ctx context.Context, id string, input models.ProgramUpdateInput) (*models.Program, error)
+	Decide(ctx context.Context, id string, status models.ProgramStatus) (*models.Program, error)
 	Delete(ctx context.Context, id string) error
 	ListSkills(ctx context.Context, programID string) ([]*models.ProgramSkill, error)
 	AddSkill(ctx context.Context, programID string, input models.ProgramSkillCreateInput) (*models.ProgramSkill, error)
@@ -382,11 +383,7 @@ func (h *ProgramHandler) Decision(w http.ResponseWriter, r *http.Request) {
 		Error(w, fmt.Errorf("%w: status is required", domain.ErrInvalidInput))
 		return
 	}
-	if *input.Status != models.ProgramStatusPublished && *input.Status != models.ProgramStatusRejected {
-		Error(w, fmt.Errorf("%w: decision must publish or reject a submitted program", domain.ErrInvalidInput))
-		return
-	}
-	program, err := h.svc.Update(r.Context(), chi.URLParam(r, "id"), models.ProgramUpdateInput{Status: input.Status})
+	program, err := h.svc.Decide(r.Context(), chi.URLParam(r, "id"), *input.Status)
 	if err != nil {
 		Error(w, err)
 		return

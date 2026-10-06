@@ -2,8 +2,8 @@
 
 ## Status Mapping
 
-Program creation persists the canonical backend status `pending`. BFF consumers
-map `pending` and `submitted` to their pending-review display state.
+Program creation persists the canonical backend status `pending`. The BFF catalog
+mapping shows a `pending` program in its pending-review display state.
 
 **Base URL**: `https://lfx-api.<environment>/mentorship/v1` through the Heimdall gateway.
 **Content-Type**: `application/json` for all request and response bodies  
@@ -523,7 +523,8 @@ Programs are the top-level entity for a mentorship offering.
 }
 ```
 
-**Status lifecycle**: `pending → submitted → published ↔ hidden | rejected → archived`
+**Status lifecycle**: `pending → submitted → published | rejected`; `rejected → submitted`;
+`published ↔ hidden`; `published | hidden → archived`. See [§15](#15-domain-state-machines).
 
 | Status | Meaning |
 |---|---|
@@ -604,11 +605,12 @@ Programs are the top-level entity for a mentorship offering.
 
 #### `GET /v1/programs` 🔓
 
+Always returns `published` programs.
+
 **Query parameters**
 
 | Parameter | Values | Description |
 |---|---|---|
-| `status` | `pending\|submitted\|published\|hidden\|rejected\|archived` | Filter by status |
 | `search` | string | Case-insensitive match on program name |
 | `limit` / `offset` | — | Pagination |
 
@@ -2044,7 +2046,7 @@ pending ────────────────────────
 
 | From | To | Notes |
 |---|---|---|
-| `pending` | `submitted` | All required fields present (lfid, description, repo_link, logo_url, ≥1 skill, ≥1 open term) |
+| `pending` | `submitted` | All required fields present (linked LF project, description, repo_link, logo_url, ≥1 skill, ≥1 open term) |
 | `submitted` | `published` | Reviewer approves |
 | `submitted` | `rejected` | Reviewer declines |
 | `published` | `hidden` | No pending/accepted/graduated applications |

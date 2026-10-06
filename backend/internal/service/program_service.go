@@ -433,6 +433,21 @@ func normalizeProjectMetadata(input *models.ProgramCreateInput) error {
 }
 
 // Update validates and applies changes to the program with the given ID.
+// Decide publishes or rejects a submitted program.
+func (s *ProgramService) Decide(ctx context.Context, id string, status models.ProgramStatus) (*models.Program, error) {
+	if status != models.ProgramStatusPublished && status != models.ProgramStatusRejected {
+		return nil, fmt.Errorf("%w: decision must publish or reject a submitted program", domain.ErrInvalidInput)
+	}
+	current, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("get program for decision: %w", err)
+	}
+	if current.Status != models.ProgramStatusSubmitted {
+		return nil, fmt.Errorf("%w: only a submitted program can be decided, not %q", domain.ErrInvalidStateTransition, current.Status)
+	}
+	return s.Update(ctx, id, models.ProgramUpdateInput{Status: &status})
+}
+
 func (s *ProgramService) Update(ctx context.Context, id string, input models.ProgramUpdateInput) (*models.Program, error) {
 	ctx, span := programSvcTracer.Start(ctx, "ProgramService.Update")
 	defer span.End()
