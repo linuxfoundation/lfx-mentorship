@@ -1,0 +1,165 @@
+# Copyright The Linux Foundation and each contributor to LFX.
+# SPDX-License-Identifier: MIT
+
+"""Tests for the importer's project-parent resolution and program upsert.
+
+Run from backend/db/scripts: python -m pytest. The upsert tests need a migrated
+database in MIGRATION_TEST_PG_DSN and are skipped without one.
+"""
+
+import os
+import sys
+import types
+
+import psycopg2
+import pytest
+
+import migrate_dynamo_to_postgres as m
+
+PROGRAM = "11111111-1111-4111-8111-111111111111"
+CNCF = "d9431bb9-b0a8-47ff-a3bc-30a2a989572c"
+TPG = "2d296cca-1856-45dd-a3b0-2b37c9eabbfd"
+SFID = "a0941000002wBz4AAE"
+
+
+class _Msg:
+    def __init__(self, data: str):
+        self.data = data.encode()
+
+
+@pytest.fixture
+def nats(monkeypatch):
+    """Install a fake nats module whose replies come from reply(subject, body)."""
+
+    def install(reply):
+        class Conn:
+            async def request(self, subject, body, timeout=5):
+                return _Msg(reply(subject, body.decode()))
+
+            async def close(self):
+                pass
+
+        async def connect(url):
+            return Conn()
+
+        monkeypatch.setitem(sys.modules, "nats", types.SimpleNamespace(connect=connect))
+        monkeypatch.setattr(m, "NATS_URL", "nats://fake")
+
+    return install
+
+
+def replies(mapping=CNCF, slug="cncf", name="CNCF"):
+    table = {"lfx.lookup_v1_mapping": mapping, "lfx.projects-api.get_slug": slug, "lfx.projects-api.get_name": name}
+    return lambda subject, body: table[subject]
+
+
+def resolve_sfid():
+    return m.resolve_lf_projects([{"projectId": PROGRAM, "lfProjectId": SFID}])[SFID]
+
+
+def test_sfid_resolves_to_verified_project(nats):
+    nats(replies())
+    assert resolve_sfid() == (CNCF, "cncf", "CNCF")
+
+
+def test_empty_mapping_reply_is_unmapped(nats):
+    nats(replies(mapping=""))
+    assert resolve_sfid() is None
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"mapping": "error: kv unavailable"},
+        {"slug": ""},
+        {"name": ""},
+        {"slug": '{"error":"internal","message":"boom"}'},
+        {"name": '{"error":"internal","message":"boom"}'},
+    ],
+    ids=["mapping-error", "empty-slug", "empty-name", "slug-internal", "name-internal"],
+)
+def test_lookup_failures_abort_the_import(nats, kwargs):
+    nats(replies(**kwargs))
+    with pytest.raises(RuntimeError, match=r"lfx\."):
+        resolve_sfid()
+
+
+@pytest.mark.parametrize("kwargs", [{"slug": '{"error":"not_found"}'}, {"name": '{"error":"not_found"}'}], ids=["slug", "name"])
+def test_not_found_project_is_unmapped(nats, kwargs):
+    nats(replies(**kwargs))
+    assert resolve_sfid() is None
+
+
+def test_value_that_is_not_an_error_body_is_kept(nats):
+    nats(replies(name="{not json} project"))
+    assert resolve_sfid() == (CNCF, "cncf", "{not json} project")
+
+
+def test_without_nats_url_nothing_resolves(monkeypatch):
+    monkeypatch.setattr(m, "NATS_URL", "")
+    assert m.resolve_lf_projects([{"projectId": PROGRAM, "lfProjectId": SFID}]) == {}
+
+
+class _Files:
+    def rewrite(self, *args):
+        return None
+
+
+def program_rows(monkeypatch, projects, resolved):
+    captured = []
+    monkeypatch.setattr(m.psycopg2.extras, "execute_batch", lambda cur, sql, rows, page_size=0: captured.append(rows) if "INSERT INTO programs" in sql else None)
+    m.migrate_programs(None, projects, set(), _Files(), resolved)
+    return {row[0]: row for row in captured[0]}
+
+
+def test_selection_skips_rejected_and_self_referencing_candidates(monkeypatch):
+    fabricated = "deadbeef-0000-5000-8000-000000000000"
+    projects = [
+        {"projectId": PROGRAM, "name": "A", "lfProjectId": SFID, "lfProjectLogo": "https://logo/a.svg"},
+        {"projectId": TPG.replace("2d", "3e", 1), "name": "B", "lfProjectId": "unmapped", "lfProjectUid": fabricated},
+        {"projectId": CNCF.replace("d9", "e9", 1), "name": "C", "projectUid": CNCF.replace("d9", "e9", 1), "lfProjectUid": TPG, "lfProjectLogo": "https://logo/c.svg"},
+    ]
+    resolved = {SFID: (CNCF, "cncf", "CNCF"), "unmapped": None, fabricated: None, TPG: (TPG, "test-project-group", "TPG")}
+    rows = program_rows(monkeypatch, projects, resolved)
+
+    assert rows[PROGRAM][1:5] == (CNCF, "cncf", "CNCF", "https://logo/a.svg")
+    assert rows[projects[1]["projectId"]][1:5] == (None, None, None, None)
+    # lfProjectLogo describes the lfProjectId project, so it is not applied to another parent.
+    assert rows[projects[2]["projectId"]][1:5] == (TPG, "test-project-group", "TPG", None)
+
+
+DSN = os.environ.get("MIGRATION_TEST_PG_DSN")
+
+
+@pytest.fixture
+def cursor():
+    if not DSN:
+        pytest.skip("MIGRATION_TEST_PG_DSN is not set")
+    conn = psycopg2.connect(DSN, options="-c search_path=mentorship,public")
+    try:
+        with conn.cursor() as cur:
+            yield cur
+    finally:
+        conn.rollback()
+        conn.close()
+
+
+def upsert(cur, resolved, **source):
+    m.migrate_programs(cur, [{"projectId": PROGRAM, "name": "P", **source}], set(), _Files(), resolved)
+    cur.execute("SELECT lf_project_uid, lf_project_slug, lf_project_name, lf_project_logo_url FROM programs WHERE id = %s", (PROGRAM,))
+    return cur.fetchone()
+
+
+def test_upsert_keeps_existing_parent_when_none_is_confirmed(cursor):
+    assert upsert(cursor, {SFID: (CNCF, "cncf", "CNCF")}, lfProjectId=SFID, lfProjectLogo="https://logo/a.svg") == (CNCF, "cncf", "CNCF", "https://logo/a.svg")
+    assert upsert(cursor, {SFID: None}, lfProjectId=SFID) == (CNCF, "cncf", "CNCF", "https://logo/a.svg")
+
+
+def test_upsert_keeps_logo_when_same_parent_resolves_through_another_field(cursor):
+    upsert(cursor, {SFID: (CNCF, "cncf", "CNCF")}, lfProjectId=SFID, lfProjectLogo="https://logo/a.svg")
+    assert upsert(cursor, {SFID: None, CNCF: (CNCF, "cncf", "CNCF")}, lfProjectId=SFID, lfProjectUid=CNCF) == (CNCF, "cncf", "CNCF", "https://logo/a.svg")
+
+
+def test_upsert_replaces_metadata_when_parent_changes(cursor):
+    upsert(cursor, {SFID: (CNCF, "cncf", "CNCF")}, lfProjectId=SFID, lfProjectLogo="https://logo/a.svg")
+    assert upsert(cursor, {TPG: (TPG, "test-project-group", "TPG")}, lfProjectUid=TPG) == (TPG, "test-project-group", "TPG", None)

@@ -68,6 +68,15 @@ jobs:
           TEST_DATABASE_DSN: postgres://mentorship:mentorship@localhost:5432/mentorship?sslmode=disable
         run: go test -race -count=1 -tags=integration ./internal/infrastructure/db
 
+      - name: Run migration script tests
+        working-directory: backend/db/scripts
+        env:
+          MIGRATION_TEST_PG_DSN: postgresql://mentorship:mentorship@localhost:5432/mentorship
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install --quiet pytest==9.1.1 boto3==1.43.74 psycopg2-binary==2.9.12
+          .venv/bin/python -m pytest -q
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

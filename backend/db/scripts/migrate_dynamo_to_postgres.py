@@ -223,11 +223,14 @@ def resolve_lf_projects(projects: list) -> dict:
                 reply = await ask(subject, uid)
                 if not reply:
                     raise RuntimeError(f"{subject} {uid}: empty reply")
-                if not reply.startswith("{"):
-                    return reply
                 # project-service answers failures with a JSON error body instead of a value.
-                error = json.loads(reply).get("error")
-                if error == "not_found":
+                try:
+                    body = json.loads(reply)
+                except ValueError:
+                    return reply
+                if not isinstance(body, dict):
+                    return reply
+                if body.get("error") == "not_found":
                     return None
                 raise RuntimeError(f"{subject} {uid}: {reply}")
 
@@ -721,7 +724,9 @@ def migrate_programs(cur, projects: list, known_user_ids: set, files: lo.LegacyF
                     lf_project_uid     = COALESCE(EXCLUDED.lf_project_uid, programs.lf_project_uid),
           lf_project_slug        = CASE WHEN EXCLUDED.lf_project_uid IS NULL THEN programs.lf_project_slug ELSE EXCLUDED.lf_project_slug END,
           lf_project_name        = CASE WHEN EXCLUDED.lf_project_uid IS NULL THEN programs.lf_project_name ELSE EXCLUDED.lf_project_name END,
-          lf_project_logo_url   = CASE WHEN EXCLUDED.lf_project_uid IS NULL THEN programs.lf_project_logo_url ELSE EXCLUDED.lf_project_logo_url END,
+          lf_project_logo_url   = CASE WHEN EXCLUDED.lf_project_uid IS NULL
+                                         OR (EXCLUDED.lf_project_logo_url IS NULL AND EXCLUDED.lf_project_uid = programs.lf_project_uid)
+                                       THEN programs.lf_project_logo_url ELSE EXCLUDED.lf_project_logo_url END,
           name                = EXCLUDED.name,
           slug                = EXCLUDED.slug,
           status              = EXCLUDED.status,
