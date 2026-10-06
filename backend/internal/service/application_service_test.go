@@ -922,3 +922,27 @@ func TestApplicationService_ListByProgramTermForActor_ReviewerKeepsFilterUserID(
 		t.Fatalf("ListByProgramTermForActor: %v", err)
 	}
 }
+
+func TestApplicationService_ListByProgram_StatusFilter(t *testing.T) {
+	for _, status := range []models.ProgramApplicationStatus{
+		models.ProgramApplicationStatusApplied,
+		models.ProgramApplicationStatusTasksSubmitted,
+		models.ProgramApplicationStatus(models.ApplicationStatusAccepted),
+	} {
+		var got models.ProgramApplicationStatus
+		svc := newApplicationSvc(&stubAppRepo{
+			listByProgram: func(_ context.Context, _ string, f models.ProgramApplicationFilter) ([]*models.ProgramApplicationRow, *models.PaginationMeta, error) {
+				got = f.Status
+				return []*models.ProgramApplicationRow{}, &models.PaginationMeta{}, nil
+			},
+		}, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{})
+		if _, _, err := svc.ListByProgram(context.Background(), "prog-1", models.ProgramApplicationFilter{Status: status}); err != nil || got != status {
+			t.Fatalf("ListByProgram(status %q) passed %q, err = %v; want it passed through", status, got, err)
+		}
+	}
+
+	svc := newApplicationSvc(&stubAppRepo{}, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{})
+	if _, _, err := svc.ListByProgram(context.Background(), "prog-1", models.ProgramApplicationFilter{Status: "submitted"}); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("ListByProgram(unknown status) err = %v; want ErrInvalidInput", err)
+	}
+}

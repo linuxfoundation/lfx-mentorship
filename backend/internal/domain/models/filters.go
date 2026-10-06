@@ -102,7 +102,7 @@ type ProgramApplicationFilter struct {
 	Offset int
 	Type   ProgramApplicationType
 	Search string
-	Status string
+	Status ProgramApplicationStatus
 	TermID string
 }
 

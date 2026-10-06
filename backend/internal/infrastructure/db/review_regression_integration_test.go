@@ -8,6 +8,7 @@ package db
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -519,6 +520,53 @@ func TestApplicationRepositoryIntegration_TimestampsAreRequired(t *testing.T) {
 	}
 }
 
+func TestDirectoryIntegration_NonStringSkillsAreDropped(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	skillSet := `{"skills":[null,"Rust",{"name":"Kubernetes"},7,"Go"]}`
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ('00000000-0000-0000-0000-000000000080', $1, $2, 'mentee', 'accepted')`, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatalf("insert accepted mentee application: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES ('00000000-0000-0000-0000-000000000081', $1, $2, 'mentor', 'active')`, fixture.ProgramID, fixture.UserID); err != nil {
+		t.Fatalf("insert active mentor membership: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO user_profiles (id, user_id, profile_type, skill_set) VALUES ('00000000-0000-0000-0000-000000000082', $1, 'mentee', $2), ('00000000-0000-0000-0000-000000000083', $1, 'mentor', $2)`, fixture.UserID, skillSet); err != nil {
+		t.Fatalf("insert profiles: %v", err)
+	}
+	want := []string{"Go", "Rust"}
+
+	mentees, err := NewMenteeRepository(pool).List(ctx, models.MenteeFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("mentee List: %v", err)
+	}
+	if len(mentees.Data) != 1 || !slices.Equal(mentees.Data[0].Skills, want) {
+		t.Errorf("mentee list = %+v, want one mentee with skills %v", mentees.Data, want)
+	}
+	mentee, err := NewMenteeRepository(pool).GetByUserID(ctx, fixture.UserID)
+	if err != nil {
+		t.Fatalf("mentee GetByUserID: %v", err)
+	}
+	if !slices.Equal(mentee.Skills, want) {
+		t.Errorf("mentee detail skills = %v, want %v", mentee.Skills, want)
+	}
+
+	mentors, err := NewMentorRepository(pool).List(ctx, models.MentorFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("mentor List: %v", err)
+	}
+	if len(mentors.Data) != 1 || !slices.Equal(mentors.Data[0].Skills, want) {
+		t.Errorf("mentor list = %+v, want one mentor with skills %v", mentors.Data, want)
+	}
+	mentor, err := NewMentorRepository(pool).GetByUserID(ctx, fixture.UserID)
+	if err != nil {
+		t.Fatalf("mentor GetByUserID: %v", err)
+	}
+	if !slices.Equal(mentor.Skills, want) {
+		t.Errorf("mentor detail skills = %v, want %v", mentor.Skills, want)
+	}
+}
+
 func assertTermProjectionStatus(t *testing.T, pool *pgxpool.Pool, termID, want string) {
 	t.Helper()
 	var applicationStatus, taskStatus, indexedStatus string
@@ -533,6 +581,77 @@ func assertTermProjectionStatus(t *testing.T, pool *pgxpool.Pool, termID, want s
 	}
 	if applicationStatus != want || taskStatus != want || indexedStatus != want {
 		t.Fatalf("projection statuses = application=%q task=%q index=%q, want %q", applicationStatus, taskStatus, indexedStatus, want)
+	}
+}
+
+func TestApplicationRepositoryIntegration_ListByProgramStatusFilterAndOrder(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	// Applicants in their expected order. Across ranks created_on rises down the list, so recency
+	// alone would reverse it, and ids rise too, so the id tiebreaker alone would as well. Within the
+	// two pending ranks the newer application comes first.
+	applicants := []struct {
+		id, status     string
+		tasksSubmitted bool
+		prerequisite   string // status of its one prerequisite task, or "" for none
+		day            int
+	}{
+		{"00000000-0000-0000-0000-0000000000c1", "graduated", false, "", 0},
+		{"00000000-0000-0000-0000-0000000000c2", "accepted", false, "", 1},
+		{"00000000-0000-0000-0000-0000000000c3", "pending", false, "submitted", 3}, // tasks_submitted, not yet flagged
+		{"00000000-0000-0000-0000-0000000000c4", "pending", false, "", 2},          // tasks_submitted: none to submit
+		{"00000000-0000-0000-0000-0000000000c5", "pending", true, "incomplete", 5}, // applied: flagged, then reset by a reviewer
+		{"00000000-0000-0000-0000-0000000000c6", "pending", false, "in_progress", 4},
+		{"00000000-0000-0000-0000-0000000000c7", "hold", false, "", 6},
+		{"00000000-0000-0000-0000-0000000000c8", "declined", false, "", 7},
+		{"00000000-0000-0000-0000-0000000000c9", "withdrawn", false, "", 8},
+	}
+	for _, a := range applicants {
+		suffix := a.id[len(a.id)-1:]
+		userID := "00000000-0000-0000-0000-0000000000d" + suffix
+		if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name) VALUES ($1, $2, $2)`, userID, "applicant-"+suffix); err != nil {
+			t.Fatalf("insert user: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status, tasks_submitted, created_on)
+			VALUES ($1, $2, $3, 'mentee', $4, $5, '2026-01-01T00:00:00Z'::timestamptz + make_interval(days => $6))`,
+			a.id, fixture.OpenTerm, userID, a.status, a.tasksSubmitted, a.day); err != nil {
+			t.Fatalf("insert %s application: %v", a.status, err)
+		}
+		if a.prerequisite != "" {
+			if _, err := pool.Exec(ctx, `INSERT INTO tasks (id, application_id, program_term_id, assignee_id, status, category, application_status, program_term_status)
+				VALUES ($1, $2, $3, $4, $5, 'prerequisite', 'pending', 'open')`,
+				"00000000-0000-0000-0000-0000000000e"+suffix, a.id, fixture.OpenTerm, userID, a.prerequisite); err != nil {
+				t.Fatalf("insert prerequisite task: %v", err)
+			}
+		}
+	}
+	repo := NewApplicationRepository(pool)
+
+	rows, _, err := repo.ListByProgram(ctx, fixture.ProgramID, models.ProgramApplicationFilter{Limit: 50})
+	if err != nil || len(rows) != len(applicants) {
+		t.Fatalf("ListByProgram = %d rows, err = %v; want %d", len(rows), err, len(applicants))
+	}
+	for i, row := range rows {
+		if want := applicants[i].id; row.ApplicationID != want {
+			t.Fatalf("row %d = %q (%s); want %q", i, row.ApplicationID, row.Status, want)
+		}
+	}
+
+	for status, want := range map[models.ProgramApplicationStatus][]string{
+		models.ProgramApplicationStatusApplied:                           {"00000000-0000-0000-0000-0000000000c5", "00000000-0000-0000-0000-0000000000c6"},
+		models.ProgramApplicationStatusTasksSubmitted:                    {"00000000-0000-0000-0000-0000000000c3", "00000000-0000-0000-0000-0000000000c4"},
+		models.ProgramApplicationStatus(models.ApplicationStatusPending): {"00000000-0000-0000-0000-0000000000c3", "00000000-0000-0000-0000-0000000000c4", "00000000-0000-0000-0000-0000000000c5", "00000000-0000-0000-0000-0000000000c6"},
+	} {
+		rows, meta, err := repo.ListByProgram(ctx, fixture.ProgramID, models.ProgramApplicationFilter{Status: status, Limit: 50})
+		if err != nil || meta.Total != len(want) || len(rows) != len(want) {
+			t.Fatalf("ListByProgram(status %q) = %d rows, meta %+v, err = %v; want %v", status, len(rows), meta, err, want)
+		}
+		for i, row := range rows {
+			if row.ApplicationID != want[i] {
+				t.Fatalf("ListByProgram(status %q) row %d = %q; want %q", status, i, row.ApplicationID, want[i])
+			}
+		}
 	}
 }
 
