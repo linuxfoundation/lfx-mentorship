@@ -558,8 +558,9 @@ func TestApplicationRepositoryIntegration_ListByProgramStatusFilterAndOrder(t *t
 		{"00000000-0000-0000-0000-0000000000c1", "graduated", false, false},
 	}
 	for i, a := range applicants {
-		userID := "00000000-0000-0000-0000-0000000000d" + a.id[len(a.id)-1:]
-		if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name) VALUES ($1, $1, $1)`, userID); err != nil {
+		suffix := a.id[len(a.id)-1:]
+		userID := "00000000-0000-0000-0000-0000000000d" + suffix
+		if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name) VALUES ($1, $2, $2)`, userID, "applicant-"+suffix); err != nil {
 			t.Fatalf("insert user: %v", err)
 		}
 		if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status, tasks_submitted, created_on)
