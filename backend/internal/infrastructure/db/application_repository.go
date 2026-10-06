@@ -134,11 +134,12 @@ func (r *ApplicationRepository) ListByProgramTerm(ctx context.Context, programTe
 	return apps, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, nil
 }
 
-// prerequisitesDone holds for an application with no prerequisite task outstanding: either
-// MarkTasksSubmitted flagged every one submitted, or it has none to submit. It splits pending into
-// the applicants list's applied and tasks_submitted.
-const prerequisitesDone = `(COALESCE(a.tasks_submitted, false) OR NOT EXISTS (SELECT 1 FROM tasks t
-	WHERE t.application_id = a.id AND t.category = 'prerequisite'))`
+// prerequisitesDone holds for an application with no prerequisite task outstanding: every one is
+// submitted or complete, or it has none. It splits pending into the applicants list's applied and
+// tasks_submitted. It reads the tasks, not applications.tasks_submitted: that flag records the first
+// full submission and stays set when a reviewer resets a task to incomplete.
+const prerequisitesDone = `(NOT EXISTS (SELECT 1 FROM tasks t
+	WHERE t.application_id = a.id AND t.category = 'prerequisite' AND t.status NOT IN ('submitted', 'complete')))`
 
 func (r *ApplicationRepository) ListByProgram(ctx context.Context, programID string, filter models.ProgramApplicationFilter) ([]*models.ProgramApplicationRow, *models.PaginationMeta, error) {
 	limit, offset := filter.Limit, filter.Offset
