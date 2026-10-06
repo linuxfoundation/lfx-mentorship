@@ -8,6 +8,7 @@ package db
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -516,6 +517,53 @@ func TestApplicationRepositoryIntegration_TimestampsAreRequired(t *testing.T) {
 		if !errors.As(err, &pgErr) || pgErr.Code != "23502" {
 			t.Fatalf("insert with NULL %s err = %v; want not_null_violation", column, err)
 		}
+	}
+}
+
+func TestDirectoryIntegration_NonStringSkillsAreDropped(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	skillSet := `{"skills":[null,"Rust",{"name":"Kubernetes"},7,"Go"]}`
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ('00000000-0000-0000-0000-000000000080', $1, $2, 'mentee', 'accepted')`, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatalf("insert accepted mentee application: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES ('00000000-0000-0000-0000-000000000081', $1, $2, 'mentor', 'active')`, fixture.ProgramID, fixture.UserID); err != nil {
+		t.Fatalf("insert active mentor membership: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO user_profiles (id, user_id, profile_type, skill_set) VALUES ('00000000-0000-0000-0000-000000000082', $1, 'mentee', $2), ('00000000-0000-0000-0000-000000000083', $1, 'mentor', $2)`, fixture.UserID, skillSet); err != nil {
+		t.Fatalf("insert profiles: %v", err)
+	}
+	want := []string{"Go", "Rust"}
+
+	mentees, err := NewMenteeRepository(pool).List(ctx, models.MenteeFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("mentee List: %v", err)
+	}
+	if len(mentees.Data) != 1 || !slices.Equal(mentees.Data[0].Skills, want) {
+		t.Errorf("mentee list = %+v, want one mentee with skills %v", mentees.Data, want)
+	}
+	mentee, err := NewMenteeRepository(pool).GetByUserID(ctx, fixture.UserID)
+	if err != nil {
+		t.Fatalf("mentee GetByUserID: %v", err)
+	}
+	if !slices.Equal(mentee.Skills, want) {
+		t.Errorf("mentee detail skills = %v, want %v", mentee.Skills, want)
+	}
+
+	mentors, err := NewMentorRepository(pool).List(ctx, models.MentorFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("mentor List: %v", err)
+	}
+	if len(mentors.Data) != 1 || !slices.Equal(mentors.Data[0].Skills, want) {
+		t.Errorf("mentor list = %+v, want one mentor with skills %v", mentors.Data, want)
+	}
+	mentor, err := NewMentorRepository(pool).GetByUserID(ctx, fixture.UserID)
+	if err != nil {
+		t.Fatalf("mentor GetByUserID: %v", err)
+	}
+	if !slices.Equal(mentor.Skills, want) {
+		t.Errorf("mentor detail skills = %v, want %v", mentor.Skills, want)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
@@ -123,6 +124,9 @@ func (s *UserProfileService) validateCreateInput(ctx context.Context, input mode
 	if err := reservedFileField("logo_url", input.LogoURL); err != nil {
 		return err
 	}
+	if err := validateSkillSet(input.SkillSet); err != nil {
+		return err
+	}
 	if input.ProfileType == "" {
 		return fmt.Errorf("%w: profile_type is required", domain.ErrInvalidInput)
 	}
@@ -167,6 +171,38 @@ func withoutResumeLink(profileLinks json.RawMessage) (json.RawMessage, error) {
 	return json.Marshal(links)
 }
 
+// skillSetLists are the skill_set keys holding skill names; the public mentee and
+// mentor directories read skills.
+var skillSetLists = []string{"skills", "improvementSkills"}
+
+// validateSkillSet requires skill_set to be an object whose skill lists, when
+// present, are arrays of non-empty strings.
+func validateSkillSet(skillSet json.RawMessage) error {
+	if len(skillSet) == 0 {
+		return nil
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(skillSet, &fields); err != nil {
+		return fmt.Errorf("%w: skill_set must be an object", domain.ErrInvalidInput)
+	}
+	for _, key := range skillSetLists {
+		raw, ok := fields[key]
+		if !ok {
+			continue
+		}
+		var skills []*string
+		if err := json.Unmarshal(raw, &skills); err != nil {
+			return fmt.Errorf("%w: skill_set.%s must be an array of strings", domain.ErrInvalidInput, key)
+		}
+		for _, skill := range skills {
+			if skill == nil || strings.TrimSpace(*skill) == "" {
+				return fmt.Errorf("%w: skill_set.%s must contain only non-empty strings", domain.ErrInvalidInput, key)
+			}
+		}
+	}
+	return nil
+}
+
 // Update applies changes to the user profile with the given ID.
 func (s *UserProfileService) Update(ctx context.Context, id string, input models.UserProfileUpdateInput) (*models.UserProfile, error) {
 	ctx, span := userProfileSvcTracer.Start(ctx, "UserProfileService.Update")
@@ -174,6 +210,9 @@ func (s *UserProfileService) Update(ctx context.Context, id string, input models
 	span.SetAttributes(attribute.String("profile.id", id))
 
 	if err := reservedFileField("logo_url", input.LogoURL); err != nil {
+		return nil, err
+	}
+	if err := validateSkillSet(input.SkillSet); err != nil {
 		return nil, err
 	}
 	var err error
