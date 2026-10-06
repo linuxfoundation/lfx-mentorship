@@ -531,28 +531,71 @@ func TestProgramHandler_PublicReads_DraftBySlugReturns404ToNonOwner(t *testing.T
 		},
 	}
 	h := handler.NewProgramHandler(svc)
-	principals := map[string]*models.Principal{
-		"anonymous":          {UserID: "_anonymous"},
-		"authenticated user": {UserID: "someone", Username: "someone"},
-	}
-	for who, principal := range principals {
+	for who, gateway := range map[string]func(http.Handler) http.Handler{
+		"anonymous":          gatewayAs(t, ""),
+		"authenticated user": gatewayAs(t, "someone"),
+	} {
 		for name, serve := range map[string]http.HandlerFunc{
 			"program":       h.GetByID,
 			"skills":        h.ListSkills,
 			"funding-stats": h.GetFundingStats,
 			"header":        h.GetHeaderProjection,
+			"mentees":       h.ListCatalogMentees,
+			"sponsors":      h.GetProgramSponsors,
+			"transactions":  h.GetCategorizedTransactions,
 		} {
 			t.Run(who+"/"+name, func(t *testing.T) {
 				r := httptest.NewRequest(http.MethodGet, "/v1/programs/my-draft/"+name, nil)
 				r = requestWithChiParam(r, "id", "my-draft")
-				r = r.WithContext(auth.ContextWithPrincipal(r.Context(), principal))
 				w := httptest.NewRecorder()
-				serve(w, r)
+				gateway(serve).ServeHTTP(w, r)
 				if w.Code != http.StatusNotFound {
 					t.Fatalf("got %d; want 404", w.Code)
 				}
 			})
 		}
+	}
+}
+
+// gatewayAs wraps a handler in the production GatewayMiddleware, which marks
+// every request as gateway-authorized: as an anonymous caller when user is
+// empty, otherwise as the authenticated user.
+func gatewayAs(t *testing.T, user string) func(http.Handler) http.Handler {
+	t.Helper()
+	cfg := auth.JWTAuthConfig{
+		HeimdallJWKSURL:  "http://heimdall.invalid/jwks",
+		HeimdallAudience: "lfx-mentorship-backend",
+		HeimdallIssuer:   "heimdall",
+	}
+	if user != "" {
+		cfg = auth.JWTAuthConfig{AllowMockPrincipalBypass: true, DisabledMockLocalPrincipal: user}
+	}
+	authenticator, err := auth.NewJWTAuthenticator(context.Background(), cfg, nil)
+	if err != nil {
+		t.Fatalf("NewJWTAuthenticator: %v", err)
+	}
+	return authenticator.GatewayMiddleware
+}
+
+func TestProgramHandler_GetByID_GatewayBypassRequiresUUID(t *testing.T) {
+	const hiddenID = "3f2b9c1e-8d4a-4b6f-9e21-5c7a0d9ea71d"
+	hidden := func(context.Context, string) (*models.Program, error) {
+		return &models.Program{ID: hiddenID, Slug: "my-hidden", Status: models.ProgramStatusHidden}, nil
+	}
+	h := handler.NewProgramHandler(&stubProgramSvc{getByID: hidden, getBySlug: hidden})
+	for ref, want := range map[string]int{
+		hiddenID:    http.StatusOK,
+		"my-hidden": http.StatusNotFound,
+	} {
+		t.Run(ref, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "/v1/programs/"+ref, nil)
+			r = requestWithChiParam(r, "id", ref)
+			w := httptest.NewRecorder()
+			gatewayAs(t, "someone")(http.HandlerFunc(h.GetByID)).ServeHTTP(w, r)
+			if w.Code != want {
+				t.Fatalf("got %d; want %d", w.Code, want)
+			}
+		})
 	}
 }
 

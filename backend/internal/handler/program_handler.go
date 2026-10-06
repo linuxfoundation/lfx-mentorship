@@ -139,9 +139,15 @@ func resolveVisibleProgram(w http.ResponseWriter, r *http.Request, svc programLo
 	if !ok {
 		return nil, false
 	}
-	if !program.PubliclyVisibleAt(programPathID(r)) {
+	ref := programPathID(r)
+	if !program.PubliclyVisibleAt(ref) {
+		// Heimdall's openfga_check authorized the captured path ID, which
+		// vouches for this program only when that ID is its UUID: a slug has
+		// no FGA tuples, so a slug-addressed request falls through to the
+		// owner check.
 		principal := auth.PrincipalFromContext(r.Context())
-		if auth.IsGatewayPrincipal(r.Context()) && principal != nil && principal.UserID != "_anonymous" {
+		if auth.IsGatewayPrincipal(r.Context()) && principal != nil && principal.UserID != "_anonymous" &&
+			strings.EqualFold(program.ID, ref) {
 			return program, true
 		}
 		if !isProgramOwner(r, program) {

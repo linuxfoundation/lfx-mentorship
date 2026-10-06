@@ -528,7 +528,7 @@ Programs are the top-level entity for a mentorship offering.
 
 | Status | Meaning |
 |---|---|
-| `draft` | Being configured; unlisted — public reads succeed only when addressed by UUID (slug lookups 404, never in lists) |
+| `draft` | Being configured; unlisted — readable by UUID only, never listed |
 | `submitted` | Under reviewer inspection |
 | `published` | Live; accepts applications |
 | `hidden` | Soft-hidden; only visible to owner |
@@ -690,7 +690,7 @@ LF project / foundation is not included yet — `programs.lfid` remains the owne
 
 #### `GET /v1/programs/{id}/catalog` 🔓
 
-Same catalog shape as `GET /v1/programs/catalog` for a single program (UUID or slug). Hidden programs follow the same FR-009 404 rule as `GET /v1/programs/{id}`.
+Same catalog shape as `GET /v1/programs/catalog` for a single program (UUID or slug). Drafts are served by UUID only; hidden programs follow the same FR-009 404 rule as `GET /v1/programs/{id}`.
 
 **Response** `200` → `<ProgramCatalogItem>`  
 **Errors** `404`
@@ -699,7 +699,7 @@ Same catalog shape as `GET /v1/programs/catalog` for a single program (UUID or s
 
 #### `GET /v1/programs/{id}/mentees` 🔓
 
-Public list of accepted and graduated mentees for a program (UUID or slug). Hidden programs follow the same FR-009 404 rule as `GET /v1/programs/{id}`. Pending, declined, withdrawn, and hold applications are omitted.
+Public list of accepted and graduated mentees for a program (UUID or slug). Drafts are served by UUID only; hidden programs follow the same FR-009 404 rule as `GET /v1/programs/{id}`. Pending, declined, withdrawn, and hold applications are omitted.
 
 **Response** `200`
 ```json
@@ -988,7 +988,7 @@ Fetch a program by UUID or slug.
 
 Resolve a program UUID or slug to the canonical program UUID.
 
-> Only `published` programs resolve, except for the program's LFID owner; everyone else receives `404`.
+> `published` programs resolve for anyone; a `draft` resolves by UUID only. Other statuses resolve only for the program's LFID owner; everyone else receives `404`.
 
 **Response** `200`
 ```json
@@ -2102,7 +2102,7 @@ incomplete ──► in_progress ──► submitted ──► complete
 | FR-003 | Max 4 open terms per program | `ProgramTermService.Create`, `.Update` |
 | FR-004 | Submission requires all required fields + ≥1 open term | `ProgramService.Update` |
 | FR-008 | Hide blocked while pending/accepted/graduated apps exist | `ProgramService.Update` |
-| FR-009 | Hidden programs return 404 to non-owners | `handler.resolveVisibleProgram`, used by `ProgramHandler.GetByID` and `ProgramMemberHandler.List` |
+| FR-009 | Hidden programs return 404 to non-owners; drafts are served by UUID only | `handler.resolveVisibleProgram`, used by `ProgramHandler.GetByID` and `ProgramMemberHandler.List` |
 | FR-013 | Close term blocked while accepted apps exist | `ProgramTermService.Update` |
 | FR-014 | Reopen term only if end_date in the future | `ProgramTermService.Update` |
 | FR-016 | Apply only when term is open AND within window | `ApplicationService.Create` |
