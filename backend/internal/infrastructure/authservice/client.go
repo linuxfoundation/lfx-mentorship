@@ -108,8 +108,9 @@ func (c *Client) Account(ctx context.Context, username string) (*models.LFAccoun
 	if err := reply.err(subjectUserMetadataRead); err != nil {
 		return nil, err
 	}
+	// auth-service answers data: null for an account with no profile metadata.
 	if reply.Data == nil {
-		return nil, fmt.Errorf("%w: %s: reply has no data", domain.ErrUpstreamUnavailable, subjectUserMetadataRead)
+		return &models.LFAccount{Username: username}, nil
 	}
 	return &models.LFAccount{
 		Username:   username,

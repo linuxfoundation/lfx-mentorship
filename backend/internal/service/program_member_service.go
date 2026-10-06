@@ -236,17 +236,36 @@ func (s *ProgramMemberService) userByEmail(ctx context.Context, email string) (*
 // account directory when the person has never signed in; sign-in upserts the same row.
 func (s *ProgramMemberService) userByLFID(ctx context.Context, lfid string) (*models.User, error) {
 	user, err := s.users.GetByLFID(ctx, lfid)
-	if err == nil {
-		return user, nil
-	}
-	if !errors.Is(err, domain.ErrUserNotFound) {
+	found := err == nil
+	if !found && !errors.Is(err, domain.ErrUserNotFound) {
 		return nil, fmt.Errorf("resolve lfid: %w", err)
 	}
 	if s.directory == nil {
+		if found {
+			return user, nil
+		}
 		return nil, fmt.Errorf("%w: lfid %q has no Mentorship account; they must sign in once before they can be invited", domain.ErrIneligible, lfid)
 	}
 	if !isLFID(lfid) {
 		return nil, fmt.Errorf("%w: lfid %q is not a valid LF username", domain.ErrInvalidInput, lfid)
+	}
+	// The invitation is sent to users.email, so it must match the account's current primary email.
+	email, err := s.directory.PrimaryEmail(ctx, lfid)
+	if errors.Is(err, domain.ErrAccountNotFound) {
+		return nil, fmt.Errorf("%w: lfid %q has no LF account", domain.ErrIneligible, lfid)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("look up LF account email: %w", err)
+	}
+	if found {
+		if user.Email != nil && *user.Email == email {
+			return user, nil
+		}
+		user, err = s.users.UpsertByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email})
+		if err != nil {
+			return nil, fmt.Errorf("refresh email for lfid %q: %w", lfid, err)
+		}
+		return user, nil
 	}
 	account, err := s.directory.Account(ctx, lfid)
 	if errors.Is(err, domain.ErrAccountNotFound) {
@@ -254,10 +273,6 @@ func (s *ProgramMemberService) userByLFID(ctx context.Context, lfid string) (*mo
 	}
 	if err != nil {
 		return nil, fmt.Errorf("look up LF account: %w", err)
-	}
-	email, err := s.directory.PrimaryEmail(ctx, lfid)
-	if err != nil {
-		return nil, fmt.Errorf("look up LF account email: %w", err)
 	}
 	user, err = s.users.UpsertByLFID(ctx, models.UserCreateInput{
 		LFID:       &account.Username,
@@ -321,6 +336,9 @@ func (s *ProgramMemberService) SearchCandidates(ctx context.Context, query strin
 		if strings.EqualFold(c.LFID, account.Username) {
 			return candidates, nil
 		}
+	}
+	if len(candidates) >= maxCandidates {
+		candidates = candidates[:maxCandidates-1]
 	}
 	return append([]*models.MentorCandidate{{LFID: account.Username, Name: account.Name, AvatarURL: account.AvatarURL}}, candidates...), nil
 }

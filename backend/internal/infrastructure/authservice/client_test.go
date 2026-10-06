@@ -54,6 +54,16 @@ func TestAccount(t *testing.T) {
 	}
 }
 
+func TestAccount_NoMetadata(t *testing.T) {
+	for _, body := range []string{`{"success":true,"data":null}`, `{"success":true}`} {
+		conn := &stubConn{replies: map[string]string{"lfx.auth-service.user_metadata.read": body}}
+		got, err := authservice.NewClient(conn, 0).Account(context.Background(), "ada")
+		if err != nil || got.Username != "ada" || got.Name != nil || got.AvatarURL != nil {
+			t.Errorf("%s: got %+v, %v; want ada with an empty profile", body, got, err)
+		}
+	}
+}
+
 func TestPrimaryEmail(t *testing.T) {
 	conn := &stubConn{replies: map[string]string{"lfx.auth-service.user_emails.read": `{"success":true,"data":{"primary_email":"ada@example.org","alternate_emails":[]}}`}}
 	got, err := authservice.NewClient(conn, 0).PrimaryEmail(context.Background(), "ada")
@@ -82,6 +92,9 @@ func TestErrors(t *testing.T) {
 		"empty data": {&stubConn{replies: allReplies(`{"success":true}`)}, domain.ErrUpstreamUnavailable},
 	} {
 		for call, fn := range calls {
+			if name == "empty data" && call == "user_metadata" {
+				continue // an account without metadata is valid; see TestAccount_NoMetadata
+			}
 			if err := fn(authservice.NewClient(tc.conn, 0)); !errors.Is(err, tc.want) {
 				t.Errorf("%s/%s: err = %v; want %v", name, call, err, tc.want)
 			}

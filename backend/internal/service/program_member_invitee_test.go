@@ -6,6 +6,7 @@ package service_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
@@ -45,6 +46,9 @@ func (d *stubDirectory) Account(_ context.Context, username string) (*models.LFA
 
 func (d *stubDirectory) PrimaryEmail(_ context.Context, username string) (string, error) {
 	d.calls++
+	if d.err != nil {
+		return "", d.err
+	}
 	if e, ok := d.emails[username]; ok {
 		return e, nil
 	}
@@ -59,7 +63,11 @@ type stubInviteeUsers struct {
 
 func (s *stubInviteeUsers) UpsertByLFID(_ context.Context, in models.UserCreateInput) (*models.User, error) {
 	s.upserted = &in
-	return &models.User{ID: "new-user", LFID: in.LFID}, nil
+	id := "new-user"
+	if existing, ok := s.ids[*in.LFID]; ok {
+		id = existing
+	}
+	return &models.User{ID: id, LFID: in.LFID, Email: in.Email}, nil
 }
 
 func (s *stubInviteeUsers) SearchCandidates(context.Context, string, int) ([]*models.User, error) {
@@ -70,7 +78,7 @@ func newDirectory() *stubDirectory {
 	return &stubDirectory{
 		usernames: map[string]string{"ada@example.org": "ada", "mentor@example.org": "mentor-lfid"},
 		accounts:  map[string]*models.LFAccount{"ada": {Username: "ada", Name: ptr("Ada Lovelace"), AvatarURL: ptr("https://example.org/ada.png")}},
-		emails:    map[string]string{"ada": "ada.primary@example.org"},
+		emails:    map[string]string{"ada": "ada.primary@example.org", "mentor-lfid": "mentor@example.org"},
 	}
 }
 
@@ -112,9 +120,9 @@ func TestProgramMemberService_Create_CreatesUserForNewLFAccount(t *testing.T) {
 	}
 }
 
-func TestProgramMemberService_Create_EmailOfExistingUserSkipsUpsert(t *testing.T) {
+func TestProgramMemberService_Create_ExistingUserWithCurrentEmailSkipsUpsert(t *testing.T) {
 	var captured models.ProgramMemberCreateInput
-	users := &stubInviteeUsers{}
+	users := &stubInviteeUsers{stubLFIDUsers: stubLFIDUsers{emails: map[string]string{"mentor-lfid": "mentor@example.org"}}}
 	_, err := newInviteSvc(users, newDirectory(), capturingMemberRepo(&captured), &stubNotifier{}).Create(context.Background(), "prog-1",
 		models.ProgramMemberCreateInput{Email: ptr("mentor@example.org"), MemberType: models.MemberTypeMentor})
 	if err != nil {
@@ -125,6 +133,31 @@ func TestProgramMemberService_Create_EmailOfExistingUserSkipsUpsert(t *testing.T
 	}
 }
 
+func TestProgramMemberService_Create_RefreshesExistingUserEmail(t *testing.T) {
+	for name, local := range map[string]map[string]string{
+		"stale email":   {"mentor-lfid": "old@example.org"},
+		"missing email": nil,
+	} {
+		for via, input := range map[string]models.ProgramMemberCreateInput{
+			"lfid":  {LFID: "mentor-lfid", MemberType: models.MemberTypeMentor},
+			"email": {Email: ptr("mentor@example.org"), MemberType: models.MemberTypeMentor},
+		} {
+			var captured models.ProgramMemberCreateInput
+			users := &stubInviteeUsers{stubLFIDUsers: stubLFIDUsers{emails: local}}
+			_, err := newInviteSvc(users, newDirectory(), capturingMemberRepo(&captured), &stubNotifier{}).Create(context.Background(), "prog-1", input)
+			if err != nil {
+				t.Fatalf("%s/%s: Create: %v", name, via, err)
+			}
+			if users.upserted == nil || *users.upserted.LFID != "mentor-lfid" || *users.upserted.Email != "mentor@example.org" || users.upserted.Name != nil {
+				t.Errorf("%s/%s: upserted = %+v; want only the primary email refreshed", name, via, users.upserted)
+			}
+			if captured.UserID != "mentor-1" {
+				t.Errorf("%s/%s: user_id = %q; want mentor-1", name, via, captured.UserID)
+			}
+		}
+	}
+}
+
 func TestProgramMemberService_Create_InviteeErrors(t *testing.T) {
 	for name, tc := range map[string]struct {
 		input     models.ProgramMemberCreateInput
@@ -132,14 +165,15 @@ func TestProgramMemberService_Create_InviteeErrors(t *testing.T) {
 		noDir     bool
 		want      error
 	}{
-		"unknown email":      {input: models.ProgramMemberCreateInput{Email: ptr("nobody@example.org")}, directory: newDirectory(), want: domain.ErrIneligible},
-		"unknown lfid":       {input: models.ProgramMemberCreateInput{LFID: "nobody"}, directory: newDirectory(), want: domain.ErrIneligible},
-		"invalid email":      {input: models.ProgramMemberCreateInput{Email: ptr("not an email")}, directory: newDirectory(), want: domain.ErrInvalidInput},
-		"uuid lfid":          {input: models.ProgramMemberCreateInput{LFID: "4f9c1f4e-7d0a-4c43-9d0e-1b2f3c4d5e6f"}, directory: newDirectory(), want: domain.ErrInvalidInput},
-		"directory down":     {input: models.ProgramMemberCreateInput{LFID: "ada"}, directory: &stubDirectory{err: domain.ErrUpstreamUnavailable}, want: domain.ErrUpstreamUnavailable},
-		"email without dir":  {input: models.ProgramMemberCreateInput{Email: ptr("ada@example.org")}, noDir: true, want: domain.ErrUpstreamUnavailable},
-		"lfid without dir":   {input: models.ProgramMemberCreateInput{LFID: "ada"}, noDir: true, want: domain.ErrIneligible},
-		"nothing identifies": {input: models.ProgramMemberCreateInput{Email: ptr("  ")}, directory: newDirectory(), want: domain.ErrInvalidInput},
+		"unknown email":                 {input: models.ProgramMemberCreateInput{Email: ptr("nobody@example.org")}, directory: newDirectory(), want: domain.ErrIneligible},
+		"unknown lfid":                  {input: models.ProgramMemberCreateInput{LFID: "nobody"}, directory: newDirectory(), want: domain.ErrIneligible},
+		"invalid email":                 {input: models.ProgramMemberCreateInput{Email: ptr("not an email")}, directory: newDirectory(), want: domain.ErrInvalidInput},
+		"uuid lfid":                     {input: models.ProgramMemberCreateInput{LFID: "4f9c1f4e-7d0a-4c43-9d0e-1b2f3c4d5e6f"}, directory: newDirectory(), want: domain.ErrInvalidInput},
+		"directory down":                {input: models.ProgramMemberCreateInput{LFID: "ada"}, directory: &stubDirectory{err: domain.ErrUpstreamUnavailable}, want: domain.ErrUpstreamUnavailable},
+		"existing user, directory down": {input: models.ProgramMemberCreateInput{LFID: "mentor-lfid"}, directory: &stubDirectory{err: domain.ErrUpstreamUnavailable}, want: domain.ErrUpstreamUnavailable},
+		"email without dir":             {input: models.ProgramMemberCreateInput{Email: ptr("ada@example.org")}, noDir: true, want: domain.ErrUpstreamUnavailable},
+		"lfid without dir":              {input: models.ProgramMemberCreateInput{LFID: "ada"}, noDir: true, want: domain.ErrIneligible},
+		"nothing identifies":            {input: models.ProgramMemberCreateInput{Email: ptr("  ")}, directory: newDirectory(), want: domain.ErrInvalidInput},
 	} {
 		tc.input.MemberType = models.MemberTypeMentor
 		created := false
@@ -201,6 +235,17 @@ func TestProgramMemberService_SearchCandidates(t *testing.T) {
 		got, err := newInviteSvc(&stubInviteeUsers{}, newDirectory(), &stubMemberRepo{}, &stubNotifier{}).SearchCandidates(context.Background(), "nobody")
 		if err != nil || len(got) != 0 {
 			t.Fatalf("got %v, err %v; want empty", got, err)
+		}
+	})
+
+	t.Run("LF account is kept within the limit", func(t *testing.T) {
+		full := make([]*models.User, 10)
+		for i := range full {
+			full[i] = &models.User{LFID: ptr(fmt.Sprintf("ada-%d", i))}
+		}
+		got, err := newInviteSvc(&stubInviteeUsers{found: full}, newDirectory(), &stubMemberRepo{}, &stubNotifier{}).SearchCandidates(context.Background(), "ada")
+		if err != nil || len(got) != 10 || got[0].LFID != "ada" || got[9].LFID != "ada-8" {
+			t.Fatalf("got %d candidates, err %v; want ada then the first nine local matches", len(got), err)
 		}
 	})
 
