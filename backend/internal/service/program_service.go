@@ -302,20 +302,7 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 	if len(input.Terms) > maxEnrollmentTerms {
 		return nil, fmt.Errorf("%w: at most %d terms are allowed", domain.ErrInvalidInput, maxEnrollmentTerms)
 	}
-	normalizedSkills := make([]string, 0, len(input.Skills))
-	seenSkills := make(map[string]struct{}, len(input.Skills))
-	for _, skill := range input.Skills {
-		skill = strings.TrimSpace(skill)
-		if skill == "" {
-			continue
-		}
-		if _, exists := seenSkills[strings.ToLower(skill)]; exists {
-			continue
-		}
-		seenSkills[strings.ToLower(skill)] = struct{}{}
-		normalizedSkills = append(normalizedSkills, skill)
-	}
-	input.Skills = normalizedSkills
+	input.Skills = normalizeSkills(input.Skills)
 	if len(input.Skills) == 0 {
 		return nil, fmt.Errorf("%w: at least one skill is required", domain.ErrInvalidInput)
 	}
@@ -462,6 +449,12 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 	if err := reservedFileField("logo_url", input.LogoURL); err != nil {
 		return nil, err
 	}
+	if input.Skills != nil {
+		input.Skills = normalizeSkills(input.Skills)
+		if len(input.Skills) == 0 {
+			return nil, fmt.Errorf("%w: at least one skill is required", domain.ErrInvalidInput)
+		}
+	}
 
 	if input.Status != nil {
 		current, err := s.repo.GetByID(ctx, id)
@@ -534,6 +527,26 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 		return nil, fmt.Errorf("update program: %w", err)
 	}
 	return p, nil
+}
+
+// normalizeSkills trims skills and drops blanks and case-insensitive duplicates,
+// keeping the first spelling of each.
+func normalizeSkills(skills []string) []string {
+	normalized := make([]string, 0, len(skills))
+	seen := make(map[string]struct{}, len(skills))
+	for _, skill := range skills {
+		skill = strings.TrimSpace(skill)
+		if skill == "" {
+			continue
+		}
+		key := strings.ToLower(skill)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		normalized = append(normalized, skill)
+	}
+	return normalized
 }
 
 // Delete removes the program with the given ID.

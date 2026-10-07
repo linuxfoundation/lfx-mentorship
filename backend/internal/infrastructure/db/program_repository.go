@@ -960,6 +960,12 @@ func (r *ProgramRepository) Update(ctx context.Context, id string, input models.
 		span.RecordError(err)
 		return nil, fmt.Errorf("update program: %w", err)
 	}
+	if input.Skills != nil {
+		if err := replaceProgramSkills(ctx, tx, updatedID, input.Skills); err != nil {
+			span.RecordError(err)
+			return nil, err
+		}
+	}
 
 	p, err := scanProgram(tx.QueryRow(ctx, `SELECT`+programSelectCols+programsWithFundingFrom+` WHERE programs.id = $1`, updatedID))
 	if err != nil {
@@ -1145,6 +1151,21 @@ func (r *ProgramRepository) ListSkills(ctx context.Context, programID string) ([
 }
 
 // AddSkill inserts a new skill for a program.
+// replaceProgramSkills makes skills the program's full skill set, keeping the
+// rows (and IDs) of skills that are already present.
+func replaceProgramSkills(ctx context.Context, tx pgx.Tx, programID string, skills []string) error {
+	if _, err := tx.Exec(ctx, `DELETE FROM program_skills WHERE program_id = $1 AND NOT (skill = ANY($2))`, programID, skills); err != nil {
+		return fmt.Errorf("remove program skills: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO program_skills (program_id, skill)
+		SELECT $1, unnest($2::text[])
+		ON CONFLICT (program_id, skill) DO NOTHING`, programID, skills); err != nil {
+		return fmt.Errorf("add program skills: %w", err)
+	}
+	return nil
+}
+
 func (r *ProgramRepository) AddSkill(ctx context.Context, programID string, input models.ProgramSkillCreateInput) (*models.ProgramSkill, error) {
 	ctx, span := programTracer.Start(ctx, "db.programs.AddSkill")
 	defer span.End()

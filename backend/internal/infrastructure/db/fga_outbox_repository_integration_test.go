@@ -974,6 +974,47 @@ func TestEnrollmentIntegration_PersistsProjectMetadataInIndexSnapshot(t *testing
 	}
 }
 
+func TestProgramUpdateIntegration_ReplacesSkills(t *testing.T) {
+	pool := integrationPool(t)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name) VALUES ('00000000-0000-0000-0000-000000000060', 'enroll-admin', 'Enroll Admin')`); err != nil {
+		t.Fatal(err)
+	}
+	repo := NewProgramRepository(pool)
+	projectUID := "00000000-0000-0000-0000-000000000099"
+	program, err := repo.CreateEnrollment(ctx, models.ProgramEnrollmentInput{Program: models.ProgramCreateInput{ID: "00000000-0000-0000-0000-000000000061", CreatorUserID: "00000000-0000-0000-0000-000000000060", ProjectUID: &projectUID, Name: "Skills", Slug: "skills", Status: models.ProgramStatusPending}, Skills: []string{"Go", "Rust"}})
+	if err != nil {
+		t.Fatalf("create enrollment: %v", err)
+	}
+	var keptID string
+	if err := pool.QueryRow(ctx, `SELECT id FROM program_skills WHERE program_id = $1 AND skill = 'Go'`, program.ID).Scan(&keptID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Skills: []string{"Go", "Kubernetes"}}); err != nil {
+		t.Fatalf("update skills: %v", err)
+	}
+	skills, err := repo.ListSkills(ctx, program.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, skill := range skills {
+		got[skill.Skill] = skill.ID
+	}
+	if len(got) != 2 || got["Kubernetes"] == "" || got["Go"] != keptID {
+		t.Fatalf("skills after update = %v; want Go (id %s) and Kubernetes", got, keptID)
+	}
+
+	name := "Skills Renamed"
+	if _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Name: &name}); err != nil {
+		t.Fatalf("update name: %v", err)
+	}
+	if skills, err := repo.ListSkills(ctx, program.ID); err != nil || len(skills) != 2 {
+		t.Fatalf("skills after name-only update = %d, %v; want 2 unchanged", len(skills), err)
+	}
+}
+
 func TestFGAOutboxIntegration_NewGenerationCannotBeAcknowledgedByOldClaim(t *testing.T) {
 	pool := integrationPool(t)
 	repo := NewFGAOutboxRepository(pool)

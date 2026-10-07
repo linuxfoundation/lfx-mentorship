@@ -117,6 +117,8 @@ type ProgramUpdateInput struct {
 	DiscoverSortRank   *int               `json:"discover_sort_rank,omitempty"`
 	MenteeNeeds        json.RawMessage    `json:"mentee_needs,omitempty"`
 	TaskTemplates      json.RawMessage    `json:"task_templates,omitempty"`
+	// Skills replaces the program's full skill set when non-nil; nil leaves it unchanged.
+	Skills []string `json:"skills,omitempty"`
 }
 
 // ProgramSkill maps to the public.program_skills table.

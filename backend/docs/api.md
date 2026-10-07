@@ -1049,9 +1049,14 @@ Update program fields. Status cannot be changed here: a body with `status` retur
   "description": "Updated description",
   "repo_link":   "https://...",
   "lfid":        "alice",
+  "skills":      ["Go", "Kubernetes"],
   "task_templates": [...]
 }
 ```
+
+`skills` replaces the program's full skill set: skills not in the list are removed
+and new ones are added. Entries are trimmed and de-duplicated case-insensitively; at
+least one is required. Omit `skills` to leave them unchanged.
 
 **Response** `200` → `<Program>`  
 **Errors** `400`, `404`

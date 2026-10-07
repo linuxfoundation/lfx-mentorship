@@ -475,6 +475,49 @@ func TestProgramService_Update_InvalidProgramTermStatus_Rejected(t *testing.T) {
 	}
 }
 
+func TestProgramService_Update_NormalizesSkills(t *testing.T) {
+	var captured models.ProgramUpdateInput
+	repo := &stubProgRepo{update: func(_ context.Context, _ string, input models.ProgramUpdateInput) (*models.Program, error) {
+		captured = input
+		return &models.Program{ID: "prog-1"}, nil
+	}}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	if _, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Skills: []string{" Go ", "go", "", "Kubernetes"}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(captured.Skills) != 2 || captured.Skills[0] != "Go" || captured.Skills[1] != "Kubernetes" {
+		t.Fatalf("skills=%v", captured.Skills)
+	}
+}
+
+func TestProgramService_Update_RejectsEmptySkills(t *testing.T) {
+	repo := &stubProgRepo{update: func(context.Context, string, models.ProgramUpdateInput) (*models.Program, error) {
+		t.Fatal("repository must not be called for an empty skill set")
+		return nil, nil
+	}}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Skills: []string{" ", ""}})
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput, got %v", err)
+	}
+}
+
+func TestProgramService_Update_OmittedSkillsLeftUnchanged(t *testing.T) {
+	var captured models.ProgramUpdateInput
+	repo := &stubProgRepo{update: func(_ context.Context, _ string, input models.ProgramUpdateInput) (*models.Program, error) {
+		captured = input
+		return &models.Program{ID: "prog-1"}, nil
+	}}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	name := "Renamed"
+	if _, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Name: &name}); err != nil {
+		t.Fatal(err)
+	}
+	if captured.Skills != nil {
+		t.Fatalf("skills=%v; want nil", captured.Skills)
+	}
+}
+
 type fakeCrowdfundingClient struct {
 	getCategorizedTransactions func(context.Context, string, string, bool, int, int) (*models.ProgramCategorizedTransactions, error)
 }
