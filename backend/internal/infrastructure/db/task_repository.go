@@ -195,7 +195,8 @@ func (r *TaskRepository) Create(ctx context.Context, applicationID string, input
 	return t, nil
 }
 
-// Update patches a task's mutable fields.
+// Update patches a task's mutable fields. A nil field is left unchanged; an empty submit_file
+// or due_date clears it.
 func (r *TaskRepository) Update(ctx context.Context, id string, input models.TaskUpdateInput) (*models.Task, error) {
 	ctx, span := taskTracer.Start(ctx, "db.tasks.Update")
 	defer span.End()
@@ -205,6 +206,9 @@ func (r *TaskRepository) Update(ctx context.Context, id string, input models.Tas
 		return nil, fmt.Errorf("begin update task transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockTaskApplication(ctx, tx, id); err != nil {
+		return nil, err
+	}
 
 	const q = `
 		UPDATE tasks SET
@@ -215,19 +219,24 @@ func (r *TaskRepository) Update(ctx context.Context, id string, input models.Tas
 			application_status = COALESCE($6,  application_status),
 			program_term_status= COALESCE($7,  program_term_status),
 			custom             = COALESCE($8,  custom),
-			submit_file        = COALESCE($9,  submit_file),
+			submit_file        = CASE WHEN $9 = '' THEN NULL ELSE COALESCE($9,  submit_file) END,
 			file               = COALESCE($10, file),
-			due_date           = COALESCE($11, due_date)
+			due_date           = CASE WHEN $11 = '' THEN NULL ELSE COALESCE($11, due_date) END
 		WHERE id = $1
+		  -- A task that requires a file cannot be submitted without one, whether it is being
+		  -- submitted or its file requirement is being turned on.
+		  AND NOT (COALESCE($5, CASE WHEN $9::text IS NOT NULL THEN status END, '') = $12
+		           AND COALESCE($9, submit_file, '') <> ''
+		           AND COALESCE($10, file, '') = '')
 		RETURNING ` + taskCols
 
 	t, err := scanTask(tx.QueryRow(ctx, q,
 		id, input.Name, input.Description, input.Category, input.Status,
 		input.ApplicationStatus, input.ProgramTermStatus, input.Custom,
-		input.SubmitFile, input.File, input.DueDate,
+		input.SubmitFile, input.File, input.DueDate, models.TaskStatusSubmitted,
 	))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, domain.ErrTaskNotFound
+		return nil, missOrRequiredFile(ctx, tx, id)
 	}
 	if err != nil {
 		span.RecordError(err)
@@ -254,7 +263,7 @@ func (r *TaskRepository) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("begin delete task transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	current, err := scanTask(tx.QueryRow(ctx, `SELECT `+taskCols+` FROM tasks WHERE id = $1`, id))
+	current, err := scanTask(tx.QueryRow(ctx, `SELECT `+taskCols+` FROM tasks WHERE id = $1 FOR UPDATE`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ErrTaskNotFound
 	}
@@ -270,6 +279,9 @@ func (r *TaskRepository) Delete(ctx context.Context, id string) error {
 	if cmd.RowsAffected() == 0 {
 		return domain.ErrTaskNotFound
 	}
+	if err := queueObjectDeletions(ctx, tx, domain.ObjectBucketAttachments, current.File); err != nil {
+		return err
+	}
 	if err := enqueueTaskMarker(ctx, tx, current, "delete_access"); err != nil {
 		return err
 	}
@@ -280,6 +292,45 @@ func (r *TaskRepository) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("commit delete task transaction: %w", err)
 	}
 	return nil
+}
+
+// errWithdrawnTaskLocked rejects a write to a task whose application is withdrawn. Withdrawn is
+// terminal and the application is kept as history when its applicant reapplies, so its tasks
+// stay as they were at withdrawal.
+var errWithdrawnTaskLocked = fmt.Errorf("%w: a withdrawn application's tasks cannot change", domain.ErrStateLocked)
+
+// lockTaskApplication share-locks the application a task belongs to and returns
+// errWithdrawnTaskLocked when it is withdrawn. It reads the application row rather than the
+// task's denormalised application_status, and withdrawing updates that row, so a withdrawal
+// either commits first and is seen here or waits until this task write commits.
+func lockTaskApplication(ctx context.Context, tx pgx.Tx, taskID string) error {
+	var status models.ApplicationStatus
+	err := tx.QueryRow(ctx, `
+		SELECT a.status FROM tasks t JOIN applications a ON a.id = t.application_id
+		WHERE t.id = $1 FOR SHARE OF a`, taskID).Scan(&status)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		// A missing task, or one with no application, is left to the write itself.
+		return nil
+	case err != nil:
+		return fmt.Errorf("lock task application: %w", err)
+	case status == models.ApplicationStatusWithdrawn:
+		return errWithdrawnTaskLocked
+	}
+	return nil
+}
+
+// missOrRequiredFile resolves an update that matched no row into not-found or a submitted task
+// left without its required file.
+func missOrRequiredFile(ctx context.Context, tx pgx.Tx, id string) error {
+	var exists bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM tasks WHERE id = $1)`, id).Scan(&exists); err != nil {
+		return fmt.Errorf("check task after missed update: %w", err)
+	}
+	if !exists {
+		return domain.ErrTaskNotFound
+	}
+	return fmt.Errorf("%w: a submitted task that requires a file must have one uploaded", domain.ErrInvalidInput)
 }
 
 func enqueueTaskMarker(ctx context.Context, tx pgx.Tx, task *models.Task, operation string) error {

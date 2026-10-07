@@ -37,6 +37,7 @@ spec:
         routes:
           - path: /mentorship/v1/mentors/:id
           - path: /mentorship/v1/mentees/:id
+          - path: /mentorship/v1/user-profiles/:id/logo-download
       execute:
         - authenticator: oidc
         - authenticator: anonymous_authenticator
@@ -104,6 +105,7 @@ spec:
           - path: /mentorship/v1/programs/:id/transactions
           - path: /mentorship/v1/programs/:id/sponsors
           - path: /mentorship/v1/programs/:id/header
+          - path: /mentorship/v1/programs/:id/logo-download
       execute:
         - authenticator: oidc
         - authenticator: anonymous_authenticator
@@ -152,7 +154,8 @@ spec:
             values:
               aud: {{ .Values.app.audience | quote }}
 
-    # Authenticated routes without an object in the path.
+    # Authenticated routes without an object in the path. The by-id profile
+    # routes, logo upload included, check ownership in the service.
     - id: rule:lfx:lfx-mentorship-backend:identity
       allow_encoded_slashes: "off"
       match:
@@ -162,7 +165,10 @@ spec:
           - path: /mentorship/v1/me/profiles
           - path: /mentorship/v1/me/profiles/:profileType
           - path: /mentorship/v1/me/profiles/by-id/:id
+          - path: /mentorship/v1/me/profiles/by-id/:id/logo-upload
+          - path: /mentorship/v1/me/profiles/by-id/:id/logo
           - path: /mentorship/v1/me/applications
+          - path: /mentorship/v1/me/programs
       execute:
         - authenticator: oidc
         - authorizer: allow_all
@@ -236,6 +242,42 @@ spec:
         methods: [PATCH, DELETE]
         routes:
           - path: /mentorship/v1/programs/:id
+      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_program:{{ "{{- .Request.URL.Captures.id -}}" }}'
+              relation: writer
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    - id: rule:lfx:lfx-mentorship-backend:program-logo-upload
+      allow_encoded_slashes: "off"
+      match:
+        methods: [POST]
+        routes:
+          - path: /mentorship/v1/programs/:id/logo-upload
+      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_program:{{ "{{- .Request.URL.Captures.id -}}" }}'
+              relation: writer
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    - id: rule:lfx:lfx-mentorship-backend:program-logo-delete
+      allow_encoded_slashes: "off"
+      match:
+        methods: [DELETE]
+        routes:
+          - path: /mentorship/v1/programs/:id/logo
       execute:
         - authenticator: oidc
         - authorizer: openfga_check
@@ -380,6 +422,24 @@ spec:
         methods: [PATCH]
         routes:
           - path: /mentorship/v1/programs/:id/members/:memberId
+      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_program:{{ "{{- .Request.URL.Captures.id -}}" }}'
+              relation: writer
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    - id: rule:lfx:lfx-mentorship-backend:program-member-resend-invite
+      allow_encoded_slashes: "off"
+      match:
+        methods: [POST]
+        routes:
+          - path: /mentorship/v1/programs/:id/members/:memberId/resend-invite
       execute:
         - authenticator: oidc
         - authorizer: openfga_check
@@ -715,6 +775,7 @@ spec:
         methods: [GET]
         routes:
           - path: /mentorship/v1/tasks/:id
+          - path: /mentorship/v1/tasks/:id/file-download
       execute:
         - authenticator: oidc
         - authorizer: openfga_check
@@ -741,6 +802,42 @@ spec:
             values:
               object: 'mentorship_task:{{ "{{- .Request.URL.Captures.id -}}" }}'
               relation: manager
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    - id: rule:lfx:lfx-mentorship-backend:tasks-file-upload
+      allow_encoded_slashes: "off"
+      match:
+        methods: [POST]
+        routes:
+          - path: /mentorship/v1/tasks/:id/file-upload
+      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_task:{{ "{{- .Request.URL.Captures.id -}}" }}'
+              relation: assignee
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    - id: rule:lfx:lfx-mentorship-backend:tasks-file-delete
+      allow_encoded_slashes: "off"
+      match:
+        methods: [DELETE]
+        routes:
+          - path: /mentorship/v1/tasks/:id/file
+      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_task:{{ "{{- .Request.URL.Captures.id -}}" }}'
+              relation: assignee
         - finalizer: create_jwt
           config:
             values:

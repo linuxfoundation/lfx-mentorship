@@ -4,7 +4,9 @@
 package db
 
 import (
+	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -60,6 +62,7 @@ func TestNewTaskIndexDocument(t *testing.T) {
 	category := models.TaskCategoryPrerequisite
 	submitFile := "required"
 	dueDate := "2026-02-15"
+	key := "0b9a3f4e-6d5c-4b3a-9f8e-7d6c5b4a3f2e-essay.pdf"
 	task := &models.Task{
 		ID:            "task-1",
 		ApplicationID: stringPointer("app-1"),
@@ -70,6 +73,7 @@ func TestNewTaskIndexDocument(t *testing.T) {
 		Status:        models.TaskStatusComplete,
 		Custom:        true,
 		SubmitFile:    &submitFile,
+		File:          &key,
 		DueDate:       &dueDate,
 		CreatedOn:     createdOn,
 		UpdatedOn:     createdOn,
@@ -78,6 +82,9 @@ func TestNewTaskIndexDocument(t *testing.T) {
 	document := NewTaskIndexDocument(task)
 	if document.ID != task.ID || document.ApplicationID == nil || *document.ApplicationID != "app-1" {
 		t.Fatalf("document identity = %#v, want task-1/app-1", document)
+	}
+	if data, err := json.Marshal(document); err != nil || !document.HasFile || strings.Contains(string(data), key) {
+		t.Fatalf("document must flag the file without carrying its key: %s (err %v)", data, err)
 	}
 	if document.Name == nil || *document.Name != name || document.Status != models.TaskStatusComplete {
 		t.Fatalf("document fields = %#v, want task fields", document)

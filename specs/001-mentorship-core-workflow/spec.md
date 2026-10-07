@@ -7,7 +7,7 @@
 
 ## Execution Flow (main)
 ```
-1. Program Admin creates a program in draft and submits it for review
+1. Program Admin creates a program in pending and submits it for review
 2. Reviewer publishes or rejects the program
 3. Program Admin invites mentors, or mentors self-request; each is approved or declined
 4. Mentee creates a profile (subject to an eligibility gate) and applies to an open term
@@ -33,9 +33,9 @@ the program_admin can manage the program's visibility and terms throughout its l
 
 1. **Given** a program_admin with a linked LF project, **When** they create a program with
    a unique name, description, repository URL, logo, at least one skill tag, and at
-   least one term, **Then** the program is created with `status = draft`.
+   least one term, **Then** the program is created with `status = pending`.
 
-2. **Given** a `draft` program that meets all required fields, **When** the program_admin
+2. **Given** a `pending` program that meets all required fields, **When** the program_admin
    submits it, **Then** `status` transitions to `submitted` and it becomes visible to
    reviewers.
 
@@ -181,12 +181,12 @@ the program_admin can manage the program's visibility and terms throughout its l
 ### Functional Requirements — Program Lifecycle
 
 - **FR-001**: System MUST allow a program_admin to create a program with `status =
-  draft`, requiring a linked LF project, a unique name, a description, a repository
+  pending`, requiring a linked LF project, a unique name, a description, a repository
   URL, a logo, at least one skill tag, and at least one term.
 - **FR-002**: System MUST support the following optional program fields: CII project
   ID, website URL, code of conduct, and prerequisite task templates.
 - **FR-003**: System MUST enforce a maximum of 4 open terms per program.
-- **FR-004**: System MUST allow a program_admin to transition a program from `draft` to
+- **FR-004**: System MUST allow a program_admin to transition a program from `pending` to
   `submitted` only when all required fields (FR-001) are present.
 - **FR-005**: System MUST allow a reviewer to transition a `submitted` program to
   either `published` or `rejected`.
@@ -314,8 +314,9 @@ the program_admin can manage the program's visibility and terms throughout its l
 - **Program**: Represents a mentorship program owned by a program_admin and linked to an
   LF project. Key attributes: name (unique), description, repository URL, logo,
   skill tags (≥1), CII project ID (optional), website URL (optional), code of conduct
-  (optional), prerequisite task templates (optional). Status lifecycle: `draft` →
-  `submitted` → `published` ↔ `hidden` | `rejected` → `archived`.
+  (optional), prerequisite task templates (optional). Status lifecycle: `pending` →
+  `submitted` → `published` | `rejected`; `rejected` → `submitted`; `published` ↔
+  `hidden`; `published` | `hidden` → `archived`.
 - **ProgramTerm**: A time-boxed run of a program (max 4 open per program). Key
   attributes: `application_start_date`, `application_end_date`, end date. Status
   lifecycle: `open` ↔ `closed` | `deleted`. Belongs to one Program.
@@ -341,7 +342,8 @@ the program_admin can manage the program's visibility and terms throughout its l
 ## Success Criteria *(mandatory)*
 
 - **SC-001**: 100% of program status transitions observed in the system match the
-  lifecycle `draft → submitted → published ↔ hidden | rejected → archived`; no
+  lifecycle `pending → submitted → published | rejected`, `rejected → submitted`,
+  `published ↔ hidden`, `published | hidden → archived`; no
   program is ever observed in an undefined status.
 - **SC-002**: 0 terms can be closed while an `accepted` application remains open on
   that term.

@@ -79,7 +79,7 @@ export function getProgramTermDisplayStatus(
 /**
  * Catalog / program-card badge: derived from term application windows
  * the same way `GET /v1/programs/catalog` is mapped for the programs list.
- * Never `pending`, which is a draft-program status set by the caller; the narrower
+ * Never `pending`, which the caller sets for a pending program; the narrower
  * type keeps the result assignable to both `ProgramStatus` and `ProfileProgramStatus`.
  */
 export function toProgramCardStatus(terms: ProgramTerm[]): Exclude<ProgramStatus, 'pending'> {

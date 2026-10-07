@@ -2,9 +2,8 @@
 
 ## Status Mapping
 
-Program creation persists the canonical backend status `draft`. BFF consumers
-map `draft` and `submitted` to their pending-review display state; this API does
-not expose a separate persisted `pending` program status.
+Program creation persists the canonical backend status `pending`. The BFF catalog
+mapping shows a `pending` program in its pending-review display state.
 
 **Base URL**: `https://lfx-api.<environment>/mentorship/v1` through the Heimdall gateway.
 **Content-Type**: `application/json` for all request and response bodies  
@@ -20,6 +19,7 @@ The gateway-authorized API uses canonical resource paths:
 - Self-service user and profile mutations use `/me` and `/me/profiles`.
 - User application reads use `/me/applications`.
 - Mentor self-service program requests use `/me/program-memberships`.
+- Program admins list their programs with `/me/programs`.
 - Program-admin collection reads use Query Service
   `/query/resources?v=1&type=mentorship_program&filter_grants=direct`.
 - Term-scoped routes use `/programs/{programUID}/terms/{termID}`.
@@ -75,9 +75,10 @@ TEST_DATABASE_DSN='postgres://mentorship:mentorship@localhost:5433/mentorship_te
 11. [Mentor Invite Tokens](#11-mentor-invite-tokens)
 12. [Applications](#12-applications)
 13. [Tasks](#13-tasks)
-14. [Domain State Machines](#14-domain-state-machines)
-15. [Business Rule Reference](#15-business-rule-reference)
-16. [Frontend Integration Guide](#16-frontend-integration-guide)
+14. [Files](#14-files)
+15. [Domain State Machines](#15-domain-state-machines)
+16. [Business Rule Reference](#16-business-rule-reference)
+17. [Frontend Integration Guide](#17-frontend-integration-guide)
 
 ---
 
@@ -201,9 +202,12 @@ All errors return a JSON body:
 | `401 Unauthorized` | Missing or invalid JWT |
 | `403 Forbidden` | Authenticated but not permitted (e.g. wrong actor for task submission) |
 | `404 Not Found` | Resource does not exist (or hidden program for non-owner) |
-| `409 Conflict` | Duplicate resource, invalid state transition, guard blocked transition |
+| `409 Conflict` | Duplicate resource, invalid state transition, guard blocked transition, or a concurrent write won |
+| `413 Payload Too Large` | Upload over the file class's size cap |
+| `415 Unsupported Media Type` | Upload whose bytes are not an allowed type for its file class |
+| `416 Range Not Satisfiable` | Download `Range` outside the object |
 | `422 Unprocessable Entity` | Eligibility or business constraint failure |
-| `503 Service Unavailable` | Database unavailable (`/readyz`) |
+| `503 Service Unavailable` | Database unavailable (`/readyz`), or object storage unavailable or not configured (file routes only) |
 | `500 Internal Server Error` | Unexpected server fault |
 
 ---
@@ -302,10 +306,12 @@ Update mutable user fields.
   "lfid":        "new-lfid",
   "name":        "New Name",
   "given_name":  "New",
-  "family_name": "Name",
-  "avatar_url":  "https://..."
+  "family_name": "Name"
 }
 ```
+
+`avatar_url` is rejected: the service sets it from the login identity and the
+profile-logo routes ([Files](#14-files)).
 
 **Response** `200` → `<User>`  
 **Errors** `400`, `404`
@@ -381,7 +387,6 @@ User profiles represent a participant's mentorship identity. `profile_type = men
     "comments": "Eager to learn cloud-native"
   },
   "profile_links": {
-    "resumeLink":     "https://...",
     "linkedinProfileLink": "https://linkedin.com/in/alice",
     "githubProfileLink":   "https://github.com/alice"
   },
@@ -390,7 +395,7 @@ User profiles represent a participant's mentorship identity. `profile_type = men
 }
 ```
 
-The `address`, `demographics`, `socioeconomics`, `skill_set`, and `profile_links` fields are free-form JSON objects stored as JSONB.
+The `address`, `demographics`, `socioeconomics`, `skill_set`, and `profile_links` fields are free-form JSON objects stored as JSONB. `skill_set` must be an object or `null`, and `skill_set.skills` and `skill_set.improvementSkills` must each be absent, `null`, or an array of non-empty strings; any other shape is rejected with `400`.
 
 ### Endpoints
 
@@ -444,7 +449,6 @@ Create a user profile.
   "last_name":    "Smith",
   "email":        "alice@example.com",
   "phone":        "+1-555-0100",
-  "logo_url":     "https://...",
   "introduction": "...",
   "terms_and_conditions": true,
   "address":       { ... },
@@ -519,11 +523,12 @@ Programs are the top-level entity for a mentorship offering.
 }
 ```
 
-**Status lifecycle**: `draft → submitted → published ↔ hidden | rejected → archived`
+**Status lifecycle**: `pending → submitted → published | rejected`; `rejected → submitted`;
+`published ↔ hidden`; `published | hidden → archived`. See [§15](#15-domain-state-machines).
 
 | Status | Meaning |
 |---|---|
-| `draft` | Being configured; not visible to public |
+| `pending` | Being configured; not visible to public |
 | `submitted` | Under reviewer inspection |
 | `published` | Live; accepts applications |
 | `hidden` | Soft-hidden; only visible to owner |
@@ -600,11 +605,12 @@ Programs are the top-level entity for a mentorship offering.
 
 #### `GET /v1/programs` 🔓
 
+Always returns `published` programs.
+
 **Query parameters**
 
 | Parameter | Values | Description |
 |---|---|---|
-| `status` | `draft\|submitted\|published\|hidden\|rejected\|archived` | Filter by status |
 | `search` | string | Case-insensitive match on program name |
 | `limit` / `offset` | — | Pagination |
 
@@ -629,7 +635,7 @@ Paginated public catalog of programs with nested skills, terms, and active mento
 | `sort_by` / `sortBy` | `accepting_first\|completed_first\|name_asc\|name_desc\|updated_oldest\|updated_newest` | Sort order. Defaults to `accepting_first`. |
 | `limit` / `offset` | — | Pagination |
 
-Always returns `status = published` programs. Draft, hidden, and other statuses are omitted.
+Always returns `status = published` programs. Pending, hidden, and other statuses are omitted.
 
 Through the gateway this is the one service-owned collection route: Heimdall authenticates optionally and applies `allow_all`, so the published pin in the service is the only filter.
 
@@ -995,7 +1001,7 @@ Resolve a program UUID or slug to the canonical program UUID.
 
 #### `POST /v1/programs` 🔒
 
-Create a program with its first terms, skills, and prerequisites in one transaction. New programs start in `draft` status and the slug is derived from `name`.
+Create a program with its first terms, skills, and prerequisites in one transaction. New programs start in `pending` status and the slug is derived from `name`.
 
 The caller resolves the LF project from Project Service and passes its UID, slug, name, and logo. They are persisted with the program and feed its search index snapshot (`project_slug`, `project_name`, `project_logo_url`).
 
@@ -1031,30 +1037,52 @@ The caller resolves the LF project from Project Service and passes its UID, slug
 
 #### `PATCH /v1/programs/{id}` 🔒
 
-Update program fields and/or transition status.
+Update program fields. Status cannot be changed here: a body with `status` returns
+`400`; use [`POST /v1/programs/{id}/submit`](#post-v1programsidsubmit-) and
+[`POST /v1/programs/{id}/decision`](#post-v1programsiddecision-).
 
 **Request body** (all optional)
 ```json
 {
   "name":        "Updated Name",
   "description": "Updated description",
-  "logo_url":    "https://...",
   "repo_link":   "https://...",
   "lfid":        "alice",
-  "status":      "submitted",
   "task_templates": [...]
 }
 ```
 
-**Status transition rules** — see [§14 State Machines](#14-domain-state-machines).
+**Response** `200` → `<Program>`  
+**Errors** `400`, `404`
 
-| Transition | Guard condition |
-|---|---|
-| `draft → submitted` | `lfid`, `description`, `repo_link`, and `logo_url` must all be non-empty; at least 1 skill tag; at least 1 open term |
-| `published → hidden` | No `pending`, `accepted`, or `graduated` applications on the program |
+---
+
+#### `POST /v1/programs/{id}/submit` 🔒
+
+Submit a `pending` or `rejected` program for review (`→ submitted`). No request body.
+See [§15 State Machines](#15-domain-state-machines).
+
+**Guard**: a linked LF project, `description`, `repo_link` and `logo_url` are
+non-empty; at least 1 skill tag; at least 1 open term.
 
 **Response** `200` → `<Program>`  
-**Errors** `400`, `404`, `409` (invalid transition or guard blocked)
+**Errors** `404`, `409` (invalid transition or guard blocked)
+
+---
+
+#### `POST /v1/programs/{id}/decision` 🔒
+
+Publish or reject a `submitted` program. Approver team only.
+
+**Request body**
+```json
+{ "status": "published" }
+```
+
+`status` is required and must be `published` or `rejected`.
+
+**Response** `200` → `<Program>`  
+**Errors** `400` (missing or other `status`), `404`, `409` (program is not `submitted`)
 
 ---
 
@@ -1373,10 +1401,10 @@ Add a member to a program.
 **Program Admin flow** (`member_type = "program_admin"`):
 - Record is created with `status = "active"`.
 
-**Request body**
+**Request body** (identify the user with `user_id` or `lfid`; sending both is a `400`)
 ```json
 {
-  "user_id":     "uuid",       // required
+  "lfid":        "alice",      // or "user_id": "uuid"; surrounding whitespace is trimmed; 422 if they have never signed in
   "member_type": "mentor",     // required; "program_admin" | "mentor"
   "status":      "requested",  // optional; if omitted, defaults per member_type above
   "email":       "mentor@example.com"
@@ -1384,7 +1412,7 @@ Add a member to a program.
 ```
 
 **Response** `201` → `<ProgramMember>`  
-**Errors** `400`, `409`
+**Errors** `400`, `404` (program not found), `409` (the user already has a row of this `member_type` on the program), `422` (the `lfid` has no Mentorship account: they must sign in once before they can be invited)
 
 ---
 
@@ -1416,10 +1444,83 @@ This endpoint therefore refuses `requested`/`pending` → `withdrawn` and
 #### `DELETE /v1/programs/{id}/members/{memberId}` 🔒
 
 Deletes the member row, in any status, and returns `204`. Removing an active
-member also removes their OpenFGA relation.
+member also removes their OpenFGA relation. Deleting an invited, declined or
+withdrawn mentor frees the user to be invited again. To remove an active mentor
+but keep the record, `PATCH` the status to `withdrawn` instead.
 
 **Response** `204`  
 **Errors** `403`, `404`
+
+---
+
+#### `POST /v1/programs/{id}/members/{memberId}/resend-invite` 🔒
+
+Signs a fresh 7-day invite token for an `invited` mentor and sends the
+`mentor_invited` email again. Earlier tokens stay valid until they expire. No
+request body.
+
+**Response** `204`  
+**Errors** `403` (not a Program Admin), `404`, `409` (the member is not an
+`invited` mentor, or the program is not `published`), `503` (invites are not configured)
+
+---
+
+### Program admin self-service
+
+#### AdministeredProgram Object
+
+One row of the caller's programs list. `term` is a
+[ProgramTerm](#programterm-object): the latest open term, else the latest
+closed term, and is omitted when the program has no terms. `stats` matches `GET /v1/programs/{id}/header`.
+
+```json
+{
+  "id":           "uuid",
+  "slug":         "gridflow",
+  "name":         "GridFlow: Time-Series Ingestion Pipeline",
+  "project_uid":  "uuid",
+  "project_name": "LF Energy",
+  "logo_url":     "https://...",
+  "status":       "published",
+  "admin_status": "open",
+  "term":         <ProgramTerm>,
+  "stats":        { "mentors": 2, "mentees": 3, "graduated": 6 },
+  "created_on":   "2026-01-01T00:00:00Z",
+  "updated_on":   "2026-01-01T00:00:00Z"
+}
+```
+
+`admin_status` groups `status` with the program's terms:
+
+| `admin_status` | When |
+|---|---|
+| `pending_review` | `status` is `pending` or `submitted` |
+| `open` | `status` is `published` and the program has an open term, or no terms yet |
+| `completed` | `status` is `published` and every term is closed |
+| `rejected` | `status` is `rejected` |
+| `hidden` | `status` is `archived` or `hidden` |
+
+#### `GET /v1/me/programs` 🔒
+
+Lists the programs the caller is an active `program_admin` of, ordered by name.
+The user is always the principal. The gateway requires only a signed-in user
+(`oidc`); see the [route matrix](../../docs/rewrite/06-route-matrix.md) for why
+this is not yet a Query Service collection.
+
+**Query parameters**
+
+| Parameter | Values | Description |
+|---|---|---|
+| `search` | — | Case-insensitive match on program or project name |
+| `status` | `open\|pending_review\|completed\|rejected\|hidden` | Filter by `admin_status` |
+| `limit` / `offset` | — | Pagination (default 20, max 100) |
+
+**Response** `200`
+```json
+{ "data": [<AdministeredProgram>, ...], "meta": {...} }
+```
+
+**Errors** `400` (unknown `status`, non-integer `limit`/`offset`), `401` (no principal, or a machine-to-machine client)
 
 ---
 
@@ -1484,7 +1585,7 @@ the program, that row is reset to `requested` instead. No invite email is sent.
 
 | Status | When |
 |---|---|
-| `400` | `program_id` is not a UUID, or the program is a `draft` |
+| `400` | `program_id` is not a UUID, or the program is `pending` |
 | `401` | No signed-in user |
 | `404` | The program does not exist, or is not visible to every signed-in user (`submitted`, `rejected`, `archived`, `hidden`) |
 | `409` | The caller already has a mentor row in `invited`, `requested`, `pending`, `active`, or `declined`, or the row changed concurrently |
@@ -1625,8 +1726,14 @@ Submit an application to a term.
 1. Term must have `status = "open"`.
 2. Current date must fall within `application_start_date` and `application_end_date`.
 3. No existing non-withdrawn application for this user+term (reapplication from `declined` is permanently blocked; reapplication from `withdrawn` is allowed while the window is open).
+4. Fewer than 3 withdrawn applications for this user+term in the requested role — once a user has withdrawn 3, no further application to the term in that role is accepted.
 
 **After creation**: The program's `task_templates` JSONB array is cloned as individual `prerequisite` tasks linked to the new application.
+
+**Reapplication** creates a new `pending` application under a new ID and keeps
+the withdrawn one, unchanged, as history — its reviewer note, evaluation, and
+tasks stay on it. A user may therefore hold several withdrawn applications for a
+term, but at most one that is not withdrawn.
 
 **Request body**
 ```json
@@ -1639,7 +1746,7 @@ The applicant is always the caller. `attendance_type` is ignored; a Program
 Admin sets it on acceptance.
 
 **Response** `201` → `<Application>`  
-**Errors** `400`, `401`, `409` (duplicate / blocked reapplication), `422` (window closed, term not open)
+**Errors** `400`, `401`, `409` (duplicate / blocked reapplication), `422` (window closed, term not open, reapplication limit reached)
 
 ---
 
@@ -1743,7 +1850,7 @@ Tasks represent units of work assigned to a mentee. They are either:
   "program_term_status": "open",
   "custom":              false,
   "submit_file":         null,
-  "file":                null,
+  "file":                "/mentorship/v1/tasks/{id}/file-download",
   "due_date":            "2026-02-10",
   "created_by":          "alice",
   "created_on":          "2026-01-15T00:00:00Z",
@@ -1753,14 +1860,19 @@ Tasks represent units of work assigned to a mentee. They are either:
 
 **`category` values**: `prerequisite`, `non_prerequisite`
 
-**`status` lifecycle**: `incomplete → in_progress → submitted → complete`
+**`file`** is the download route of the submission, present only when one is
+uploaded. The stored object key never appears in a response or the search index,
+which carries a `has_file` flag instead. See [Files](#14-files).
+
+**`status` lifecycle**: the mentee moves `incomplete → in_progress → submitted`, a
+reviewer completes; a mentor or program admin can also set any status directly.
 
 **`due_date`** is an ISO 8601 date string (`YYYY-MM-DD`) for compatibility with
 legacy task data. Writes with any other format are rejected with `400`.
 Consumers performing date arithmetic should parse it as a
 date rather than comparing it to a PostgreSQL timestamp directly.
 
-Backward reset to `incomplete` is always possible (by a reviewer only).
+Backward moves are made by a reviewer only.
 
 ### Endpoints
 
@@ -1837,36 +1949,99 @@ Create a non-prerequisite task and assign it to an accepted mentee.
 
 #### `PATCH /v1/tasks/{id}` 🔒
 
-Update a task's status or metadata.
+A mentor's or program admin's full edit of a task: its content, its file
+requirement, and its status.
 
 **Request body** (all optional)
 ```json
 {
   "name":        "Updated task name",
   "description": "Updated description",
+  "category":    "non_prerequisite",
+  "custom":      true,
   "status":      "in_progress",
-  "due_date":    "2026-05-15",
-  "file":        "https://storage.example.com/submission.pdf"
+  "submit_file": "required",
+  "due_date":    "2026-05-15"
 }
 ```
 
-**Actor permission rules**:
+An omitted field is left unchanged. An empty string clears `submit_file` (no file
+required) or `due_date`.
 
-| Transition | Required actor |
-|---|---|
-| `incomplete → in_progress` | Task **assignee** (mentee) only |
-| `in_progress → submitted` | Task **assignee** (mentee) only |
-| `submitted → complete` | **Non-assignee** (program_admin or mentor) only |
-| Any state → `incomplete` (reset) | **Non-assignee** (program_admin or mentor) only |
+**Actor**: an active `mentor` or `program_admin` of the task's program, who is not
+the task's assignee. Every other caller gets `403`, whatever fields the body holds.
 
-Invalid forward transitions (e.g. `incomplete → complete`) return `409`.
+**Status**: the caller may set any of `incomplete`, `in_progress`, `submitted` or
+`complete`, from any current status — for example reopen a completed task, or
+complete one that was never submitted. The one refusal is a task left `submitted`
+while it requires a file and has none: setting `status: "submitted"`, or turning
+`submit_file` on for a `submitted` task, returns `400` until the mentee uploads the
+file. Moving the task to another status in the same request is allowed.
 
-**Side effect**: When the last `prerequisite` task for an application reaches `submitted` or `complete`, the system:
+`file` is rejected with `400`: the submission is written by
+`POST /v1/tasks/{id}/file-upload`. `application_status` and `program_term_status`
+are rejected with `400`: they are set through `PATCH /v1/tasks/{id}/review`.
+
+**Side effect**: when a new `status` or `category` leaves every `prerequisite` task
+on the application `submitted` or `complete`, the system:
 1. Sets `applications.tasks_submitted = true`.
 2. Fires `NotifyAdminTasksSubmitted` to notify the program admin.
 
+`tasks_submitted` records the first full submission. Moving a task back out of
+`submitted` or `complete` leaves it set; the applicants list reads the tasks
+themselves.
+
 **Response** `200` → `<Task>`  
-**Errors** `400`, `401`, `403` (wrong actor), `404`, `409` (invalid transition)
+**Errors** `400`, `401`, `403`, `404`, `409` (withdrawn application)
+
+---
+
+#### `PATCH /v1/tasks/{id}/submission` 🔒
+
+The assignee (mentee) moves their task forward.
+
+**Request body**: `{ "status": "in_progress" | "submitted" }`
+
+| Transition | Required actor |
+|---|---|
+| `incomplete → in_progress` | Task **assignee** only |
+| `in_progress → submitted` | Task **assignee** only; a required file must be uploaded first |
+
+Any other transition returns `409`. `file` is rejected with `400`. The
+`tasks_submitted` side effect above applies.
+
+**Response** `200` → `<Task>`  
+**Errors** `400`, `401`, `403`, `404`, `409`
+
+---
+
+#### `PATCH /v1/tasks/{id}/review` 🔒
+
+A reviewer's decision on a submitted task.
+
+**Request body** (at least one field)
+```json
+{
+  "status":              "complete" | "incomplete",
+  "application_status":  "accepted",
+  "program_term_status": "open"
+}
+```
+
+The caller must be an active `mentor` or `program_admin` of the task's program, and
+not its assignee, for every field.
+
+| Transition | Required actor |
+|---|---|
+| `submitted → complete` | Reviewer |
+| Any state → `incomplete` (reset) | Reviewer |
+
+Any other `status` value returns `400`: the assignee's own steps go through
+`PATCH /v1/tasks/{id}/submission`, and `PATCH /v1/tasks/{id}` sets any status.
+Completing a task that is not `submitted` returns `409`.
+
+**Response** `200` → `<Task>`  
+**Errors** `400`, `401`, `403`, `404`, `409`
 
 ---
 
@@ -1879,12 +2054,57 @@ Hard-delete a task.
 
 ---
 
-## 14. Domain State Machines
+## 14. Files
+
+File payloads live in S3-compatible storage, never in a response body or the
+search index. The design is [02 §object storage](../../docs/rewrite/02-target-architecture.md#object-storage)
+and the authorization is [06 §file routes](../../docs/rewrite/06-route-matrix.md#file-routes),
+both added by #161.
+
+- **Logos** (programs, profiles) go to the public bucket. The column stores the full
+  CDN URL, returned as `public_url`. PNG or JPEG only (never SVG), at most 2 MB.
+- **Task submissions** go to the private bucket. The column stores the object key,
+  which responses replace with the download route. PDF, DOC, DOCX or plain text,
+  at most 20 MB.
+- The type is identified from the payload bytes, not the declared `Content-Type`.
+  An unsupported type returns `415`; an oversized body `413`.
+- Every upload writes a fresh `{uuid}-{filename}` key and never overwrites. The
+  superseded object, and any upload that never commits, are deleted through the
+  `object_deletions` queue.
+- These routes are the only writers of `logo_url`, `avatar_url` and `file`. The
+  generic create and update routes reject those fields with `400`. They drop
+  `profile_links.resumeLink` rather than reject it, since resumes are not a file
+  class and a client may echo back a migrated profile.
+- An archived program's logo cannot change (`409`); a rejected program's can,
+  since resubmitting requires a logo.
+
+| Route | Body | Response |
+|---|---|---|
+| `POST /v1/programs/{id}/logo-upload` 🔒 | raw image | `201` `{ public_url, filename, content_type, size }` |
+| `DELETE /v1/programs/{id}/logo` 🔒 | — | `204` |
+| `GET /v1/programs/{id}/logo-download` 🔓 | — | `200` image; a fallback to `public_url` |
+| `POST /v1/me/profiles/by-id/{id}/logo-upload` 🔒 | raw image | `201`; also sets the user's `avatar_url` |
+| `DELETE /v1/me/profiles/by-id/{id}/logo` 🔒 | — | `204`; clears `avatar_url` while it holds that logo |
+| `GET /v1/user-profiles/{id}/logo-download` 🔓 | — | `200` image, publicly listed profiles only |
+| `POST /v1/tasks/{id}/file-upload` 🔒 | `multipart/form-data`, part `file` | `201` `{ filename, content_type, size }` |
+| `GET /v1/tasks/{id}/file-download` 🔒 | — | `200`/`206` attachment, `Cache-Control: private, no-store`, `Range` supported |
+| `DELETE /v1/tasks/{id}/file` 🔒 | — | `204`; only while `incomplete` or `in_progress` |
+
+A task file can be uploaded until the task is `complete`; once `submitted` it is
+replaced through `file-upload`, never deleted, so a task that requires a file
+always keeps one. A task whose application is `withdrawn` keeps its file: upload and
+delete return `409`. A concurrent upload to the same record returns `409`, as does an
+upload that took longer than the 15-minute grace period to save. A `Range` outside
+the object returns `416`.
+
+---
+
+## 15. Domain State Machines
 
 ### Program Status
 
 ```
-draft ──────────────────────────────────► submitted
+pending ────────────────────────────────► submitted
                                               │
                               ┌───────────────┼─────────────────┐
                               ▼               ▼                 │
@@ -1901,7 +2121,7 @@ draft ────────────────────────�
 
 | From | To | Notes |
 |---|---|---|
-| `draft` | `submitted` | All required fields present (lfid, description, repo_link, logo_url, ≥1 skill, ≥1 open term) |
+| `pending` | `submitted` | All required fields present (linked LF project, description, repo_link, logo_url, ≥1 skill, ≥1 open term) |
 | `submitted` | `published` | Reviewer approves |
 | `submitted` | `rejected` | Reviewer declines |
 | `published` | `hidden` | No pending/accepted/graduated applications |
@@ -1971,10 +2191,11 @@ incomplete ──► in_progress ──► submitted ──► complete
 | `in_progress` | `submitted` | Assignee (mentee) |
 | `submitted` | `complete` | Reviewer (non-assignee) |
 | Any | `incomplete` | Reviewer (non-assignee) — reset |
+| Any | Any | Reviewer (non-assignee) — full edit through `PATCH /v1/tasks/{id}` |
 
 ---
 
-## 15. Business Rule Reference
+## 16. Business Rule Reference
 
 | ID | Rule | Where enforced |
 |---|---|---|
@@ -2001,7 +2222,7 @@ incomplete ──► in_progress ──► submitted ──► complete
 
 ---
 
-## 16. Frontend Integration Guide
+## 17. Frontend Integration Guide
 
 ### Authentication Flow
 
@@ -2111,10 +2332,11 @@ Foundations and stipend totals are not on this endpoint yet — keep those as st
 GET /v1/applications/{appId}/tasks
 
 # Start work
-PATCH /v1/tasks/{taskId}  Body: { "status": "in_progress" }
+PATCH /v1/tasks/{taskId}/submission  Body: { "status": "in_progress" }
 
-# Submit
-PATCH /v1/tasks/{taskId}  Body: { "status": "submitted", "file": "<upload-url>" }
+# Submit: upload the file first when the task requires one
+POST /v1/tasks/{taskId}/file-upload  Body: multipart/form-data, part "file"
+PATCH /v1/tasks/{taskId}/submission  Body: { "status": "submitted" }
 ```
 
 When all prerequisite tasks reach `submitted`/`complete`, the application's `tasks_submitted` flag is set to `true` — poll `GET /v1/applications/{id}` to detect this change.
@@ -2171,7 +2393,7 @@ Body: { "status": "declined" } // decline
 
 #### Program Submission Workflow (Program Admin)
 
-1. Create program in draft:
+1. Create program in pending:
    ```
    POST /v1/programs
    ```
@@ -2191,7 +2413,7 @@ Body: { "status": "declined" } // decline
    ```
 5. Submit for review:
    ```
-   PATCH /v1/programs/{id}  Body: { "status": "submitted" }
+   POST /v1/programs/{id}/submit
    ```
    Returns `409` with a descriptive error if any required field or guard condition is not met.
 

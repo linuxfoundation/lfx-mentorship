@@ -134,6 +134,13 @@ func (r *ApplicationRepository) ListByProgramTerm(ctx context.Context, programTe
 	return apps, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, nil
 }
 
+// prerequisitesDone holds for an application with no prerequisite task outstanding: every one is
+// submitted or complete, or it has none. It splits pending into the applicants list's applied and
+// tasks_submitted. It reads the tasks, not applications.tasks_submitted: that flag records the first
+// full submission and stays set when a reviewer resets a task to incomplete.
+const prerequisitesDone = `(NOT EXISTS (SELECT 1 FROM tasks t
+	WHERE t.application_id = a.id AND t.category = 'prerequisite' AND t.status NOT IN ('submitted', 'complete')))`
+
 func (r *ApplicationRepository) ListByProgram(ctx context.Context, programID string, filter models.ProgramApplicationFilter) ([]*models.ProgramApplicationRow, *models.PaginationMeta, error) {
 	limit, offset := filter.Limit, filter.Offset
 	if limit <= 0 || limit > 50 {
@@ -143,14 +150,28 @@ func (r *ApplicationRepository) ListByProgram(ctx context.Context, programID str
 		offset = 0
 	}
 	args := []any{programID}
-	where := ` WHERE pt.program_id = $1 AND a.role = 'mentee' AND p.status NOT IN ('draft', 'submitted')`
+	// Withdrawn applications kept beside a reapplication are history, not separate applicants: list
+	// one application per (term, user) — the live one, else the newest withdrawn — matching
+	// GetManagementSummary's counts. Equal created_on values break the tie on id.
+	where := ` WHERE pt.program_id = $1 AND a.role = 'mentee' AND p.status NOT IN ` + sqlUnreviewedProgramStatuses + `
+		AND NOT (a.status = 'withdrawn' AND EXISTS (SELECT 1 FROM applications other
+			WHERE other.program_term_id = a.program_term_id AND other.user_id = a.user_id
+			AND other.role = a.role AND other.id <> a.id
+			AND (other.status <> 'withdrawn'
+				OR (other.created_on, other.id) > (a.created_on, a.id))))`
 	switch filter.Type {
 	case models.ProgramApplicationTypeCurrent:
 		where += ` AND pt.status = 'open'`
 	case models.ProgramApplicationTypePast:
 		where += ` AND pt.status = 'closed'`
 	}
-	if filter.Status != "" {
+	switch filter.Status {
+	case "":
+	case models.ProgramApplicationStatusApplied:
+		where += ` AND a.status = 'pending' AND NOT ` + prerequisitesDone
+	case models.ProgramApplicationStatusTasksSubmitted:
+		where += ` AND a.status = 'pending' AND ` + prerequisitesDone
+	default:
 		args = append(args, filter.Status)
 		where += fmt.Sprintf(` AND a.status = $%d`, len(args))
 	}
@@ -162,6 +183,15 @@ func (r *ApplicationRepository) ListByProgram(ctx context.Context, programID str
 		args = append(args, "%"+filter.Search+"%")
 		where += fmt.Sprintf(` AND (u.name ILIKE $%d OR u.email ILIKE $%d)`, len(args), len(args))
 	}
+	// Furthest-along applicants first; pending splits on prerequisitesDone as the status filter does.
+	const orderBy = ` ORDER BY CASE
+		WHEN a.status = 'graduated' THEN 1
+		WHEN a.status = 'accepted' THEN 2
+		WHEN a.status = 'pending' AND ` + prerequisitesDone + ` THEN 3
+		WHEN a.status = 'pending' THEN 4
+		WHEN a.status = 'hold' THEN 5
+		WHEN a.status = 'declined' THEN 6
+		ELSE 7 END, a.created_on DESC, a.id DESC`
 	var total int
 	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id JOIN programs p ON p.id = pt.program_id JOIN users u ON u.id = a.user_id`+where, args...).Scan(&total); err != nil {
 		return nil, nil, fmt.Errorf("count program applications: %w", err)
@@ -174,7 +204,7 @@ func (r *ApplicationRepository) ListByProgram(ctx context.Context, programID str
 		COALESCE((SELECT jsonb_agg(jsonb_build_object('program_id', op.id, 'program_name', op.name, 'status', oa.status))
 			FROM applications oa JOIN program_terms ot ON ot.id = oa.program_term_id JOIN programs op ON op.id = ot.program_id
 			WHERE oa.user_id = a.user_id AND op.id <> pt.program_id AND oa.role = 'mentee' AND oa.status IN ('pending', 'accepted', 'graduated')), '[]'::jsonb)
-		FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id JOIN programs p ON p.id = pt.program_id JOIN users u ON u.id = a.user_id` + where + fmt.Sprintf(` ORDER BY a.created_on DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
+		FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id JOIN programs p ON p.id = pt.program_id JOIN users u ON u.id = a.user_id` + where + orderBy + fmt.Sprintf(` LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
 	rows, err := r.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("list program applications: %w", err)
@@ -292,17 +322,103 @@ func (r *ApplicationRepository) CreateWithTasks(ctx context.Context, programTerm
 		return nil, fmt.Errorf("%w: applications are not open for this term", domain.ErrIneligible)
 	}
 
+	a, err := insertApplicationWithTasks(ctx, tx, programTermID, term.Status, input, tasks)
+	if err != nil {
+		span.RecordError(err)
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit create application transaction: %w", err)
+	}
+	return a, nil
+}
+
+func (r *ApplicationRepository) Reapply(ctx context.Context, oldID, programTermID string, input models.ApplicationCreateInput) (*models.Application, error) {
+	return r.ReapplyWithTasks(ctx, oldID, programTermID, input, nil)
+}
+
+// ReapplyWithTasks creates a new application alongside a withdrawn one. The withdrawn application
+// is left untouched — its reviewer note, evaluation, and tasks stay on it as history — because
+// reapplying is an applicant-driven action, and the applicant holds no relation that permits
+// writing (or even reading) reviewer-owned data. Deleting or rewriting the old row here would let
+// the applicant erase it. Coexistence is allowed by uq_applications_active (migration 001), which
+// keeps one non-withdrawn application per (term, user, role) and any number of withdrawn ones.
+func (r *ApplicationRepository) ReapplyWithTasks(ctx context.Context, oldID, programTermID string, input models.ApplicationCreateInput, tasks []models.TaskCreateInput) (*models.Application, error) {
+	ctx, span := applicationTracer.Start(ctx, "db.applications.Reapply")
+	defer span.End()
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin reapply transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var termStatus models.ProgramTermStatus
+	err = tx.QueryRow(ctx, `SELECT status FROM program_terms WHERE id = $1 FOR UPDATE`, programTermID).Scan(&termStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrProgramTermNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("lock program term for reapply: %w", err)
+	}
+	if termStatus != models.ProgramTermStatusOpen {
+		return nil, fmt.Errorf("%w: applications are not open for this term", domain.ErrIneligible)
+	}
+	// Re-check under lock that the application being reapplied from is still withdrawn in this
+	// term; the service validated it before the transaction began.
+	var status models.ApplicationStatus
+	if err := tx.QueryRow(ctx, `SELECT status FROM applications WHERE id = $1 AND program_term_id = $2 FOR UPDATE`, oldID, programTermID).Scan(&status); errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrApplicationNotFound
+	} else if err != nil {
+		return nil, fmt.Errorf("lock withdrawn application for reapply: %w", err)
+	}
+	if status != models.ApplicationStatusWithdrawn {
+		return nil, fmt.Errorf("%w: only a withdrawn application can be reapplied (status: %s)", domain.ErrConflict, status)
+	}
+	// Re-check the reapplication limit: the service counted before the transaction began. Locking
+	// every application the user holds for this term and role also makes a concurrent withdrawal
+	// wait, so it cannot clear uq_applications_active between this check and the insert.
+	rows, err := tx.Query(ctx, `SELECT status FROM applications WHERE program_term_id = $1 AND user_id = $2 AND role = $3 FOR UPDATE`, programTermID, input.UserID, input.Role)
+	if err != nil {
+		return nil, fmt.Errorf("lock applications for reapply: %w", err)
+	}
+	statuses, err := pgx.CollectRows(rows, pgx.RowTo[models.ApplicationStatus])
+	if err != nil {
+		return nil, fmt.Errorf("lock applications for reapply: %w", err)
+	}
+	withdrawn := 0
+	for _, s := range statuses {
+		if s == models.ApplicationStatusWithdrawn {
+			withdrawn++
+		}
+	}
+	if withdrawn >= models.MaxWithdrawnApplicationsPerTerm {
+		return nil, fmt.Errorf("%w: reapplication limit reached: you have withdrawn %d applications for this term and cannot apply to it again", domain.ErrIneligible, withdrawn)
+	}
+	// A concurrent reapply that already created the active application fails this insert on
+	// uq_applications_active, which the handler maps to 409.
+	a, err := insertApplicationWithTasks(ctx, tx, programTermID, termStatus, input, tasks)
+	if err != nil {
+		span.RecordError(err)
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit reapply transaction: %w", err)
+	}
+	return a, nil
+}
+
+// insertApplicationWithTasks inserts a pending application with its prerequisite tasks and queues
+// its access, search, and parent program refreshes, all inside the caller's transaction.
+func insertApplicationWithTasks(ctx context.Context, tx pgx.Tx, programTermID string, termStatus models.ProgramTermStatus, input models.ApplicationCreateInput, tasks []models.TaskCreateInput) (*models.Application, error) {
 	const q = `
 		INSERT INTO applications (id, program_term_id, user_id, role, status, program_term_status, start_date_time, end_date_time, attendance_type)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING ` + applicationCols
 
 	a, err := scanApplication(tx.QueryRow(ctx, q,
-		input.ID, programTermID, input.UserID, input.Role, input.Status, term.Status,
+		input.ID, programTermID, input.UserID, input.Role, input.Status, termStatus,
 		input.StartDateTime, input.EndDateTime, input.AttendanceType,
 	))
 	if err != nil {
-		span.RecordError(err)
 		return nil, fmt.Errorf("create application: %w", err)
 	}
 	if err := enqueueApplicationMarker(ctx, tx, a, "update_access"); err != nil {
@@ -320,82 +436,6 @@ func (r *ApplicationRepository) CreateWithTasks(ctx context.Context, programTerm
 	}
 	if err := insertApplicationTasks(ctx, tx, a, tasks); err != nil {
 		return nil, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit create application transaction: %w", err)
-	}
-	return a, nil
-}
-
-func (r *ApplicationRepository) Reapply(ctx context.Context, oldID, programTermID string, input models.ApplicationCreateInput) (*models.Application, error) {
-	return r.ReapplyWithTasks(ctx, oldID, programTermID, input, nil)
-}
-
-func (r *ApplicationRepository) ReapplyWithTasks(ctx context.Context, oldID, programTermID string, input models.ApplicationCreateInput, tasks []models.TaskCreateInput) (*models.Application, error) {
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("begin reapply transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	var programID string
-	var termStatus models.ProgramTermStatus
-	err = tx.QueryRow(ctx, `SELECT program_id, status FROM program_terms WHERE id = $1 FOR UPDATE`, programTermID).Scan(&programID, &termStatus)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, domain.ErrProgramTermNotFound
-	}
-	if err != nil {
-		return nil, fmt.Errorf("lock program term for reapply: %w", err)
-	}
-	var taskIDs []string
-	rows, err := tx.Query(ctx, `SELECT id FROM tasks WHERE application_id = $1`, oldID)
-	if err != nil {
-		return nil, fmt.Errorf("list withdrawn application tasks: %w", err)
-	}
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		taskIDs = append(taskIDs, id)
-	}
-	rows.Close()
-	if _, err := tx.Exec(ctx, `DELETE FROM applications WHERE id = $1`, oldID); err != nil {
-		return nil, fmt.Errorf("delete withdrawn application: %w", err)
-	}
-	const q = `INSERT INTO applications (id, program_term_id, user_id, role, status, program_term_status, start_date_time, end_date_time, attendance_type) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING ` + applicationCols
-	a, err := scanApplication(tx.QueryRow(ctx, q, input.ID, programTermID, input.UserID, input.Role, input.Status, termStatus, input.StartDateTime, input.EndDateTime, input.AttendanceType))
-	if err != nil {
-		return nil, fmt.Errorf("create replacement application: %w", err)
-	}
-	if err := enqueueObjectDeleteMarker(ctx, tx, "mentorship_application", oldID); err != nil {
-		return nil, err
-	}
-	if err := enqueueIndexDelete(ctx, tx, "mentorship_application", oldID); err != nil {
-		return nil, err
-	}
-	for _, taskID := range taskIDs {
-		if err := enqueueObjectDeleteMarker(ctx, tx, "mentorship_task", taskID); err != nil {
-			return nil, err
-		}
-		if err := enqueueIndexDelete(ctx, tx, "mentorship_task", taskID); err != nil {
-			return nil, err
-		}
-	}
-	if err := enqueueApplicationMarker(ctx, tx, a, "update_access"); err != nil {
-		return nil, err
-	}
-	if err := enqueueApplicationIndex(ctx, tx, a, "created"); err != nil {
-		return nil, err
-	}
-	if err := enqueueProgramIndexByID(ctx, tx, programID); err != nil {
-		return nil, err
-	}
-	if err := insertApplicationTasks(ctx, tx, a, tasks); err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit reapply transaction: %w", err)
 	}
 	return a, nil
 }
@@ -688,7 +728,7 @@ func (r *ApplicationRepository) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("begin delete application transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	current, err := scanApplication(tx.QueryRow(ctx, `SELECT `+applicationCols+` FROM applications WHERE id = $1`, id))
+	current, err := scanApplication(tx.QueryRow(ctx, `SELECT `+applicationCols+` FROM applications WHERE id = $1 FOR UPDATE`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ErrApplicationNotFound
 	}
@@ -713,6 +753,9 @@ func (r *ApplicationRepository) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("iterate application tasks before delete: %w", err)
 	}
 	rows.Close()
+	if err := queueTaskFileDeletions(ctx, tx, "application_id = $1", id); err != nil {
+		return err
+	}
 
 	cmd, err := tx.Exec(ctx, `DELETE FROM applications WHERE id = $1`, id)
 	if err != nil {
@@ -838,12 +881,16 @@ func (r *ApplicationRepository) CountByTerm(ctx context.Context, termID string) 
 }
 
 // FindByTermAndUser returns an application for a specific term and user, or nil.
-func (r *ApplicationRepository) FindByTermAndUser(ctx context.Context, termID, userID string) (*models.Application, error) {
+func (r *ApplicationRepository) FindByTermAndUser(ctx context.Context, termID, userID string, role models.ApplicationRole) (*models.Application, error) {
 	ctx, span := applicationTracer.Start(ctx, "db.applications.FindByTermAndUser")
 	defer span.End()
 
-	q := `SELECT ` + applicationCols + ` FROM applications WHERE program_term_id = $1 AND user_id = $2 LIMIT 1`
-	a, err := scanApplication(r.pool.QueryRow(ctx, q, termID, userID))
+	// A user may hold several withdrawn applications for a term (each reapply leaves the previous
+	// one as history) but at most one other. Prefer that live one, else the latest withdrawn, so
+	// the reapply guard sees the application that currently decides eligibility.
+	q := `SELECT ` + applicationCols + ` FROM applications WHERE program_term_id = $1 AND user_id = $2 AND role = $3
+		ORDER BY status = 'withdrawn', created_on DESC, id DESC LIMIT 1`
+	a, err := scanApplication(r.pool.QueryRow(ctx, q, termID, userID, role))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -852,6 +899,20 @@ func (r *ApplicationRepository) FindByTermAndUser(ctx context.Context, termID, u
 		return nil, fmt.Errorf("find application by term and user: %w", err)
 	}
 	return a, nil
+}
+
+// CountWithdrawnByTermAndUser returns how many withdrawn applications a user holds for a term in a role.
+func (r *ApplicationRepository) CountWithdrawnByTermAndUser(ctx context.Context, termID, userID string, role models.ApplicationRole) (int, error) {
+	ctx, span := applicationTracer.Start(ctx, "db.applications.CountWithdrawnByTermAndUser")
+	defer span.End()
+
+	var count int
+	const q = `SELECT COUNT(*) FROM applications WHERE program_term_id = $1 AND user_id = $2 AND role = $3 AND status = 'withdrawn'`
+	if err := r.pool.QueryRow(ctx, q, termID, userID, role).Scan(&count); err != nil {
+		span.RecordError(err)
+		return 0, fmt.Errorf("count withdrawn applications: %w", err)
+	}
+	return count, nil
 }
 
 // BulkDeclineByTerm moves all pending/submitted applications in a term to declined.

@@ -48,11 +48,19 @@ type MentorFilter struct {
 type ProgramFilter struct {
 	Limit           int
 	Offset          int
-	Status          string // programs.status: draft | submitted | published | hidden | rejected | archived
+	Status          string // programs.status: pending | submitted | published | hidden | rejected | archived
 	Search          string // ilike on name
 	Skill           string // catalog only: case-insensitive exact match on a program skill
 	DiscoveryStatus string // catalog only: acceptance | in-progress | completed
 	SortBy          string // catalog only: accepting_first | completed_first | name_asc | name_desc | updated_oldest | updated_newest
+}
+
+// AdministeredProgramFilter constrains the caller's administered programs list.
+type AdministeredProgramFilter struct {
+	Limit  int
+	Offset int
+	Search string                    // ilike on program or project name
+	Status AdministeredProgramStatus // empty for every status
 }
 
 // ProgramEnrollmentTemplate contains the fields needed to prefill enrollment.
@@ -94,7 +102,7 @@ type ProgramApplicationFilter struct {
 	Offset int
 	Type   ProgramApplicationType
 	Search string
-	Status string
+	Status ProgramApplicationStatus
 	TermID string
 }
 

@@ -47,6 +47,20 @@ Key notes
   live from an earlier run is removed with FGA delete_access and index deleted
   markers, so its tuples and search document are retracted.
 - All INSERTs use ON CONFLICT … DO UPDATE (idempotent; safe to re-run).
+- File columns (users.avatar_url, user_profiles.logo_url, programs.logo_url,
+  tasks.file) are rewritten from the copy manifest copy_legacy_objects.py
+  writes, so run that first: legacy-bucket URLs become CDN URLs (logos) or
+  object keys (submissions), quarantined or missing objects become NULL,
+  foreign logo URLs carry through and foreign tasks.file values are nulled.
+- profile_links.resumeLink is dropped: resumes are not migrated.
+- programs.lf_project_uid comes from the first project identifier that
+  project-service confirms exists: lfProjectId first (a v1 Salesforce ID,
+  translated over NATS lfx.lookup_v1_mapping), then legacy UUID fields.
+  lf_project_slug and lf_project_name come from project-service, and
+  lf_project_logo_url from lfProjectLogo when lfProjectId is the parent. A
+  program with no confirmed parent is reported as UNMAPPED_PROGRAM; an existing
+  one keeps its current parent. A project-service error other than not_found
+  aborts the import.
 
 Usage
 -----
@@ -57,12 +71,18 @@ Usage
     export DYNAMODB_TABLE_PREFIX=jobspring-dev  # defaults to jobspring-prod
 
   export PG_DSN="host=localhost port=5432 dbname=mentorship user=postgres password=..."
+  export COPY_MANIFEST=legacy-object-manifest.json
+  export LOGOS_CDN_URL_PREFIX=https://...
+  export LOGOS_S3_BUCKET=... ATTACHMENTS_S3_BUCKET=...   # must match the manifest
+  export NATS_URL=nats://...   # platform NATS, to verify project parents; unset leaves programs unmapped
 
-  pip install boto3 psycopg2-binary
+  pip install boto3 psycopg2-binary nats-py
+  python3 backend/db/scripts/copy_legacy_objects.py
   python3 backend/db/scripts/migrate_dynamo_to_postgres.py
 """
 
 import json
+import asyncio
 import logging
 import os
 import re
@@ -75,6 +95,8 @@ import boto3
 import psycopg2
 import psycopg2.extras
 from boto3.dynamodb.types import TypeDeserializer as _TypeDeserializer
+
+import legacy_objects as lo
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -96,6 +118,13 @@ PG_DSN = os.environ.get(
 )
 
 TABLE_PREFIX = os.environ.get("DYNAMODB_TABLE_PREFIX", "jobspring-prod")
+LEGACY_BUCKET = os.environ.get("LEGACY_UPLOADS_BUCKET", f"{TABLE_PREFIX}-uploads")
+COPY_MANIFEST = os.environ.get("COPY_MANIFEST", "legacy-object-manifest.json")
+LOGOS_CDN_URL_PREFIX = os.environ.get("LOGOS_CDN_URL_PREFIX", "")
+# Must name the buckets copy_legacy_objects.py copied into; the manifest records them.
+LOGOS_S3_BUCKET = os.environ.get("LOGOS_S3_BUCKET", "").strip()
+ATTACHMENTS_S3_BUCKET = os.environ.get("ATTACHMENTS_S3_BUCKET", "").strip()
+NATS_URL = os.environ.get("NATS_URL", "").strip()
 
 # Stable UUID namespace — must not change between runs to keep IDs deterministic.
 _UUID_NS = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
@@ -153,6 +182,85 @@ def _as_uuid(value) -> str | None:
         return _uuid5("coerce", s)
 
 
+def _strict_uuid(value) -> str | None:
+    """Return a canonical UUID string, or None; never coerce, so no parent is fabricated."""
+    try:
+        return str(uuid.UUID(str(value).strip())) if value else None
+    except ValueError:
+        return None
+
+
+def _project_candidates(p: dict) -> list[tuple[str, str]]:
+    """(field, raw value) pairs that may name the program's LF project, in priority order."""
+    linked = p.get("project") if isinstance(p.get("project"), dict) else {}
+    fields = [(f, p.get(f)) for f in ("lfProjectId", "projectUid", "lfProjectUid", "lfProjectUID")] + [("project.id", linked.get("id"))]
+    return [(f, str(v).strip()) for f, v in fields if v and str(v).strip()]
+
+
+def resolve_lf_projects(projects: list) -> dict:
+    """Map each candidate project identifier to a verified v2 (uid, slug, name), or None.
+
+    A v1 SFID is translated over lfx.lookup_v1_mapping; a UUID is taken as-is. Either
+    way project-service must confirm the project exists, so an identifier fabricated
+    by an older patch run, or naming a deleted project, resolves to None.
+    """
+    values = sorted({v for p in projects for _, v in _project_candidates(p)})
+    if not values:
+        return {}
+    if not NATS_URL:
+        log.warning("NATS_URL is not set: %d project identifiers cannot be verified; programs stay unmapped", len(values))
+        return {}
+
+    async def lookup() -> dict:
+        import nats  # imported lazily so runs without project identifiers need no NATS client
+
+        nc = await nats.connect(NATS_URL)
+        try:
+            async def ask(subject: str, body: str) -> str:
+                return (await nc.request(subject, body.encode(), timeout=5)).data.decode().strip()
+
+            async def project_field(subject: str, uid: str) -> str | None:
+                reply = await ask(subject, uid)
+                if not reply:
+                    raise RuntimeError(f"{subject} {uid}: empty reply")
+                # project-service answers failures with a JSON error body instead of a value.
+                try:
+                    body = json.loads(reply)
+                except ValueError:
+                    return reply
+                if not isinstance(body, dict):
+                    return reply
+                if body.get("error") == "not_found":
+                    return None
+                raise RuntimeError(f"{subject} {uid}: {reply}")
+
+            async def v1_project_uid(sfid: str) -> str | None:
+                reply = await ask("lfx.lookup_v1_mapping", f"project.sfid.{sfid}")
+                # An empty reply means no mapping; anything else that is not a UUID is a lookup failure.
+                if reply and not _strict_uuid(reply):
+                    raise RuntimeError(f"lfx.lookup_v1_mapping project.sfid.{sfid}: {reply}")
+                return _strict_uuid(reply)
+
+            resolved: dict = {}
+            for value in values:
+                uid = _strict_uuid(value) or await v1_project_uid(value)
+                slug = await project_field("lfx.projects-api.get_slug", uid) if uid else None
+                # A project deleted between the two lookups answers get_name with not_found.
+                name = await project_field("lfx.projects-api.get_name", uid) if slug else None
+                if not name:
+                    log.warning("UNMAPPED_LF_PROJECT project_identifier=%s", value)
+                    resolved[value] = None
+                    continue
+                resolved[value] = (uid, slug, name)
+            return resolved
+        finally:
+            await nc.close()
+
+    resolved = asyncio.run(lookup())
+    log.info("  → %d of %d project identifiers verified in project-service", sum(1 for r in resolved.values() if r), len(values))
+    return resolved
+
+
 def _as_int(value, default: int = 0) -> int:
     if value is None:
         return default
@@ -183,6 +291,13 @@ def _as_bool(value, default: bool = False) -> bool:
     if isinstance(value, str):
         return value.lower() in ("true", "1", "yes")
     return bool(value)
+
+
+def _without_resume_link(links):
+    """Drop resumeLink: resumes are not migrated (docs/rewrite/02 §file classes)."""
+    if isinstance(links, dict):
+        return {k: v for k, v in links.items() if k != "resumeLink"}
+    return links
 
 
 def _to_jsonb(value) -> str | None:
@@ -250,17 +365,17 @@ def _redact_dsn(dsn: str) -> str:
 def _normalize_program_status(status: str | None) -> str:
     """Map DynamoDB project status to Postgres programs.status."""
     if not status:
-        return "draft"
+        return "pending"
     m = {
-        "draft": "draft",
-        "pending": "draft",       # legacy DynamoDB value
+        "draft": "pending",
+        "pending": "pending",
         "submitted": "submitted",
         "published": "published",
         "rejected": "rejected",
         "archived": "archived",
         "hidden": "hidden",
     }
-    return m.get(status.lower(), "draft")
+    return m.get(status.lower(), "pending")
 
 
 _VALID_APP_STATUSES = {"pending", "accepted", "declined", "withdrawn", "graduated", "hold"}
@@ -300,7 +415,7 @@ def _map_program_term_status(term_status: str | None, dynamo_value: str | None) 
 # ---------------------------------------------------------------------------
 
 
-def migrate_users(cur, users: list) -> set:
+def migrate_users(cur, users: list, files: lo.LegacyFileRewriter) -> set:
     """Upsert users; return set of known user IDs."""
     log.info("Migrating users (%d rows) ...", len(users))
     rows = []
@@ -333,7 +448,7 @@ def migrate_users(cur, users: list) -> set:
                 (u.get("name") or "").strip() or None,
                 (u.get("givenName") or "").strip() or None,
                 (u.get("familyName") or "").strip() or None,
-                (u.get("avatarUrl") or "").strip() or None,
+                files.rewrite("users.avatar_url", lo.LOGO, u.get("avatarUrl")),
                 _parse_ts(u.get("createdAt")),
                 _parse_ts(u.get("updatedAt")),
             )
@@ -366,16 +481,29 @@ def migrate_users(cur, users: list) -> set:
 # ---------------------------------------------------------------------------
 
 
-def migrate_user_profiles(cur, profiles: list, known_user_ids: set) -> dict:
+def migrate_user_profiles(cur, profiles: list, known_user_ids: set, files: lo.LegacyFileRewriter) -> dict:
     """
     Upsert user_profiles; return {user_profile_id: user_id} for program_admins.
-    Rows with recordKind='github-profile-reservation' are skipped.
+    Rows with recordKind='github-profile-reservation' are skipped, and a user
+    with several mentee profiles keeps only the newest by (createdAt, id).
     """
     log.info("Migrating user_profiles (%d raw rows) ...", len(profiles))
     rows = []
     profile_map: dict = {}  # profile_id → user_id
     seen_slugs: set = set()
     skipped = 0
+    duplicates = 0
+
+    # uq_user_profiles_user_type allows one mentee profile per user.
+    mentee_keeper: dict = {}  # user_id → (created_on, profile_id)
+    for p in profiles:
+        if p.get("recordKind") == "github-profile-reservation" or _map_profile_type(p.get("type")) != "mentee":
+            continue
+        pid, uid = _as_uuid(p.get("id")), _as_uuid(p.get("userId"))
+        if pid and uid:
+            key = (_parse_ts(p.get("createdAt")) or datetime.min.replace(tzinfo=timezone.utc), pid)
+            if uid not in mentee_keeper or key > mentee_keeper[uid]:
+                mentee_keeper[uid] = key
 
     for p in profiles:
         if p.get("recordKind") == "github-profile-reservation":
@@ -385,6 +513,9 @@ def migrate_user_profiles(cur, profiles: list, known_user_ids: set) -> dict:
         uid = _as_uuid(p.get("userId"))
         if not pid:
             skipped += 1
+            continue
+        if uid in mentee_keeper and _map_profile_type(p.get("type")) == "mentee" and mentee_keeper[uid][1] != pid:
+            duplicates += 1
             continue
         # Insert placeholder user if user_id is referenced but not in users table
         if uid and uid not in known_user_ids:
@@ -417,7 +548,7 @@ def migrate_user_profiles(cur, profiles: list, known_user_ids: set) -> dict:
                 (p.get("lastName") or "").strip() or None,
                 (p.get("email") or "").strip() or None,
                 (p.get("phone") or "").strip() or None,
-                (p.get("logoUrl") or "").strip() or None,
+                files.rewrite("user_profiles.logo_url", lo.LOGO, p.get("logoUrl")),
                 (p.get("introduction") or "").strip() or None,
                 _as_bool(p.get("termsAndConditions")),
                 _as_int(p.get("numberOfProjects")),
@@ -425,11 +556,23 @@ def migrate_user_profiles(cur, profiles: list, known_user_ids: set) -> dict:
                 _to_jsonb(p.get("demographics")),
                 _to_jsonb(p.get("socioeconomics")),
                 _to_jsonb(p.get("skillSet")),
-                _to_jsonb(p.get("profileLinks")),
+                _to_jsonb(_without_resume_link(p.get("profileLinks"))),
                 _parse_ts(p.get("createdAt")),
                 _parse_ts(p.get("updatedAt")),
             )
         )
+
+    # A rerun can pick a different keeper than an earlier run stored.
+    if mentee_keeper:
+        cur.execute(
+            """
+            DELETE FROM user_profiles AS p
+            USING unnest(%s::uuid[], %s::uuid[]) AS k(user_id, id)
+            WHERE p.profile_type = 'mentee' AND p.user_id = k.user_id AND p.id <> k.id
+            """,
+            (list(mentee_keeper), [pid for _, pid in mentee_keeper.values()]),
+        )
+        duplicates += cur.rowcount
 
     psycopg2.extras.execute_batch(
         cur,
@@ -462,7 +605,7 @@ def migrate_user_profiles(cur, profiles: list, known_user_ids: set) -> dict:
         rows,
         page_size=500,
     )
-    log.info("  → %d user_profiles upserted, %d skipped", len(rows), skipped)
+    log.info("  → %d user_profiles upserted, %d skipped, %d duplicate mentee profiles dropped", len(rows), skipped, duplicates)
     return profile_map
 
 
@@ -471,12 +614,14 @@ def migrate_user_profiles(cur, profiles: list, known_user_ids: set) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
+def migrate_programs(cur, projects: list, known_user_ids: set, files: lo.LegacyFileRewriter, lf_projects: dict | None = None) -> set:
     """
     Upsert programs from jobspring-prod-projects.
     Also populates program_skills and program_funding_stats.
+    lf_projects maps an lfProjectId (v1 SFID) to its (uid, slug, name) in v2.
     Returns set of known program IDs.
     """
+    lf_projects = lf_projects or {}
     log.info("Migrating programs (%d rows) ...", len(projects))
     prog_rows = []
     skill_rows = []
@@ -495,32 +640,16 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
         # project_uid is the LF project parent used by the authorization
         # inheritance chain. Do not substitute the program ID when the legacy
         # source does not provide an explicit project identifier.
-        linked_project = p.get("project") if isinstance(p.get("project"), dict) else {}
-        project_uid = _as_uuid(
-            p.get("projectUid")
-            or p.get("lfProjectUid")
-            or p.get("lfProjectId")
-            or p.get("lfProjectUID")
-            or linked_project.get("id")
+        # Only a parent project-service confirms is imported; slug and name come from it too.
+        chosen_field, lf_project = next(
+            ((f, lf_projects[v]) for f, v in _project_candidates(p) if lf_projects.get(v) and lf_projects[v][0] != pid),
+            (None, None),
         )
+        project_uid, project_slug, project_name = lf_project or (None, None, None)
         if not project_uid:
             unresolved_project_uids.append(pid)
-
-        project_slug = (
-            p.get("projectSlug")
-            or p.get("lfProjectSlug")
-            or p.get("project_slug")
-            or linked_project.get("slug")
-        )
-        project_name = (
-            p.get("projectName")
-            or p.get("lfProjectName")
-            or p.get("project_name")
-            or linked_project.get("name")
-        )
-        project_slug = str(project_slug).strip() if project_slug else None
-        project_name = str(project_name).strip() if project_name else None
-        project_logo_url = (p.get("projectLogoUrl") or p.get("lfProjectLogoUrl") or p.get("project_logo_url") or "").strip() or None
+        # lfProjectLogo describes the lfProjectId project, so it only applies when that field won.
+        project_logo_url = str(p.get("lfProjectLogo") or "").strip() or None if chosen_field == "lfProjectId" else None
         if not project_uid or not project_slug or not project_name:
             unresolved_project_mappings.append((pid, project_uid, project_slug, project_name))
 
@@ -550,7 +679,7 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
                 _normalize_program_status(p.get("status")),
                 False,  # is_paid — not captured in DynamoDB; assume false
                 (p.get("description") or "").strip() or None,
-                (p.get("logoUrl") or "").strip() or None,
+                files.rewrite("programs.logo_url", lo.LOGO, p.get("logoUrl")),
                 (p.get("websiteUrl") or "").strip() or None,
                 (p.get("repoLink") or "").strip() or None,
                 (p.get("codeOfConduct") or "").strip() or None,
@@ -593,8 +722,8 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
 
     if unresolved_project_uids:
         log.warning(
-            "%d programs are missing an explicit project UID and will be imported "
-            "without an authorization parent",
+            "%d programs are missing an explicit project UID; new ones are imported "
+            "without an authorization parent and existing ones keep theirs",
             len(unresolved_project_uids),
         )
         for program_id in unresolved_project_uids:
@@ -619,10 +748,13 @@ def migrate_programs(cur, projects: list, known_user_ids: set) -> set:
            created_on, updated_on)
                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         ON CONFLICT (id) DO UPDATE SET
-                    lf_project_uid     = EXCLUDED.lf_project_uid,
-          lf_project_slug        = EXCLUDED.lf_project_slug,
-          lf_project_name        = EXCLUDED.lf_project_name,
-          lf_project_logo_url   = EXCLUDED.lf_project_logo_url,
+                    -- An unmapped re-import keeps the existing parent: OpenFGA already holds it, and the sync cannot clear a project reference.
+                    lf_project_uid     = COALESCE(EXCLUDED.lf_project_uid, programs.lf_project_uid),
+          lf_project_slug        = CASE WHEN EXCLUDED.lf_project_uid IS NULL THEN programs.lf_project_slug ELSE EXCLUDED.lf_project_slug END,
+          lf_project_name        = CASE WHEN EXCLUDED.lf_project_uid IS NULL THEN programs.lf_project_name ELSE EXCLUDED.lf_project_name END,
+          lf_project_logo_url   = CASE WHEN EXCLUDED.lf_project_uid IS NULL
+                                         OR (EXCLUDED.lf_project_logo_url IS NULL AND EXCLUDED.lf_project_uid = programs.lf_project_uid)
+                                       THEN programs.lf_project_logo_url ELSE EXCLUDED.lf_project_logo_url END,
           name                = EXCLUDED.name,
           slug                = EXCLUDED.slug,
           status              = EXCLUDED.status,
@@ -868,6 +1000,14 @@ def migrate_program_members(
 # Migration: applications + enrollments
 # ---------------------------------------------------------------------------
 
+# One mentee application id per (term, user), with the one that decides eligibility last so it
+# wins when collected into a dict: a user can hold withdrawn applications beside a reapplication
+# (uq_applications_active), so the live one wins, else the newest withdrawn.
+_MENTEE_APPLICATIONS_BY_PRECEDENCE = (
+    "SELECT program_term_id::text, user_id::text, id::text FROM applications WHERE role = 'mentee'"
+    " ORDER BY status <> 'withdrawn', created_on, id"
+)
+
 
 def migrate_mentees(
     cur,
@@ -950,7 +1090,20 @@ def migrate_mentees(
             )
             if row_sort > prev_sort:
                 best[key] = row
-    app_rows = list(best.values())
+
+    # Each (term, user) keeps the row a previous run wrote for it: the live one, else the newest
+    # withdrawn. Upserting by that id rather than the winner's own lets a rerun whose winner
+    # changed update the row in place instead of adding a second live row (uq_applications_active).
+    cur.execute(_MENTEE_APPLICATIONS_BY_PRECEDENCE)
+    existing = {(row[0], row[1]): row[2] for row in cur.fetchall()}
+    # created_on and updated_on are NOT NULL; legacy records can lack either, so fall back on
+    # the other one, then on the time of this run.
+    migrated_on = datetime.now(timezone.utc)
+    app_rows = [
+        (existing.get(key, row[0]),) + row[1:11]
+        + (row[11] or row[12] or migrated_on, row[12] or row[11] or migrated_on)
+        for key, row in best.items()
+    ]
 
     psycopg2.extras.execute_batch(
         cur,
@@ -960,7 +1113,7 @@ def migrate_mentees(
            start_date_time, end_date_time, tasks_submitted, admin_notified,
            attendance_type, created_on, updated_on)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (program_term_id, user_id, role) DO UPDATE SET
+        ON CONFLICT (id) DO UPDATE SET
           status              = EXCLUDED.status,
           program_term_status = EXCLUDED.program_term_status,
           start_date_time     = EXCLUDED.start_date_time,
@@ -975,7 +1128,7 @@ def migrate_mentees(
     log.info("  → %d applications upserted, %d skipped", len(app_rows), skipped)
 
     # Rebuild index from DB so ON CONFLICT winners are used for task resolution.
-    cur.execute("SELECT program_term_id::text, user_id::text, id::text FROM applications WHERE role = 'mentee'")
+    cur.execute(_MENTEE_APPLICATIONS_BY_PRECEDENCE)
     application_index = {(row[0], row[1]): row[2] for row in cur.fetchall()}
 
     return application_index
@@ -1025,6 +1178,7 @@ def migrate_tasks(
     application_index: dict,
     known_term_ids: dict,
     known_user_ids: set,
+    files: lo.LegacyFileRewriter,
 ) -> None:
     """Upsert tasks; resolve application_id via (program_term_id, assignee_id)."""
     log.info("Migrating tasks (%d rows) ...", len(tasks))
@@ -1091,7 +1245,7 @@ def migrate_tasks(
             _map_program_term_status(known_term_ids.get(resolved_term_id), t.get("programTermStatus")),
             _as_bool(t.get("custom")),
             (t.get("submitFile") or "").strip() or None,
-            (t.get("file") or "").strip() or None,
+            files.rewrite("tasks.file", lo.SUBMISSION, t.get("file")),
             due_date,
             (t.get("createdBy") or "").strip() or None,
             _parse_ts(t.get("createdOn")),
@@ -1492,7 +1646,7 @@ def seed_derived_state(cur) -> None:
                 'program_term_status', t.program_term_status,
                 'custom', t.custom,
                 'submit_file', t.submit_file,
-                'file', t.file,
+                'has_file', t.file IS NOT NULL,
                 'due_date', t.due_date,
                 'created_on', t.created_on,
                 'updated_on', t.updated_on
@@ -1548,6 +1702,12 @@ def main() -> None:
     log.info("Connecting to PostgreSQL: %s", _redact_dsn(PG_DSN))
     conn = psycopg2.connect(PG_DSN)
     psycopg2.extras.register_uuid()
+    files = lo.LegacyFileRewriter(
+        COPY_MANIFEST,
+        LOGOS_CDN_URL_PREFIX,
+        lo.legacy_url_prefix(LEGACY_BUCKET),
+        {lo.LOGO: LOGOS_S3_BUCKET, lo.SUBMISSION: ATTACHMENTS_S3_BUCKET},
+    )
 
     try:
         # ── 1. Scan all DynamoDB tables ──────────────────────────────────────
@@ -1562,16 +1722,17 @@ def main() -> None:
         # ── 2. Migrate in FK dependency order ───────────────────────────────
         with conn:  # single transaction: commits on clean exit, rolls back on exception
             with conn.cursor() as cur:
-                known_user_ids    = migrate_users(cur, users_raw)
-                profile_map       = migrate_user_profiles(cur, profiles_raw, known_user_ids)
-                known_program_ids = migrate_programs(cur, projects_raw, known_user_ids)
+                known_user_ids    = migrate_users(cur, users_raw, files)
+                profile_map       = migrate_user_profiles(cur, profiles_raw, known_user_ids, files)
+                known_program_ids = migrate_programs(cur, projects_raw, known_user_ids, files, resolve_lf_projects(projects_raw))
                 known_term_ids    = migrate_program_terms(cur, terms_raw, known_program_ids)
                 term_scoped_members = migrate_program_members(cur, members_raw, known_program_ids, known_user_ids)
                 application_index = migrate_mentees(cur, mentees_raw, known_term_ids, known_user_ids)
                 reconcile_term_scoped_members(cur, term_scoped_members)
-                migrate_tasks(cur, tasks_raw, application_index, known_term_ids, known_user_ids)
+                migrate_tasks(cur, tasks_raw, application_index, known_term_ids, known_user_ids, files)
                 seed_derived_state(cur)
 
+        files.report()
         log.info("Migration complete.")
 
     except Exception:

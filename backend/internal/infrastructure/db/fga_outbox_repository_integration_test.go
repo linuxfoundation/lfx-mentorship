@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -619,6 +620,156 @@ func TestProgramHeaderProjectionIntegration_LeavesActiveTermNilWithoutOpenTerm(t
 	}
 }
 
+func TestProgramListAdministeredIntegration_GroupsStatusAndScopesToActiveAdmin(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	const (
+		otherUserID   = "00000000-0000-0000-0000-000000000002"
+		completedID   = "00000000-0000-0000-0000-000000000040"
+		pendingID     = "00000000-0000-0000-0000-000000000041"
+		mentorOnlyID  = "00000000-0000-0000-0000-000000000042"
+		withdrawnID   = "00000000-0000-0000-0000-000000000043"
+		rejectedID    = "00000000-0000-0000-0000-000000000060"
+		hiddenID      = "00000000-0000-0000-0000-000000000061"
+		archivedID    = "00000000-0000-0000-0000-000000000062"
+		noTermsID     = "00000000-0000-0000-0000-000000000063"
+		deletedTermID = "00000000-0000-0000-0000-000000000064"
+		otherAdminID  = "00000000-0000-0000-0000-000000000065"
+	)
+	for _, q := range []string{
+		`INSERT INTO users (id, lfid, name) VALUES ('` + otherUserID + `', 'fixture-user-2', 'Fixture User 2')`,
+		`INSERT INTO programs (id, name, slug, status, lf_project_name) VALUES
+			('` + completedID + `', 'Alpha', 'alpha', 'published', 'LF Energy'),
+			('` + pendingID + `', 'beta', 'beta', 'submitted', 'CNCF'),
+			('` + mentorOnlyID + `', 'Mentored', 'mentored', 'published', NULL),
+			('` + withdrawnID + `', 'Withdrawn', 'withdrawn', 'published', NULL),
+			('` + rejectedID + `', 'Gamma', 'gamma', 'rejected', NULL),
+			('` + hiddenID + `', 'Hidden', 'hidden', 'hidden', NULL),
+			('` + archivedID + `', 'Iota', 'iota', 'archived', NULL),
+			('` + noTermsID + `', 'Kappa', 'kappa', 'published', NULL),
+			('` + deletedTermID + `', 'Lambda', 'lambda', 'published', NULL),
+			('` + otherAdminID + `', 'Other', 'other', 'pending', NULL)`,
+		`INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES
+			('00000000-0000-0000-0000-000000000044', '` + completedID + `', '` + fixture.UserID + `', 'program_admin', 'active'),
+			('00000000-0000-0000-0000-000000000045', '` + pendingID + `', '` + fixture.UserID + `', 'program_admin', 'active'),
+			('00000000-0000-0000-0000-000000000046', '` + mentorOnlyID + `', '` + fixture.UserID + `', 'mentor', 'active'),
+			('00000000-0000-0000-0000-000000000047', '` + withdrawnID + `', '` + fixture.UserID + `', 'program_admin', 'withdrawn'),
+			('00000000-0000-0000-0000-000000000048', '` + fixture.ProgramID + `', '` + fixture.UserID + `', 'mentor', 'active'),
+			('00000000-0000-0000-0000-000000000066', '` + fixture.ProgramID + `', '` + otherUserID + `', 'mentor', 'withdrawn'),
+			('00000000-0000-0000-0000-000000000067', '` + rejectedID + `', '` + fixture.UserID + `', 'program_admin', 'active'),
+			('00000000-0000-0000-0000-000000000068', '` + hiddenID + `', '` + fixture.UserID + `', 'program_admin', 'active'),
+			('00000000-0000-0000-0000-000000000069', '` + archivedID + `', '` + fixture.UserID + `', 'program_admin', 'active'),
+			('00000000-0000-0000-0000-00000000006a', '` + noTermsID + `', '` + fixture.UserID + `', 'program_admin', 'active'),
+			('00000000-0000-0000-0000-00000000006b', '` + deletedTermID + `', '` + fixture.UserID + `', 'program_admin', 'active'),
+			('00000000-0000-0000-0000-00000000006c', '` + otherAdminID + `', '` + otherUserID + `', 'program_admin', 'active')`,
+		`INSERT INTO program_terms (id, program_id, name, status, start_date_time) VALUES
+			('00000000-0000-0000-0000-000000000049', '` + completedID + `', 'Spring 2026', 'closed', '2026-01-01'),
+			('00000000-0000-0000-0000-00000000004a', '` + completedID + `', 'Summer 2026', 'closed', '2026-05-01'),
+			('00000000-0000-0000-0000-00000000006d', '` + deletedTermID + `', 'Deleted', 'deleted', '2026-01-01')`,
+		`INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES
+			('00000000-0000-0000-0000-00000000004b', '` + fixture.OpenTerm + `', '` + fixture.UserID + `', 'mentee', 'accepted'),
+			('00000000-0000-0000-0000-00000000006e', '` + fixture.OpenTerm + `', '` + otherUserID + `', 'mentee', 'graduated')`,
+	} {
+		if _, err := pool.Exec(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	repo := NewProgramRepository(pool)
+
+	programs, meta, err := repo.ListAdministeredByUser(ctx, fixture.UserID, models.AdministeredProgramFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	type row struct {
+		id     string
+		status models.AdministeredProgramStatus
+		term   string
+	}
+	want := []row{
+		{completedID, models.AdministeredProgramStatusCompleted, "Summer 2026"},
+		{pendingID, models.AdministeredProgramStatusPendingReview, ""},
+		{fixture.ProgramID, models.AdministeredProgramStatusOpen, "Open"},
+		{rejectedID, models.AdministeredProgramStatusRejected, ""},
+		{hiddenID, models.AdministeredProgramStatusHidden, ""},
+		{archivedID, models.AdministeredProgramStatusHidden, ""},
+		{noTermsID, models.AdministeredProgramStatusOpen, ""},
+		{deletedTermID, models.AdministeredProgramStatusOpen, ""},
+	}
+	// Mentor-only and withdrawn memberships, and the other user's program, are excluded.
+	if meta.Total != len(want) || len(programs) != len(want) {
+		t.Fatalf("total=%d len=%d; want %d", meta.Total, len(programs), len(want))
+	}
+	for i, w := range want {
+		p := programs[i]
+		term := ""
+		if p.Term != nil {
+			term = p.Term.Name
+			if p.Term.ProgramID != p.ID {
+				t.Errorf("programs[%d].Term.ProgramID = %s; want %s", i, p.Term.ProgramID, p.ID)
+			}
+		}
+		if p.ID != w.id || p.AdminStatus != w.status || term != w.term {
+			t.Errorf("programs[%d] = {%s %s %q}; want %+v", i, p.ID, p.AdminStatus, term, w)
+		}
+		header, err := repo.GetHeaderProjection(ctx, p.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.Stats != header.Stats {
+			t.Errorf("programs[%d] stats = %+v; want header stats %+v", i, p.Stats, header.Stats)
+		}
+	}
+	if programs[0].Term.Status != models.ProgramTermStatusClosed || programs[2].Term.Status != models.ProgramTermStatusOpen {
+		t.Errorf("term statuses = %s, %s; want closed, open", programs[0].Term.Status, programs[2].Term.Status)
+	}
+	if s := programs[2].Stats; s.Mentors != 1 || s.Mentees != 1 || s.Graduated != 1 {
+		t.Errorf("fixture program stats = %+v; want 1 active mentor, 1 mentee, 1 graduated", s)
+	}
+
+	others, meta, err := repo.ListAdministeredByUser(ctx, otherUserID, models.AdministeredProgramFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Total != 1 || len(others) != 1 || others[0].ID != otherAdminID {
+		t.Errorf("other user: total=%d programs=%+v; want only %s", meta.Total, others, otherAdminID)
+	}
+
+	for status, wantIDs := range map[models.AdministeredProgramStatus][]string{
+		models.AdministeredProgramStatusCompleted: {completedID},
+		models.AdministeredProgramStatusOpen:      {fixture.ProgramID, noTermsID, deletedTermID},
+		models.AdministeredProgramStatusHidden:    {hiddenID, archivedID},
+	} {
+		got, meta, err := repo.ListAdministeredByUser(ctx, fixture.UserID, models.AdministeredProgramFilter{Status: status})
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotIDs := make([]string, len(got))
+		for i, p := range got {
+			gotIDs[i] = p.ID
+		}
+		if meta.Total != len(wantIDs) || !slices.Equal(gotIDs, wantIDs) {
+			t.Errorf("status=%s: total=%d ids=%v; want %v", status, meta.Total, gotIDs, wantIDs)
+		}
+	}
+
+	byProject, meta, err := repo.ListAdministeredByUser(ctx, fixture.UserID, models.AdministeredProgramFilter{Search: "cncf"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Total != 1 || len(byProject) != 1 || byProject[0].ID != pendingID {
+		t.Errorf("search=cncf: total=%d programs=%+v; want only %s", meta.Total, byProject, pendingID)
+	}
+
+	paged, meta, err := repo.ListAdministeredByUser(ctx, fixture.UserID, models.AdministeredProgramFilter{Limit: 1, Offset: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Total != len(want) || len(paged) != 1 || paged[0].ID != pendingID {
+		t.Errorf("limit=1 offset=1: total=%d programs=%+v; want %s of %d", meta.Total, paged, pendingID, len(want))
+	}
+}
+
 func TestProgramTermDeleteIntegration_BlocksWhenApplicationsExist(t *testing.T) {
 	pool := integrationPool(t)
 	fixture := seedIntegrationFixture(t, pool)
@@ -779,7 +930,7 @@ func TestEnrollmentIntegration_RollsBackWhenSkillInsertFails(t *testing.T) {
 	}
 	repo := NewProgramRepository(pool)
 	projectUID := "00000000-0000-0000-0000-000000000099"
-	_, err := repo.CreateEnrollment(ctx, models.ProgramEnrollmentInput{Program: models.ProgramCreateInput{ID: "00000000-0000-0000-0000-000000000061", CreatorUserID: "00000000-0000-0000-0000-000000000060", ProjectUID: &projectUID, Name: "Rollback", Slug: "rollback", Status: models.ProgramStatusDraft}, Skills: []string{"Go", "Go"}})
+	_, err := repo.CreateEnrollment(ctx, models.ProgramEnrollmentInput{Program: models.ProgramCreateInput{ID: "00000000-0000-0000-0000-000000000061", CreatorUserID: "00000000-0000-0000-0000-000000000060", ProjectUID: &projectUID, Name: "Rollback", Slug: "rollback", Status: models.ProgramStatusPending}, Skills: []string{"Go", "Go"}})
 	if err == nil {
 		t.Fatal("expected duplicate skill failure")
 	}
@@ -799,7 +950,7 @@ func TestEnrollmentIntegration_PersistsProjectMetadataInIndexSnapshot(t *testing
 		t.Fatal(err)
 	}
 	projectUID, projectSlug, projectName, projectLogo := "00000000-0000-0000-0000-000000000099", "enroll-project", "Enroll Project", "https://example.com/logo.svg"
-	program, err := NewProgramRepository(pool).CreateEnrollment(ctx, models.ProgramEnrollmentInput{Program: models.ProgramCreateInput{ID: "00000000-0000-0000-0000-000000000061", CreatorUserID: "00000000-0000-0000-0000-000000000060", ProjectUID: &projectUID, ProjectSlug: &projectSlug, ProjectName: &projectName, ProjectLogoURL: &projectLogo, Name: "Enroll", Slug: "enroll", Status: models.ProgramStatusDraft}, Skills: []string{"Go"}})
+	program, err := NewProgramRepository(pool).CreateEnrollment(ctx, models.ProgramEnrollmentInput{Program: models.ProgramCreateInput{ID: "00000000-0000-0000-0000-000000000061", CreatorUserID: "00000000-0000-0000-0000-000000000060", ProjectUID: &projectUID, ProjectSlug: &projectSlug, ProjectName: &projectName, ProjectLogoURL: &projectLogo, Name: "Enroll", Slug: "enroll", Status: models.ProgramStatusPending}, Skills: []string{"Go"}})
 	if err != nil {
 		t.Fatalf("create enrollment: %v", err)
 	}
