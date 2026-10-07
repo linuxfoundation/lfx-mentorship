@@ -518,3 +518,34 @@ func TestNotify_DeduplicatesRecipients(t *testing.T) {
 		t.Fatalf("sent %d messages, want mentee plus one for the admin who is also the HR inbox: %+v", len(sent), sent)
 	}
 }
+
+func TestNotify_AllowedRecipientsSuppressesOthers(t *testing.T) {
+	f := newFixture()
+	f.members.members = []*models.ProgramMember{{UserID: "admin1"}}
+	f.n.allowedRecipients = recipientSet([]string{"Mentee@LinuxFoundation.org"})
+
+	f.n.NotifyMenteeAccepted(context.Background(), "a1", "full_time")
+
+	sent := f.wait(t)
+	if len(sent) != 1 || sent[0].To != "mentee@linuxfoundation.org" {
+		t.Fatalf("sent = %+v, want only the allowed mentee; the admin and HR inbox are suppressed", sent)
+	}
+}
+
+func TestRecipientAllowed(t *testing.T) {
+	n := &Notifier{allowedRecipients: recipientSet([]string{"Tester@LinuxFoundation.org", "pinned+qa@linuxfoundation.org"})}
+	for addr, want := range map[string]bool{
+		"tester@linuxfoundation.org":            true,
+		"tester+mentee1@linuxfoundation.org":    true,
+		"tester@contractor.linuxfoundation.org": false,
+		"other@linuxfoundation.org":             false,
+		"other+tester@linuxfoundation.org":      false,
+		"pinned+qa@linuxfoundation.org":         true,
+		"pinned@linuxfoundation.org":            false,
+		"pinned+dev@linuxfoundation.org":        false,
+	} {
+		if got := n.recipientAllowed(addr); got != want {
+			t.Errorf("recipientAllowed(%q) = %v, want %v", addr, got, want)
+		}
+	}
+}

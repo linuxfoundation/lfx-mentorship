@@ -140,8 +140,13 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			PublicSiteURL: cfg.Email.PublicSiteURL,
 			SelfServeURL:  cfg.Email.SelfServeURL,
 			HRInbox:       cfg.Email.HRInbox,
+
+			AllowedRecipients: cfg.Email.AllowedRecipients,
 		}, logger)
 		notifier = emailNotifier
+		if len(cfg.Email.AllowedRecipients) > 0 {
+			logger.Warn("email restricted to EMAIL_ALLOWED_RECIPIENTS; all other recipients are suppressed", "allowed", len(cfg.Email.AllowedRecipients))
+		}
 	}
 
 	// Services
