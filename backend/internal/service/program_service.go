@@ -405,7 +405,7 @@ func (s *ProgramService) resolveProjectMetadata(ctx context.Context, projectUID 
 	if s.projects != nil {
 		project, err := s.projects.GetProject(ctx, projectUID)
 		if errors.Is(err, domain.ErrProjectNotFound) {
-			return nil, nil, nil, fmt.Errorf("%w: projectId does not match a Project Service project", domain.ErrInvalidInput)
+			return nil, nil, nil, fmt.Errorf("%w: project ID does not match a Project Service project", domain.ErrInvalidInput)
 		}
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("resolve project: %w", err)
@@ -485,6 +485,17 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 	if err := reservedFileField("logo_url", input.LogoURL); err != nil {
 		return nil, err
 	}
+	if input.Skills != nil {
+		input.Skills = normalizeSkills(input.Skills)
+		if len(input.Skills) == 0 {
+			return nil, fmt.Errorf("%w: at least one skill is required", domain.ErrInvalidInput)
+		}
+	}
+	if input.Terms != nil {
+		if err := validateOpenTerms(input.Terms); err != nil {
+			return nil, err
+		}
+	}
 	if input.ProjectUID != nil || input.ProjectSlug != nil || input.ProjectName != nil || input.ProjectLogoURL != nil {
 		if input.ProjectUID == nil || strings.TrimSpace(*input.ProjectUID) == "" {
 			return nil, fmt.Errorf("%w: project_uid is required when changing the project", domain.ErrInvalidInput)
@@ -495,22 +506,13 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 		}
 		canonicalProjectUID := projectUID.String()
 		input.ProjectUID = &canonicalProjectUID
-		if input.ProjectSlug, input.ProjectName, input.ProjectLogoURL, err = normalizeProjectMetadata(input.ProjectSlug, input.ProjectName, input.ProjectLogoURL); err != nil {
+		if input.ProjectSlug, input.ProjectName, input.ProjectLogoURL, err = s.resolveProjectMetadata(ctx, canonicalProjectUID, input.ProjectSlug, input.ProjectName, input.ProjectLogoURL); err != nil {
 			return nil, err
 		}
-		if err := validateHTTPURL(input.ProjectLogoURL); err != nil {
-			return nil, err
-		}
-	}
-	if input.Skills != nil {
-		input.Skills = normalizeSkills(input.Skills)
-		if len(input.Skills) == 0 {
-			return nil, fmt.Errorf("%w: at least one skill is required", domain.ErrInvalidInput)
-		}
-	}
-	if input.Terms != nil {
-		if err := validateOpenTerms(input.Terms); err != nil {
-			return nil, err
+		if s.projects == nil { // otherwise the logo is Project Service's, not the caller's
+			if err := validateHTTPURL(input.ProjectLogoURL); err != nil {
+				return nil, err
+			}
 		}
 	}
 

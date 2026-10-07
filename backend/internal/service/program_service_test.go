@@ -731,6 +731,52 @@ func TestProgramService_Update_RejectsInvalidProject(t *testing.T) {
 	}
 }
 
+func TestProgramService_Update_ChangesProjectFromProjectService(t *testing.T) {
+	var captured models.ProgramUpdateInput
+	repo := &stubProgRepo{update: func(_ context.Context, _ string, input models.ProgramUpdateInput) (*models.Program, error) {
+		captured = input
+		return &models.Program{ID: "prog-1"}, nil
+	}}
+	lookup := &stubProjectLookup{project: &models.ProjectMetadata{Slug: "cncf", Name: "CNCF"}}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	svc.SetProjectLookup(lookup)
+	uid, slug, name, logo := "7CAD5A8D-19D0-41A4-81A6-043453DAF9EE", "other-project", "Other Project", "javascript:alert(1)"
+
+	if _, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{ProjectUID: &uid, ProjectSlug: &slug, ProjectName: &name, ProjectLogoURL: &logo}); err != nil {
+		t.Fatal(err)
+	}
+	if lookup.gotUID != "7cad5a8d-19d0-41a4-81a6-043453daf9ee" {
+		t.Errorf("lookup uid = %q; want the canonical UUID", lookup.gotUID)
+	}
+	if captured.ProjectSlug == nil || *captured.ProjectSlug != "cncf" || captured.ProjectName == nil || *captured.ProjectName != "CNCF" || captured.ProjectLogoURL != nil {
+		t.Fatalf("project metadata = %v %v %v; want Project Service's, with no logo", captured.ProjectSlug, captured.ProjectName, captured.ProjectLogoURL)
+	}
+}
+
+func TestProgramService_Update_ProjectLookupErrors(t *testing.T) {
+	for label, tc := range map[string]struct {
+		err  error
+		want error
+	}{
+		"unknown project":     {err: domain.ErrProjectNotFound, want: domain.ErrInvalidInput},
+		"service unavailable": {err: domain.ErrUpstreamUnavailable, want: domain.ErrUpstreamUnavailable},
+	} {
+		t.Run(label, func(t *testing.T) {
+			svc := newProgramSvc(&stubProgRepo{update: func(context.Context, string, models.ProgramUpdateInput) (*models.Program, error) {
+				t.Fatal("repository must not be called")
+				return nil, nil
+			}}, &stubTermRepo{}, &stubAppRepo{})
+			svc.SetProjectLookup(&stubProjectLookup{err: tc.err})
+			uid := "00000000-0000-0000-0000-000000000001"
+
+			_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{ProjectUID: &uid})
+			if !errors.Is(err, tc.want) || errors.Is(err, domain.ErrProjectNotFound) {
+				t.Fatalf("err = %v; want %v", err, tc.want)
+			}
+		})
+	}
+}
+
 type fakeCrowdfundingClient struct {
 	getCategorizedTransactions func(context.Context, string, string, bool, int, int) (*models.ProgramCategorizedTransactions, error)
 }

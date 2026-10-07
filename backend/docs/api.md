@@ -1069,9 +1069,12 @@ Update program fields. Status cannot be changed here: a body with `status` retur
 }
 ```
 
-The `project_*` fields move the program to another LF project and are applied
-together: when any is present, `project_uid` (a Project Service UUID),
-`project_slug`, and `project_name` are required, and an omitted or blank
+The `project_*` fields move the program to another LF project. When any is
+present, `project_uid` (a Project Service UUID) is required, and, as on create,
+the backend reads the new project's slug, name, and logo from Project Service and
+ignores the `project_slug`, `project_name`, and `project_logo_url` sent. When
+`FGA_NATS_URL` is unset in local development it stores them as sent instead:
+`project_slug` and `project_name` are then required, and an omitted or blank
 `project_logo_url` clears the logo. Omit all four to leave the project unchanged.
 Moving a program changes who can manage it, since access is inherited from the
 project.
@@ -1094,8 +1097,9 @@ term close and reopen routes. Omit `terms` to leave them unchanged. The
 [`GET /v1/programs/{id}/terms`](#get-v1programsidterms-).
 
 **Response** `200` → `<Program>`  
-**Errors** `400` (including an `id` that is not an open term of the program), `404`,
-`409` (removing an open term that has applications)
+**Errors** `400` (including an `id` that is not an open term of the program, or a
+`project_uid` with no Project Service project), `404`, `409` (removing an open term
+that has applications), `503` (Project Service unavailable)
 
 ---
 
