@@ -80,6 +80,12 @@ func enqueueProgramIndex(ctx context.Context, tx pgx.Tx, program *models.Program
 		WHERE program_id = $1`, program.ID).Scan(&document.Stats.Mentors, &document.Stats.Mentees, &document.Stats.Graduated); err != nil {
 		return fmt.Errorf("resolve program index stats: %w", err)
 	}
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE(array_agg(skill ORDER BY skill), ARRAY[]::text[])
+		FROM program_skills
+		WHERE program_id = $1`, program.ID).Scan(&document.Skills); err != nil {
+		return fmt.Errorf("resolve program index skills: %w", err)
+	}
 	data, err := json.Marshal(document)
 	if err != nil {
 		return err
@@ -898,6 +904,10 @@ func (r *ProgramRepository) CreateEnrollment(ctx context.Context, input models.P
 			return nil, fmt.Errorf("create enrollment skill: %w", err)
 		}
 	}
+	// createInTx indexed the program before its skills existed; refresh the snapshot.
+	if err := enqueueProgramIndex(ctx, tx, program, "created"); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create enrollment transaction: %w", err)
 	}
@@ -959,6 +969,20 @@ func (r *ProgramRepository) Update(ctx context.Context, id string, input models.
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("update program: %w", err)
+	}
+	if input.ProjectUID != nil {
+		if _, err := tx.Exec(ctx, `
+			UPDATE programs SET lf_project_uid = $2, lf_project_slug = $3, lf_project_name = $4, lf_project_logo_url = $5
+			WHERE id = $1`, updatedID, input.ProjectUID, input.ProjectSlug, input.ProjectName, input.ProjectLogoURL); err != nil {
+			span.RecordError(err)
+			return nil, fmt.Errorf("update program project: %w", err)
+		}
+	}
+	if input.Skills != nil {
+		if err := replaceProgramSkills(ctx, tx, updatedID, input.Skills); err != nil {
+			span.RecordError(err)
+			return nil, err
+		}
 	}
 
 	p, err := scanProgram(tx.QueryRow(ctx, `SELECT`+programSelectCols+programsWithFundingFrom+` WHERE programs.id = $1`, updatedID))
@@ -1142,6 +1166,21 @@ func (r *ProgramRepository) ListSkills(ctx context.Context, programID string) ([
 		skills = []*models.ProgramSkill{}
 	}
 	return skills, rows.Err()
+}
+
+// replaceProgramSkills makes skills the program's full skill set, keeping the
+// rows (and IDs) of skills that already exist with the same spelling.
+func replaceProgramSkills(ctx context.Context, tx pgx.Tx, programID string, skills []string) error {
+	if _, err := tx.Exec(ctx, `DELETE FROM program_skills WHERE program_id = $1 AND NOT (skill = ANY($2))`, programID, skills); err != nil {
+		return fmt.Errorf("remove program skills: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO program_skills (program_id, skill)
+		SELECT $1, unnest($2::text[])
+		ON CONFLICT (program_id, skill) DO NOTHING`, programID, skills); err != nil {
+		return fmt.Errorf("add program skills: %w", err)
+	}
+	return nil
 }
 
 // AddSkill inserts a new skill for a program.

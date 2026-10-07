@@ -19,6 +19,7 @@ type ProgramIndexDocument struct {
 	Slug           string                    `json:"slug"`
 	Status         string                    `json:"status"`
 	LogoURL        *string                   `json:"logo_url,omitempty"`
+	Skills         []string                  `json:"skills"`
 	Stats          models.ProgramHeaderStats `json:"stats"`
 	CreatedOn      time.Time                 `json:"created_on"`
 	UpdatedOn      time.Time                 `json:"updated_on"`

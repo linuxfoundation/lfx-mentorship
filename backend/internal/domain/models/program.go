@@ -98,6 +98,13 @@ type ProgramEnrollmentInput struct {
 
 // ProgramUpdateInput is the request body for updating a program.
 type ProgramUpdateInput struct {
+	// The project fields move the program to another LF project and are applied together:
+	// ProjectUID, ProjectSlug, and ProjectName are required when any is set, and an omitted
+	// ProjectLogoURL clears the previous project's logo.
+	ProjectUID         *string            `json:"project_uid,omitempty"`
+	ProjectSlug        *string            `json:"project_slug,omitempty"`
+	ProjectName        *string            `json:"project_name,omitempty"`
+	ProjectLogoURL     *string            `json:"project_logo_url,omitempty"`
 	Name               *string            `json:"name,omitempty"`
 	Slug               *string            `json:"slug,omitempty"`
 	Status             *ProgramStatus     `json:"status,omitempty"`
@@ -117,6 +124,8 @@ type ProgramUpdateInput struct {
 	DiscoverSortRank   *int               `json:"discover_sort_rank,omitempty"`
 	MenteeNeeds        json.RawMessage    `json:"mentee_needs,omitempty"`
 	TaskTemplates      json.RawMessage    `json:"task_templates,omitempty"`
+	// Skills replaces the program's full skill set when non-nil; nil leaves it unchanged.
+	Skills []string `json:"skills,omitempty"`
 }
 
 // ProgramSkill maps to the public.program_skills table.
