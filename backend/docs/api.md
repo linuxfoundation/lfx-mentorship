@@ -1050,6 +1050,17 @@ Update program fields. Status cannot be changed here: a body with `status` retur
   "repo_link":   "https://...",
   "lfid":        "alice",
   "skills":      ["Go", "Kubernetes"],
+  "terms": [
+    {
+      "id":                     "b3c1...",
+      "name":                   "Fall 2026",
+      "application_start_date": "2026-07-01T00:00:00Z",
+      "application_end_date":   "2026-07-31T00:00:00Z",
+      "start_date_time":        "2026-09-01T00:00:00Z",
+      "end_date_time":          "2026-11-30T00:00:00Z"
+    },
+    { "name": "Spring 2027", "application_start_date": "...", "application_end_date": "...", "start_date_time": "...", "end_date_time": "..." }
+  ],
   "project_uid":      "7cad5a8d-19d0-41a4-81a6-043453daf9ee",
   "project_slug":     "new-project",
   "project_name":     "New Project",
@@ -1072,8 +1083,19 @@ response does not include skills; read them from
 [`GET /v1/programs/{id}/skills`](#get-v1programsidskills-). The program's search
 index snapshot is refreshed with the new skills in the same transaction.
 
+`terms` is the program's full set of open terms, applied in the same transaction:
+an entry with an `id` updates that open term's name and four dates, an entry
+without one creates a new `open` term, and any open term not listed is deleted.
+Closed terms are never listed and are left unchanged. Every entry needs a name and
+all four dates, with the application window ending after it starts and before the
+term starts; 1 to 4 entries are allowed. Term status is not changed here; use the
+term close and reopen routes. Omit `terms` to leave them unchanged. The
+`<Program>` response does not include terms; read them from
+[`GET /v1/programs/{id}/terms`](#get-v1programsidterms-).
+
 **Response** `200` → `<Program>`  
-**Errors** `400`, `404`
+**Errors** `400` (including an `id` that is not an open term of the program), `404`,
+`409` (removing an open term that has applications)
 
 ---
 

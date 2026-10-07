@@ -126,6 +126,9 @@ type ProgramUpdateInput struct {
 	TaskTemplates      json.RawMessage    `json:"task_templates,omitempty"`
 	// Skills replaces the program's full skill set when non-nil; nil leaves it unchanged.
 	Skills []string `json:"skills,omitempty"`
+	// Terms replaces the program's open terms when non-nil: unlisted open terms are
+	// removed and closed terms are untouched. nil leaves terms unchanged.
+	Terms []ProgramOpenTermInput `json:"terms,omitempty"`
 }
 
 // ProgramSkill maps to the public.program_skills table.

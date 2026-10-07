@@ -518,6 +518,81 @@ func TestProgramService_Update_OmittedSkillsLeftUnchanged(t *testing.T) {
 	}
 }
 
+// openTermEntry returns an open-term entry with a valid application window and term dates.
+func openTermEntry(id, name string) models.ProgramOpenTermInput {
+	appStart := time.Now().Add(24 * time.Hour)
+	appEnd, start, end := appStart.Add(24*time.Hour), appStart.Add(48*time.Hour), appStart.Add(30*24*time.Hour)
+	return models.ProgramOpenTermInput{ID: id, Name: name, ApplicationStartDate: &appStart, ApplicationEndDate: &appEnd, StartDateTime: &start, EndDateTime: &end}
+}
+
+func TestProgramService_Update_PassesOpenTerms(t *testing.T) {
+	var captured models.ProgramUpdateInput
+	repo := &stubProgRepo{update: func(_ context.Context, _ string, input models.ProgramUpdateInput) (*models.Program, error) {
+		captured = input
+		return &models.Program{ID: "prog-1"}, nil
+	}}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	input := models.ProgramUpdateInput{Terms: []models.ProgramOpenTermInput{
+		openTermEntry("7CAD5A8D-19D0-41A4-81A6-043453DAF9EE", " Fall 2026 "),
+		openTermEntry("", "Spring 2027"),
+	}}
+	if _, err := svc.Update(context.Background(), "prog-1", input); err != nil {
+		t.Fatal(err)
+	}
+	if len(captured.Terms) != 2 || captured.Terms[0].ID != "7cad5a8d-19d0-41a4-81a6-043453daf9ee" || captured.Terms[0].Name != "Fall 2026" || captured.Terms[1].ID != "" {
+		t.Fatalf("terms=%+v", captured.Terms)
+	}
+}
+
+func TestProgramService_Update_RejectsInvalidOpenTerms(t *testing.T) {
+	const id = "7cad5a8d-19d0-41a4-81a6-043453daf9ee"
+	badDates := openTermEntry("", "Bad")
+	badDates.EndDateTime = badDates.StartDateTime
+	missingDates := models.ProgramOpenTermInput{Name: "No dates"}
+
+	tests := []struct {
+		name  string
+		terms []models.ProgramOpenTermInput
+	}{
+		{"empty set", []models.ProgramOpenTermInput{}},
+		{"over the open-term cap", []models.ProgramOpenTermInput{openTermEntry("", "A"), openTermEntry("", "B"), openTermEntry("", "C"), openTermEntry("", "D"), openTermEntry("", "E")}},
+		{"blank name", []models.ProgramOpenTermInput{openTermEntry("", "  ")}},
+		{"invalid dates", []models.ProgramOpenTermInput{badDates}},
+		{"missing dates", []models.ProgramOpenTermInput{missingDates}},
+		{"malformed id", []models.ProgramOpenTermInput{openTermEntry("term-1", "Fall")}},
+		{"duplicate id", []models.ProgramOpenTermInput{openTermEntry(id, "Fall"), openTermEntry(id, "Fall again")}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &stubProgRepo{update: func(context.Context, string, models.ProgramUpdateInput) (*models.Program, error) {
+				t.Fatal("repository must not be called for an invalid open-term set")
+				return nil, nil
+			}}
+			svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+			_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Terms: tt.terms})
+			if !errors.Is(err, domain.ErrInvalidInput) {
+				t.Fatalf("expected ErrInvalidInput, got %v", err)
+			}
+		})
+	}
+}
+
+func TestProgramService_Update_OmittedTermsLeftUnchanged(t *testing.T) {
+	var captured models.ProgramUpdateInput
+	repo := &stubProgRepo{update: func(_ context.Context, _ string, input models.ProgramUpdateInput) (*models.Program, error) {
+		captured = input
+		return &models.Program{ID: "prog-1"}, nil
+	}}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	name := "Renamed"
+	if _, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Name: &name}); err != nil {
+		t.Fatal(err)
+	}
+	if captured.Terms != nil {
+		t.Fatalf("terms=%v; want nil", captured.Terms)
+	}
+}
+
 func TestProgramService_Update_ChangesProject(t *testing.T) {
 	var captured models.ProgramUpdateInput
 	repo := &stubProgRepo{update: func(_ context.Context, _ string, input models.ProgramUpdateInput) (*models.Program, error) {

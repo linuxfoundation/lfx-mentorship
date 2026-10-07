@@ -820,6 +820,29 @@ func TestProgramHandler_Update_PassesSkills(t *testing.T) {
 	}
 }
 
+func TestProgramHandler_Update_PassesTerms(t *testing.T) {
+	var captured models.ProgramUpdateInput
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		update: func(_ context.Context, _ string, input models.ProgramUpdateInput) (*models.Program, error) {
+			captured = input
+			return &models.Program{ID: "p1"}, nil
+		},
+	})
+	body := `{"terms":[{"id":"t1","name":"Fall 2026","start_date_time":"2026-11-01T00:00:00Z"},{"name":"Spring 2027"}]}`
+	r := httptest.NewRequest(http.MethodPatch, "/v1/programs/p1", strings.NewReader(body))
+	r = requestWithPrincipal(r, "admin-1")
+	r = requestWithChiParam(r, "id", "p1")
+	w := httptest.NewRecorder()
+	h.Update(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d; want 200: %s", w.Code, w.Body.String())
+	}
+	if len(captured.Terms) != 2 || captured.Terms[0].ID != "t1" || captured.Terms[0].StartDateTime == nil || captured.Terms[1].ID != "" || captured.Terms[1].Name != "Spring 2027" {
+		t.Fatalf("terms = %+v", captured.Terms)
+	}
+}
+
 func TestProgramHandler_Update_PassesProject(t *testing.T) {
 	var captured models.ProgramUpdateInput
 	h := handler.NewProgramHandler(&stubProgramSvc{

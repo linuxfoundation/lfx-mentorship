@@ -1032,6 +1032,78 @@ func TestProgramUpdateIntegration_ReplacesSkills(t *testing.T) {
 	}
 }
 
+func TestProgramUpdateIntegration_ReplacesOpenTerms(t *testing.T) {
+	pool := integrationPool(t)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+	const userID = "00000000-0000-0000-0000-000000000070"
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name) VALUES ($1, 'terms-admin', 'Terms Admin')`, userID); err != nil {
+		t.Fatal(err)
+	}
+	appStart := time.Now().Add(24 * time.Hour).UTC().Truncate(time.Microsecond)
+	appEnd, start, end := appStart.Add(24*time.Hour), appStart.Add(48*time.Hour), appStart.Add(30*24*time.Hour)
+	term := func(id, name string) models.ProgramOpenTermInput {
+		return models.ProgramOpenTermInput{ID: id, Name: name, ApplicationStartDate: &appStart, ApplicationEndDate: &appEnd, StartDateTime: &start, EndDateTime: &end}
+	}
+	const keptID, removedID, closedID = "00000000-0000-0000-0000-000000000072", "00000000-0000-0000-0000-000000000073", "00000000-0000-0000-0000-000000000074"
+	repo := NewProgramRepository(pool)
+	projectUID := "00000000-0000-0000-0000-000000000099"
+	program, err := repo.CreateEnrollment(ctx, models.ProgramEnrollmentInput{
+		Program: models.ProgramCreateInput{ID: "00000000-0000-0000-0000-000000000071", CreatorUserID: userID, ProjectUID: &projectUID, Name: "Terms", Slug: "terms", Status: models.ProgramStatusPending},
+		Terms: []models.ProgramTermCreateInput{
+			{ID: keptID, Name: "Fall", ApplicationStartDate: &appStart, ApplicationEndDate: &appEnd, StartDateTime: &start, EndDateTime: &end},
+			{ID: removedID, Name: "Winter", ApplicationStartDate: &appStart, ApplicationEndDate: &appEnd, StartDateTime: &start, EndDateTime: &end},
+		},
+		Skills: []string{"Go"},
+	})
+	if err != nil {
+		t.Fatalf("create enrollment: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO program_terms (id, program_id, name, status) VALUES ($1, $2, 'Spring 2025', 'closed')`, closedID, program.ID); err != nil {
+		t.Fatal(err)
+	}
+	termsByName := func() map[string][2]string {
+		rows, err := pool.Query(ctx, `SELECT id::text, name, status FROM program_terms WHERE program_id = $1`, program.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		got := map[string][2]string{}
+		for rows.Next() {
+			var id, name, status string
+			if err := rows.Scan(&id, &name, &status); err != nil {
+				t.Fatal(err)
+			}
+			got[name] = [2]string{id, status}
+		}
+		return got
+	}
+
+	if _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Terms: []models.ProgramOpenTermInput{term(keptID, "Fall 2026"), term("", "Spring 2027")}}); err != nil {
+		t.Fatalf("replace open terms: %v", err)
+	}
+	got := termsByName()
+	if got["Fall 2026"] != [2]string{keptID, "open"} || got["Spring 2027"][1] != "open" || got["Winter"] != [2]string{removedID, "deleted"} || got["Spring 2025"] != [2]string{closedID, "closed"} {
+		t.Fatalf("terms after replace = %v; want Fall 2026 kept, Spring 2027 added, Winter deleted, Spring 2025 closed and untouched", got)
+	}
+	newID := got["Spring 2027"][0]
+
+	// Only open terms of the program can be listed.
+	if _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Terms: []models.ProgramOpenTermInput{term(keptID, "Fall 2026"), term(newID, "Spring 2027"), term(closedID, "Edited")}}); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("listing a closed term: got %v; want ErrInvalidInput", err)
+	}
+
+	// An open term with applications cannot be removed.
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ('00000000-0000-0000-0000-000000000075', $1, $2, 'mentee', 'pending')`, keptID, userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Terms: []models.ProgramOpenTermInput{term(newID, "Spring 2027")}}); !errors.Is(err, domain.ErrStateLocked) {
+		t.Fatalf("removing a term with applications: got %v; want ErrStateLocked", err)
+	}
+	if after := termsByName(); after["Fall 2026"] != [2]string{keptID, "open"} || after["Spring 2025"] != [2]string{closedID, "closed"} {
+		t.Fatalf("terms after rejected updates = %v; want unchanged", after)
+	}
+}
+
 func TestProgramUpdateIntegration_ChangesProject(t *testing.T) {
 	pool := integrationPool(t)
 	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})

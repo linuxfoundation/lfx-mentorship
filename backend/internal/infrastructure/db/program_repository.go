@@ -984,6 +984,13 @@ func (r *ProgramRepository) Update(ctx context.Context, id string, input models.
 			return nil, err
 		}
 	}
+	// The UPDATE above holds the program row lock that replaceOpenTerms requires.
+	if input.Terms != nil {
+		if err := replaceOpenTerms(ctx, tx, updatedID, input.Terms); err != nil {
+			span.RecordError(err)
+			return nil, err
+		}
+	}
 
 	p, err := scanProgram(tx.QueryRow(ctx, `SELECT`+programSelectCols+programsWithFundingFrom+` WHERE programs.id = $1`, updatedID))
 	if err != nil {
