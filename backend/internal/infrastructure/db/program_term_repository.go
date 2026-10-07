@@ -244,7 +244,9 @@ func (r *ProgramTermRepository) Create(ctx context.Context, input models.Program
 	return t, nil
 }
 
-// Update patches program term fields and returns the updated record.
+// Update patches program term fields and returns the updated record. A deleted
+// term is not found, so a reopen that waited on a replacement removing the term
+// cannot bring it back.
 func (r *ProgramTermRepository) Update(ctx context.Context, id string, input models.ProgramTermUpdateInput) (*models.ProgramTerm, error) {
 	ctx, span := programTermTracer.Start(ctx, "db.program_terms.Update")
 	defer span.End()
@@ -277,7 +279,7 @@ func (r *ProgramTermRepository) Update(ctx context.Context, id string, input mod
 			end_date_time          = COALESCE($6, end_date_time),
 			application_start_date = COALESCE($7, application_start_date),
 			application_end_date   = COALESCE($8, application_end_date)
-		WHERE id = $1
+		WHERE id = $1 AND status <> 'deleted'
 		RETURNING` + programTermCols
 
 	t, err := scanProgramTerm(tx.QueryRow(ctx, q,

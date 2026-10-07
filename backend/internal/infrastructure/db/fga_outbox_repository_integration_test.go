@@ -1077,6 +1077,10 @@ func TestProgramUpdateIntegration_ReplacesTerms(t *testing.T) {
 	if removed, err := terms.GetByID(ctx, removedID); err != nil || removed.Status != models.ProgramTermStatusDeleted {
 		t.Fatalf("removed term = %+v, %v; want status deleted", removed, err)
 	}
+	reopen := models.ProgramTermStatusOpen
+	if _, err := terms.Update(ctx, removedID, models.ProgramTermUpdateInput{Status: &reopen}); !errors.Is(err, domain.ErrProgramTermNotFound) {
+		t.Fatalf("reopening a removed term: got %v; want ErrProgramTermNotFound", err)
+	}
 
 	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ('00000000-0000-0000-0000-000000000074', $1, $2, 'mentee', 'pending')`, keptID, userID); err != nil {
 		t.Fatal(err)
