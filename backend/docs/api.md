@@ -1413,16 +1413,16 @@ Add a member to a program.
 
 Anyone with an LF account can be invited, whether or not they have used
 Mentorship. An `email` is resolved to its LF account through auth-service,
-matching the account's primary or linked emails. A person who already has a
-Mentorship user is invited as that user, and their stored email is first
-updated to the account's primary email from auth-service; a legacy LFID that
-auth-service cannot look up keeps its stored email. Otherwise a user is created from
-auth-service (LFID in the casing auth-service stores, name, avatar and primary
-email); their first sign-in updates that same row. Either way the invite email goes to
-the account's primary email.
+matching the account's primary or linked emails. An `lfid` must match the LF
+username exactly, including case. A person who already has a Mentorship user is
+invited as that user and the invite email goes to their stored email, without
+calling auth-service; only a user with no stored email gets the account's
+primary email filled in from auth-service. Otherwise a user is created from
+auth-service (LFID, name, avatar and primary email), the invite email goes to
+that primary email, and their first sign-in updates that same row.
 
 **Response** `201` → `<ProgramMember>`  
-**Errors** `400`, `404` (program not found), `409` (the user already has a row of this `member_type` on the program), `422` (no LF account has that `lfid` or `email`, or another Mentorship user already holds the account's primary email), `503` (auth-service is unreachable)
+**Errors** `400`, `404` (program not found), `409` (the user already has a row of this `member_type` on the program, in any status), `422` (no LF account has that `lfid` or `email`, or another Mentorship user already holds the account's primary email), `503` (auth-service is unreachable when it is needed)
 
 ---
 

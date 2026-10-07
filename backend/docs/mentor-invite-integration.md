@@ -43,11 +43,12 @@ Response `200`:
 - Show each candidate's avatar, name and LFID.
 - Helper text: *"Search by name, LF username, or full email address."*
   - Name search only finds people who already use Mentorship.
-  - Anyone else is found by their **exact** LF username or **full** email.
-    Partial emails never match.
+  - Anyone else is found by their **exact** LF username (case-sensitive) or
+    **full** email. Partial emails never match.
 - Empty state: if the query looks like a full email or a username and nothing
   comes back, show *"No LF account found. Ask them to create one at
-  sso.linuxfoundation.org, then invite them by email or username."*
+  sso.linuxfoundation.org, then invite them by email or username."* A lookup
+  outage with no local matches returns `503`, not an empty list.
 
 ## 3. Send the invite
 
@@ -59,7 +60,8 @@ POST /programs/{programId}/members
 ```
 
 Response `201` returns the member with `"status": "invited"`. The backend
-emails the invite to the account's primary email.
+emails the invite to the person's Mentorship email, or to the account's primary
+email if they have never used Mentorship.
 
 Inviting by email without picking a candidate also works:
 `{ "email": "alice@example.org", "member_type": "mentor" }`. Prefer the LFID
@@ -74,9 +76,18 @@ Never send both `user_id` and `lfid`.
 |---|---|---|
 | `400` | Bad input (short search, malformed email), or the program isn't published yet | Inline validation message |
 | `401` / `403` | Not signed in, or not a Program Admin of this program | Hide the action for non-admins; otherwise show a generic error |
-| `409` | Already invited or already a mentor on this program | *"This person is already on the program."* Point to **Resend invite** if they are `invited` |
-| `422` | No LF account for that LFID or email | Same message as the empty state in step 2 |
+| `409` | The person already has a mentor row on this program, in any status | Find their row in the Mentors tab list and act on its status (see below) |
+| `422` | No LF account for that LFID or email, or another Mentorship user already holds the account's primary email | Show the message from the response body |
 | `503` | Account lookup is temporarily unavailable | *"Couldn't look up accounts right now. Try again."* Keep the dialog open |
+
+`program_members` is unique per program, person and role, so a `409` covers
+every earlier mentor row, not only active ones:
+
+- `invited`: point to **Resend invite**.
+- `active`: *"This person is already a mentor on the program."*
+- `requested`: point the admin to approving the request.
+- `declined` (including a revoked invite) or `withdrawn`: the admin removes the
+  row with `DELETE /programs/{id}/members/{memberId}`, then invites again.
 
 ## 5. After a successful invite
 
@@ -84,13 +95,13 @@ Never send both `user_id` and `lfid`.
 - Resend and revoke reuse the existing actions:
   - `POST /programs/{id}/members/{memberId}/resend-invite`
   - `PATCH` the member status to `declined`
-- The invite landing page from #3171 needs no change. The invitee accepts after
-  signing in, and their first sign-in lands on the Mentorship user the invite
-  created.
+- The invite landing page from
+  [linuxfoundation/lfx-self-serve#3171](https://github.com/linuxfoundation/lfx-self-serve/issues/3171)
+  needs no change. The invitee accepts after signing in, and their first
+  sign-in lands on the Mentorship user the invite created.
 
 ## Testing on dev
 
-- Wait for #262 to merge and the dev backend to pick up the new image.
 - Dev only delivers email to `linuxfoundation.org` addresses. Invite one of
   those to test the full email → accept flow.
 - Quick checks:

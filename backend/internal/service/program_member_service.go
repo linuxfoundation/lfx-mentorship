@@ -188,7 +188,7 @@ func (s *ProgramMemberService) Create(ctx context.Context, programID string, inp
 		if inviteeEmail != "" {
 			user, err = s.userByEmail(ctx, inviteeEmail)
 		} else {
-			user, err = s.userByLFID(ctx, input.LFID, false)
+			user, err = s.userByLFID(ctx, input.LFID)
 		}
 		if err != nil {
 			span.RecordError(err)
@@ -230,19 +230,19 @@ func (s *ProgramMemberService) userByEmail(ctx context.Context, email string) (*
 	if err != nil {
 		return nil, fmt.Errorf("look up LF account by email: %w", err)
 	}
-	return s.userByLFID(ctx, username, true)
+	return s.userByLFID(ctx, username)
 }
 
 // userByLFID returns the Mentorship user for an LF account, creating it from the
 // account directory when the person has never signed in; sign-in upserts the same row.
-// canonical reports whether lfid already has the casing auth-service stores.
-func (s *ProgramMemberService) userByLFID(ctx context.Context, lfid string, canonical bool) (*models.User, error) {
+// Auth-service matches lfid case-sensitively, so a found account has the stored casing.
+func (s *ProgramMemberService) userByLFID(ctx context.Context, lfid string) (*models.User, error) {
 	user, err := s.users.GetByLFID(ctx, lfid)
 	if err != nil && !errors.Is(err, domain.ErrUserNotFound) {
 		return nil, fmt.Errorf("resolve lfid: %w", err)
 	}
-	// Auth-service cannot look up a legacy LFID, so its stored email is all there is.
-	if user != nil && (s.directory == nil || !isLFID(lfid)) {
+	// An existing user's stored email is never overwritten; auth-service only fills a missing one.
+	if user != nil && (user.Email != nil || s.directory == nil || !isLFID(lfid)) {
 		return user, nil
 	}
 	if s.directory == nil {
@@ -252,84 +252,37 @@ func (s *ProgramMemberService) userByLFID(ctx context.Context, lfid string, cano
 		return nil, fmt.Errorf("%w: lfid %q is not a valid LF username", domain.ErrInvalidInput, lfid)
 	}
 
-	if user != nil {
-		email, err := s.directory.PrimaryEmail(ctx, lfid)
-		if errors.Is(err, domain.ErrAccountNotFound) {
-			return nil, fmt.Errorf("%w: lfid %q has no LF account", domain.ErrIneligible, lfid)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("look up LF account: %w", err)
-		}
-		return s.refreshEmail(ctx, user, email)
-	}
-
-	var (
-		email   string
-		account *models.LFAccount
-	)
+	input := models.UserCreateInput{LFID: &lfid}
+	var account *models.LFAccount
 	g, gctx := errgroup.WithContext(ctx)
-	g.Go(func() (err error) {
-		email, err = s.directory.PrimaryEmail(gctx, lfid)
+	g.Go(func() error {
+		email, err := s.directory.PrimaryEmail(gctx, lfid)
+		input.Email = &email
 		return err
 	})
-	g.Go(func() (err error) {
-		account, err = s.directory.Account(gctx, lfid)
-		return err
-	})
+	if user == nil {
+		g.Go(func() (err error) {
+			account, err = s.directory.Account(gctx, lfid)
+			return err
+		})
+	}
 	if err := g.Wait(); errors.Is(err, domain.ErrAccountNotFound) {
 		return nil, fmt.Errorf("%w: lfid %q has no LF account", domain.ErrIneligible, lfid)
 	} else if err != nil {
 		return nil, fmt.Errorf("look up LF account: %w", err)
 	}
-
-	username := lfid
-	if !canonical {
-		// Sign-in keys the row by the stored username, which email_to_username returns as stored.
-		username, err = s.directory.UsernameByEmail(ctx, email)
-		if err != nil {
-			return nil, fmt.Errorf("look up LF username: %w", err)
-		}
-		if username != lfid {
-			user, err = s.users.GetByLFID(ctx, username)
-			if err == nil {
-				return s.refreshEmail(ctx, user, email)
-			}
-			if !errors.Is(err, domain.ErrUserNotFound) {
-				return nil, fmt.Errorf("resolve lfid: %w", err)
-			}
-		}
+	if account != nil {
+		input.Name, input.GivenName, input.FamilyName, input.AvatarURL = account.Name, account.GivenName, account.FamilyName, account.AvatarURL
 	}
 
-	user, err = s.users.UpsertByLFID(ctx, models.UserCreateInput{
-		LFID:       &username,
-		Email:      &email,
-		Name:       account.Name,
-		GivenName:  account.GivenName,
-		FamilyName: account.FamilyName,
-		AvatarURL:  account.AvatarURL,
-	})
+	user, err = s.users.UpsertByLFID(ctx, input)
 	if errors.Is(err, domain.ErrEmailInUse) {
-		return nil, fmt.Errorf("%w: the primary email of lfid %q belongs to another Mentorship user", domain.ErrIneligible, username)
+		return nil, fmt.Errorf("%w: the primary email of lfid %q belongs to another Mentorship user", domain.ErrIneligible, lfid)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("create user for lfid %q: %w", username, err)
+		return nil, fmt.Errorf("upsert user for lfid %q: %w", lfid, err)
 	}
 	return user, nil
-}
-
-// refreshEmail stores the account's primary email, which the invite email is sent to.
-func (s *ProgramMemberService) refreshEmail(ctx context.Context, user *models.User, email string) (*models.User, error) {
-	if user.Email != nil && *user.Email == email {
-		return user, nil
-	}
-	updated, err := s.users.UpsertByLFID(ctx, models.UserCreateInput{LFID: user.LFID, Email: &email})
-	if errors.Is(err, domain.ErrEmailInUse) {
-		return nil, fmt.Errorf("%w: the primary email of lfid %q belongs to another Mentorship user", domain.ErrIneligible, *user.LFID)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("refresh email of lfid %q: %w", *user.LFID, err)
-	}
-	return updated, nil
 }
 
 // SearchCandidates returns people a Program Admin can invite to a published
