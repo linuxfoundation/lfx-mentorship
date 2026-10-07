@@ -146,14 +146,15 @@ func (s *stubProjectLookup) GetProject(_ context.Context, uid string) (*models.P
 	return s.project, s.err
 }
 
-// enrollmentWithProjectMetadata is a valid enrollment whose project slug, name,
-// and logo name a different project than projectUID.
+// enrollmentWithProjectMetadata is a valid enrollment whose project slug and
+// name belong to a different project than projectUID, and whose logo is unsafe,
+// so a test passes only if Project Service's values replace all three.
 func enrollmentWithProjectMetadata(projectUID string) models.ProgramEnrollmentInput {
 	start := time.Now().Add(24 * time.Hour)
 	termEnd := start.Add(24 * time.Hour)
 	applicationStart := time.Now()
 	applicationEnd := start.Add(-time.Hour)
-	slug, name, logo := "other-project", "Other Project", "https://example.org/other.png"
+	slug, name, logo := "other-project", "Other Project", "javascript:alert(1)"
 	return models.ProgramEnrollmentInput{
 		Program: models.ProgramCreateInput{ProjectUID: &projectUID, ProjectSlug: &slug, ProjectName: &name, ProjectLogoURL: &logo, Name: "Program", Slug: "program"},
 		Skills:  []string{"Go"},

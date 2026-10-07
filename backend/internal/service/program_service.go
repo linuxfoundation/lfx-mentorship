@@ -368,7 +368,11 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 	if !available {
 		return nil, fmt.Errorf("%w: program name is already in use", domain.ErrConflict)
 	}
-	for _, value := range []*string{input.Program.RepoLink, input.Program.WebsiteURL, input.Program.CodeOfConduct, input.Program.ProjectLogoURL} {
+	urls := []*string{input.Program.RepoLink, input.Program.WebsiteURL, input.Program.CodeOfConduct}
+	if s.projects == nil { // otherwise Project Service's logo replaces the caller's
+		urls = append(urls, input.Program.ProjectLogoURL)
+	}
+	for _, value := range urls {
 		if err := validateHTTPURL(value); err != nil {
 			return nil, err
 		}
