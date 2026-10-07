@@ -99,6 +99,8 @@ type EmailConfig struct {
 	SelfServeURL string
 	// HRInbox is the LF staff HR inbox copied on every mentee acceptance.
 	HRInbox string
+	// AllowedRecipients, when set, are the only addresses mail goes to, so testing on real data cannot reach real users.
+	AllowedRecipients []string
 }
 
 // CrowdfundingConfig holds outbound crowdfunding API settings.
@@ -283,6 +285,15 @@ func loadEmailConfig(natsConfigured bool) (EmailConfig, error) {
 	}
 	if addr, err := mail.ParseAddress(cfg.HRInbox); err != nil || addr.Address != cfg.HRInbox {
 		return EmailConfig{}, fmt.Errorf("EMAIL_HR_INBOX must be a bare email address when FGA_NATS_URL is set")
+	}
+	for r := range strings.SplitSeq(os.Getenv("EMAIL_ALLOWED_RECIPIENTS"), ",") {
+		if r = strings.TrimSpace(r); r == "" {
+			continue
+		}
+		if addr, err := mail.ParseAddress(r); err != nil || addr.Address != r {
+			return EmailConfig{}, fmt.Errorf("EMAIL_ALLOWED_RECIPIENTS must be a comma-separated list of bare email addresses")
+		}
+		cfg.AllowedRecipients = append(cfg.AllowedRecipients, r)
 	}
 	return cfg, nil
 }

@@ -157,6 +157,9 @@ config:
   SELF_SERVE_URL: ""
   # LF staff HR inbox that receives every mentee acceptance.
   EMAIL_HR_INBOX: ""
+  # Comma-separated addresses that are the only ones to receive email; set while
+  # testing on real data so real users get nothing. Empty sends to everyone.
+  EMAIL_ALLOWED_RECIPIENTS: ""
   LEDGER_BASE_URL: ""
   # Crowdfunding is reached through the LFX v2 gateway at
   # https://lfx-api.<domain>/crowdfunding; the transactions route is public.

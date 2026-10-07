@@ -54,6 +54,8 @@ type NotifierConfig struct {
 	PublicSiteURL string
 	SelfServeURL  string
 	HRInbox       string
+	// AllowedRecipients, when set, are the only addresses mail goes to; every other send is suppressed.
+	AllowedRecipients []string
 }
 
 // Repositories are the lookups the Notifier needs to resolve recipients and template data.
@@ -74,8 +76,10 @@ type Notifier struct {
 	publicURL    string
 	selfServeURL string
 	hrInbox      string
-	logger       *slog.Logger
-	wg           sync.WaitGroup
+	// allowedRecipients holds lowercased addresses; nil sends to everyone.
+	allowedRecipients map[string]bool
+	logger            *slog.Logger
+	wg                sync.WaitGroup
 }
 
 var _ domain.Notifier = (*Notifier)(nil)
@@ -89,7 +93,21 @@ func NewNotifier(sender Sender, repos Repositories, cfg NotifierConfig, logger *
 		selfServeURL: strings.TrimRight(cfg.SelfServeURL, "/"),
 		hrInbox:      cfg.HRInbox,
 		logger:       logger,
+
+		allowedRecipients: recipientSet(cfg.AllowedRecipients),
 	}
+}
+
+// recipientSet lowercases addrs for case-insensitive matching; it is nil when addrs is empty.
+func recipientSet(addrs []string) map[string]bool {
+	if len(addrs) == 0 {
+		return nil
+	}
+	set := make(map[string]bool, len(addrs))
+	for _, a := range addrs {
+		set[strings.ToLower(a)] = true
+	}
+	return set
 }
 
 // Wait blocks until in-flight notifications finish or ctx ends.
@@ -359,6 +377,10 @@ func (n *Notifier) dispatch(ctx context.Context, notification string, build func
 				continue
 			}
 			seen[addr] = true
+			if n.allowedRecipients != nil && !n.allowedRecipients[addr] {
+				n.logger.InfoContext(ctx, "email notification suppressed", "notification", notification)
+				continue
+			}
 			slots <- struct{}{}
 			sends.Add(1)
 			go func() {
