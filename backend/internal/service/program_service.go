@@ -42,6 +42,7 @@ type ProgramService struct {
 	appRepo    domain.ApplicationRepository
 	memberRepo domain.ProgramMemberRepository
 	cfClient   clients.CrowdfundingClient
+	projects   domain.ProjectLookup
 }
 
 // NewProgramService returns a ProgramService.
@@ -53,6 +54,13 @@ func NewProgramService(repo domain.ProgramRepository, termRepo domain.ProgramTer
 // cross-service program transaction endpoints.
 func (s *ProgramService) SetCrowdfundingClient(client clients.CrowdfundingClient) {
 	s.cfClient = client
+}
+
+// SetProjectLookup makes Project Service the source of the project slug, name,
+// and logo stored with a new program. Without it, the values the caller sent
+// are stored, which only local development without NATS relies on.
+func (s *ProgramService) SetProjectLookup(projects domain.ProjectLookup) {
+	s.projects = projects
 }
 
 // programTransitions defines the valid next states for each program status.
@@ -278,7 +286,7 @@ func (s *ProgramService) Create(ctx context.Context, input models.ProgramCreateI
 	}
 	canonicalProjectUID := projectUID.String()
 	input.ProjectUID = &canonicalProjectUID
-	if input.ProjectSlug, input.ProjectName, input.ProjectLogoURL, err = normalizeProjectMetadata(input.ProjectSlug, input.ProjectName, input.ProjectLogoURL); err != nil {
+	if input.ProjectSlug, input.ProjectName, input.ProjectLogoURL, err = s.resolveProjectMetadata(ctx, canonicalProjectUID, input.ProjectSlug, input.ProjectName, input.ProjectLogoURL); err != nil {
 		return nil, err
 	}
 	input.Status = models.ProgramStatusPending // programs always start as pending
@@ -360,7 +368,11 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 	if !available {
 		return nil, fmt.Errorf("%w: program name is already in use", domain.ErrConflict)
 	}
-	for _, value := range []*string{input.Program.RepoLink, input.Program.WebsiteURL, input.Program.CodeOfConduct, input.Program.ProjectLogoURL} {
+	urls := []*string{input.Program.RepoLink, input.Program.WebsiteURL, input.Program.CodeOfConduct}
+	if s.projects == nil { // otherwise Project Service's logo replaces the caller's
+		urls = append(urls, input.Program.ProjectLogoURL)
+	}
+	for _, value := range urls {
 		if err := validateHTTPURL(value); err != nil {
 			return nil, err
 		}
@@ -377,7 +389,7 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 	}
 	canonicalProjectUID := projectUID.String()
 	input.Program.ProjectUID = &canonicalProjectUID
-	if input.Program.ProjectSlug, input.Program.ProjectName, input.Program.ProjectLogoURL, err = normalizeProjectMetadata(input.Program.ProjectSlug, input.Program.ProjectName, input.Program.ProjectLogoURL); err != nil {
+	if input.Program.ProjectSlug, input.Program.ProjectName, input.Program.ProjectLogoURL, err = s.resolveProjectMetadata(ctx, canonicalProjectUID, input.Program.ProjectSlug, input.Program.ProjectName, input.Program.ProjectLogoURL); err != nil {
 		return nil, err
 	}
 	input.Program.Status = models.ProgramStatusPending
@@ -385,8 +397,26 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 	return s.repo.CreateEnrollment(ctx, input)
 }
 
-// normalizeProjectMetadata trims the Project Service slug, name, and logo the
-// caller resolved alongside project_uid. The program index snapshot is derived
+// resolveProjectMetadata replaces the caller's project slug, name, and logo
+// with Project Service's, so a program cannot carry another project's
+// branding. It runs after all other validation to spend no lookup on a
+// request that is rejected anyway.
+func (s *ProgramService) resolveProjectMetadata(ctx context.Context, projectUID string, slug, name, logoURL *string) (*string, *string, *string, error) {
+	if s.projects != nil {
+		project, err := s.projects.GetProject(ctx, projectUID)
+		if errors.Is(err, domain.ErrProjectNotFound) {
+			return nil, nil, nil, fmt.Errorf("%w: project ID does not match a Project Service project", domain.ErrInvalidInput)
+		}
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("resolve project: %w", err)
+		}
+		slug, name, logoURL = &project.Slug, &project.Name, project.LogoURL
+	}
+	return normalizeProjectMetadata(slug, name, logoURL)
+}
+
+// normalizeProjectMetadata trims the Project Service slug, name, and logo
+// stored alongside project_uid. The program index snapshot is derived
 // from the persisted row, so slug and name must be present whenever the project is set.
 func normalizeProjectMetadata(slug, name, logoURL *string) (*string, *string, *string, error) {
 	trim := func(value *string) *string {
@@ -455,6 +485,17 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 	if err := reservedFileField("logo_url", input.LogoURL); err != nil {
 		return nil, err
 	}
+	if input.Skills != nil {
+		input.Skills = normalizeSkills(input.Skills)
+		if len(input.Skills) == 0 {
+			return nil, fmt.Errorf("%w: at least one skill is required", domain.ErrInvalidInput)
+		}
+	}
+	if input.Terms != nil {
+		if err := validateOpenTerms(input.Terms); err != nil {
+			return nil, err
+		}
+	}
 	if input.ProjectUID != nil || input.ProjectSlug != nil || input.ProjectName != nil || input.ProjectLogoURL != nil {
 		if input.ProjectUID == nil || strings.TrimSpace(*input.ProjectUID) == "" {
 			return nil, fmt.Errorf("%w: project_uid is required when changing the project", domain.ErrInvalidInput)
@@ -465,22 +506,13 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 		}
 		canonicalProjectUID := projectUID.String()
 		input.ProjectUID = &canonicalProjectUID
-		if input.ProjectSlug, input.ProjectName, input.ProjectLogoURL, err = normalizeProjectMetadata(input.ProjectSlug, input.ProjectName, input.ProjectLogoURL); err != nil {
+		if input.ProjectSlug, input.ProjectName, input.ProjectLogoURL, err = s.resolveProjectMetadata(ctx, canonicalProjectUID, input.ProjectSlug, input.ProjectName, input.ProjectLogoURL); err != nil {
 			return nil, err
 		}
-		if err := validateHTTPURL(input.ProjectLogoURL); err != nil {
-			return nil, err
-		}
-	}
-	if input.Skills != nil {
-		input.Skills = normalizeSkills(input.Skills)
-		if len(input.Skills) == 0 {
-			return nil, fmt.Errorf("%w: at least one skill is required", domain.ErrInvalidInput)
-		}
-	}
-	if input.Terms != nil {
-		if err := validateOpenTerms(input.Terms); err != nil {
-			return nil, err
+		if s.projects == nil { // otherwise the logo is Project Service's, not the caller's
+			if err := validateHTTPURL(input.ProjectLogoURL); err != nil {
+				return nil, err
+			}
 		}
 	}
 

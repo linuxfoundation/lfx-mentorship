@@ -99,8 +99,10 @@ type ProgramEnrollmentInput struct {
 // ProgramUpdateInput is the request body for updating a program.
 type ProgramUpdateInput struct {
 	// The project fields move the program to another LF project and are applied together:
-	// ProjectUID, ProjectSlug, and ProjectName are required when any is set, and an omitted
-	// ProjectLogoURL clears the previous project's logo.
+	// ProjectUID is required when any is set. When Project Service is configured, it supplies
+	// the slug, name, and logo and the caller's are ignored. Otherwise ProjectSlug and
+	// ProjectName are also required, and an omitted ProjectLogoURL clears the previous
+	// project's logo.
 	ProjectUID         *string            `json:"project_uid,omitempty"`
 	ProjectSlug        *string            `json:"project_slug,omitempty"`
 	ProjectName        *string            `json:"project_name,omitempty"`

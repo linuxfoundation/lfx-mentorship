@@ -133,6 +133,98 @@ func TestProgramService_CreateEnrollment_RejectsUnsafeURL(t *testing.T) {
 	}
 }
 
+// ── project metadata from Project Service ────────────────────────────────────
+
+type stubProjectLookup struct {
+	project *models.ProjectMetadata
+	err     error
+	gotUID  string
+}
+
+func (s *stubProjectLookup) GetProject(_ context.Context, uid string) (*models.ProjectMetadata, error) {
+	s.gotUID = uid
+	return s.project, s.err
+}
+
+// enrollmentWithProjectMetadata is a valid enrollment whose project slug and
+// name belong to a different project than projectUID, and whose logo is unsafe,
+// so a test passes only if Project Service's values replace all three.
+func enrollmentWithProjectMetadata(projectUID string) models.ProgramEnrollmentInput {
+	start := time.Now().Add(24 * time.Hour)
+	termEnd := start.Add(24 * time.Hour)
+	applicationStart := time.Now()
+	applicationEnd := start.Add(-time.Hour)
+	slug, name, logo := "other-project", "Other Project", "javascript:alert(1)"
+	return models.ProgramEnrollmentInput{
+		Program: models.ProgramCreateInput{ProjectUID: &projectUID, ProjectSlug: &slug, ProjectName: &name, ProjectLogoURL: &logo, Name: "Program", Slug: "program"},
+		Skills:  []string{"Go"},
+		Terms:   []models.ProgramTermCreateInput{{Name: "Term", StartDateTime: &start, EndDateTime: &termEnd, ApplicationStartDate: &applicationStart, ApplicationEndDate: &applicationEnd}},
+	}
+}
+
+func TestProgramService_CreateEnrollment_StoresProjectServiceMetadata(t *testing.T) {
+	var captured models.ProgramEnrollmentInput
+	repo := &stubProgRepo{createEnrollment: func(_ context.Context, input models.ProgramEnrollmentInput) (*models.Program, error) {
+		captured = input
+		return &models.Program{ID: "p1"}, nil
+	}}
+	lookup := &stubProjectLookup{project: &models.ProjectMetadata{Slug: "cncf", Name: "Cloud Native Computing Foundation"}}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	svc.SetProjectLookup(lookup)
+
+	if _, err := svc.CreateEnrollment(context.Background(), enrollmentWithProjectMetadata("7CAD5A8D-19D0-41A4-81A6-043453DAF9EE")); err != nil {
+		t.Fatal(err)
+	}
+	if lookup.gotUID != "7cad5a8d-19d0-41a4-81a6-043453daf9ee" {
+		t.Errorf("lookup uid = %q; want the canonical UUID", lookup.gotUID)
+	}
+	program := captured.Program
+	if program.ProjectSlug == nil || *program.ProjectSlug != "cncf" || program.ProjectName == nil || *program.ProjectName != "Cloud Native Computing Foundation" || program.ProjectLogoURL != nil {
+		t.Fatalf("project metadata = %v %v %v; want Project Service's, with no logo", program.ProjectSlug, program.ProjectName, program.ProjectLogoURL)
+	}
+}
+
+func TestProgramService_CreateEnrollment_ProjectLookupErrors(t *testing.T) {
+	for label, tc := range map[string]struct {
+		err  error
+		want error
+	}{
+		"unknown project":     {err: domain.ErrProjectNotFound, want: domain.ErrInvalidInput},
+		"service unavailable": {err: domain.ErrUpstreamUnavailable, want: domain.ErrUpstreamUnavailable},
+	} {
+		t.Run(label, func(t *testing.T) {
+			svc := newProgramSvc(&stubProgRepo{createEnrollment: func(context.Context, models.ProgramEnrollmentInput) (*models.Program, error) {
+				t.Fatal("repository must not be called")
+				return nil, nil
+			}}, &stubTermRepo{}, &stubAppRepo{})
+			svc.SetProjectLookup(&stubProjectLookup{err: tc.err})
+
+			_, err := svc.CreateEnrollment(context.Background(), enrollmentWithProjectMetadata("00000000-0000-0000-0000-000000000001"))
+			if !errors.Is(err, tc.want) || errors.Is(err, domain.ErrProjectNotFound) {
+				t.Fatalf("err = %v; want %v", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestProgramService_Create_StoresProjectServiceMetadata(t *testing.T) {
+	var captured models.ProgramCreateInput
+	repo := &stubProgRepo{create: func(_ context.Context, in models.ProgramCreateInput) (*models.Program, error) {
+		captured = in
+		return &models.Program{}, nil
+	}}
+	logo := "https://example.org/cncf.png"
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	svc.SetProjectLookup(&stubProjectLookup{project: &models.ProjectMetadata{Slug: "cncf", Name: "CNCF", LogoURL: &logo}})
+
+	if _, err := svc.Create(context.Background(), enrollmentWithProjectMetadata("00000000-0000-0000-0000-000000000001").Program); err != nil {
+		t.Fatal(err)
+	}
+	if *captured.ProjectSlug != "cncf" || *captured.ProjectName != "CNCF" || captured.ProjectLogoURL == nil || *captured.ProjectLogoURL != logo {
+		t.Fatalf("project metadata = %v %v %v; want Project Service's", *captured.ProjectSlug, *captured.ProjectName, captured.ProjectLogoURL)
+	}
+}
+
 func TestProgramService_Update_InvalidTransition(t *testing.T) {
 	repo := &stubProgRepo{
 		getByID: func(_ context.Context, id string) (*models.Program, error) {
@@ -634,6 +726,52 @@ func TestProgramService_Update_RejectsInvalidProject(t *testing.T) {
 			svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
 			if _, err := svc.Update(context.Background(), "prog-1", input); !errors.Is(err, domain.ErrInvalidInput) {
 				t.Fatalf("expected ErrInvalidInput, got %v", err)
+			}
+		})
+	}
+}
+
+func TestProgramService_Update_ChangesProjectFromProjectService(t *testing.T) {
+	var captured models.ProgramUpdateInput
+	repo := &stubProgRepo{update: func(_ context.Context, _ string, input models.ProgramUpdateInput) (*models.Program, error) {
+		captured = input
+		return &models.Program{ID: "prog-1"}, nil
+	}}
+	lookup := &stubProjectLookup{project: &models.ProjectMetadata{Slug: "cncf", Name: "CNCF"}}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	svc.SetProjectLookup(lookup)
+	uid, slug, name, logo := "7CAD5A8D-19D0-41A4-81A6-043453DAF9EE", "other-project", "Other Project", "javascript:alert(1)"
+
+	if _, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{ProjectUID: &uid, ProjectSlug: &slug, ProjectName: &name, ProjectLogoURL: &logo}); err != nil {
+		t.Fatal(err)
+	}
+	if lookup.gotUID != "7cad5a8d-19d0-41a4-81a6-043453daf9ee" {
+		t.Errorf("lookup uid = %q; want the canonical UUID", lookup.gotUID)
+	}
+	if captured.ProjectSlug == nil || *captured.ProjectSlug != "cncf" || captured.ProjectName == nil || *captured.ProjectName != "CNCF" || captured.ProjectLogoURL != nil {
+		t.Fatalf("project metadata = %v %v %v; want Project Service's, with no logo", captured.ProjectSlug, captured.ProjectName, captured.ProjectLogoURL)
+	}
+}
+
+func TestProgramService_Update_ProjectLookupErrors(t *testing.T) {
+	for label, tc := range map[string]struct {
+		err  error
+		want error
+	}{
+		"unknown project":     {err: domain.ErrProjectNotFound, want: domain.ErrInvalidInput},
+		"service unavailable": {err: domain.ErrUpstreamUnavailable, want: domain.ErrUpstreamUnavailable},
+	} {
+		t.Run(label, func(t *testing.T) {
+			svc := newProgramSvc(&stubProgRepo{update: func(context.Context, string, models.ProgramUpdateInput) (*models.Program, error) {
+				t.Fatal("repository must not be called")
+				return nil, nil
+			}}, &stubTermRepo{}, &stubAppRepo{})
+			svc.SetProjectLookup(&stubProjectLookup{err: tc.err})
+			uid := "00000000-0000-0000-0000-000000000001"
+
+			_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{ProjectUID: &uid})
+			if !errors.Is(err, tc.want) || errors.Is(err, domain.ErrProjectNotFound) {
+				t.Fatalf("err = %v; want %v", err, tc.want)
 			}
 		})
 	}
