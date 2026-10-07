@@ -33,6 +33,7 @@ type stubProgramSvc struct {
 	getCategorizedTransactions func(context.Context, string, string, bool, int, int) (*models.ProgramCategorizedTransactions, error)
 	getProgramSponsors         func(context.Context, string, string, bool, bool) ([]models.ProgramSponsor, error)
 	createEnrollment           func(context.Context, models.ProgramEnrollmentInput) (*models.Program, error)
+	update                     func(context.Context, string, models.ProgramUpdateInput) (*models.Program, error)
 }
 
 func (s *stubProgramSvc) GetByID(ctx context.Context, id string) (*models.Program, error) {
@@ -101,7 +102,10 @@ func (s *stubProgramSvc) CreateEnrollment(ctx context.Context, input models.Prog
 	}
 	return s.Create(ctx, input.Program)
 }
-func (s *stubProgramSvc) Update(context.Context, string, models.ProgramUpdateInput) (*models.Program, error) {
+func (s *stubProgramSvc) Update(ctx context.Context, id string, input models.ProgramUpdateInput) (*models.Program, error) {
+	if s.update != nil {
+		return s.update(ctx, id, input)
+	}
 	return &models.Program{}, nil
 }
 func (s *stubProgramSvc) Decide(context.Context, string, models.ProgramStatus) (*models.Program, error) {
@@ -791,6 +795,28 @@ func TestProgramHandler_ListMine_InvalidStatus(t *testing.T) {
 	h.ListMine(w, r)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("got %d; want 400", w.Code)
+	}
+}
+
+func TestProgramHandler_Update_PassesSkills(t *testing.T) {
+	var captured models.ProgramUpdateInput
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		update: func(_ context.Context, _ string, input models.ProgramUpdateInput) (*models.Program, error) {
+			captured = input
+			return &models.Program{ID: "p1"}, nil
+		},
+	})
+	r := httptest.NewRequest(http.MethodPatch, "/v1/programs/p1", strings.NewReader(`{"skills":["Go","Kubernetes"]}`))
+	r = requestWithPrincipal(r, "admin-1")
+	r = requestWithChiParam(r, "id", "p1")
+	w := httptest.NewRecorder()
+	h.Update(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d; want 200: %s", w.Code, w.Body.String())
+	}
+	if len(captured.Skills) != 2 || captured.Skills[0] != "Go" || captured.Skills[1] != "Kubernetes" {
+		t.Fatalf("skills = %v; want [Go Kubernetes]", captured.Skills)
 	}
 }
 

@@ -1150,9 +1150,8 @@ func (r *ProgramRepository) ListSkills(ctx context.Context, programID string) ([
 	return skills, rows.Err()
 }
 
-// AddSkill inserts a new skill for a program.
 // replaceProgramSkills makes skills the program's full skill set, keeping the
-// rows (and IDs) of skills that are already present.
+// rows (and IDs) of skills that already exist with the same spelling.
 func replaceProgramSkills(ctx context.Context, tx pgx.Tx, programID string, skills []string) error {
 	if _, err := tx.Exec(ctx, `DELETE FROM program_skills WHERE program_id = $1 AND NOT (skill = ANY($2))`, programID, skills); err != nil {
 		return fmt.Errorf("remove program skills: %w", err)
@@ -1166,6 +1165,7 @@ func replaceProgramSkills(ctx context.Context, tx pgx.Tx, programID string, skil
 	return nil
 }
 
+// AddSkill inserts a new skill for a program.
 func (r *ProgramRepository) AddSkill(ctx context.Context, programID string, input models.ProgramSkillCreateInput) (*models.ProgramSkill, error) {
 	ctx, span := programTracer.Start(ctx, "db.programs.AddSkill")
 	defer span.End()
