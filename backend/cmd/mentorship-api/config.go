@@ -297,7 +297,7 @@ func loadEmailConfig(natsConfigured bool) (EmailConfig, error) {
 		cfg.AllowedRecipients = append(cfg.AllowedRecipients, r)
 	}
 	// A set value with no addresses would mean "send to everyone"; fail closed instead.
-	if strings.TrimSpace(allowed) != "" && len(cfg.AllowedRecipients) == 0 {
+	if allowed != "" && len(cfg.AllowedRecipients) == 0 {
 		return EmailConfig{}, fmt.Errorf("EMAIL_ALLOWED_RECIPIENTS is set but lists no addresses")
 	}
 	return cfg, nil
