@@ -1017,6 +1017,7 @@ The caller resolves the LF project from Project Service and passes its UID, slug
   "repositoryUrl":    "https://github.com/cncf/mentorship",
   "websiteUrl":       "https://...",
   "codeOfConductUrl": "https://...",
+  "industry":         "Cloud Native",                         // optional
   "ciiProjectId":     "12345",
   "skills":           ["Go"],                                 // required; at least one
   "terms": [                                                  // required; 1–4 terms
@@ -1048,9 +1049,28 @@ Update program fields. Status cannot be changed here: a body with `status` retur
   "description": "Updated description",
   "repo_link":   "https://...",
   "lfid":        "alice",
+  "skills":      ["Go", "Kubernetes"],
+  "project_uid":      "7cad5a8d-19d0-41a4-81a6-043453daf9ee",
+  "project_slug":     "new-project",
+  "project_name":     "New Project",
+  "project_logo_url": "https://...",
   "task_templates": [...]
 }
 ```
+
+The `project_*` fields move the program to another LF project and are applied
+together: when any is present, `project_uid` (a Project Service UUID),
+`project_slug`, and `project_name` are required, and an omitted or blank
+`project_logo_url` clears the logo. Omit all four to leave the project unchanged.
+Moving a program changes who can manage it, since access is inherited from the
+project.
+
+`skills` replaces the program's full skill set: skills not in the list are removed
+and new ones are added. Entries are trimmed and de-duplicated case-insensitively; at
+least one is required. Omit `skills` to leave them unchanged. The `<Program>`
+response does not include skills; read them from
+[`GET /v1/programs/{id}/skills`](#get-v1programsidskills-). The program's search
+index snapshot is refreshed with the new skills in the same transaction.
 
 **Response** `200` → `<Program>`  
 **Errors** `400`, `404`
@@ -1401,18 +1421,47 @@ Add a member to a program.
 **Program Admin flow** (`member_type = "program_admin"`):
 - Record is created with `status = "active"`.
 
-**Request body** (identify the user with `user_id` or `lfid`; sending both is a `400`)
+**Request body** (identify the person with exactly one of `user_id`, `lfid` or, when neither is set, `email`; sending `user_id` and `lfid` together is a `400`)
 ```json
 {
-  "lfid":        "alice",      // or "user_id": "uuid"; surrounding whitespace is trimmed; 422 if they have never signed in
+  "lfid":        "alice",      // or "user_id": "uuid", or only "email"; surrounding whitespace is trimmed
   "member_type": "mentor",     // required; "program_admin" | "mentor"
   "status":      "requested",  // optional; if omitted, defaults per member_type above
   "email":       "mentor@example.com"
 }
 ```
 
+Anyone with an LF account can be invited, whether or not they have used
+Mentorship. An `email` is resolved to its LF account through auth-service,
+matching the account's primary or linked emails. An `lfid` must match the LF
+username exactly, including case. A person who already has a Mentorship user is
+invited as that user and the invite email goes to their stored email, without
+calling auth-service; only a user with no stored email, or a blank one, gets the account's
+primary email filled in from auth-service. Otherwise a user is created from
+auth-service (LFID, name, avatar and primary email), the invite email goes to
+that primary email, and their first sign-in updates that same row.
+
 **Response** `201` → `<ProgramMember>`  
-**Errors** `400`, `404` (program not found), `409` (the user already has a row of this `member_type` on the program), `422` (the `lfid` has no Mentorship account: they must sign in once before they can be invited)
+**Errors** `400`, `404` (program not found), `409` (the user already has a row of this `member_type` on the program, in any status), `422` (no LF account has that `lfid` or `email`, or another Mentorship user already holds the account's primary email), `503` (auth-service is unreachable when it is needed)
+
+---
+
+#### `GET /v1/programs/{id}/mentor-candidates?search=` 🔒
+
+Typeahead for the invite dialog; requires program `writer`, and the program must
+be published. `search` must be at least 2 characters. A whole email is resolved
+only through auth-service and returns at most the one LF account that owns it,
+because Mentorship users can edit their stored email. Any other `search` returns
+up to 10 Mentorship users matching part of a name or an LFID prefix; when none
+is an exact LFID match and `search` is an LFID, the matching LF account from
+auth-service is listed first. If auth-service fails for a non-email `search`,
+the local matches are still returned, or `503` when there are none. Emails are never returned.
+
+**Response** `200`
+```json
+{ "data": [ { "lfid": "alice", "name": "Alice Example", "avatar_url": "https://…" } ] }
+```
+**Errors** `400` (search too short, or the program is not published), `401`, `403`, `404` (program not found), `503` (auth-service is unreachable for an email `search`, or for an LFID `search` with no local matches)
 
 ---
 

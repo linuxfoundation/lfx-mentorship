@@ -192,7 +192,8 @@ def _strict_uuid(value) -> str | None:
 
 def _project_candidates(p: dict) -> list[tuple[str, str]]:
     """(field, raw value) pairs that may name the program's LF project, in priority order."""
-    linked = p.get("project") if isinstance(p.get("project"), dict) else {}
+    project = p.get("project")
+    linked = project if isinstance(project, dict) else {}
     fields = [(f, p.get(f)) for f in ("lfProjectId", "projectUid", "lfProjectUid", "lfProjectUID")] + [("project.id", linked.get("id"))]
     return [(f, str(v).strip()) for f, v in fields if v and str(v).strip()]
 
@@ -246,7 +247,7 @@ def resolve_lf_projects(projects: list) -> dict:
                 uid = _strict_uuid(value) or await v1_project_uid(value)
                 slug = await project_field("lfx.projects-api.get_slug", uid) if uid else None
                 # A project deleted between the two lookups answers get_name with not_found.
-                name = await project_field("lfx.projects-api.get_name", uid) if slug else None
+                name = await project_field("lfx.projects-api.get_name", uid) if uid and slug else None
                 if not name:
                     log.warning("UNMAPPED_LF_PROJECT project_identifier=%s", value)
                     resolved[value] = None

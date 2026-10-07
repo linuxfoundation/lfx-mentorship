@@ -18,6 +18,7 @@ type programMemberService interface {
 	ListByProgram(ctx context.Context, programID string, filter models.ProgramMemberFilter) ([]*models.ProgramMember, *models.PaginationMeta, error)
 	ListMentorManagement(ctx context.Context, programID string, filter models.ProgramMemberFilter) ([]*models.ProgramMentorManagementRow, *models.PaginationMeta, error)
 	Create(ctx context.Context, programID string, input models.ProgramMemberCreateInput) (*models.ProgramMember, error)
+	SearchCandidates(ctx context.Context, programID, query string) ([]*models.MentorCandidate, error)
 	Update(ctx context.Context, programID, id string, input models.ProgramMemberUpdateInput, actorID string) (*models.ProgramMember, error)
 	Delete(ctx context.Context, programID, id, actorID string) error
 	ResendInvite(ctx context.Context, programID, id, actorID string) error
@@ -121,6 +122,20 @@ func (h *ProgramMemberHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	JSON(w, http.StatusCreated, member)
+}
+
+// SearchCandidates handles GET /v1/programs/{id}/mentor-candidates?search= — Heimdall requires program writer.
+func (h *ProgramMemberHandler) SearchCandidates(w http.ResponseWriter, r *http.Request) {
+	if auth.PrincipalFromContext(r.Context()) == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	candidates, err := h.svc.SearchCandidates(r.Context(), chi.URLParam(r, "id"), r.URL.Query().Get("search"))
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]any{"data": candidates})
 }
 
 // Update handles PATCH /v1/programs/{id}/members/{memberId} — requires JWT.

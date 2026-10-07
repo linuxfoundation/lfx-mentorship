@@ -18,6 +18,7 @@ var (
 	ErrApplicationNotFound   = errors.New("application not found")
 	ErrTaskNotFound          = errors.New("task not found")
 	ErrFileNotFound          = errors.New("file not found")
+	ErrAccountNotFound       = errors.New("LF account not found")
 
 	ErrInvalidInput        = errors.New("invalid input")
 	ErrPayloadTooLarge     = errors.New("payload too large")
@@ -26,6 +27,7 @@ var (
 	ErrUnauthorized        = errors.New("unauthorized")
 	ErrForbidden           = errors.New("forbidden")
 	ErrConflict            = errors.New("resource conflict")
+	ErrEmailInUse          = errors.New("email already belongs to another user")
 	ErrUpstreamUnavailable = errors.New("upstream service unavailable")
 
 	ErrInvalidStateTransition = errors.New("invalid state transition")

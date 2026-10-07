@@ -19,6 +19,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/handler"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/auth"
+	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/authservice"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/clients"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/db"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/email"
@@ -124,7 +125,9 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	// Notifier
 	var notifier domain.Notifier = infrastructure.NewLogNotifier(logger)
 	var emailNotifier *email.Notifier
+	var accounts domain.AccountDirectory
 	if natsConn != nil {
+		accounts = authservice.NewClient(natsConn, 0)
 		emailNotifier = email.NewNotifier(email.NewClient(natsConn, email.Config{}), email.Repositories{
 			Users:        userRepo,
 			Profiles:     userProfileRepo,
@@ -151,7 +154,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		}))
 	}
 	programTermSvc := service.NewProgramTermService(programTermRepo, applicationRepo)
-	programMemberSvc := service.NewProgramMemberService(programMemberRepo, programRepo, userRepo, notifier, cfg.Local.InviteSecret)
+	programMemberSvc := service.NewProgramMemberService(programMemberRepo, programRepo, userRepo, accounts, notifier, cfg.Local.InviteSecret)
 	applicationSvc := service.NewApplicationService(applicationRepo, taskRepo, programTermRepo, programRepo, programMemberRepo, notifier)
 	taskSvc := service.NewTaskService(taskRepo, applicationRepo, programTermRepo, programMemberRepo, notifier)
 	menteeSvc := service.NewMenteeService(menteeRepo)
@@ -336,6 +339,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			r.Delete("/programs/{id}/skills/{skillId}", programH.DeleteSkill)
 
 			// Program members
+			r.Get("/programs/{id}/mentor-candidates", programMemberH.SearchCandidates)
 			r.Post("/programs/{id}/members", programMemberH.Create)
 			r.Patch("/programs/{id}/members/{memberId}", programMemberH.Update)
 			r.Delete("/programs/{id}/members/{memberId}", programMemberH.Delete)

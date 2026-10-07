@@ -75,11 +75,13 @@ type ProgramMember struct {
 type ProgramMemberCreateInput struct {
 	ID     string `json:"id"`
 	UserID string `json:"user_id"`
-	// LFID identifies the user instead of UserID; it must belong to an existing user.
+	// LFID identifies the user instead of UserID; a person who has never signed in
+	// gets a user created from their LF account.
 	LFID       string               `json:"lfid,omitempty"`
 	MemberType MemberType           `json:"member_type"`
 	Status     *ProgramMemberStatus `json:"status,omitempty"`
-	Email      *string              `json:"email,omitempty"`
+	// Email is stored on the member and, when neither UserID nor LFID is set, identifies the invitee's LF account.
+	Email *string `json:"email,omitempty"`
 }
 
 // ProgramMembership is one of the caller's own program_members rows, joined to

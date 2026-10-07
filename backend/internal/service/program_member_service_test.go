@@ -22,17 +22,22 @@ func newMemberSvc(memberRepo *stubMemberRepo, progRepo *stubProgRepo, notifier *
 			return &models.ProgramMember{ProgramID: programID, UserID: userID, MemberType: models.MemberTypeProgramAdmin, Status: &active}, nil
 		}
 	}
-	return service.NewProgramMemberService(memberRepo, progRepo, &stubLFIDUsers{ids: map[string]string{"mentor-lfid": "mentor-1"}}, notifier, "test-secret")
+	return service.NewProgramMemberService(memberRepo, progRepo, &stubLFIDUsers{ids: map[string]string{"mentor-lfid": "mentor-1"}}, nil, notifier, "test-secret")
 }
 
 type stubLFIDUsers struct {
 	stubUserRepository
-	ids map[string]string
+	ids    map[string]string
+	emails map[string]string
 }
 
 func (s *stubLFIDUsers) GetByLFID(_ context.Context, lfid string) (*models.User, error) {
 	if id, ok := s.ids[lfid]; ok {
-		return &models.User{ID: id}, nil
+		u := &models.User{ID: id, LFID: &lfid}
+		if e, ok := s.emails[lfid]; ok {
+			u.Email = &e
+		}
+		return u, nil
 	}
 	return nil, domain.ErrUserNotFound
 }

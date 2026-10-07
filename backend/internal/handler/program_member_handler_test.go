@@ -26,6 +26,14 @@ type stubProgramMemberSvc struct {
 	withdrawMine   func(context.Context, string, string) error
 	delete         func(context.Context, string, string, string) error
 	resendInvite   func(context.Context, string, string, string) error
+	search         func(context.Context, string, string) ([]*models.MentorCandidate, error)
+}
+
+func (s *stubProgramMemberSvc) SearchCandidates(ctx context.Context, programID, query string) ([]*models.MentorCandidate, error) {
+	if s.search != nil {
+		return s.search(ctx, programID, query)
+	}
+	return []*models.MentorCandidate{}, nil
 }
 
 func (s *stubProgramMemberSvc) GetByID(ctx context.Context, id string) (*models.ProgramMember, error) {
@@ -84,6 +92,56 @@ func (s *stubProgramMemberSvc) WithdrawMine(ctx context.Context, id, userID stri
 		return s.withdrawMine(ctx, id, userID)
 	}
 	return nil
+}
+
+func TestProgramMemberHandler_SearchCandidates(t *testing.T) {
+	var programID, query string
+	name := "Ada"
+	h := handler.NewProgramMemberHandler(&stubProgramMemberSvc{
+		search: func(_ context.Context, id, q string) ([]*models.MentorCandidate, error) {
+			programID, query = id, q
+			return []*models.MentorCandidate{{LFID: "ada", Name: &name}}, nil
+		},
+	}, &stubProgramSvc{})
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/p1/mentor-candidates?search=ada%40example.org", nil)
+	r = withPrincipal(requestWithChiParam(r, "id", "p1"), "u1")
+	w := httptest.NewRecorder()
+	h.SearchCandidates(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d; want 200", w.Code)
+	}
+	if programID != "p1" || query != "ada@example.org" {
+		t.Errorf("program, query = %q, %q; want p1, ada@example.org", programID, query)
+	}
+	if body := w.Body.String(); !strings.Contains(body, `"lfid":"ada"`) || strings.Contains(body, "email") {
+		t.Errorf("body = %s; want the candidate without email", body)
+	}
+}
+
+func TestProgramMemberHandler_SearchCandidates_Errors(t *testing.T) {
+	for name, tc := range map[string]struct {
+		principal bool
+		err       error
+		want      int
+	}{
+		"no principal":      {false, nil, http.StatusUnauthorized},
+		"short query":       {true, domain.ErrInvalidInput, http.StatusBadRequest},
+		"auth-service down": {true, domain.ErrUpstreamUnavailable, http.StatusServiceUnavailable},
+	} {
+		h := handler.NewProgramMemberHandler(&stubProgramMemberSvc{
+			search: func(context.Context, string, string) ([]*models.MentorCandidate, error) { return nil, tc.err },
+		}, &stubProgramSvc{})
+		r := requestWithChiParam(httptest.NewRequest(http.MethodGet, "/v1/programs/p1/mentor-candidates?search=a", nil), "id", "p1")
+		if tc.principal {
+			r = withPrincipal(r, "u1")
+		}
+		w := httptest.NewRecorder()
+		h.SearchCandidates(w, r)
+		if w.Code != tc.want {
+			t.Errorf("%s: got %d; want %d", name, w.Code, tc.want)
+		}
+	}
 }
 
 // The public roster is active members only, and the caller must not be able to
