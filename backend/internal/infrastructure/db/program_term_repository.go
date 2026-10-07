@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
@@ -284,6 +285,67 @@ func lockProgramAndCheckOpenTerms(ctx context.Context, tx pgx.Tx, programID, exc
 	}
 	if count >= 4 {
 		return fmt.Errorf("%w: program already has %d open term(s) (max %d)", domain.ErrStateLocked, count, 4)
+	}
+	return nil
+}
+
+// replaceOpenTerms makes terms the program's full set of open terms: entries with
+// an ID update that open term, entries without one are created open, and unlisted
+// open terms are soft-deleted. Closed terms are untouched. It rejects an ID that is
+// not an open term of the program and removing a term that has applications.
+// The caller must hold the program row lock, which open-term creates also take.
+func replaceOpenTerms(ctx context.Context, tx pgx.Tx, programID string, terms []models.ProgramOpenTermInput) error {
+	keep := make([]string, 0, len(terms))
+	for _, term := range terms {
+		if term.ID != "" {
+			keep = append(keep, term.ID)
+		}
+	}
+	// Lock the terms being removed so no application can be added to them meanwhile.
+	rows, err := tx.Query(ctx, `
+		SELECT id FROM program_terms
+		WHERE program_id = $1 AND status = 'open' AND NOT (id = ANY($2::uuid[]))
+		FOR UPDATE`, programID, keep)
+	if err != nil {
+		return fmt.Errorf("lock removed open terms: %w", err)
+	}
+	removed, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return fmt.Errorf("lock removed open terms: %w", err)
+	}
+	if len(removed) > 0 {
+		var withApplications int
+		if err := tx.QueryRow(ctx, `SELECT COUNT(DISTINCT program_term_id) FROM applications WHERE program_term_id = ANY($1::uuid[])`, removed).Scan(&withApplications); err != nil {
+			return fmt.Errorf("count applications for removed terms: %w", err)
+		}
+		if withApplications > 0 {
+			return fmt.Errorf("%w: %d removed term(s) have applications", domain.ErrStateLocked, withApplications)
+		}
+		if _, err := tx.Exec(ctx, `UPDATE program_terms SET status = 'deleted' WHERE id = ANY($1::uuid[])`, removed); err != nil {
+			return fmt.Errorf("remove open terms: %w", err)
+		}
+	}
+	for _, term := range terms {
+		if term.ID == "" {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO program_terms (id, program_id, name, status, start_date_time, end_date_time, application_start_date, application_end_date)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+				uuid.NewString(), programID, term.Name, models.ProgramTermStatusOpen,
+				term.StartDateTime, term.EndDateTime, term.ApplicationStartDate, term.ApplicationEndDate); err != nil {
+				return fmt.Errorf("add open term: %w", err)
+			}
+			continue
+		}
+		cmd, err := tx.Exec(ctx, `
+			UPDATE program_terms SET name = $3, start_date_time = $4, end_date_time = $5, application_start_date = $6, application_end_date = $7
+			WHERE id = $1 AND program_id = $2 AND status = 'open'`,
+			term.ID, programID, term.Name, term.StartDateTime, term.EndDateTime, term.ApplicationStartDate, term.ApplicationEndDate)
+		if err != nil {
+			return fmt.Errorf("update open term %s: %w", term.ID, err)
+		}
+		if cmd.RowsAffected() == 0 {
+			return fmt.Errorf("%w: term %s is not an open term of this program", domain.ErrInvalidInput, term.ID)
+		}
 	}
 	return nil
 }
