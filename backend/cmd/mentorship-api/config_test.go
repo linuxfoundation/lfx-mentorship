@@ -33,6 +33,7 @@ func TestLoadEmailConfig(t *testing.T) {
 		"display-name hr inbox":       {nats: true, override: map[string]string{"EMAIL_HR_INBOX": "HR <hr@linuxfoundation.org>"}, wantErr: "EMAIL_HR_INBOX"},
 		"allowed recipients":          {nats: true, override: map[string]string{"EMAIL_ALLOWED_RECIPIENTS": " a@linuxfoundation.org, b@contractor.linuxfoundation.org ,"}},
 		"invalid allowed recipient":   {nats: true, override: map[string]string{"EMAIL_ALLOWED_RECIPIENTS": "a@linuxfoundation.org,not-an-address"}, wantErr: "EMAIL_ALLOWED_RECIPIENTS"},
+		"comma-only recipients":       {nats: true, override: map[string]string{"EMAIL_ALLOWED_RECIPIENTS": " , "}, wantErr: "EMAIL_ALLOWED_RECIPIENTS"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			for k, v := range valid {

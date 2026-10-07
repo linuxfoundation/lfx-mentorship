@@ -286,7 +286,8 @@ func loadEmailConfig(natsConfigured bool) (EmailConfig, error) {
 	if addr, err := mail.ParseAddress(cfg.HRInbox); err != nil || addr.Address != cfg.HRInbox {
 		return EmailConfig{}, fmt.Errorf("EMAIL_HR_INBOX must be a bare email address when FGA_NATS_URL is set")
 	}
-	for r := range strings.SplitSeq(os.Getenv("EMAIL_ALLOWED_RECIPIENTS"), ",") {
+	allowed := os.Getenv("EMAIL_ALLOWED_RECIPIENTS")
+	for r := range strings.SplitSeq(allowed, ",") {
 		if r = strings.TrimSpace(r); r == "" {
 			continue
 		}
@@ -294,6 +295,10 @@ func loadEmailConfig(natsConfigured bool) (EmailConfig, error) {
 			return EmailConfig{}, fmt.Errorf("EMAIL_ALLOWED_RECIPIENTS must be a comma-separated list of bare email addresses")
 		}
 		cfg.AllowedRecipients = append(cfg.AllowedRecipients, r)
+	}
+	// A set value with no addresses would mean "send to everyone"; fail closed instead.
+	if strings.TrimSpace(allowed) != "" && len(cfg.AllowedRecipients) == 0 {
+		return EmailConfig{}, fmt.Errorf("EMAIL_ALLOWED_RECIPIENTS is set but lists no addresses")
 	}
 	return cfg, nil
 }

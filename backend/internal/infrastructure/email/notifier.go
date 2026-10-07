@@ -110,6 +110,20 @@ func recipientSet(addrs []string) map[string]bool {
 	return set
 }
 
+// recipientAllowed reports whether the lowercased addr may receive mail. A plus-addressed
+// recipient (user+tag@domain) matches its listed base address, so test accounts need no listing.
+func (n *Notifier) recipientAllowed(addr string) bool {
+	if n.allowedRecipients == nil || n.allowedRecipients[addr] {
+		return true
+	}
+	at := strings.LastIndex(addr, "@")
+	if at < 0 {
+		return false
+	}
+	base, _, tagged := strings.Cut(addr[:at], "+")
+	return tagged && n.allowedRecipients[base+addr[at:]]
+}
+
 // Wait blocks until in-flight notifications finish or ctx ends.
 func (n *Notifier) Wait(ctx context.Context) error {
 	done := make(chan struct{})
@@ -377,7 +391,7 @@ func (n *Notifier) dispatch(ctx context.Context, notification string, build func
 				continue
 			}
 			seen[addr] = true
-			if n.allowedRecipients != nil && !n.allowedRecipients[addr] {
+			if !n.recipientAllowed(addr) {
 				n.logger.InfoContext(ctx, "email notification suppressed", "notification", notification)
 				continue
 			}

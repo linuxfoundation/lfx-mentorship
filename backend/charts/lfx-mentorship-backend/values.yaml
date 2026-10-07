@@ -158,7 +158,8 @@ config:
   # LF staff HR inbox that receives every mentee acceptance.
   EMAIL_HR_INBOX: ""
   # Comma-separated addresses that are the only ones to receive email; set while
-  # testing on real data so real users get nothing. Empty sends to everyone.
+  # testing on real data so real users get nothing. user+tag@ variants of a
+  # listed address match too. Empty sends to everyone.
   EMAIL_ALLOWED_RECIPIENTS: ""
   LEDGER_BASE_URL: ""
   # Crowdfunding is reached through the LFX v2 gateway at

@@ -531,3 +531,21 @@ func TestNotify_AllowedRecipientsSuppressesOthers(t *testing.T) {
 		t.Fatalf("sent = %+v, want only the allowed mentee; the admin and HR inbox are suppressed", sent)
 	}
 }
+
+func TestRecipientAllowed(t *testing.T) {
+	n := &Notifier{allowedRecipients: recipientSet([]string{"Tester@LinuxFoundation.org", "pinned+qa@linuxfoundation.org"})}
+	for addr, want := range map[string]bool{
+		"tester@linuxfoundation.org":            true,
+		"tester+mentee1@linuxfoundation.org":    true,
+		"tester@contractor.linuxfoundation.org": false,
+		"other@linuxfoundation.org":             false,
+		"other+tester@linuxfoundation.org":      false,
+		"pinned+qa@linuxfoundation.org":         true,
+		"pinned@linuxfoundation.org":            false,
+		"pinned+dev@linuxfoundation.org":        false,
+	} {
+		if got := n.recipientAllowed(addr); got != want {
+			t.Errorf("recipientAllowed(%q) = %v, want %v", addr, got, want)
+		}
+	}
+}
