@@ -518,6 +518,110 @@ func TestProgramService_Update_OmittedSkillsLeftUnchanged(t *testing.T) {
 	}
 }
 
+// replacementTerm returns a term entry with a valid application window and term dates.
+func replacementTerm(id, name string) models.ProgramTermReplaceInput {
+	appStart := time.Now().Add(24 * time.Hour)
+	appEnd, start, end := appStart.Add(24*time.Hour), appStart.Add(48*time.Hour), appStart.Add(30*24*time.Hour)
+	return models.ProgramTermReplaceInput{ID: id, Name: name, ApplicationStartDate: &appStart, ApplicationEndDate: &appEnd, StartDateTime: &start, EndDateTime: &end}
+}
+
+// historicalTerm returns a closed term that ended in the past, with microsecond timestamps.
+func historicalTerm(id string) *models.ProgramTerm {
+	appStart := time.Date(2025, 1, 1, 0, 0, 0, 123456000, time.UTC)
+	appEnd, start, end := appStart.Add(24*time.Hour), appStart.Add(48*time.Hour), appStart.Add(30*24*time.Hour)
+	return &models.ProgramTerm{ID: id, ProgramID: "prog-1", Name: "Spring 2025", Status: models.ProgramTermStatusClosed, ApplicationStartDate: &appStart, ApplicationEndDate: &appEnd, StartDateTime: &start, EndDateTime: &end}
+}
+
+func TestProgramService_Update_PassesTermsToRepository(t *testing.T) {
+	var captured models.ProgramUpdateInput
+	repo := &stubProgRepo{update: func(_ context.Context, _ string, input models.ProgramUpdateInput) (*models.Program, error) {
+		captured = input
+		return &models.Program{ID: "prog-1"}, nil
+	}}
+	terms := &stubTermRepo{listActive: func(context.Context, string) ([]*models.ProgramTerm, error) {
+		return []*models.ProgramTerm{{ID: "term-1", ProgramID: "prog-1", Name: "Fall", Status: models.ProgramTermStatusOpen}}, nil
+	}}
+	svc := newProgramSvc(repo, terms, &stubAppRepo{})
+	input := models.ProgramUpdateInput{Terms: []models.ProgramTermReplaceInput{replacementTerm("term-1", " Fall 2026 "), replacementTerm("", "Spring 2027")}}
+	if _, err := svc.Update(context.Background(), "prog-1", input); err != nil {
+		t.Fatal(err)
+	}
+	if len(captured.Terms) != 2 || captured.Terms[0].ID != "term-1" || captured.Terms[0].Name != "Fall 2026" || captured.Terms[1].ID != "" {
+		t.Fatalf("terms=%+v", captured.Terms)
+	}
+}
+
+func TestProgramService_Update_AcceptsUnchangedHistoricalTerm(t *testing.T) {
+	called := false
+	repo := &stubProgRepo{update: func(context.Context, string, models.ProgramUpdateInput) (*models.Program, error) {
+		called = true
+		return &models.Program{ID: "prog-1"}, nil
+	}}
+	current := historicalTerm("term-old")
+	terms := &stubTermRepo{listActive: func(context.Context, string) ([]*models.ProgramTerm, error) {
+		return []*models.ProgramTerm{current}, nil
+	}}
+	// Echo the term back as a browser would: millisecond timestamps.
+	ms := func(v *time.Time) *time.Time { r := v.Truncate(time.Millisecond); return &r }
+	echoed := models.ProgramTermReplaceInput{ID: current.ID, Name: current.Name, ApplicationStartDate: ms(current.ApplicationStartDate), ApplicationEndDate: ms(current.ApplicationEndDate), StartDateTime: ms(current.StartDateTime), EndDateTime: ms(current.EndDateTime)}
+	svc := newProgramSvc(repo, terms, &stubAppRepo{})
+	if _, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Terms: []models.ProgramTermReplaceInput{echoed, replacementTerm("", "Fall 2026")}}); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("repository update was not called")
+	}
+}
+
+func TestProgramService_Update_RejectsInvalidTerms(t *testing.T) {
+	current := []*models.ProgramTerm{
+		{ID: "term-1", ProgramID: "prog-1", Name: "Fall", Status: models.ProgramTermStatusOpen},
+		historicalTerm("term-old"),
+	}
+	badDates := replacementTerm("", "Bad")
+	badDates.EndDateTime = badDates.StartDateTime
+	editedHistorical := replacementTerm("term-old", "Renamed")
+
+	tests := []struct {
+		name  string
+		terms []models.ProgramTermReplaceInput
+		want  error
+	}{
+		{"empty set", []models.ProgramTermReplaceInput{}, domain.ErrInvalidInput},
+		{"blank name", []models.ProgramTermReplaceInput{replacementTerm("", "  ")}, domain.ErrInvalidInput},
+		{"invalid dates", []models.ProgramTermReplaceInput{badDates}, domain.ErrInvalidInput},
+		{"unknown term", []models.ProgramTermReplaceInput{replacementTerm("term-other", "Other")}, domain.ErrProgramTermNotFound},
+		{"duplicate term", []models.ProgramTermReplaceInput{replacementTerm("term-1", "Fall"), replacementTerm("term-1", "Fall")}, domain.ErrInvalidInput},
+		{"edited historical term", []models.ProgramTermReplaceInput{editedHistorical}, domain.ErrStateLocked},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &stubProgRepo{update: func(context.Context, string, models.ProgramUpdateInput) (*models.Program, error) {
+				t.Fatal("repository must not be called for an invalid term set")
+				return nil, nil
+			}}
+			terms := &stubTermRepo{listActive: func(context.Context, string) ([]*models.ProgramTerm, error) { return current, nil }}
+			svc := newProgramSvc(repo, terms, &stubAppRepo{})
+			_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Terms: tt.terms})
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("expected %v, got %v", tt.want, err)
+			}
+		})
+	}
+}
+
+func TestProgramService_Update_OmittedTermsNotLoaded(t *testing.T) {
+	terms := &stubTermRepo{listActive: func(context.Context, string) ([]*models.ProgramTerm, error) {
+		t.Fatal("terms must not be loaded when the update omits them")
+		return nil, nil
+	}}
+	svc := newProgramSvc(&stubProgRepo{}, terms, &stubAppRepo{})
+	name := "Renamed"
+	if _, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Name: &name}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestProgramService_Update_ChangesProject(t *testing.T) {
 	var captured models.ProgramUpdateInput
 	repo := &stubProgRepo{update: func(_ context.Context, _ string, input models.ProgramUpdateInput) (*models.Program, error) {

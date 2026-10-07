@@ -144,6 +144,7 @@ type stubTermRepo struct {
 	getByID            func(context.Context, string) (*models.ProgramTerm, error)
 	getByProgramAndID  func(context.Context, string, string) (*models.ProgramTerm, error)
 	listByProgram      func(context.Context, string, models.ProgramTermFilter) ([]*models.ProgramTerm, *models.PaginationMeta, error)
+	listActive         func(context.Context, string) ([]*models.ProgramTerm, error)
 	create             func(context.Context, models.ProgramTermCreateInput) (*models.ProgramTerm, error)
 	update             func(context.Context, string, models.ProgramTermUpdateInput) (*models.ProgramTerm, error)
 	delete             func(context.Context, string) error
@@ -170,6 +171,12 @@ func (m *stubTermRepo) ListByProgram(ctx context.Context, id string, f models.Pr
 }
 func (m *stubTermRepo) ListManagementByProgram(context.Context, string, models.ProgramTermFilter) ([]*models.ProgramTermManagementRow, *models.PaginationMeta, error) {
 	return []*models.ProgramTermManagementRow{}, &models.PaginationMeta{}, nil
+}
+func (m *stubTermRepo) ListActiveByProgram(ctx context.Context, programID string) ([]*models.ProgramTerm, error) {
+	if m.listActive != nil {
+		return m.listActive(ctx, programID)
+	}
+	return []*models.ProgramTerm{}, nil
 }
 func (m *stubTermRepo) Create(ctx context.Context, in models.ProgramTermCreateInput) (*models.ProgramTerm, error) {
 	if m.create != nil {

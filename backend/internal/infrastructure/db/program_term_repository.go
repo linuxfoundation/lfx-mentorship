@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
@@ -17,6 +18,9 @@ import (
 )
 
 var programTermTracer = otel.Tracer("program-terms-db")
+
+// maxOpenTermsPerProgram is the maximum number of concurrently open terms allowed (FR-003).
+const maxOpenTermsPerProgram = 4
 
 // ProgramTermRepository implements domain.ProgramTermRepository against PostgreSQL.
 type ProgramTermRepository struct {
@@ -177,6 +181,31 @@ func (r *ProgramTermRepository) ListManagementByProgram(ctx context.Context, pro
 	return result, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, rows.Err()
 }
 
+// ListActiveByProgram returns every non-deleted term of a program, unpaginated.
+func (r *ProgramTermRepository) ListActiveByProgram(ctx context.Context, programID string) ([]*models.ProgramTerm, error) {
+	ctx, span := programTermTracer.Start(ctx, "db.program_terms.ListActiveByProgram")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.program_id", programID))
+
+	rows, err := r.pool.Query(ctx, `SELECT`+programTermCols+` FROM program_terms WHERE program_id = $1 AND status <> 'deleted' ORDER BY start_date_time DESC NULLS LAST`, programID)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("list active program terms: %w", err)
+	}
+	defer rows.Close()
+
+	terms := []*models.ProgramTerm{}
+	for rows.Next() {
+		t, err := scanProgramTerm(rows)
+		if err != nil {
+			span.RecordError(err)
+			return nil, fmt.Errorf("scan program term: %w", err)
+		}
+		terms = append(terms, t)
+	}
+	return terms, rows.Err()
+}
+
 // Create inserts a new program term and returns the persisted record.
 func (r *ProgramTermRepository) Create(ctx context.Context, input models.ProgramTermCreateInput) (*models.ProgramTerm, error) {
 	ctx, span := programTermTracer.Start(ctx, "db.program_terms.Create")
@@ -282,8 +311,66 @@ func lockProgramAndCheckOpenTerms(ctx context.Context, tx pgx.Tx, programID, exc
 	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM program_terms WHERE program_id = $1 AND status = 'open' AND ($2 = '' OR id::text <> $2)`, programID, excludeTermID).Scan(&count); err != nil {
 		return fmt.Errorf("count open terms for write: %w", err)
 	}
-	if count >= 4 {
-		return fmt.Errorf("%w: program already has %d open term(s) (max %d)", domain.ErrStateLocked, count, 4)
+	if count >= maxOpenTermsPerProgram {
+		return fmt.Errorf("%w: program already has %d open term(s) (max %d)", domain.ErrStateLocked, count, maxOpenTermsPerProgram)
+	}
+	return nil
+}
+
+// replaceProgramTerms makes terms the program's full term set: entries with an ID
+// update that term, entries without one are created open, and unlisted terms are
+// soft-deleted. It rejects removing a term that has applications and a result
+// above the open-term cap. The caller must hold the program row lock.
+func replaceProgramTerms(ctx context.Context, tx pgx.Tx, programID string, terms []models.ProgramTermReplaceInput) error {
+	keep := make([]string, 0, len(terms))
+	for _, term := range terms {
+		if term.ID != "" {
+			keep = append(keep, term.ID)
+		}
+	}
+	var withApplications int
+	if err := tx.QueryRow(ctx, `
+		SELECT COUNT(DISTINCT t.id) FROM program_terms t
+		JOIN applications a ON a.program_term_id = t.id
+		WHERE t.program_id = $1 AND t.status <> 'deleted' AND NOT (t.id = ANY($2::uuid[]))`, programID, keep).Scan(&withApplications); err != nil {
+		return fmt.Errorf("count applications for removed terms: %w", err)
+	}
+	if withApplications > 0 {
+		return fmt.Errorf("%w: %d removed term(s) have applications", domain.ErrStateLocked, withApplications)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE program_terms SET status = 'deleted'
+		WHERE program_id = $1 AND status <> 'deleted' AND NOT (id = ANY($2::uuid[]))`, programID, keep); err != nil {
+		return fmt.Errorf("remove program terms: %w", err)
+	}
+	for _, term := range terms {
+		if term.ID == "" {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO program_terms (id, program_id, name, status, start_date_time, end_date_time, application_start_date, application_end_date)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+				uuid.NewString(), programID, term.Name, models.ProgramTermStatusOpen,
+				term.StartDateTime, term.EndDateTime, term.ApplicationStartDate, term.ApplicationEndDate); err != nil {
+				return fmt.Errorf("add program term: %w", err)
+			}
+			continue
+		}
+		cmd, err := tx.Exec(ctx, `
+			UPDATE program_terms SET name = $3, start_date_time = $4, end_date_time = $5, application_start_date = $6, application_end_date = $7
+			WHERE id = $1 AND program_id = $2 AND status <> 'deleted'`,
+			term.ID, programID, term.Name, term.StartDateTime, term.EndDateTime, term.ApplicationStartDate, term.ApplicationEndDate)
+		if err != nil {
+			return fmt.Errorf("update program term %s: %w", term.ID, err)
+		}
+		if cmd.RowsAffected() == 0 {
+			return fmt.Errorf("%w: term %s", domain.ErrProgramTermNotFound, term.ID)
+		}
+	}
+	var open int
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM program_terms WHERE program_id = $1 AND status = 'open'`, programID).Scan(&open); err != nil {
+		return fmt.Errorf("count open terms after replace: %w", err)
+	}
+	if open > maxOpenTermsPerProgram {
+		return fmt.Errorf("%w: program would have %d open terms (max %d)", domain.ErrStateLocked, open, maxOpenTermsPerProgram)
 	}
 	return nil
 }

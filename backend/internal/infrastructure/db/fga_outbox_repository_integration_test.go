@@ -1032,6 +1032,68 @@ func TestProgramUpdateIntegration_ReplacesSkills(t *testing.T) {
 	}
 }
 
+func TestProgramUpdateIntegration_ReplacesTerms(t *testing.T) {
+	pool := integrationPool(t)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+	const userID = "00000000-0000-0000-0000-000000000070"
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name) VALUES ($1, 'terms-admin', 'Terms Admin')`, userID); err != nil {
+		t.Fatal(err)
+	}
+	appStart := time.Now().Add(24 * time.Hour).UTC().Truncate(time.Microsecond)
+	appEnd, start, end := appStart.Add(24*time.Hour), appStart.Add(48*time.Hour), appStart.Add(30*24*time.Hour)
+	term := func(id, name string) models.ProgramTermReplaceInput {
+		return models.ProgramTermReplaceInput{ID: id, Name: name, ApplicationStartDate: &appStart, ApplicationEndDate: &appEnd, StartDateTime: &start, EndDateTime: &end}
+	}
+	const keptID, removedID = "00000000-0000-0000-0000-000000000072", "00000000-0000-0000-0000-000000000073"
+	repo := NewProgramRepository(pool)
+	projectUID := "00000000-0000-0000-0000-000000000099"
+	program, err := repo.CreateEnrollment(ctx, models.ProgramEnrollmentInput{
+		Program: models.ProgramCreateInput{ID: "00000000-0000-0000-0000-000000000071", CreatorUserID: userID, ProjectUID: &projectUID, Name: "Terms", Slug: "terms", Status: models.ProgramStatusPending},
+		Terms: []models.ProgramTermCreateInput{
+			{ID: keptID, Name: "Fall", ApplicationStartDate: &appStart, ApplicationEndDate: &appEnd, StartDateTime: &start, EndDateTime: &end},
+			{ID: removedID, Name: "Winter", ApplicationStartDate: &appStart, ApplicationEndDate: &appEnd, StartDateTime: &start, EndDateTime: &end},
+		},
+		Skills: []string{"Go"},
+	})
+	if err != nil {
+		t.Fatalf("create enrollment: %v", err)
+	}
+	terms := NewProgramTermRepository(pool)
+
+	if _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Terms: []models.ProgramTermReplaceInput{term(keptID, "Fall 2026"), term("", "Spring 2027")}}); err != nil {
+		t.Fatalf("replace terms: %v", err)
+	}
+	active, err := terms.ListActiveByProgram(ctx, program.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, activeTerm := range active {
+		got[activeTerm.Name] = activeTerm.ID
+	}
+	if len(got) != 2 || got["Fall 2026"] != keptID || got["Spring 2027"] == "" {
+		t.Fatalf("terms after replace = %v; want Fall 2026 (id %s) and a new Spring 2027", got, keptID)
+	}
+	if removed, err := terms.GetByID(ctx, removedID); err != nil || removed.Status != models.ProgramTermStatusDeleted {
+		t.Fatalf("removed term = %+v, %v; want status deleted", removed, err)
+	}
+
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ('00000000-0000-0000-0000-000000000074', $1, $2, 'mentee', 'pending')`, keptID, userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Terms: []models.ProgramTermReplaceInput{term(got["Spring 2027"], "Spring 2027")}}); !errors.Is(err, domain.ErrStateLocked) {
+		t.Fatalf("removing a term with applications: got %v; want ErrStateLocked", err)
+	}
+
+	overCap := []models.ProgramTermReplaceInput{term(keptID, "Fall 2026"), term(got["Spring 2027"], "Spring 2027"), term("", "A"), term("", "B"), term("", "C")}
+	if _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Terms: overCap}); !errors.Is(err, domain.ErrStateLocked) {
+		t.Fatalf("exceeding the open-term cap: got %v; want ErrStateLocked", err)
+	}
+	if active, err := terms.ListActiveByProgram(ctx, program.ID); err != nil || len(active) != 2 {
+		t.Fatalf("terms after rejected updates = %d, %v; want 2 unchanged", len(active), err)
+	}
+}
+
 func TestProgramUpdateIntegration_ChangesProject(t *testing.T) {
 	pool := integrationPool(t)
 	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})

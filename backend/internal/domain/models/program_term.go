@@ -46,6 +46,12 @@ type ProgramTerm struct {
 	UpdatedOn            time.Time         `json:"updated_on"`
 }
 
+// IsHistorical reports whether the term is closed and has ended; such terms
+// can no longer be edited.
+func (t *ProgramTerm) IsHistorical(now time.Time) bool {
+	return t.Status == ProgramTermStatusClosed && t.EndDateTime != nil && now.After(*t.EndDateTime)
+}
+
 // DiscoveryLabel returns the public-facing term state label per FR-017.
 // Mapping: open+window future→"Coming Soon"; open+in window→"Apply Now";
 // open+window past→"In Progress"; closed/deleted/nil dates→"Completed".
@@ -76,6 +82,18 @@ type ProgramTermCreateInput struct {
 	EndDateTime          *time.Time        `json:"end_date_time,omitempty"`
 	ApplicationStartDate *time.Time        `json:"application_start_date,omitempty"`
 	ApplicationEndDate   *time.Time        `json:"application_end_date,omitempty"`
+}
+
+// ProgramTermReplaceInput is one entry of the full term set sent on a program
+// update: an entry with ID updates that term, one without creates a new open term.
+// Status is not accepted; term lifecycle changes use the close and reopen routes.
+type ProgramTermReplaceInput struct {
+	ID                   string     `json:"id,omitempty"`
+	Name                 string     `json:"name"`
+	StartDateTime        *time.Time `json:"start_date_time,omitempty"`
+	EndDateTime          *time.Time `json:"end_date_time,omitempty"`
+	ApplicationStartDate *time.Time `json:"application_start_date,omitempty"`
+	ApplicationEndDate   *time.Time `json:"application_end_date,omitempty"`
 }
 
 // ProgramTermUpdateInput is the request body for updating a program term.

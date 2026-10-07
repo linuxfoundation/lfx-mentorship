@@ -478,6 +478,12 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 			return nil, fmt.Errorf("%w: at least one skill is required", domain.ErrInvalidInput)
 		}
 	}
+	if input.Terms != nil {
+		if err := s.validateReplacementTerms(ctx, id, input.Terms); err != nil {
+			span.RecordError(err)
+			return nil, err
+		}
+	}
 
 	if input.Status != nil {
 		current, err := s.repo.GetByID(ctx, id)
@@ -550,6 +556,72 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 		return nil, fmt.Errorf("update program: %w", err)
 	}
 	return p, nil
+}
+
+// validateReplacementTerms checks a program update's full term set against the
+// program's current terms and trims term names in place. Listed IDs must be
+// current terms of the program, each listed once. Changed and new terms must
+// have valid dates; a historical closed term may only be listed unchanged, so a
+// client can send it back as-is. Removal of unlisted terms and the open-term cap
+// are enforced by the repository inside the update transaction.
+func (s *ProgramService) validateReplacementTerms(ctx context.Context, programID string, terms []models.ProgramTermReplaceInput) error {
+	if len(terms) == 0 {
+		return fmt.Errorf("%w: at least one term is required", domain.ErrInvalidInput)
+	}
+	current, err := s.termRepo.ListActiveByProgram(ctx, programID)
+	if err != nil {
+		return fmt.Errorf("list program terms for update: %w", err)
+	}
+	byID := make(map[string]*models.ProgramTerm, len(current))
+	for _, term := range current {
+		byID[term.ID] = term
+	}
+	listed := make(map[string]struct{}, len(terms))
+	now := time.Now()
+	for i := range terms {
+		term := &terms[i]
+		term.Name = strings.TrimSpace(term.Name)
+		if term.Name == "" {
+			return fmt.Errorf("%w: term name is required", domain.ErrInvalidInput)
+		}
+		if term.ID != "" {
+			existing, ok := byID[term.ID]
+			if !ok {
+				return fmt.Errorf("%w: term %s", domain.ErrProgramTermNotFound, term.ID)
+			}
+			if _, dup := listed[term.ID]; dup {
+				return fmt.Errorf("%w: term %s is listed more than once", domain.ErrInvalidInput, term.ID)
+			}
+			listed[term.ID] = struct{}{}
+			if termUnchanged(existing, *term) {
+				continue
+			}
+			if existing.IsHistorical(now) {
+				return fmt.Errorf("%w: historical closed term %s cannot be edited", domain.ErrStateLocked, term.ID)
+			}
+		}
+		if err := validateTermDates(term.StartDateTime, term.EndDateTime, term.ApplicationStartDate, term.ApplicationEndDate); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// termUnchanged reports whether a replacement entry carries the term's current
+// name and dates. Dates are compared to the millisecond because browser clients
+// round-trip timestamps through JavaScript Date, which drops microseconds.
+func termUnchanged(current *models.ProgramTerm, in models.ProgramTermReplaceInput) bool {
+	sameTime := func(a, b *time.Time) bool {
+		if a == nil || b == nil {
+			return a == b
+		}
+		return a.Truncate(time.Millisecond).Equal(b.Truncate(time.Millisecond))
+	}
+	return current.Name == in.Name &&
+		sameTime(current.StartDateTime, in.StartDateTime) &&
+		sameTime(current.EndDateTime, in.EndDateTime) &&
+		sameTime(current.ApplicationStartDate, in.ApplicationStartDate) &&
+		sameTime(current.ApplicationEndDate, in.ApplicationEndDate)
 }
 
 // normalizeSkills trims skills and drops blanks and case-insensitive duplicates,

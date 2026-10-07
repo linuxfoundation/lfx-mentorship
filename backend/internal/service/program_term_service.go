@@ -132,7 +132,7 @@ func (s *ProgramTermService) Update(ctx context.Context, id string, input models
 	if err != nil {
 		return nil, fmt.Errorf("get term for update: %w", err)
 	}
-	if current.Status == models.ProgramTermStatusClosed && current.EndDateTime != nil && time.Now().After(*current.EndDateTime) {
+	if current.IsHistorical(time.Now()) {
 		return nil, fmt.Errorf("%w: historical closed terms cannot be edited", domain.ErrStateLocked)
 	}
 
