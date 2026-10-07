@@ -820,6 +820,32 @@ func TestProgramHandler_Update_PassesSkills(t *testing.T) {
 	}
 }
 
+func TestProgramHandler_Update_PassesProject(t *testing.T) {
+	var captured models.ProgramUpdateInput
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		update: func(_ context.Context, _ string, input models.ProgramUpdateInput) (*models.Program, error) {
+			captured = input
+			return &models.Program{ID: "p1"}, nil
+		},
+	})
+	body := `{"project_uid":"7cad5a8d-19d0-41a4-81a6-043453daf9ee","project_slug":"new-project","project_name":"New Project","project_logo_url":"https://example.com/logo.svg"}`
+	r := httptest.NewRequest(http.MethodPatch, "/v1/programs/p1", strings.NewReader(body))
+	r = requestWithPrincipal(r, "admin-1")
+	r = requestWithChiParam(r, "id", "p1")
+	w := httptest.NewRecorder()
+	h.Update(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d; want 200: %s", w.Code, w.Body.String())
+	}
+	if captured.ProjectUID == nil || *captured.ProjectUID != "7cad5a8d-19d0-41a4-81a6-043453daf9ee" ||
+		captured.ProjectSlug == nil || *captured.ProjectSlug != "new-project" ||
+		captured.ProjectName == nil || *captured.ProjectName != "New Project" ||
+		captured.ProjectLogoURL == nil || *captured.ProjectLogoURL != "https://example.com/logo.svg" {
+		t.Fatalf("project fields = %v %v %v %v", captured.ProjectUID, captured.ProjectSlug, captured.ProjectName, captured.ProjectLogoURL)
+	}
+}
+
 func TestProgramHandler_Create_MapsIndustry(t *testing.T) {
 	var captured models.ProgramEnrollmentInput
 	h := handler.NewProgramHandler(&stubProgramSvc{

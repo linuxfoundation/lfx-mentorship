@@ -80,6 +80,12 @@ func enqueueProgramIndex(ctx context.Context, tx pgx.Tx, program *models.Program
 		WHERE program_id = $1`, program.ID).Scan(&document.Stats.Mentors, &document.Stats.Mentees, &document.Stats.Graduated); err != nil {
 		return fmt.Errorf("resolve program index stats: %w", err)
 	}
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE(array_agg(skill ORDER BY skill), ARRAY[]::text[])
+		FROM program_skills
+		WHERE program_id = $1`, program.ID).Scan(&document.Skills); err != nil {
+		return fmt.Errorf("resolve program index skills: %w", err)
+	}
 	data, err := json.Marshal(document)
 	if err != nil {
 		return err
@@ -959,6 +965,14 @@ func (r *ProgramRepository) Update(ctx context.Context, id string, input models.
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("update program: %w", err)
+	}
+	if input.ProjectUID != nil {
+		if _, err := tx.Exec(ctx, `
+			UPDATE programs SET lf_project_uid = $2, lf_project_slug = $3, lf_project_name = $4, lf_project_logo_url = $5
+			WHERE id = $1`, updatedID, input.ProjectUID, input.ProjectSlug, input.ProjectName, input.ProjectLogoURL); err != nil {
+			span.RecordError(err)
+			return nil, fmt.Errorf("update program project: %w", err)
+		}
 	}
 	if input.Skills != nil {
 		if err := replaceProgramSkills(ctx, tx, updatedID, input.Skills); err != nil {

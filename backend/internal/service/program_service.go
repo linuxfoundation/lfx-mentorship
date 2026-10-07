@@ -278,7 +278,7 @@ func (s *ProgramService) Create(ctx context.Context, input models.ProgramCreateI
 	}
 	canonicalProjectUID := projectUID.String()
 	input.ProjectUID = &canonicalProjectUID
-	if err := normalizeProjectMetadata(&input); err != nil {
+	if input.ProjectSlug, input.ProjectName, input.ProjectLogoURL, err = normalizeProjectMetadata(input.ProjectSlug, input.ProjectName, input.ProjectLogoURL); err != nil {
 		return nil, err
 	}
 	input.Status = models.ProgramStatusPending // programs always start as pending
@@ -361,16 +361,8 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 		return nil, fmt.Errorf("%w: program name is already in use", domain.ErrConflict)
 	}
 	for _, value := range []*string{input.Program.RepoLink, input.Program.WebsiteURL, input.Program.CodeOfConduct, input.Program.ProjectLogoURL} {
-		if value == nil || strings.TrimSpace(*value) == "" {
-			continue
-		}
-		parsed, err := url.ParseRequestURI(*value)
-		if err != nil || parsed.Host == "" {
-			return nil, fmt.Errorf("%w: invalid URL", domain.ErrInvalidInput)
-		}
-		scheme := strings.ToLower(parsed.Scheme)
-		if scheme != "http" && scheme != "https" {
-			return nil, fmt.Errorf("%w: invalid URL", domain.ErrInvalidInput)
+		if err := validateHTTPURL(value); err != nil {
+			return nil, err
 		}
 	}
 	if strings.TrimSpace(input.Program.Slug) == "" {
@@ -385,7 +377,7 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 	}
 	canonicalProjectUID := projectUID.String()
 	input.Program.ProjectUID = &canonicalProjectUID
-	if err := normalizeProjectMetadata(&input.Program); err != nil {
+	if input.Program.ProjectSlug, input.Program.ProjectName, input.Program.ProjectLogoURL, err = normalizeProjectMetadata(input.Program.ProjectSlug, input.Program.ProjectName, input.Program.ProjectLogoURL); err != nil {
 		return nil, err
 	}
 	input.Program.Status = models.ProgramStatusPending
@@ -395,8 +387,8 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 
 // normalizeProjectMetadata trims the Project Service slug, name, and logo the
 // caller resolved alongside project_uid. The program index snapshot is derived
-// from the persisted row, so slug and name must be present at creation.
-func normalizeProjectMetadata(input *models.ProgramCreateInput) error {
+// from the persisted row, so slug and name must be present whenever the project is set.
+func normalizeProjectMetadata(slug, name, logoURL *string) (*string, *string, *string, error) {
 	trim := func(value *string) *string {
 		if value == nil {
 			return nil
@@ -407,14 +399,28 @@ func normalizeProjectMetadata(input *models.ProgramCreateInput) error {
 		}
 		return &trimmed
 	}
-	input.ProjectSlug = trim(input.ProjectSlug)
-	input.ProjectName = trim(input.ProjectName)
-	input.ProjectLogoURL = trim(input.ProjectLogoURL)
-	if input.ProjectSlug == nil {
-		return fmt.Errorf("%w: project_slug is required", domain.ErrInvalidInput)
+	slug, name, logoURL = trim(slug), trim(name), trim(logoURL)
+	if slug == nil {
+		return nil, nil, nil, fmt.Errorf("%w: project_slug is required", domain.ErrInvalidInput)
 	}
-	if input.ProjectName == nil {
-		return fmt.Errorf("%w: project_name is required", domain.ErrInvalidInput)
+	if name == nil {
+		return nil, nil, nil, fmt.Errorf("%w: project_name is required", domain.ErrInvalidInput)
+	}
+	return slug, name, logoURL, nil
+}
+
+// validateHTTPURL accepts an absent or blank value, or an absolute http(s) URL.
+func validateHTTPURL(value *string) error {
+	if value == nil || strings.TrimSpace(*value) == "" {
+		return nil
+	}
+	parsed, err := url.ParseRequestURI(*value)
+	if err != nil || parsed.Host == "" {
+		return fmt.Errorf("%w: invalid URL", domain.ErrInvalidInput)
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return fmt.Errorf("%w: invalid URL", domain.ErrInvalidInput)
 	}
 	return nil
 }
@@ -448,6 +454,23 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 	}
 	if err := reservedFileField("logo_url", input.LogoURL); err != nil {
 		return nil, err
+	}
+	if input.ProjectUID != nil || input.ProjectSlug != nil || input.ProjectName != nil || input.ProjectLogoURL != nil {
+		if input.ProjectUID == nil || strings.TrimSpace(*input.ProjectUID) == "" {
+			return nil, fmt.Errorf("%w: project_uid is required when changing the project", domain.ErrInvalidInput)
+		}
+		projectUID, err := uuid.Parse(strings.TrimSpace(*input.ProjectUID))
+		if err != nil {
+			return nil, fmt.Errorf("%w: project_uid must be a UUID", domain.ErrInvalidInput)
+		}
+		canonicalProjectUID := projectUID.String()
+		input.ProjectUID = &canonicalProjectUID
+		if input.ProjectSlug, input.ProjectName, input.ProjectLogoURL, err = normalizeProjectMetadata(input.ProjectSlug, input.ProjectName, input.ProjectLogoURL); err != nil {
+			return nil, err
+		}
+		if err := validateHTTPURL(input.ProjectLogoURL); err != nil {
+			return nil, err
+		}
 	}
 	if input.Skills != nil {
 		input.Skills = normalizeSkills(input.Skills)

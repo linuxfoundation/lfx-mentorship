@@ -518,6 +518,52 @@ func TestProgramService_Update_OmittedSkillsLeftUnchanged(t *testing.T) {
 	}
 }
 
+func TestProgramService_Update_ChangesProject(t *testing.T) {
+	var captured models.ProgramUpdateInput
+	repo := &stubProgRepo{update: func(_ context.Context, _ string, input models.ProgramUpdateInput) (*models.Program, error) {
+		captured = input
+		return &models.Program{ID: "prog-1"}, nil
+	}}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	uid, slug, name, logo := " 7CAD5A8D-19D0-41A4-81A6-043453DAF9EE ", " new-project ", " New Project ", " "
+	_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{ProjectUID: &uid, ProjectSlug: &slug, ProjectName: &name, ProjectLogoURL: &logo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if captured.ProjectUID == nil || *captured.ProjectUID != "7cad5a8d-19d0-41a4-81a6-043453daf9ee" {
+		t.Fatalf("project_uid = %v; want canonical UUID", captured.ProjectUID)
+	}
+	if captured.ProjectSlug == nil || *captured.ProjectSlug != "new-project" || captured.ProjectName == nil || *captured.ProjectName != "New Project" {
+		t.Fatalf("project slug/name = %v %v", captured.ProjectSlug, captured.ProjectName)
+	}
+	if captured.ProjectLogoURL != nil {
+		t.Fatalf("project_logo_url = %q; want nil for a blank logo", *captured.ProjectLogoURL)
+	}
+}
+
+func TestProgramService_Update_RejectsInvalidProject(t *testing.T) {
+	uid, slug, name, badLogo, notUUID := "7cad5a8d-19d0-41a4-81a6-043453daf9ee", "new-project", "New Project", "ftp://example.com/logo.svg", "not-a-uuid"
+	cases := map[string]models.ProgramUpdateInput{
+		"missing uid":  {ProjectSlug: &slug, ProjectName: &name},
+		"invalid uid":  {ProjectUID: &notUUID, ProjectSlug: &slug, ProjectName: &name},
+		"missing slug": {ProjectUID: &uid, ProjectName: &name},
+		"missing name": {ProjectUID: &uid, ProjectSlug: &slug},
+		"bad logo":     {ProjectUID: &uid, ProjectSlug: &slug, ProjectName: &name, ProjectLogoURL: &badLogo},
+	}
+	for label, input := range cases {
+		t.Run(label, func(t *testing.T) {
+			repo := &stubProgRepo{update: func(context.Context, string, models.ProgramUpdateInput) (*models.Program, error) {
+				t.Fatal("repository must not be called for an invalid project")
+				return nil, nil
+			}}
+			svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+			if _, err := svc.Update(context.Background(), "prog-1", input); !errors.Is(err, domain.ErrInvalidInput) {
+				t.Fatalf("expected ErrInvalidInput, got %v", err)
+			}
+		})
+	}
+}
+
 type fakeCrowdfundingClient struct {
 	getCategorizedTransactions func(context.Context, string, string, bool, int, int) (*models.ProgramCategorizedTransactions, error)
 }

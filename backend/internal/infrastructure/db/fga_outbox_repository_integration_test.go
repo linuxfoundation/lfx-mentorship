@@ -1005,6 +1005,19 @@ func TestProgramUpdateIntegration_ReplacesSkills(t *testing.T) {
 	if len(got) != 2 || got["Kubernetes"] == "" || got["Go"] != keptID {
 		t.Fatalf("skills after update = %v; want Go (id %s) and Kubernetes", got, keptID)
 	}
+	var data []byte
+	if err := pool.QueryRow(ctx, `SELECT data FROM index_outbox WHERE object_type = 'mentorship_program' AND object_uid = $1`, program.ID).Scan(&data); err != nil {
+		t.Fatalf("read program index snapshot: %v", err)
+	}
+	var document struct {
+		Skills []string `json:"skills"`
+	}
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatalf("decode program index snapshot: %v", err)
+	}
+	if len(document.Skills) != 2 || document.Skills[0] != "Go" || document.Skills[1] != "Kubernetes" {
+		t.Fatalf("program index skills = %v; want [Go Kubernetes]", document.Skills)
+	}
 
 	name := "Skills Renamed"
 	if _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Name: &name}); err != nil {
@@ -1012,6 +1025,41 @@ func TestProgramUpdateIntegration_ReplacesSkills(t *testing.T) {
 	}
 	if skills, err := repo.ListSkills(ctx, program.ID); err != nil || len(skills) != 2 {
 		t.Fatalf("skills after name-only update = %d, %v; want 2 unchanged", len(skills), err)
+	}
+}
+
+func TestProgramUpdateIntegration_ChangesProject(t *testing.T) {
+	pool := integrationPool(t)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name) VALUES ('00000000-0000-0000-0000-000000000060', 'enroll-admin', 'Enroll Admin')`); err != nil {
+		t.Fatal(err)
+	}
+	repo := NewProgramRepository(pool)
+	oldUID, oldSlug, oldName, oldLogo := "00000000-0000-0000-0000-000000000099", "old-project", "Old Project", "https://example.com/old.svg"
+	program, err := repo.CreateEnrollment(ctx, models.ProgramEnrollmentInput{Program: models.ProgramCreateInput{ID: "00000000-0000-0000-0000-000000000061", CreatorUserID: "00000000-0000-0000-0000-000000000060", ProjectUID: &oldUID, ProjectSlug: &oldSlug, ProjectName: &oldName, ProjectLogoURL: &oldLogo, Name: "Moving", Slug: "moving", Status: models.ProgramStatusPending}, Skills: []string{"Go"}})
+	if err != nil {
+		t.Fatalf("create enrollment: %v", err)
+	}
+
+	newUID, newSlug, newName := "00000000-0000-0000-0000-000000000098", "new-project", "New Project"
+	updated, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{ProjectUID: &newUID, ProjectSlug: &newSlug, ProjectName: &newName})
+	if err != nil {
+		t.Fatalf("update project: %v", err)
+	}
+	if updated.ProjectUID == nil || *updated.ProjectUID != newUID || updated.ProjectSlug == nil || *updated.ProjectSlug != newSlug ||
+		updated.ProjectName == nil || *updated.ProjectName != newName {
+		t.Fatalf("project after update = %v %v %v", updated.ProjectUID, updated.ProjectSlug, updated.ProjectName)
+	}
+	if updated.ProjectLogoURL != nil {
+		t.Fatalf("project_logo_url = %q; want old logo cleared", *updated.ProjectLogoURL)
+	}
+
+	name := "Moving Renamed"
+	if updated, err = repo.Update(ctx, program.ID, models.ProgramUpdateInput{Name: &name}); err != nil {
+		t.Fatalf("update name: %v", err)
+	}
+	if updated.ProjectUID == nil || *updated.ProjectUID != newUID {
+		t.Fatalf("project_uid after name-only update = %v; want %s", updated.ProjectUID, newUID)
 	}
 }
 

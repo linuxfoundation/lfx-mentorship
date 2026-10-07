@@ -1050,13 +1050,27 @@ Update program fields. Status cannot be changed here: a body with `status` retur
   "repo_link":   "https://...",
   "lfid":        "alice",
   "skills":      ["Go", "Kubernetes"],
+  "project_uid":      "7cad5a8d-19d0-41a4-81a6-043453daf9ee",
+  "project_slug":     "new-project",
+  "project_name":     "New Project",
+  "project_logo_url": "https://...",
   "task_templates": [...]
 }
 ```
 
+The `project_*` fields move the program to another LF project and are applied
+together: when any is present, `project_uid` (a Project Service UUID),
+`project_slug`, and `project_name` are required, and an omitted or blank
+`project_logo_url` clears the logo. Omit all four to leave the project unchanged.
+Moving a program changes who can manage it, since access is inherited from the
+project.
+
 `skills` replaces the program's full skill set: skills not in the list are removed
 and new ones are added. Entries are trimmed and de-duplicated case-insensitively; at
-least one is required. Omit `skills` to leave them unchanged.
+least one is required. Omit `skills` to leave them unchanged. The `<Program>`
+response does not include skills; read them from
+[`GET /v1/programs/{id}/skills`](#get-v1programsidskills-). The program's search
+index snapshot is refreshed with the new skills in the same transaction.
 
 **Response** `200` → `<Program>`  
 **Errors** `400`, `404`
