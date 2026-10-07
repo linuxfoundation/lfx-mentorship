@@ -1416,7 +1416,7 @@ Mentorship. An `email` is resolved to its LF account through auth-service,
 matching the account's primary or linked emails. An `lfid` must match the LF
 username exactly, including case. A person who already has a Mentorship user is
 invited as that user and the invite email goes to their stored email, without
-calling auth-service; only a user with no stored email gets the account's
+calling auth-service; only a user with no stored email, or a blank one, gets the account's
 primary email filled in from auth-service. Otherwise a user is created from
 auth-service (LFID, name, avatar and primary email), the invite email goes to
 that primary email, and their first sign-in updates that same row.

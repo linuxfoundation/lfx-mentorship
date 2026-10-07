@@ -31,6 +31,9 @@ const (
 
 var lfidPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{1,99}$`)
 
+// autheliaTokenPrefix marks input auth-service's Authelia backend resolves as a bearer token.
+const autheliaTokenPrefix = "authelia"
+
 // ProgramMemberService orchestrates program member reads and writes.
 type ProgramMemberService struct {
 	repo         domain.ProgramMemberRepository
@@ -242,7 +245,7 @@ func (s *ProgramMemberService) userByLFID(ctx context.Context, lfid string) (*mo
 		return nil, fmt.Errorf("resolve lfid: %w", err)
 	}
 	// An existing user's stored email is never overwritten; auth-service only fills a missing one.
-	if user != nil && (user.Email != nil || s.directory == nil || !isLFID(lfid)) {
+	if user != nil && ((user.Email != nil && strings.TrimSpace(*user.Email) != "") || s.directory == nil || !isLFID(lfid)) {
 		return user, nil
 	}
 	if s.directory == nil {
@@ -336,7 +339,8 @@ func (s *ProgramMemberService) SearchCandidates(ctx context.Context, programID, 
 		if u.LFID != nil {
 			lfid = *u.LFID
 		}
-		if strings.EqualFold(lfid, query) {
+		// Auth-service matches an LFID case-sensitively, so only an identical one makes the lookup redundant.
+		if lfid == query {
 			exact = true
 		}
 		candidates = append(candidates, &models.MentorCandidate{LFID: lfid, Name: u.Name, AvatarURL: u.AvatarURL})
@@ -388,9 +392,13 @@ func isEmail(s string) bool {
 	return err == nil && addr.Name == "" && addr.Address == s
 }
 
-// isLFID also rejects UUIDs, which auth-service would treat as a subject identifier.
+// isLFID also rejects UUIDs and Authelia opaque tokens, which auth-service would
+// treat as a subject identifier and a bearer token.
 func isLFID(s string) bool {
 	if _, err := uuid.Parse(s); err == nil {
+		return false
+	}
+	if strings.HasPrefix(s, autheliaTokenPrefix) {
 		return false
 	}
 	return lfidPattern.MatchString(s)
