@@ -24,9 +24,6 @@ type ProgramTermService struct {
 	appRepo domain.ApplicationRepository
 }
 
-// maxOpenTermsPerProgram is the maximum number of concurrently open terms allowed (FR-003).
-const maxOpenTermsPerProgram = 4
-
 // NewProgramTermService returns a ProgramTermService.
 func NewProgramTermService(repo domain.ProgramTermRepository, appRepo domain.ApplicationRepository) *ProgramTermService {
 	return &ProgramTermService{repo: repo, appRepo: appRepo}
@@ -109,8 +106,8 @@ func (s *ProgramTermService) Create(ctx context.Context, input models.ProgramTer
 			span.RecordError(err)
 			return nil, fmt.Errorf("check open terms: %w", err)
 		}
-		if count >= maxOpenTermsPerProgram {
-			return nil, fmt.Errorf("%w: program already has %d open term(s) (max %d)", domain.ErrStateLocked, count, maxOpenTermsPerProgram)
+		if count >= models.MaxOpenTermsPerProgram {
+			return nil, fmt.Errorf("%w: program already has %d open term(s) (max %d)", domain.ErrStateLocked, count, models.MaxOpenTermsPerProgram)
 		}
 	}
 
@@ -194,8 +191,8 @@ func (s *ProgramTermService) Reopen(ctx context.Context, id string) (*models.Pro
 	if err != nil {
 		return nil, fmt.Errorf("check open terms for reopen: %w", err)
 	}
-	if count >= maxOpenTermsPerProgram {
-		return nil, fmt.Errorf("%w: program already has %d open term(s) (max %d)", domain.ErrStateLocked, count, maxOpenTermsPerProgram)
+	if count >= models.MaxOpenTermsPerProgram {
+		return nil, fmt.Errorf("%w: program already has %d open term(s) (max %d)", domain.ErrStateLocked, count, models.MaxOpenTermsPerProgram)
 	}
 	status := models.ProgramTermStatusOpen
 	term, err := s.repo.Update(ctx, id, models.ProgramTermUpdateInput{Status: &status})

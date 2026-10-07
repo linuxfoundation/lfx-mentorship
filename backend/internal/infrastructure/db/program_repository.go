@@ -925,6 +925,15 @@ func (r *ProgramRepository) Update(ctx context.Context, id string, input models.
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// Terms are locked before the program row, the order the term routes use.
+	var currentTerms map[string]*models.ProgramTerm
+	if input.Terms != nil {
+		if currentTerms, err = lockProgramTerms(ctx, tx, id); err != nil {
+			span.RecordError(err)
+			return nil, err
+		}
+	}
+
 	const q = `
 		UPDATE programs SET
 			name                = COALESCE($2,  name),
@@ -984,9 +993,8 @@ func (r *ProgramRepository) Update(ctx context.Context, id string, input models.
 			return nil, err
 		}
 	}
-	// The UPDATE above holds the program row lock that replaceProgramTerms requires.
 	if input.Terms != nil {
-		if err := replaceProgramTerms(ctx, tx, updatedID, input.Terms); err != nil {
+		if err := replaceProgramTerms(ctx, tx, updatedID, currentTerms, input.Terms); err != nil {
 			span.RecordError(err)
 			return nil, err
 		}

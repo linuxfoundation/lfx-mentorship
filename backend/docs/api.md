@@ -1089,8 +1089,8 @@ new `open` term, and every non-deleted term not listed is deleted. Send every te
 the program should keep, including closed ones. Each entry needs a name and all
 four dates, with the application window ending after it starts and before the
 term starts; at least one entry is required. A closed term that has ended cannot
-be edited but may be sent back unchanged (timestamps compared to the
-millisecond). `status` and other term fields are ignored here; use the term
+be edited but may be sent back unchanged (names compared exactly, timestamps to
+the millisecond); unchanged terms are not rewritten. `status` and other term fields are ignored here; use the term
 close and reopen routes for lifecycle changes. Omit `terms` to leave them
 unchanged. The `<Program>` response does not include terms; read them from
 [`GET /v1/programs/{id}/terms`](#get-v1programsidterms-).
@@ -1098,7 +1098,7 @@ unchanged. The `<Program>` response does not include terms; read them from
 **Response** `200` → `<Program>`  
 **Errors** `400`, `404` (program, or a listed term `id` that is not one of its
 terms), `409` (editing an ended closed term, removing a term that has
-applications, or ending with more than 4 open terms)
+applications, or adding terms that would leave more than 4 open)
 
 ---
 

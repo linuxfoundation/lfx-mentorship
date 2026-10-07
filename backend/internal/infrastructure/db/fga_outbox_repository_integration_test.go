@@ -1092,6 +1092,53 @@ func TestProgramUpdateIntegration_ReplacesTerms(t *testing.T) {
 	if active, err := terms.ListActiveByProgram(ctx, program.ID); err != nil || len(active) != 2 {
 		t.Fatalf("terms after rejected updates = %d, %v; want 2 unchanged", len(active), err)
 	}
+
+	// Entries matching their term are not rewritten.
+	before, err := terms.GetByID(ctx, keptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Terms: []models.ProgramTermReplaceInput{term(keptID, "Fall 2026"), term(got["Spring 2027"], "Spring 2027")}}); err != nil {
+		t.Fatalf("resend unchanged terms: %v", err)
+	}
+	if after, err := terms.GetByID(ctx, keptID); err != nil || !after.UpdatedOn.Equal(before.UpdatedOn) {
+		t.Fatalf("unchanged term updated_on = %v, %v; want %v", after.UpdatedOn, err, before.UpdatedOn)
+	}
+
+	// A term of another program cannot be listed.
+	const otherTermID = "00000000-0000-0000-0000-000000000076"
+	if _, err := repo.CreateEnrollment(ctx, models.ProgramEnrollmentInput{
+		Program: models.ProgramCreateInput{ID: "00000000-0000-0000-0000-000000000075", CreatorUserID: userID, ProjectUID: &projectUID, Name: "Other Terms", Slug: "other-terms", Status: models.ProgramStatusPending},
+		Terms:   []models.ProgramTermCreateInput{{ID: otherTermID, Name: "Other", ApplicationStartDate: &appStart, ApplicationEndDate: &appEnd, StartDateTime: &start, EndDateTime: &end}},
+		Skills:  []string{"Go"},
+	}); err != nil {
+		t.Fatalf("create other enrollment: %v", err)
+	}
+	foreign := []models.ProgramTermReplaceInput{term(keptID, "Fall 2026"), term(got["Spring 2027"], "Spring 2027"), term(otherTermID, "Hijacked")}
+	if _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Terms: foreign}); !errors.Is(err, domain.ErrProgramTermNotFound) {
+		t.Fatalf("listing another program's term: got %v; want ErrProgramTermNotFound", err)
+	}
+	if other, err := terms.GetByID(ctx, otherTermID); err != nil || other.Name != "Other" {
+		t.Fatalf("other program's term = %+v, %v; want unchanged", other, err)
+	}
+
+	// A program already over the open-term cap can still edit its terms.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO program_terms (id, program_id, name, status, start_date_time, end_date_time, application_start_date, application_end_date)
+		SELECT id, $1, name, 'open', $2, $3, $4, $5 FROM (VALUES
+			('00000000-0000-0000-0000-000000000077'::uuid, 'Legacy A'),
+			('00000000-0000-0000-0000-000000000078'::uuid, 'Legacy B'),
+			('00000000-0000-0000-0000-000000000079'::uuid, 'Legacy C')) AS legacy(id, name)`,
+		program.ID, start, end, appStart, appEnd); err != nil {
+		t.Fatal(err)
+	}
+	overCapEdit := []models.ProgramTermReplaceInput{
+		term(keptID, "Fall 2026 Renamed"), term(got["Spring 2027"], "Spring 2027"),
+		term("00000000-0000-0000-0000-000000000077", "Legacy A"), term("00000000-0000-0000-0000-000000000078", "Legacy B"), term("00000000-0000-0000-0000-000000000079", "Legacy C"),
+	}
+	if _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Terms: overCapEdit}); err != nil {
+		t.Fatalf("editing terms of a program over the cap: %v", err)
+	}
 }
 
 func TestProgramUpdateIntegration_ChangesProject(t *testing.T) {

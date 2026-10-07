@@ -558,6 +558,7 @@ func TestProgramService_Update_AcceptsUnchangedHistoricalTerm(t *testing.T) {
 		return &models.Program{ID: "prog-1"}, nil
 	}}
 	current := historicalTerm("term-old")
+	current.Name = "Spring 2025 " // legacy data may carry untrimmed names
 	terms := &stubTermRepo{listActive: func(context.Context, string) ([]*models.ProgramTerm, error) {
 		return []*models.ProgramTerm{current}, nil
 	}}

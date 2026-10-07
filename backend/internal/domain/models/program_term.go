@@ -13,6 +13,9 @@ type ProgramTermManagementRow struct {
 	Graduated int `json:"graduated"`
 }
 
+// MaxOpenTermsPerProgram is the maximum number of concurrently open terms allowed (FR-003).
+const MaxOpenTermsPerProgram = 4
+
 // ProgramTermStatus enumerates valid values for program_terms.status.
 type ProgramTermStatus string
 
@@ -94,6 +97,23 @@ type ProgramTermReplaceInput struct {
 	EndDateTime          *time.Time `json:"end_date_time,omitempty"`
 	ApplicationStartDate *time.Time `json:"application_start_date,omitempty"`
 	ApplicationEndDate   *time.Time `json:"application_end_date,omitempty"`
+}
+
+// Matches reports whether the entry carries the term's current name and dates.
+// Dates are compared to the millisecond because browser clients round-trip
+// timestamps through JavaScript Date, which drops microseconds.
+func (in ProgramTermReplaceInput) Matches(t *ProgramTerm) bool {
+	sameTime := func(a, b *time.Time) bool {
+		if a == nil || b == nil {
+			return a == b
+		}
+		return a.Truncate(time.Millisecond).Equal(b.Truncate(time.Millisecond))
+	}
+	return in.Name == t.Name &&
+		sameTime(in.StartDateTime, t.StartDateTime) &&
+		sameTime(in.EndDateTime, t.EndDateTime) &&
+		sameTime(in.ApplicationStartDate, t.ApplicationStartDate) &&
+		sameTime(in.ApplicationEndDate, t.ApplicationEndDate)
 }
 
 // ProgramTermUpdateInput is the request body for updating a program term.
