@@ -170,7 +170,7 @@ function mapProgram(program: MentorProgram): ProfileProgram {
     mentors: (program.mentors ?? []).map((mentor) => ({
       id: mentor.user_id,
       name: mentor.name?.trim() || 'Mentor',
-      title: mentor.introduction?.trim() || undefined,
+      introduction: mentor.introduction?.trim() || undefined,
       avatarUrl: mentor.avatar_url,
     })),
     logoInitials: logoInitials(program.name),

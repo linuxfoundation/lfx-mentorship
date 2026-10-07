@@ -26,7 +26,7 @@ func newProgramSvcWithMember(progRepo *stubProgRepo, termRepo *stubTermRepo, app
 
 // ── state machine ────────────────────────────────────────────────────────────
 
-func TestProgramService_Create_AlwaysDraft(t *testing.T) {
+func TestProgramService_Create_AlwaysPending(t *testing.T) {
 	var capturedStatus models.ProgramStatus
 	repo := &stubProgRepo{
 		create: func(_ context.Context, in models.ProgramCreateInput) (*models.Program, error) {
@@ -41,8 +41,8 @@ func TestProgramService_Create_AlwaysDraft(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if capturedStatus != models.ProgramStatusDraft {
-		t.Errorf("status = %q; want %q", capturedStatus, models.ProgramStatusDraft)
+	if capturedStatus != models.ProgramStatusPending {
+		t.Errorf("status = %q; want %q", capturedStatus, models.ProgramStatusPending)
 	}
 }
 
@@ -136,14 +136,38 @@ func TestProgramService_CreateEnrollment_RejectsUnsafeURL(t *testing.T) {
 func TestProgramService_Update_InvalidTransition(t *testing.T) {
 	repo := &stubProgRepo{
 		getByID: func(_ context.Context, id string) (*models.Program, error) {
-			return &models.Program{ID: id, Status: models.ProgramStatusDraft}, nil
+			return &models.Program{ID: id, Status: models.ProgramStatusPending}, nil
 		},
 	}
 	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
 	next := models.ProgramStatusArchived
 	_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Status: &next})
 	if !errors.Is(err, domain.ErrInvalidStateTransition) {
-		t.Errorf("expected ErrInvalidStateTransition for draft→archived, got %v", err)
+		t.Errorf("expected ErrInvalidStateTransition for pending→archived, got %v", err)
+	}
+}
+
+func TestProgramService_Decide(t *testing.T) {
+	for _, tc := range []struct {
+		current, next models.ProgramStatus
+		want          error
+	}{
+		{models.ProgramStatusSubmitted, models.ProgramStatusPublished, nil},
+		{models.ProgramStatusSubmitted, models.ProgramStatusRejected, nil},
+		{models.ProgramStatusHidden, models.ProgramStatusPublished, domain.ErrInvalidStateTransition},
+		{models.ProgramStatusPending, models.ProgramStatusPublished, domain.ErrInvalidStateTransition},
+		{models.ProgramStatusSubmitted, models.ProgramStatusHidden, domain.ErrInvalidInput},
+	} {
+		repo := &stubProgRepo{
+			getByID: func(_ context.Context, id string) (*models.Program, error) {
+				return &models.Program{ID: id, Status: tc.current}, nil
+			},
+		}
+		svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+		_, err := svc.Decide(context.Background(), "prog-1", tc.next)
+		if tc.want == nil && err != nil || tc.want != nil && !errors.Is(err, tc.want) {
+			t.Errorf("%s→%s: got %v; want %v", tc.current, tc.next, err, tc.want)
+		}
 	}
 }
 
@@ -154,7 +178,7 @@ func TestProgramService_Update_ArchivedTerminal(t *testing.T) {
 		},
 	}
 	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
-	next := models.ProgramStatusDraft
+	next := models.ProgramStatusPending
 	_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Status: &next})
 	if !errors.Is(err, domain.ErrInvalidStateTransition) {
 		t.Errorf("expected ErrInvalidStateTransition from archived, got %v", err)
@@ -171,7 +195,7 @@ func fullProgram() *models.Program {
 	logo := "https://example.com/logo.png"
 	return &models.Program{
 		ID:          "prog-1",
-		Status:      models.ProgramStatusDraft,
+		Status:      models.ProgramStatusPending,
 		ProjectUID:  &projectUID,
 		LFID:        &lfid,
 		Description: &desc,
@@ -352,7 +376,7 @@ func TestProgramService_ListCatalog_PassesSkillFilter(t *testing.T) {
 	}
 	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
 	if _, _, err := svc.ListCatalog(context.Background(), models.ProgramFilter{
-		Status:          string(models.ProgramStatusDraft),
+		Status:          string(models.ProgramStatusPending),
 		Skill:           "  Go  ",
 		DiscoveryStatus: "acceptance",
 		SortBy:          "name_desc",
@@ -386,16 +410,16 @@ func TestProgramService_GetCatalog_NotFound(t *testing.T) {
 	}
 }
 
-func TestProgramService_GetCatalog_DraftReturnsOK(t *testing.T) {
+func TestProgramService_GetCatalog_PendingReturnsOK(t *testing.T) {
 	repo := &stubProgRepo{
 		getCatalog: func(_ context.Context, id string) (*models.ProgramCatalogItem, error) {
-			return &models.ProgramCatalogItem{Program: models.Program{ID: id, Status: models.ProgramStatusDraft}}, nil
+			return &models.ProgramCatalogItem{Program: models.Program{ID: id, Status: models.ProgramStatusPending}}, nil
 		},
 	}
 	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
 	item, err := svc.GetCatalog(context.Background(), "p1")
 	if err != nil {
-		t.Fatalf("expected nil error for draft, got %v", err)
+		t.Fatalf("expected nil error for pending, got %v", err)
 	}
 	if item.ID != "p1" {
 		t.Errorf("id = %q; want p1", item.ID)
@@ -869,5 +893,68 @@ func TestProgramService_DeleteSkill_InactiveAdminForbidden(t *testing.T) {
 	err := svc.DeleteSkill(context.Background(), "prog-1", "skill-1", "admin-1")
 	if !errors.Is(err, domain.ErrForbidden) {
 		t.Fatalf("expected ErrForbidden, got %v", err)
+	}
+}
+
+func TestProgramService_ListMine_ScopesToCaller(t *testing.T) {
+	var gotUser string
+	var gotFilter models.AdministeredProgramFilter
+	repo := &stubProgRepo{
+		listAdministered: func(_ context.Context, userID string, f models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+			gotUser, gotFilter = userID, f
+			return []*models.AdministeredProgram{{ID: "p1"}}, &models.PaginationMeta{Total: 1}, nil
+		},
+	}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	got, meta, err := svc.ListMine(context.Background(), "user-1", models.AdministeredProgramFilter{
+		Limit:  5,
+		Search: "  grid  ",
+		Status: models.AdministeredProgramStatusPendingReview,
+	})
+	if err != nil {
+		t.Fatalf("ListMine: %v", err)
+	}
+	if gotUser != "user-1" {
+		t.Errorf("user = %q; want user-1", gotUser)
+	}
+	want := models.AdministeredProgramFilter{Limit: 5, Search: "grid", Status: models.AdministeredProgramStatusPendingReview}
+	if gotFilter != want {
+		t.Errorf("filter = %+v; want %+v", gotFilter, want)
+	}
+	if len(got) != 1 || meta.Total != 1 {
+		t.Errorf("got %d programs, total %d; want 1, 1", len(got), meta.Total)
+	}
+}
+
+func TestProgramService_ListMine_RejectsBadInput(t *testing.T) {
+	repo := &stubProgRepo{
+		listAdministered: func(context.Context, string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+			t.Fatal("repo must not be called for invalid input")
+			return nil, nil, nil
+		},
+	}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+
+	if _, _, err := svc.ListMine(context.Background(), "", models.AdministeredProgramFilter{}); !errors.Is(err, domain.ErrUnauthorized) {
+		t.Errorf("empty user: got %v; want ErrUnauthorized", err)
+	}
+	// The BFF's display value uses a hyphen; the API value is pending_review.
+	for _, status := range []models.AdministeredProgramStatus{"pending-review", "published", "pending"} {
+		if _, _, err := svc.ListMine(context.Background(), "user-1", models.AdministeredProgramFilter{Status: status}); !errors.Is(err, domain.ErrInvalidInput) {
+			t.Errorf("status %q: got %v; want ErrInvalidInput", status, err)
+		}
+	}
+}
+
+func TestProgramService_ListMine_WrapsRepoError(t *testing.T) {
+	repoErr := errors.New("db down")
+	repo := &stubProgRepo{
+		listAdministered: func(context.Context, string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+			return nil, nil, repoErr
+		},
+	}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	if _, _, err := svc.ListMine(context.Background(), "user-1", models.AdministeredProgramFilter{}); !errors.Is(err, repoErr) {
+		t.Errorf("got %v; want wrapped repo error", err)
 	}
 }

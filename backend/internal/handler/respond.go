@@ -65,10 +65,17 @@ func mapError(err error) (int, string) {
 		errors.Is(err, domain.ErrProgramTermNotFound),
 		errors.Is(err, domain.ErrProgramMemberNotFound),
 		errors.Is(err, domain.ErrApplicationNotFound),
-		errors.Is(err, domain.ErrTaskNotFound):
+		errors.Is(err, domain.ErrTaskNotFound),
+		errors.Is(err, domain.ErrFileNotFound):
 		return http.StatusNotFound, "not found"
 	case errors.Is(err, domain.ErrInvalidInput):
 		return http.StatusBadRequest, err.Error()
+	case errors.Is(err, domain.ErrPayloadTooLarge):
+		return http.StatusRequestEntityTooLarge, err.Error()
+	case errors.Is(err, domain.ErrUnsupportedMedia):
+		return http.StatusUnsupportedMediaType, err.Error()
+	case errors.Is(err, domain.ErrRangeNotSatisfiable):
+		return http.StatusRequestedRangeNotSatisfiable, "range not satisfiable"
 	case errors.Is(err, domain.ErrUnauthorized):
 		return http.StatusUnauthorized, "unauthorized"
 	case errors.Is(err, domain.ErrForbidden):

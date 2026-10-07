@@ -73,8 +73,10 @@ type ProgramMember struct {
 
 // ProgramMemberCreateInput is the request body for adding a program member.
 type ProgramMemberCreateInput struct {
-	ID         string               `json:"id"`
-	UserID     string               `json:"user_id"`
+	ID     string `json:"id"`
+	UserID string `json:"user_id"`
+	// LFID identifies the user instead of UserID; it must belong to an existing user.
+	LFID       string               `json:"lfid,omitempty"`
 	MemberType MemberType           `json:"member_type"`
 	Status     *ProgramMemberStatus `json:"status,omitempty"`
 	Email      *string              `json:"email,omitempty"`

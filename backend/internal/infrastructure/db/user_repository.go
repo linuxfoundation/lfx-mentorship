@@ -81,7 +81,7 @@ func (r *UserRepository) UpsertByLFID(ctx context.Context, input models.UserCrea
 			email = COALESCE(EXCLUDED.email, users.email), name = COALESCE(EXCLUDED.name, users.name),
 			given_name = COALESCE(EXCLUDED.given_name, users.given_name),
 			family_name = COALESCE(EXCLUDED.family_name, users.family_name),
-			avatar_url = COALESCE(EXCLUDED.avatar_url, users.avatar_url), updated_on = NOW()
+			avatar_url = COALESCE(users.avatar_url, EXCLUDED.avatar_url), updated_on = NOW()
 		RETURNING id, email, lfid, name, given_name, family_name, avatar_url, created_on, updated_on`,
 		input.Email, input.LFID, input.Name, input.GivenName, input.FamilyName, input.AvatarURL,
 	).Scan(&u.ID, &u.Email, &u.LFID, &u.Name, &u.GivenName, &u.FamilyName, &u.AvatarURL, &u.CreatedOn, &u.UpdatedOn)
@@ -210,18 +210,49 @@ func (r *UserRepository) Update(ctx context.Context, id string, input models.Use
 }
 
 // Delete removes the user with the given ID. Returns ErrUserNotFound when absent.
+// The user's profiles cascade, so their logos and the avatar are queued for deletion.
 func (r *UserRepository) Delete(ctx context.Context, id string) error {
 	ctx, span := userTracer.Start(ctx, "db.users.Delete")
 	defer span.End()
 	span.SetAttributes(attribute.String("db.user_id", id))
 
-	cmd, err := r.pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, id)
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin delete user transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Locks the user, then its profiles: the order profile logo writes take (lockProfileOwner).
+	var avatarURL *string
+	err = tx.QueryRow(ctx, `SELECT avatar_url FROM users WHERE id = $1 FOR UPDATE`, id).Scan(&avatarURL)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrUserNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("lock user before delete: %w", err)
+	}
+	rows, err := tx.Query(ctx, `SELECT logo_url FROM user_profiles WHERE user_id = $1 FOR UPDATE`, id)
+	if err != nil {
+		return fmt.Errorf("list user files before delete: %w", err)
+	}
+	locators, err := pgx.CollectRows(rows, pgx.RowTo[*string])
+	if err != nil {
+		return fmt.Errorf("scan user files before delete: %w", err)
+	}
+	if err := queueObjectDeletions(ctx, tx, domain.ObjectBucketLogos, append(locators, avatarURL)...); err != nil {
+		return err
+	}
+
+	cmd, err := tx.Exec(ctx, `DELETE FROM users WHERE id = $1`, id)
 	if err != nil {
 		span.RecordError(err)
 		return fmt.Errorf("delete user: %w", err)
 	}
 	if cmd.RowsAffected() == 0 {
 		return domain.ErrUserNotFound
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit delete user transaction: %w", err)
 	}
 	return nil
 }

@@ -57,10 +57,10 @@ func (s *ProgramService) SetCrowdfundingClient(client clients.CrowdfundingClient
 
 // programTransitions defines the valid next states for each program status.
 var programTransitions = map[models.ProgramStatus][]models.ProgramStatus{
-	models.ProgramStatusDraft:     {models.ProgramStatusSubmitted},
+	models.ProgramStatusPending:   {models.ProgramStatusSubmitted},
 	models.ProgramStatusSubmitted: {models.ProgramStatusPublished, models.ProgramStatusRejected},
 	models.ProgramStatusPublished: {models.ProgramStatusArchived, models.ProgramStatusHidden},
-	models.ProgramStatusRejected:  {models.ProgramStatusSubmitted}, // resubmit directly; no detour through draft
+	models.ProgramStatusRejected:  {models.ProgramStatusSubmitted}, // resubmit directly; no detour through pending
 	models.ProgramStatusArchived:  {},
 	models.ProgramStatusHidden:    {models.ProgramStatusPublished, models.ProgramStatusArchived},
 }
@@ -212,7 +212,7 @@ func (s *ProgramService) GetCatalog(ctx context.Context, id string) (*models.Pro
 		span.RecordError(err)
 		return nil, fmt.Errorf("get program catalog: %w", err)
 	}
-	if item.Status != models.ProgramStatusPublished && item.Status != models.ProgramStatusDraft {
+	if item.Status != models.ProgramStatusPublished && item.Status != models.ProgramStatusPending {
 		return nil, fmt.Errorf("get program catalog: %w", domain.ErrProgramNotFound)
 	}
 	applyCatalogLabels([]*models.ProgramCatalogItem{item}, time.Now())
@@ -233,6 +233,28 @@ func (s *ProgramService) ListCatalogMentees(ctx context.Context, programID strin
 	return mentees, nil
 }
 
+// ListMine returns the programs the caller is an active program admin of.
+func (s *ProgramService) ListMine(ctx context.Context, userID string, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+	ctx, span := programSvcTracer.Start(ctx, "ProgramService.ListMine")
+	defer span.End()
+	span.SetAttributes(attribute.String("user.id", userID))
+
+	if userID == "" {
+		return nil, nil, fmt.Errorf("%w: caller identity is required", domain.ErrUnauthorized)
+	}
+	if filter.Status != "" && !filter.Status.IsValid() {
+		return nil, nil, fmt.Errorf("%w: status must be open, pending_review, completed, rejected, or hidden", domain.ErrInvalidInput)
+	}
+	filter.Search = strings.TrimSpace(filter.Search)
+
+	programs, meta, err := s.repo.ListAdministeredByUser(ctx, userID, filter)
+	if err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("list my programs: %w", err)
+	}
+	return programs, meta, nil
+}
+
 // Create validates input and creates a program.
 func (s *ProgramService) Create(ctx context.Context, input models.ProgramCreateInput) (*models.Program, error) {
 	ctx, span := programSvcTracer.Start(ctx, "ProgramService.Create")
@@ -240,6 +262,9 @@ func (s *ProgramService) Create(ctx context.Context, input models.ProgramCreateI
 
 	if strings.TrimSpace(input.Name) == "" {
 		return nil, fmt.Errorf("%w: name is required", domain.ErrInvalidInput)
+	}
+	if err := reservedFileField("logo_url", input.LogoURL); err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(input.Slug) == "" {
 		return nil, fmt.Errorf("%w: slug is required", domain.ErrInvalidInput)
@@ -256,7 +281,7 @@ func (s *ProgramService) Create(ctx context.Context, input models.ProgramCreateI
 	if err := normalizeProjectMetadata(&input); err != nil {
 		return nil, err
 	}
-	input.Status = models.ProgramStatusDraft // programs always start as draft
+	input.Status = models.ProgramStatusPending // programs always start as pending
 	input.ID = uuid.New().String()
 
 	p, err := s.repo.Create(ctx, input)
@@ -268,6 +293,9 @@ func (s *ProgramService) Create(ctx context.Context, input models.ProgramCreateI
 }
 
 func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.ProgramEnrollmentInput) (*models.Program, error) {
+	if err := reservedFileField("logo_url", input.Program.LogoURL); err != nil {
+		return nil, err
+	}
 	if len(input.Terms) == 0 {
 		return nil, fmt.Errorf("%w: at least one term is required", domain.ErrInvalidInput)
 	}
@@ -373,7 +401,7 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 	if err := normalizeProjectMetadata(&input.Program); err != nil {
 		return nil, err
 	}
-	input.Program.Status = models.ProgramStatusDraft
+	input.Program.Status = models.ProgramStatusPending
 	input.Program.ID = uuid.New().String()
 	return s.repo.CreateEnrollment(ctx, input)
 }
@@ -404,6 +432,21 @@ func normalizeProjectMetadata(input *models.ProgramCreateInput) error {
 	return nil
 }
 
+// Decide publishes or rejects a submitted program.
+func (s *ProgramService) Decide(ctx context.Context, id string, status models.ProgramStatus) (*models.Program, error) {
+	if status != models.ProgramStatusPublished && status != models.ProgramStatusRejected {
+		return nil, fmt.Errorf("%w: decision must publish or reject a submitted program", domain.ErrInvalidInput)
+	}
+	current, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("get program for decision: %w", err)
+	}
+	if current.Status != models.ProgramStatusSubmitted {
+		return nil, fmt.Errorf("%w: only a submitted program can be decided, not %q", domain.ErrInvalidStateTransition, current.Status)
+	}
+	return s.Update(ctx, id, models.ProgramUpdateInput{Status: &status})
+}
+
 // Update validates and applies changes to the program with the given ID.
 func (s *ProgramService) Update(ctx context.Context, id string, input models.ProgramUpdateInput) (*models.Program, error) {
 	ctx, span := programSvcTracer.Start(ctx, "ProgramService.Update")
@@ -415,6 +458,9 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 	}
 	if input.ProgramTermStatus != nil && !input.ProgramTermStatus.IsValid() {
 		return nil, fmt.Errorf("%w: invalid program term status %q", domain.ErrInvalidInput, *input.ProgramTermStatus)
+	}
+	if err := reservedFileField("logo_url", input.LogoURL); err != nil {
+		return nil, err
 	}
 
 	if input.Status != nil {

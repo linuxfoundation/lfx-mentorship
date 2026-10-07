@@ -41,7 +41,7 @@ func (h *ApplicationHandler) ListByProgram(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	rows, meta, err := h.svc.ListByProgram(r.Context(), chi.URLParam(r, "id"), models.ProgramApplicationFilter{Limit: limit, Offset: offset, Type: models.ProgramApplicationType(r.URL.Query().Get("type")), Search: r.URL.Query().Get("search"), Status: r.URL.Query().Get("status"), TermID: r.URL.Query().Get("term")})
+	rows, meta, err := h.svc.ListByProgram(r.Context(), chi.URLParam(r, "id"), models.ProgramApplicationFilter{Limit: limit, Offset: offset, Type: models.ProgramApplicationType(r.URL.Query().Get("type")), Search: r.URL.Query().Get("search"), Status: models.ProgramApplicationStatus(r.URL.Query().Get("status")), TermID: r.URL.Query().Get("term")})
 	if err != nil {
 		Error(w, err)
 		return

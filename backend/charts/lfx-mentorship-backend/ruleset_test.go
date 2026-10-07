@@ -133,6 +133,37 @@ func assertAnonymousReadOnly(t *testing.T, name, block string) {
 	}
 }
 
+func TestFileRoutesUseTheirClassRelation(t *testing.T) {
+	for _, tc := range []struct {
+		rule, method, path, relation string
+	}{
+		{"program-logo-upload", "POST", "/mentorship/v1/programs/:id/logo-upload", "relation: writer"},
+		{"program-logo-delete", "DELETE", "/mentorship/v1/programs/:id/logo", "relation: writer"},
+		{"programs-public", "GET", "/mentorship/v1/programs/:id/logo-download", "relation: viewer"},
+		{"identity", "POST", "/mentorship/v1/me/profiles/by-id/:id/logo-upload", "- authorizer: allow_all"},
+		{"identity", "DELETE", "/mentorship/v1/me/profiles/by-id/:id/logo", "- authorizer: allow_all"},
+		{"directory-profiles-public", "GET", "/mentorship/v1/user-profiles/:id/logo-download", "- authorizer: allow_all"},
+		{"tasks-file-upload", "POST", "/mentorship/v1/tasks/:id/file-upload", "relation: assignee"},
+		{"tasks-file-delete", "DELETE", "/mentorship/v1/tasks/:id/file", "relation: assignee"},
+		{"tasks-auditor", "GET", "/mentorship/v1/tasks/:id/file-download", "relation: auditor"},
+	} {
+		block := ruleBlock(t, tc.rule)
+		if !strings.Contains(block, "- path: "+tc.path+"\n") {
+			t.Errorf("rule %q is missing %q", tc.rule, tc.path)
+		}
+		if !strings.Contains(block, tc.method) {
+			t.Errorf("rule %q does not allow %s", tc.rule, tc.method)
+		}
+		if !strings.Contains(block, tc.relation) {
+			t.Errorf("rule %q for %q lacks %q", tc.rule, tc.path, tc.relation)
+		}
+	}
+	// No private-class download route may be anonymous.
+	if strings.Contains(ruleBlock(t, "tasks-auditor"), "anonymous_authenticator") {
+		t.Error("task file download must not be anonymous")
+	}
+}
+
 func TestReviewerFieldsRequireReviewerRelation(t *testing.T) {
 	contents, err := os.ReadFile("templates/ruleset.yaml")
 	if err != nil {
@@ -225,6 +256,29 @@ func TestMentorModuleRoutesAreCoveredByHeimdall(t *testing.T) {
 		if !strings.Contains(ruleset, required) {
 			t.Errorf("RuleSet is missing mentor module authorization group %q", required)
 		}
+	}
+}
+
+func TestResendInviteRequiresProgramWriter(t *testing.T) {
+	block := ruleBlock(t, "program-member-resend-invite")
+	if strings.Count(block, "- path:") != 1 || !strings.Contains(block, "- path: /mentorship/v1/programs/:id/members/:memberId/resend-invite\n") {
+		t.Errorf("resend-invite rule must cover only its route:\n%s", block)
+	}
+	if !strings.Contains(block, "methods: [POST]\n") {
+		t.Errorf("resend-invite rule must allow only POST:\n%s", block)
+	}
+	for _, want := range []string{
+		"- authenticator: oidc",
+		"- authorizer: openfga_check",
+		`object: 'mentorship_program:{{ "{{- .Request.URL.Captures.id -}}" }}'`,
+		"relation: writer",
+	} {
+		if !strings.Contains(block, want) {
+			t.Errorf("resend-invite rule lacks %q:\n%s", want, block)
+		}
+	}
+	if strings.Contains(block, "anonymous_authenticator") || strings.Contains(block, "allow_all") {
+		t.Errorf("resend-invite rule must not admit anonymous or unchecked callers:\n%s", block)
 	}
 }
 

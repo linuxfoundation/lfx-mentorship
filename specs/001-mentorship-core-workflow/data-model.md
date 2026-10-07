@@ -13,7 +13,7 @@ Authoritative entity reference. Schema source of truth: `backend/db/migrations/0
 | `id` | UUID | PK | |
 | `name` | TEXT | NOT NULL | unique enforced in application layer |
 | `slug` | TEXT | NOT NULL UNIQUE | URL-safe identifier |
-| `status` | VARCHAR(20) | NOT NULL DEFAULT `draft` | see lifecycle below |
+| `status` | VARCHAR(20) | NOT NULL DEFAULT `pending` | see lifecycle below |
 | `is_paid` | BOOLEAN | NOT NULL DEFAULT false | stipend flag |
 | `description` | TEXT | nullable | required before submission |
 | `logo_url` | TEXT | nullable | required before submission |
@@ -33,7 +33,7 @@ Authoritative entity reference. Schema source of truth: `backend/db/migrations/0
 ### Status Lifecycle
 
 ```
-draft ──submit──► submitted ──approve──► published ◄──unhide──┐
+pending ─submit─► submitted ──approve──► published ◄──unhide──┐
                              └──reject──► rejected             │
                                          rejected ──resubmit──► submitted
 published ──hide──► hidden ──────────────────────────────────►─┘
@@ -155,8 +155,10 @@ invited │ requested │ active ──manual-hold──► pending
 | `attendance_type` | VARCHAR(20) | nullable | **required on accept**: `full_time \| part_time` |
 | `tasks_submitted` | BOOLEAN | DEFAULT false | set when all prerequisite tasks submitted |
 | `admin_notified` | BOOLEAN | DEFAULT false | notification sent flag |
+| `created_on` | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | orders a reapplication after its withdrawn history |
+| `updated_on` | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | |
 
-**Unique**: `(program_term_id, user_id, role)`
+**Unique**: `(program_term_id, user_id, role)` among applications that are not `withdrawn` (partial index `uq_applications_active`); withdrawn applications are kept as history when the user reapplies.
 
 ### Status Lifecycle
 
@@ -193,8 +195,8 @@ pending ──hold──► hold ──resume──► pending
 | `application_status` | VARCHAR(20) | nullable | denormalised |
 | `program_term_status` | VARCHAR(20) | nullable | denormalised |
 | `custom` | BOOLEAN | DEFAULT false | |
-| `submit_file` | TEXT | nullable | `null \| 'required' \| URL` |
-| `file` | TEXT | nullable | uploaded file URL |
+| `submit_file` | TEXT | nullable | template flag: `null \| 'required'` (never a file reference) |
+| `file` | TEXT | nullable | private-bucket object key of the submission |
 | `due_date` | DATE | nullable | |
 | `created_by` | TEXT | nullable | creator LFID |
 

@@ -107,8 +107,9 @@ resource ID is the task UUID.
 
 The document contains the task ID, application ID, assignee ID, name,
 description, category, `prerequisite`, status, application/term status, custom
-flag, `submit_file`, submission `file`, due date, and creation/update
-timestamps. These fields cover the task rows described by the mentee, mentor,
+flag, `submit_file`, a `has_file` flag, due date, and creation/update
+timestamps. The submission's object key is never indexed; clients fetch the file
+from `GET /v1/tasks/{id}/file-download`. These fields cover the task rows described by the mentee, mentor,
 and admin UI contracts. Tasks created with an application, updated, deleted,
 or created as part of an application/reapply transaction are coalesced through
 the same generation-guarded index outbox.

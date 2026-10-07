@@ -411,7 +411,8 @@ func (r *ProgramMemberRepository) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("begin delete program member transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	current, err := scanProgramMember(tx.QueryRow(ctx, `SELECT `+programMemberCols+` FROM program_members WHERE id = $1`, id))
+	// Lock the row so a concurrent invite acceptance cannot change the status read below.
+	current, err := scanProgramMember(tx.QueryRow(ctx, `SELECT `+programMemberCols+` FROM program_members WHERE id = $1 FOR UPDATE`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ErrProgramMemberNotFound
 	}

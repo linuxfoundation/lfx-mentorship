@@ -192,6 +192,144 @@ func (r *ProgramRepository) GetHeaderProjection(ctx context.Context, programID s
 	return projection, nil
 }
 
+// sqlUnreviewedProgramStatuses lists program statuses that have not passed review.
+const sqlUnreviewedProgramStatuses = `('` + string(models.ProgramStatusPending) + `', '` + string(models.ProgramStatusSubmitted) + `')`
+
+// administeredProgramsFrom selects the programs $1 is an active program admin
+// of, with the ID of the term shown on the list (the latest open term, else the
+// latest closed one) and the admin status. A published program with no open
+// term is completed once it has a closed term; with no terms at all it is still
+// open.
+const administeredProgramsFrom = `
+	FROM (
+		SELECT programs.id, programs.slug, programs.name, programs.lf_project_uid, programs.lf_project_name,
+			programs.logo_url, programs.status, programs.created_on, programs.updated_on,
+			COALESCE(open_term.id, closed_term.id) AS term_id,
+			CASE
+				WHEN programs.status IN ` + sqlUnreviewedProgramStatuses + ` THEN 'pending_review'
+				WHEN programs.status = 'published' AND open_term.id IS NULL AND closed_term.id IS NOT NULL THEN 'completed'
+				WHEN programs.status = 'published' THEN 'open'
+				WHEN programs.status = 'rejected' THEN 'rejected'
+				ELSE 'hidden' -- archived | hidden
+			END AS admin_status
+		FROM programs
+		JOIN program_members pm ON pm.program_id = programs.id
+		LEFT JOIN LATERAL (
+			SELECT pt.id FROM program_terms pt
+			WHERE pt.program_id = programs.id AND pt.status = 'open'
+			ORDER BY pt.start_date_time DESC NULLS LAST LIMIT 1
+		) open_term ON TRUE
+		LEFT JOIN LATERAL (
+			SELECT pt.id FROM program_terms pt
+			WHERE pt.program_id = programs.id AND pt.status = 'closed'
+			ORDER BY pt.start_date_time DESC NULLS LAST LIMIT 1
+		) closed_term ON TRUE
+		WHERE pm.user_id = $1 AND pm.member_type = 'program_admin' AND pm.status = 'active'
+	) ap`
+
+// ListAdministeredByUser returns the programs userID is an active program
+// admin of, ordered by name. Stats are counted for the returned page only and
+// match GetHeaderProjection.
+func (r *ProgramRepository) ListAdministeredByUser(ctx context.Context, userID string, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+	ctx, span := programTracer.Start(ctx, "db.programs.ListAdministeredByUser")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.user_id", userID))
+
+	limit := filter.Limit
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	offset := filter.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	args := []any{userID}
+	where := ` WHERE 1=1`
+	if filter.Status != "" {
+		args = append(args, string(filter.Status))
+		where += fmt.Sprintf(` AND ap.admin_status = $%d`, len(args))
+	}
+	if filter.Search != "" {
+		args = append(args, "%"+filter.Search+"%")
+		where += fmt.Sprintf(` AND (ap.name ILIKE $%d OR ap.lf_project_name ILIKE $%d)`, len(args), len(args))
+	}
+
+	var total int
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*)`+administeredProgramsFrom+where, args...).Scan(&total); err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("count administered programs: %w", err)
+	}
+
+	args = append(args, limit, offset)
+	q := `SELECT page.id, page.slug, page.name, page.lf_project_uid, page.lf_project_name, page.logo_url,
+			page.status, page.admin_status, page.term_id, page.created_on, page.updated_on,
+			(SELECT COUNT(*) FROM program_members m WHERE m.program_id = page.id AND m.member_type = 'mentor' AND m.status = 'active'),
+			mentees.accepted, mentees.graduated
+		FROM (SELECT ap.*` + administeredProgramsFrom + where +
+		fmt.Sprintf(` ORDER BY LOWER(ap.name), ap.id LIMIT $%d OFFSET $%d`, len(args)-1, len(args)) + `) page
+		LEFT JOIN LATERAL (
+			SELECT COUNT(*) FILTER (WHERE a.status = 'accepted') AS accepted,
+				COUNT(*) FILTER (WHERE a.status = 'graduated') AS graduated
+			FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id
+			WHERE pt.program_id = page.id AND a.role = 'mentee'
+		) mentees ON TRUE
+		ORDER BY LOWER(page.name), page.id`
+
+	rows, err := r.pool.Query(ctx, q, args...)
+	if err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("list administered programs: %w", err)
+	}
+	defer rows.Close()
+
+	programs := make([]*models.AdministeredProgram, 0)
+	termIDs := make([]string, 0)
+	byTermID := make(map[string]*models.AdministeredProgram)
+	for rows.Next() {
+		var p models.AdministeredProgram
+		var termID *string
+		if err := rows.Scan(&p.ID, &p.Slug, &p.Name, &p.ProjectUID, &p.ProjectName, &p.LogoURL,
+			&p.Status, &p.AdminStatus, &termID, &p.CreatedOn, &p.UpdatedOn,
+			&p.Stats.Mentors, &p.Stats.Mentees, &p.Stats.Graduated); err != nil {
+			span.RecordError(err)
+			return nil, nil, fmt.Errorf("scan administered program: %w", err)
+		}
+		programs = append(programs, &p)
+		if termID != nil {
+			termIDs = append(termIDs, *termID)
+			byTermID[*termID] = &p
+		}
+	}
+	if err := rows.Err(); err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("rows error: %w", err)
+	}
+	rows.Close()
+
+	if len(termIDs) > 0 {
+		termRows, err := r.pool.Query(ctx, `SELECT`+programTermCols+` FROM program_terms WHERE id = ANY($1)`, termIDs)
+		if err != nil {
+			span.RecordError(err)
+			return nil, nil, fmt.Errorf("list administered program terms: %w", err)
+		}
+		defer termRows.Close()
+		for termRows.Next() {
+			t, err := scanProgramTerm(termRows)
+			if err != nil {
+				span.RecordError(err)
+				return nil, nil, fmt.Errorf("scan administered program term: %w", err)
+			}
+			byTermID[t.ID].Term = t
+		}
+		if err := termRows.Err(); err != nil {
+			span.RecordError(err)
+			return nil, nil, fmt.Errorf("rows error: %w", err)
+		}
+	}
+	return programs, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, nil
+}
+
 // List returns a paginated slice of programs optionally filtered by status or search.
 func (r *ProgramRepository) List(ctx context.Context, filter models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error) {
 	ctx, span := programTracer.Start(ctx, "db.programs.List")
@@ -286,9 +424,10 @@ func (r *ProgramRepository) GetManagementSummary(ctx context.Context, programID 
 		SELECT
 			EXISTS (SELECT 1 FROM program_terms WHERE program_id = $1 AND status = 'open'),
 			EXISTS (SELECT 1 FROM program_terms WHERE program_id = $1 AND status = 'closed'),
-			COUNT(a.id) FILTER (WHERE pt.status = 'open' AND p.status NOT IN ('draft', 'submitted') AND a.role = 'mentee' AND a.status IN ('accepted', 'graduated')),
-			COUNT(a.id) FILTER (WHERE pt.status = 'closed' AND p.status NOT IN ('draft', 'submitted') AND a.role = 'mentee'),
-			COUNT(a.id) FILTER (WHERE p.status NOT IN ('draft', 'submitted') AND a.role = 'mentee'),
+			COUNT(a.id) FILTER (WHERE pt.status = 'open' AND p.status NOT IN ` + sqlUnreviewedProgramStatuses + ` AND a.role = 'mentee' AND a.status IN ('accepted', 'graduated')),
+			-- Counted per (term, user): a withdrawn application is kept beside its reapplication.
+			COUNT(DISTINCT (a.program_term_id, a.user_id)) FILTER (WHERE pt.status = 'closed' AND p.status NOT IN ` + sqlUnreviewedProgramStatuses + ` AND a.role = 'mentee'),
+			COUNT(DISTINCT (a.program_term_id, a.user_id)) FILTER (WHERE p.status NOT IN ` + sqlUnreviewedProgramStatuses + ` AND a.role = 'mentee'),
 			(SELECT COUNT(*) FROM program_members pm WHERE pm.program_id = $1 AND pm.member_type = 'mentor' AND pm.status = 'active'),
 			(SELECT COUNT(*) FROM program_terms WHERE program_id = $1 AND status <> 'deleted')
 		FROM program_terms pt
@@ -848,8 +987,23 @@ func (r *ProgramRepository) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("begin delete program transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	var logoURL *string
+	if err := tx.QueryRow(ctx, `SELECT logo_url FROM programs WHERE id = $1 FOR UPDATE`, id).Scan(&logoURL); errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrProgramNotFound
+	} else if err != nil {
+		return fmt.Errorf("lock program before delete: %w", err)
+	}
+	if err := lockProgramDescendants(ctx, tx, id); err != nil {
+		return err
+	}
 	applicationIDs, taskIDs, err := descendantIDsForProgram(ctx, tx, id)
 	if err != nil {
+		return err
+	}
+	if err := queueObjectDeletions(ctx, tx, domain.ObjectBucketLogos, logoURL); err != nil {
+		return err
+	}
+	if err := queueTaskFileDeletions(ctx, tx, "id = ANY($1)", taskIDs); err != nil {
 		return err
 	}
 
@@ -906,6 +1060,20 @@ func enqueueObjectMarker(ctx context.Context, tx pgx.Tx, objectType, objectID, o
 		              updated_on = NOW()`
 	if _, err := tx.Exec(ctx, q, objectType, objectID, operation); err != nil {
 		return fmt.Errorf("enqueue %s FGA marker: %w", objectType, err)
+	}
+	return nil
+}
+
+// lockProgramDescendants write-locks a program's terms and applications, which blocks new
+// tasks under them, so the task set read for file deletion cannot grow before the delete.
+func lockProgramDescendants(ctx context.Context, tx pgx.Tx, programID string) error {
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM program_terms WHERE program_id = $1 FOR UPDATE`, programID); err != nil {
+		return fmt.Errorf("lock program terms before delete: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		SELECT 1 FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id
+		WHERE pt.program_id = $1 FOR UPDATE OF a`, programID); err != nil {
+		return fmt.Errorf("lock program applications before delete: %w", err)
 	}
 	return nil
 }
@@ -1094,7 +1262,7 @@ func (r *ProgramRepository) ListFundingSyncProgramIDs(ctx context.Context) ([]st
 	const q = `
 		SELECT programs.id
 		FROM programs
-		WHERE status NOT IN ('archived', 'draft')
+		WHERE status NOT IN ('` + string(models.ProgramStatusArchived) + `', '` + string(models.ProgramStatusPending) + `')
 		ORDER BY programs.id`
 
 	rows, err := r.pool.Query(ctx, q)

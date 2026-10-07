@@ -32,13 +32,13 @@ All `curl` examples below assume `BASE=http://localhost:8090/v1` and
 
 ## Scenario 1 — Program Lifecycle (happy path)
 
-### 1a. Create a draft program
+### 1a. Create a pending program
 
 ```bash
 curl -s -X POST $BASE/programs $AUTH \
   -H 'Content-Type: application/json' \
   -d '{"name":"Go Mentorship 2026","slug":"go-2026","description":"Learn Go.","repo_link":"https://github.com/example/go","logo_url":"https://example.com/logo.png"}'
-# Expected: 201, body contains "status":"draft"
+# Expected: 201, body contains "status":"pending"
 ```
 
 ### 1b. Add a term (required before submission)

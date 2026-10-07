@@ -25,8 +25,28 @@ type Config struct {
 	Indexer      IndexerConfig
 	Email        EmailConfig
 	Crowdfunding CrowdfundingConfig
+	Storage      StorageConfig
 	OTel         OTelConfig
 	Local        LocalConfig
+}
+
+// StorageConfig holds the per-class buckets. A bucket left unset disables its upload
+// and download routes; the env names follow the platform's multi-bucket namespacing.
+type StorageConfig struct {
+	Region string
+	// Logos is the public, CDN-fronted bucket for program and profile logos.
+	Logos BucketConfig
+	// Attachments is the private bucket for task submissions.
+	Attachments BucketConfig
+}
+
+// BucketConfig holds one bucket's settings.
+type BucketConfig struct {
+	Bucket              string
+	EndpointURL         string
+	CreateMissingBucket bool
+	// CDNURLPrefix is set for the public bucket only.
+	CDNURLPrefix string
 }
 
 // ServerConfig holds HTTP server settings.
@@ -191,6 +211,10 @@ func loadConfig() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	storageCfg, err := loadStorageConfig()
+	if err != nil {
+		return nil, err
+	}
 
 	return &Config{
 		Server: ServerConfig{
@@ -228,6 +252,7 @@ func loadConfig() (*Config, error) {
 			BaseURL: strings.TrimRight(os.Getenv("CROWDFUNDING_BASE_URL"), "/"),
 			Timeout: crowdfundingTimeout,
 		},
+		Storage: storageCfg,
 		OTel: OTelConfig{
 			ServiceName:    getEnv("OTEL_SERVICE_NAME", "lfx-mentorship-api"),
 			ServiceVersion: getEnv("OTEL_SERVICE_VERSION", "dev"),
@@ -258,6 +283,49 @@ func loadEmailConfig(natsConfigured bool) (EmailConfig, error) {
 	}
 	if addr, err := mail.ParseAddress(cfg.HRInbox); err != nil || addr.Address != cfg.HRInbox {
 		return EmailConfig{}, fmt.Errorf("EMAIL_HR_INBOX must be a bare email address when FGA_NATS_URL is set")
+	}
+	return cfg, nil
+}
+
+// loadStorageConfig reads the logos and attachments buckets.
+func loadStorageConfig() (StorageConfig, error) {
+	cfg := StorageConfig{Region: strings.TrimSpace(os.Getenv("AWS_REGION"))}
+	var err error
+	if cfg.Logos, err = loadBucketConfig("LOGOS"); err != nil {
+		return StorageConfig{}, err
+	}
+	if cfg.Attachments, err = loadBucketConfig("ATTACHMENTS"); err != nil {
+		return StorageConfig{}, err
+	}
+	if (cfg.Logos.Bucket != "" || cfg.Attachments.Bucket != "") && cfg.Region == "" {
+		return StorageConfig{}, fmt.Errorf("AWS_REGION is required when an S3 bucket is configured")
+	}
+	// The logos bucket is CDN-fronted, so sharing it would make private attachments public.
+	if cfg.Logos.Bucket != "" && cfg.Logos.Bucket == cfg.Attachments.Bucket {
+		return StorageConfig{}, fmt.Errorf("ATTACHMENTS_S3_BUCKET must differ from LOGOS_S3_BUCKET")
+	}
+	if cfg.Logos.Bucket != "" {
+		// Stored logo columns hold the full CDN URL, so the prefix is required, not optional.
+		if u, err := url.Parse(cfg.Logos.CDNURLPrefix); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+			return StorageConfig{}, fmt.Errorf("LOGOS_CDN_URL_PREFIX must be an absolute http(s) URL with no query or fragment when LOGOS_S3_BUCKET is set")
+		}
+	}
+	return cfg, nil
+}
+
+// loadBucketConfig reads the {PREFIX}_S3_* and {PREFIX}_CDN_URL_PREFIX variables.
+func loadBucketConfig(prefix string) (BucketConfig, error) {
+	cfg := BucketConfig{
+		Bucket:       strings.TrimSpace(os.Getenv(prefix + "_S3_BUCKET")),
+		EndpointURL:  strings.TrimSpace(os.Getenv(prefix + "_S3_ENDPOINT_URL")),
+		CDNURLPrefix: strings.TrimRight(strings.TrimSpace(os.Getenv(prefix+"_CDN_URL_PREFIX")), "/"),
+	}
+	if v := os.Getenv(prefix + "_S3_CREATE_MISSING_BUCKET"); v != "" {
+		create, err := strconv.ParseBool(v)
+		if err != nil {
+			return BucketConfig{}, fmt.Errorf("%s_S3_CREATE_MISSING_BUCKET: must be a boolean", prefix)
+		}
+		cfg.CreateMissingBucket = create
 	}
 	return cfg, nil
 }
