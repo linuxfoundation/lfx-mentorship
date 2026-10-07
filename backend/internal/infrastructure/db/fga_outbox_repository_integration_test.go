@@ -962,15 +962,19 @@ func TestEnrollmentIntegration_PersistsProjectMetadataInIndexSnapshot(t *testing
 		t.Fatalf("read program index snapshot: %v", err)
 	}
 	var document struct {
-		ProjectSlug    string `json:"project_slug"`
-		ProjectName    string `json:"project_name"`
-		ProjectLogoURL string `json:"project_logo_url"`
+		ProjectSlug    string   `json:"project_slug"`
+		ProjectName    string   `json:"project_name"`
+		ProjectLogoURL string   `json:"project_logo_url"`
+		Skills         []string `json:"skills"`
 	}
 	if err := json.Unmarshal(data, &document); err != nil {
 		t.Fatalf("decode program index snapshot: %v", err)
 	}
 	if document.ProjectSlug != projectSlug || document.ProjectName != projectName || document.ProjectLogoURL != projectLogo {
 		t.Fatalf("program index project metadata = %+v", document)
+	}
+	if len(document.Skills) != 1 || document.Skills[0] != "Go" {
+		t.Fatalf("program index skills = %v; want [Go]", document.Skills)
 	}
 }
 

@@ -904,6 +904,10 @@ func (r *ProgramRepository) CreateEnrollment(ctx context.Context, input models.P
 			return nil, fmt.Errorf("create enrollment skill: %w", err)
 		}
 	}
+	// createInTx indexed the program before its skills existed; refresh the snapshot.
+	if err := enqueueProgramIndex(ctx, tx, program, "created"); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create enrollment transaction: %w", err)
 	}
