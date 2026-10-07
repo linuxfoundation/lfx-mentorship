@@ -478,6 +478,11 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 			return nil, fmt.Errorf("%w: at least one skill is required", domain.ErrInvalidInput)
 		}
 	}
+	if input.Terms != nil {
+		if err := validateOpenTerms(input.Terms); err != nil {
+			return nil, err
+		}
+	}
 
 	if input.Status != nil {
 		current, err := s.repo.GetByID(ctx, id)
@@ -550,6 +555,40 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 		return nil, fmt.Errorf("update program: %w", err)
 	}
 	return p, nil
+}
+
+// validateOpenTerms checks a program update's open-term set and trims term names
+// in place. Every listed term is open, so the list length is the open-term count.
+func validateOpenTerms(terms []models.ProgramOpenTermInput) error {
+	if len(terms) == 0 {
+		return fmt.Errorf("%w: at least one open term is required", domain.ErrInvalidInput)
+	}
+	if len(terms) > maxOpenTermsPerProgram {
+		return fmt.Errorf("%w: at most %d open terms are allowed", domain.ErrInvalidInput, maxOpenTermsPerProgram)
+	}
+	seen := make(map[string]struct{}, len(terms))
+	for i := range terms {
+		term := &terms[i]
+		term.Name = strings.TrimSpace(term.Name)
+		if term.Name == "" {
+			return fmt.Errorf("%w: term name is required", domain.ErrInvalidInput)
+		}
+		if term.ID != "" {
+			id, err := uuid.Parse(term.ID)
+			if err != nil {
+				return fmt.Errorf("%w: term id %q must be a UUID", domain.ErrInvalidInput, term.ID)
+			}
+			term.ID = id.String()
+			if _, dup := seen[term.ID]; dup {
+				return fmt.Errorf("%w: term %s is listed more than once", domain.ErrInvalidInput, term.ID)
+			}
+			seen[term.ID] = struct{}{}
+		}
+		if err := validateTermDates(term.StartDateTime, term.EndDateTime, term.ApplicationStartDate, term.ApplicationEndDate); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // normalizeSkills trims skills and drops blanks and case-insensitive duplicates,

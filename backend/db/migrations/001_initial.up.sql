@@ -226,7 +226,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   application_status   VARCHAR(20),                              -- pending | accepted | declined
   program_term_status  VARCHAR(20),                              -- open | closed
   custom               BOOLEAN     DEFAULT false,
-  submit_file          TEXT,                                     -- null | 'required' | URL
+  submit_file          TEXT,                                     -- null | 'required' (flag, not a URL)
   file                 TEXT,                                     -- uploaded file locator
   due_date             TEXT,                                     -- YYYY-MM-DD keeps lexical ORDER BY due_date chronological
   created_by           TEXT,                                     -- lfid of creator
