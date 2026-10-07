@@ -1017,6 +1017,7 @@ The caller resolves the LF project from Project Service and passes its UID, slug
   "repositoryUrl":    "https://github.com/cncf/mentorship",
   "websiteUrl":       "https://...",
   "codeOfConductUrl": "https://...",
+  "industry":         "Cloud Native",                         // optional
   "ciiProjectId":     "12345",
   "skills":           ["Go"],                                 // required; at least one
   "terms": [                                                  // required; 1–4 terms

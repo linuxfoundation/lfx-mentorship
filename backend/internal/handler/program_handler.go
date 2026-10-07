@@ -75,6 +75,7 @@ type enrollmentRequest struct {
 	RepositoryURL    *string                 `json:"repositoryUrl,omitempty"`
 	WebsiteURL       *string                 `json:"websiteUrl,omitempty"`
 	CodeOfConductURL *string                 `json:"codeOfConductUrl,omitempty"`
+	Industry         *string                 `json:"industry,omitempty"`
 	Skills           []string                `json:"skills"`
 	CIIProjectID     *string                 `json:"ciiProjectId,omitempty"`
 	LogoFileName     *string                 `json:"logoFileName,omitempty"`
@@ -458,6 +459,7 @@ func (h *ProgramHandler) Create(w http.ResponseWriter, r *http.Request) {
 			RepoLink:           request.RepositoryURL,
 			WebsiteURL:         request.WebsiteURL,
 			CodeOfConduct:      request.CodeOfConductURL,
+			Industry:           request.Industry,
 			CIIProjectID:       request.CIIProjectID,
 			TermsAndConditions: request.TermsAccepted,
 		},

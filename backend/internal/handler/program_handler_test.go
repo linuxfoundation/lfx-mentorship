@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
@@ -31,6 +32,7 @@ type stubProgramSvc struct {
 	deleteSkill                func(context.Context, string, string, string) error
 	getCategorizedTransactions func(context.Context, string, string, bool, int, int) (*models.ProgramCategorizedTransactions, error)
 	getProgramSponsors         func(context.Context, string, string, bool, bool) ([]models.ProgramSponsor, error)
+	createEnrollment           func(context.Context, models.ProgramEnrollmentInput) (*models.Program, error)
 }
 
 func (s *stubProgramSvc) GetByID(ctx context.Context, id string) (*models.Program, error) {
@@ -94,6 +96,9 @@ func (s *stubProgramSvc) Create(context.Context, models.ProgramCreateInput) (*mo
 	return &models.Program{}, nil
 }
 func (s *stubProgramSvc) CreateEnrollment(ctx context.Context, input models.ProgramEnrollmentInput) (*models.Program, error) {
+	if s.createEnrollment != nil {
+		return s.createEnrollment(ctx, input)
+	}
 	return s.Create(ctx, input.Program)
 }
 func (s *stubProgramSvc) Update(context.Context, string, models.ProgramUpdateInput) (*models.Program, error) {
@@ -786,5 +791,27 @@ func TestProgramHandler_ListMine_InvalidStatus(t *testing.T) {
 	h.ListMine(w, r)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("got %d; want 400", w.Code)
+	}
+}
+
+func TestProgramHandler_Create_MapsIndustry(t *testing.T) {
+	var captured models.ProgramEnrollmentInput
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		createEnrollment: func(_ context.Context, input models.ProgramEnrollmentInput) (*models.Program, error) {
+			captured = input
+			return &models.Program{ID: "p1"}, nil
+		},
+	})
+	body := `{"projectId":"7cad5a8d-19d0-41a4-81a6-043453daf9ee","name":"CNCF Mentorship","industry":"Cloud Native","skills":["Go"],"termsAccepted":true,` +
+		`"terms":[{"name":"Spring","startDate":"2026-03-01","endDate":"2026-05-31","applicationStartDate":"2026-01-15","applicationEndDate":"2026-02-15"}]}`
+	r := requestWithPrincipal(httptest.NewRequest(http.MethodPost, "/v1/programs", strings.NewReader(body)), "creator-1")
+	w := httptest.NewRecorder()
+	h.Create(w, r)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("got %d; want 201: %s", w.Code, w.Body.String())
+	}
+	if captured.Program.Industry == nil || *captured.Program.Industry != "Cloud Native" {
+		t.Fatalf("industry = %v; want Cloud Native", captured.Program.Industry)
 	}
 }
