@@ -66,7 +66,8 @@ func mapError(err error) (int, string) {
 		errors.Is(err, domain.ErrProgramMemberNotFound),
 		errors.Is(err, domain.ErrApplicationNotFound),
 		errors.Is(err, domain.ErrTaskNotFound),
-		errors.Is(err, domain.ErrFileNotFound):
+		errors.Is(err, domain.ErrFileNotFound),
+		errors.Is(err, domain.ErrAccountNotFound):
 		return http.StatusNotFound, "not found"
 	case errors.Is(err, domain.ErrInvalidInput):
 		return http.StatusBadRequest, err.Error()
@@ -82,6 +83,8 @@ func mapError(err error) (int, string) {
 		return http.StatusForbidden, "forbidden"
 	case errors.Is(err, domain.ErrConflict):
 		return http.StatusConflict, "conflict"
+	case errors.Is(err, domain.ErrEmailInUse):
+		return http.StatusConflict, err.Error()
 	case errors.Is(err, domain.ErrInvalidStateTransition):
 		return http.StatusConflict, err.Error()
 	case errors.Is(err, domain.ErrStateLocked):

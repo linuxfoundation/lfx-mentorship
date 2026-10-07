@@ -55,6 +55,7 @@ func TestError_WrappedSentinels(t *testing.T) {
 		{domain.ErrUnauthorized, http.StatusUnauthorized},
 		{domain.ErrForbidden, http.StatusForbidden},
 		{domain.ErrConflict, http.StatusConflict},
+		{domain.ErrEmailInUse, http.StatusConflict},
 		{domain.ErrInvalidStateTransition, http.StatusConflict},
 		{domain.ErrStateLocked, http.StatusConflict},
 		{domain.ErrIneligible, http.StatusUnprocessableEntity},
