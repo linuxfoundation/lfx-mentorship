@@ -213,10 +213,14 @@ func (r *ProgramTermRepository) Create(ctx context.Context, input models.Program
 		return nil, fmt.Errorf("begin create program term transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// Every create takes the program lock, so it cannot race a term-set replacement.
 	if input.Status == models.ProgramTermStatusOpen {
-		if err := lockProgramAndCheckOpenTerms(ctx, tx, input.ProgramID, ""); err != nil {
-			return nil, err
-		}
+		err = lockProgramAndCheckOpenTerms(ctx, tx, input.ProgramID, "")
+	} else {
+		err = lockProgram(ctx, tx, input.ProgramID)
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	const q = `
@@ -252,8 +256,10 @@ func (r *ProgramTermRepository) Update(ctx context.Context, id string, input mod
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if input.Status != nil && *input.Status == models.ProgramTermStatusOpen {
+		// Lock the program before the term (the UPDATE below), the order every
+		// term-set write uses; a term's program_id never changes, so no lock is needed to read it.
 		var programID string
-		if err := tx.QueryRow(ctx, `SELECT program_id FROM program_terms WHERE id = $1 FOR UPDATE`, id).Scan(&programID); errors.Is(err, pgx.ErrNoRows) {
+		if err := tx.QueryRow(ctx, `SELECT program_id FROM program_terms WHERE id = $1`, id).Scan(&programID); errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrProgramTermNotFound
 		} else if err != nil {
 			return nil, fmt.Errorf("load program for term update: %w", err)
@@ -299,11 +305,19 @@ func (r *ProgramTermRepository) Update(ctx context.Context, id string, input mod
 	return t, nil
 }
 
-func lockProgramAndCheckOpenTerms(ctx context.Context, tx pgx.Tx, programID, excludeTermID string) error {
+// lockProgram takes the program row lock that serializes writes to its term set.
+func lockProgram(ctx context.Context, tx pgx.Tx, programID string) error {
 	if err := tx.QueryRow(ctx, `SELECT id FROM programs WHERE id = $1 FOR UPDATE`, programID).Scan(new(string)); errors.Is(err, pgx.ErrNoRows) {
 		return domain.ErrProgramNotFound
 	} else if err != nil {
-		return fmt.Errorf("lock program for open-term check: %w", err)
+		return fmt.Errorf("lock program for term write: %w", err)
+	}
+	return nil
+}
+
+func lockProgramAndCheckOpenTerms(ctx context.Context, tx pgx.Tx, programID, excludeTermID string) error {
+	if err := lockProgram(ctx, tx, programID); err != nil {
+		return err
 	}
 	var count int
 	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM program_terms WHERE program_id = $1 AND status = 'open' AND ($2 = '' OR id::text <> $2)`, programID, excludeTermID).Scan(&count); err != nil {
@@ -334,13 +348,21 @@ func lockProgramTerms(ctx context.Context, tx pgx.Tx, programID string) (map[str
 	return terms, rows.Err()
 }
 
-// replaceProgramTerms makes terms the program's full term set, given current, the
-// program's terms as locked by lockProgramTerms. Entries with an ID update that
-// term unless they match it, entries without one are created open, and unlisted
-// terms are soft-deleted. It rejects an ID outside current, editing a historical
-// term, removing a term that has applications, and adding terms beyond the
-// open-term cap; a program already over the cap can still edit its terms.
-func replaceProgramTerms(ctx context.Context, tx pgx.Tx, programID string, current map[string]*models.ProgramTerm, terms []models.ProgramTermReplaceInput) error {
+// replaceProgramTerms makes terms the program's full term set. Entries with an ID
+// update that term unless they match it, entries without one are created open,
+// and unlisted terms are soft-deleted. It rejects an ID that is not a current
+// term of the program, editing a historical term, removing a term that has
+// applications, and adding terms beyond the open-term cap; a program already
+// over the cap can still edit its terms.
+//
+// The caller must hold the program row lock. Every term-set write takes that
+// lock before any term lock, so the term set read here is complete and stays
+// so until commit.
+func replaceProgramTerms(ctx context.Context, tx pgx.Tx, programID string, terms []models.ProgramTermReplaceInput) error {
+	current, err := lockProgramTerms(ctx, tx, programID)
+	if err != nil {
+		return err
+	}
 	listed := make(map[string]struct{}, len(terms))
 	for _, term := range terms {
 		if term.ID != "" {

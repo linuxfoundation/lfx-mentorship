@@ -1086,11 +1086,12 @@ index snapshot is refreshed with the new skills in the same transaction.
 `terms` replaces the program's full term set in the same transaction: an entry
 with an `id` updates that term's name and dates, an entry without one creates a
 new `open` term, and every non-deleted term not listed is deleted. Send every term
-the program should keep, including closed ones. Each entry needs a name and all
+the program should keep, including closed ones; at least one entry is required.
+An entry that matches its current term (names compared exactly, timestamps to the
+millisecond) is unchanged: it is not validated or rewritten, so a term can be sent
+back as read even when it lacks dates. New and changed entries need a name and all
 four dates, with the application window ending after it starts and before the
-term starts; at least one entry is required. A closed term that has ended cannot
-be edited but may be sent back unchanged (names compared exactly, timestamps to
-the millisecond); unchanged terms are not rewritten. `status` and other term fields are ignored here; use the term
+term starts. A closed term that has ended cannot be changed. `status` and other term fields are ignored here; use the term
 close and reopen routes for lifecycle changes. Omit `terms` to leave them
 unchanged. The `<Program>` response does not include terms; read them from
 [`GET /v1/programs/{id}/terms`](#get-v1programsidterms-).
