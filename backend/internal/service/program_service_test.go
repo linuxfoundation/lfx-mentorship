@@ -284,13 +284,13 @@ func TestProgramService_HideUnhide(t *testing.T) {
 		{name: "unhide published", unhide: true, current: models.ProgramStatusPublished, want: domain.ErrInvalidStateTransition},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var stored *models.ProgramStatus
+			var stored, expected *models.ProgramStatus
 			repo := &stubProgRepo{
 				getByID: func(_ context.Context, id string) (*models.Program, error) {
 					return &models.Program{ID: id, Status: tc.current}, nil
 				},
 				update: func(_ context.Context, id string, in models.ProgramUpdateInput) (*models.Program, error) {
-					stored = in.Status
+					stored, expected = in.Status, in.ExpectedStatus
 					return &models.Program{ID: id, Status: *in.Status}, nil
 				},
 			}
@@ -315,6 +315,10 @@ func TestProgramService_HideUnhide(t *testing.T) {
 			}
 			if stored == nil || *stored != tc.stored || program.Status != tc.stored {
 				t.Fatalf("stored %v, returned %q; want %q", stored, program.Status, tc.stored)
+			}
+			// The repository must apply the change only while the row is still in the status that was validated.
+			if expected == nil || *expected != tc.current {
+				t.Fatalf("ExpectedStatus = %v; want %q", expected, tc.current)
 			}
 		})
 	}

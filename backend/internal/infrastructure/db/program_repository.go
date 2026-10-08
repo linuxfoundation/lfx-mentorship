@@ -902,6 +902,16 @@ func (r *ProgramRepository) Update(ctx context.Context, id string, input models.
 		return nil, fmt.Errorf("begin update program transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if input.ExpectedStatus != nil {
+		var current models.ProgramStatus
+		if err := tx.QueryRow(ctx, `SELECT status FROM programs WHERE id = $1 FOR UPDATE`, id).Scan(&current); errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrProgramNotFound
+		} else if err != nil {
+			return nil, fmt.Errorf("lock program for status change: %w", err)
+		} else if current != *input.ExpectedStatus {
+			return nil, fmt.Errorf("%w: program status changed concurrently", domain.ErrInvalidStateTransition)
+		}
+	}
 
 	const q = `
 		UPDATE programs SET

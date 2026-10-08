@@ -560,6 +560,8 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 		if !ok {
 			return nil, fmt.Errorf("%w: cannot transition program from %q to %q", domain.ErrInvalidStateTransition, current.Status, next)
 		}
+		// The transition was validated against current.Status, so the write must apply only while the row still has it.
+		input.ExpectedStatus = &current.Status
 
 		// Submission guard (FR-004): all required fields must be present and at least one open term.
 		if next == models.ProgramStatusSubmitted {

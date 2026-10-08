@@ -286,6 +286,29 @@ func TestApplicationRepositoryIntegration_StatusChangeAppliesOnlyFromExpectedSta
 	}
 }
 
+func TestProgramRepositoryIntegration_StatusChangeAppliesOnlyFromExpectedStatus(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+	repo := NewProgramRepository(pool)
+	published, hidden, archived := models.ProgramStatusPublished, models.ProgramStatusHidden, models.ProgramStatusArchived
+	if _, err := repo.Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &hidden, ExpectedStatus: &published}); err != nil {
+		t.Fatalf("hide: %v", err)
+	}
+
+	// An unhide validated against hidden must not overwrite an archive that committed first.
+	if _, err := repo.Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &archived, ExpectedStatus: &hidden}); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	if _, err := repo.Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &published, ExpectedStatus: &hidden}); !errors.Is(err, domain.ErrInvalidStateTransition) {
+		t.Fatalf("stale unhide err = %v; want ErrInvalidStateTransition", err)
+	}
+	var status models.ProgramStatus
+	if err := pool.QueryRow(ctx, `SELECT status FROM programs WHERE id = $1`, fixture.ProgramID).Scan(&status); err != nil || status != archived {
+		t.Fatalf("status = %q, err = %v; want archived", status, err)
+	}
+}
+
 func TestApplicationRepositoryIntegration_ReapplyKeepsWithdrawnApplication(t *testing.T) {
 	pool := integrationPool(t)
 	fixture := seedIntegrationFixture(t, pool)
