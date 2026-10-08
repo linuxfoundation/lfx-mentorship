@@ -1003,14 +1003,14 @@ Resolve a program UUID or slug to the canonical program UUID.
 
 Create a program with its first terms, skills, and prerequisites in one transaction. New programs start in `pending` status and the slug is derived from `name`.
 
-The caller resolves the LF project from Project Service and passes its UID, slug, name, and logo. They are persisted with the program and feed its search index snapshot (`project_slug`, `project_name`, `project_logo_url`).
+The backend reads the project's slug, name, and logo from Project Service by `projectId` and stores them with the program, where they feed its search index snapshot (`project_slug`, `project_name`, `project_logo_url`). It ignores the `projectSlug`, `projectName`, and `projectLogoUrl` the caller sends, except when `FGA_NATS_URL` is unset in local development, where it stores them as sent.
 
 **Request body**
 ```json
 {
   "projectId":        "7cad5a8d-19d0-41a4-81a6-043453daf9ee", // required; Project Service UUID
-  "projectSlug":      "cncf",                                 // required
-  "projectName":      "Cloud Native Computing Foundation",   // required
+  "projectSlug":      "cncf",                                 // required only without FGA_NATS_URL
+  "projectName":      "Cloud Native Computing Foundation",   // required only without FGA_NATS_URL
   "projectLogoUrl":   "https://...",                          // optional; http(s)
   "name":             "CNCF Mentorship 2026",                 // required; must be unique
   "description":      "...",
@@ -1032,7 +1032,7 @@ The caller resolves the LF project from Project Service and passes its UID, slug
 ```
 
 **Response** `201` → `<Program>`  
-**Errors** `400`, `409` (duplicate name or slug)
+**Errors** `400` (including a `projectId` with no Project Service project), `409` (duplicate name or slug), `503` (Project Service unavailable)
 
 ---
 
@@ -1069,9 +1069,12 @@ Update program fields. Status cannot be changed here: a body with `status` retur
 }
 ```
 
-The `project_*` fields move the program to another LF project and are applied
-together: when any is present, `project_uid` (a Project Service UUID),
-`project_slug`, and `project_name` are required, and an omitted or blank
+The `project_*` fields move the program to another LF project. When any is
+present, `project_uid` (a Project Service UUID) is required, and, as on create,
+the backend reads the new project's slug, name, and logo from Project Service and
+ignores the `project_slug`, `project_name`, and `project_logo_url` sent. When
+`FGA_NATS_URL` is unset in local development it stores them as sent instead:
+`project_slug` and `project_name` are then required, and an omitted or blank
 `project_logo_url` clears the logo. Omit all four to leave the project unchanged.
 Moving a program changes who can manage it, since access is inherited from the
 project.
@@ -1094,8 +1097,9 @@ term close and reopen routes. Omit `terms` to leave them unchanged. The
 [`GET /v1/programs/{id}/terms`](#get-v1programsidterms-).
 
 **Response** `200` → `<Program>`  
-**Errors** `400` (including an `id` that is not an open term of the program), `404`,
-`409` (removing an open term that has applications)
+**Errors** `400` (including an `id` that is not an open term of the program, or a
+`project_uid` with no Project Service project), `404`, `409` (removing an open term
+that has applications), `503` (Project Service unavailable)
 
 ---
 
@@ -2557,7 +2561,7 @@ class ApiError extends Error {
 | `HEIMDALL_JWKS_URL` | Yes | — | Heimdall JWKS endpoint |
 | `HEIMDALL_JWT_AUDIENCE` | Yes | — | Expected JWT `aud` claim |
 | `HEIMDALL_JWT_ISSUER` | Yes | — | Expected JWT `iss` claim |
-| `FGA_NATS_URL` | Yes for relays | — | Shared NATS URL for FGA and index publishing, and notification email via lfx-v2-email-service |
+| `FGA_NATS_URL` | Yes for relays | — | Shared NATS URL for FGA and index publishing, notification email via lfx-v2-email-service, and project lookups via lfx-v2-project-service |
 | `PUBLIC_SITE_URL` | When `FGA_NATS_URL` is set | — | Public Mentorship site that user-facing email links point at |
 | `SELF_SERVE_URL` | When `FGA_NATS_URL` is set | — | LFX Self Serve base URL for management links in email |
 | `EMAIL_HR_INBOX` | When `FGA_NATS_URL` is set | — | LF staff HR inbox sent every mentee acceptance |

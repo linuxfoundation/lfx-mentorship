@@ -4,15 +4,17 @@
 package main
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
 
 func TestLoadEmailConfig(t *testing.T) {
 	valid := map[string]string{
-		"PUBLIC_SITE_URL": "https://mentorship.example.org/",
-		"SELF_SERVE_URL":  "https://app.example.org",
-		"EMAIL_HR_INBOX":  "hr@linuxfoundation.org",
+		"PUBLIC_SITE_URL":          "https://mentorship.example.org/",
+		"SELF_SERVE_URL":           "https://app.example.org",
+		"EMAIL_HR_INBOX":           "hr@linuxfoundation.org",
+		"EMAIL_ALLOWED_RECIPIENTS": "",
 	}
 	for name, tc := range map[string]struct {
 		nats     bool
@@ -29,6 +31,10 @@ func TestLoadEmailConfig(t *testing.T) {
 		"fragment on base url":        {nats: true, override: map[string]string{"PUBLIC_SITE_URL": "https://mentorship.example.org#top"}, wantErr: "PUBLIC_SITE_URL"},
 		"missing hr inbox":            {nats: true, override: map[string]string{"EMAIL_HR_INBOX": ""}, wantErr: "EMAIL_HR_INBOX"},
 		"display-name hr inbox":       {nats: true, override: map[string]string{"EMAIL_HR_INBOX": "HR <hr@linuxfoundation.org>"}, wantErr: "EMAIL_HR_INBOX"},
+		"allowed recipients":          {nats: true, override: map[string]string{"EMAIL_ALLOWED_RECIPIENTS": " a@linuxfoundation.org, b@contractor.linuxfoundation.org ,"}},
+		"invalid allowed recipient":   {nats: true, override: map[string]string{"EMAIL_ALLOWED_RECIPIENTS": "a@linuxfoundation.org,not-an-address"}, wantErr: "EMAIL_ALLOWED_RECIPIENTS"},
+		"comma-only recipients":       {nats: true, override: map[string]string{"EMAIL_ALLOWED_RECIPIENTS": " , "}, wantErr: "EMAIL_ALLOWED_RECIPIENTS"},
+		"blank recipients":            {nats: true, override: map[string]string{"EMAIL_ALLOWED_RECIPIENTS": " "}, wantErr: "EMAIL_ALLOWED_RECIPIENTS"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			for k, v := range valid {
@@ -49,6 +55,12 @@ func TestLoadEmailConfig(t *testing.T) {
 			}
 			if tc.nats && cfg.PublicSiteURL != "https://mentorship.example.org" {
 				t.Fatalf("PublicSiteURL = %q, want trailing slash trimmed", cfg.PublicSiteURL)
+			}
+			if want := []string{"a@linuxfoundation.org", "b@contractor.linuxfoundation.org"}; name == "allowed recipients" && !slices.Equal(cfg.AllowedRecipients, want) {
+				t.Fatalf("AllowedRecipients = %q, want %q", cfg.AllowedRecipients, want)
+			}
+			if name == "valid" && cfg.AllowedRecipients != nil {
+				t.Fatalf("AllowedRecipients = %q, want nil when unset", cfg.AllowedRecipients)
 			}
 		})
 	}

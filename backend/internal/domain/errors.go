@@ -19,6 +19,7 @@ var (
 	ErrTaskNotFound          = errors.New("task not found")
 	ErrFileNotFound          = errors.New("file not found")
 	ErrAccountNotFound       = errors.New("LF account not found")
+	ErrProjectNotFound       = errors.New("project not found")
 
 	ErrInvalidInput        = errors.New("invalid input")
 	ErrPayloadTooLarge     = errors.New("payload too large")

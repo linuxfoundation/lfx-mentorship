@@ -67,7 +67,8 @@ func mapError(err error) (int, string) {
 		errors.Is(err, domain.ErrApplicationNotFound),
 		errors.Is(err, domain.ErrTaskNotFound),
 		errors.Is(err, domain.ErrFileNotFound),
-		errors.Is(err, domain.ErrAccountNotFound):
+		errors.Is(err, domain.ErrAccountNotFound),
+		errors.Is(err, domain.ErrProjectNotFound):
 		return http.StatusNotFound, "not found"
 	case errors.Is(err, domain.ErrInvalidInput):
 		return http.StatusBadRequest, err.Error()
