@@ -172,7 +172,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	rosterSvc := service.NewRosterService(rosterRepo)
 	fundingStatsSvc := service.NewFundingStatsService(programRepo)
 	objectDeletions := db.NewObjectDeletionRepository(pool)
-	fileSvc := service.NewFileService(db.NewFileRepository(pool), objectDeletions, programRepo, userProfileRepo, taskSvc, logoBucket, attachments)
+	fileSvc := service.NewFileService(db.NewFileRepository(pool), objectDeletions, programRepo, taskSvc, logoBucket, attachments)
 
 	relayCtx, relayCancel := context.WithCancel(ctx)
 	if logoStore != nil || attachmentStore != nil {
@@ -276,7 +276,6 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		r.Get("/programs/resolve/{id}", programH.ResolveID)
 		r.Get("/programs/{id}", programH.GetByID)
 		transfer.Get("/programs/{id}/logo-download", fileH.DownloadProgramLogo)
-		transfer.Get("/user-profiles/{id}/logo-download", fileH.DownloadProfileLogo)
 		r.Get("/programs/{id}/header", programH.GetHeaderProjection)
 		r.Get("/programs/{id}/management-summary", programH.GetManagementSummary)
 		r.Get("/programs/{id}/catalog", programH.GetCatalog)
@@ -332,8 +331,6 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			r.Delete("/me/profiles/{profileType}", userProfileH.DeleteMeByType)
 			r.Patch("/me/profiles/by-id/{id}", userProfileH.UpdateMeByID)
 			r.Delete("/me/profiles/by-id/{id}", userProfileH.DeleteMeByID)
-			authTransfer.Post("/me/profiles/by-id/{id}/logo-upload", fileH.UploadProfileLogo)
-			r.Delete("/me/profiles/by-id/{id}/logo", fileH.DeleteProfileLogo)
 
 			// Programs
 			r.Post("/programs", programH.Create)

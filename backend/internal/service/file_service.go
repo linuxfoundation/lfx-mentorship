@@ -35,7 +35,7 @@ const (
 
 var errStorageNotConfigured = fmt.Errorf("%w: object storage is not configured", domain.ErrUpstreamUnavailable)
 
-// LogoBucket is the CDN-fronted public bucket that program and profile logos live in.
+// LogoBucket is the CDN-fronted public bucket that program logos live in.
 type LogoBucket struct {
 	Store domain.ObjectStore
 	// CDNURLPrefix is the browser-reachable base URL stored logo URLs start with, without a trailing slash.
@@ -54,8 +54,8 @@ type deletionScheduler interface {
 	Schedule(ctx context.Context, bucket domain.ObjectBucket, locator string, delay time.Duration) (string, error)
 }
 
-// FileService implements the upload, download and removal use cases for program logos,
-// profile logos and task submissions. Logo downloads are a fallback to the CDN.
+// FileService implements the upload, download and removal use cases for program logos
+// and task submissions. Logo downloads are a fallback to the CDN.
 //
 // Every upload writes a fresh key and never overwrites, and every dropped locator goes
 // through the object_deletions queue rather than an inline delete.
@@ -63,7 +63,6 @@ type FileService struct {
 	files     domain.FileRepository
 	deletions deletionScheduler
 	programs  domain.ProgramRepository
-	profiles  domain.UserProfileRepository
 	tasks     taskAccess
 	// logos and attachments are nil when their bucket is not configured.
 	logos       *LogoBucket
@@ -75,12 +74,11 @@ func NewFileService(
 	files domain.FileRepository,
 	deletions deletionScheduler,
 	programs domain.ProgramRepository,
-	profiles domain.UserProfileRepository,
 	tasks taskAccess,
 	logos *LogoBucket,
 	attachments domain.ObjectStore,
 ) *FileService {
-	return &FileService{files: files, deletions: deletions, programs: programs, profiles: profiles, tasks: tasks, logos: logos, attachments: attachments}
+	return &FileService{files: files, deletions: deletions, programs: programs, tasks: tasks, logos: logos, attachments: attachments}
 }
 
 // UploadProgramLogo stores a new logo for the program and points programs.logo_url at it.
@@ -143,73 +141,6 @@ func (s *FileService) DownloadProgramLogo(ctx context.Context, program *models.P
 		return nil, errStorageNotConfigured
 	}
 	return s.getLogo(ctx, program.LogoURL, byteRange)
-}
-
-// UploadProfileLogo stores a new logo for one of the actor's own profiles.
-func (s *FileService) UploadProfileLogo(ctx context.Context, profileID, actorID string, data []byte) (*models.UploadedFile, error) {
-	ctx, span := fileSvcTracer.Start(ctx, "FileService.UploadProfileLogo")
-	defer span.End()
-	span.SetAttributes(attribute.String("profile.id", profileID))
-
-	if s.logos == nil {
-		return nil, errStorageNotConfigured
-	}
-	profile, err := s.ownProfile(ctx, profileID, actorID)
-	if err != nil {
-		return nil, err
-	}
-	uploaded, err := s.replaceLogo(ctx, data, func(rep domain.FileReplacement) error {
-		rep.RowID, rep.Previous = profile.ID, profile.LogoURL
-		return s.files.ReplaceProfileLogo(ctx, rep)
-	})
-	if err != nil {
-		span.RecordError(err)
-		return nil, err
-	}
-	return uploaded, nil
-}
-
-// DeleteProfileLogo clears one of the actor's profile logos and queues the object for deletion.
-func (s *FileService) DeleteProfileLogo(ctx context.Context, profileID, actorID string) error {
-	ctx, span := fileSvcTracer.Start(ctx, "FileService.DeleteProfileLogo")
-	defer span.End()
-	span.SetAttributes(attribute.String("profile.id", profileID))
-
-	profile, err := s.ownProfile(ctx, profileID, actorID)
-	if err != nil {
-		return err
-	}
-	if profile.LogoURL == nil || *profile.LogoURL == "" {
-		return nil
-	}
-	if err := s.files.ClearProfileLogo(ctx, profile.ID, *profile.LogoURL); err != nil {
-		span.RecordError(err)
-		return err
-	}
-	return nil
-}
-
-// DownloadProfileLogo opens a profile's logo; only profiles in the public directory are served.
-func (s *FileService) DownloadProfileLogo(ctx context.Context, profileID, byteRange string) (*domain.StoredObject, error) {
-	ctx, span := fileSvcTracer.Start(ctx, "FileService.DownloadProfileLogo")
-	defer span.End()
-	span.SetAttributes(attribute.String("profile.id", profileID))
-
-	if s.logos == nil {
-		return nil, errStorageNotConfigured
-	}
-	listed, err := s.files.IsProfilePubliclyListed(ctx, profileID)
-	if err != nil {
-		return nil, err
-	}
-	if !listed {
-		return nil, domain.ErrUserProfileNotFound
-	}
-	profile, err := s.profiles.GetByID(ctx, profileID)
-	if err != nil {
-		return nil, fmt.Errorf("get profile for logo download: %w", err)
-	}
-	return s.getLogo(ctx, profile.LogoURL, byteRange)
 }
 
 // UploadTaskFile stores the assignee's submission for a task that is not yet complete.
@@ -375,17 +306,6 @@ func programLogoEditable(program *models.Program) error {
 		return fmt.Errorf("%w: an archived program's logo cannot change", domain.ErrStateLocked)
 	}
 	return nil
-}
-
-func (s *FileService) ownProfile(ctx context.Context, profileID, actorID string) (*models.UserProfile, error) {
-	profile, err := s.profiles.GetByID(ctx, profileID)
-	if err != nil {
-		return nil, fmt.Errorf("get profile: %w", err)
-	}
-	if actorID == "" || profile.UserID != actorID {
-		return nil, fmt.Errorf("%w: profile belongs to another user", domain.ErrForbidden)
-	}
-	return profile, nil
 }
 
 func (s *FileService) assignedTask(ctx context.Context, taskID, actorID string) (*models.Task, error) {

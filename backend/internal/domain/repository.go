@@ -185,18 +185,12 @@ type FileReplacement struct {
 // deletion in the same transaction.
 type FileRepository interface {
 	ReplaceProgramLogo(ctx context.Context, r FileReplacement) error
-	// ReplaceProfileLogo also aliases the owner's users.avatar_url to the new logo.
-	ReplaceProfileLogo(ctx context.Context, r FileReplacement) error
 	// ReplaceTaskFile returns ErrStateLocked once the task is complete or its application is withdrawn.
 	ReplaceTaskFile(ctx context.Context, r FileReplacement) error
 	ClearProgramLogo(ctx context.Context, programID, previous string) error
-	// ClearProfileLogo also nulls users.avatar_url while it still aliases the logo.
-	ClearProfileLogo(ctx context.Context, profileID, previous string) error
 	// ClearTaskFile returns ErrStateLocked unless the task is incomplete or in progress and its
 	// application is not withdrawn.
 	ClearTaskFile(ctx context.Context, taskID, previous string) error
-	// IsProfilePubliclyListed reports whether the profile backs a public mentor or mentee directory entry.
-	IsProfilePubliclyListed(ctx context.Context, profileID string) (bool, error)
 }
 
 // TaskRepository defines persistence operations for tasks.

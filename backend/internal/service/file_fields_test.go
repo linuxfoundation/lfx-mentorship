@@ -11,7 +11,6 @@ import (
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
-	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/service"
 )
 
 // The file routes are the only writers of file columns; generic routes must reject them.
@@ -27,18 +26,6 @@ func TestGenericRoutesRejectFileFields(t *testing.T) {
 			_, err := newProgramSvc(&stubProgRepo{}, &stubTermRepo{}, &stubAppRepo{}).Create(ctx, models.ProgramCreateInput{Name: "n", Slug: "s", LogoURL: &url})
 			return err
 		},
-		"user update avatar_url": func() error {
-			_, err := service.NewUserService(&stubUserRepository{}).Update(ctx, "u1", models.UserUpdateInput{AvatarURL: &url})
-			return err
-		},
-		"profile update logo_url": func() error {
-			_, err := newUserProfileSvc(&stubUserProfileRepo{}).Update(ctx, "prof1", models.UserProfileUpdateInput{LogoURL: &url})
-			return err
-		},
-		"profile create logo_url": func() error {
-			_, err := newUserProfileSvc(&stubUserProfileRepo{}).Create(ctx, models.UserProfileCreateInput{UserID: "u1", ProfileType: "mentor", LogoURL: &url})
-			return err
-		},
 		"task update file": func() error {
 			_, err := newTaskSvc(&stubTaskRepo{}, &stubAppRepo{}, &stubTermRepo{}, &stubMemberRepo{}).Update(ctx, "t1", models.TaskUpdateInput{File: &url})
 			return err
@@ -48,6 +35,51 @@ func TestGenericRoutesRejectFileFields(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			if err := call(); !errors.Is(err, domain.ErrInvalidInput) {
 				t.Fatalf("err = %v; want ErrInvalidInput", err)
+			}
+		})
+	}
+}
+
+// Profile logos are hosted by another service, so profile writes store the URL they are given.
+func TestProfileLogoURLIsSaved(t *testing.T) {
+	logo := "https://images.example.org/profile.png"
+	var saved *string
+	repo := &stubUserProfileRepo{
+		create: func(_ context.Context, in models.UserProfileCreateInput) (*models.UserProfile, error) {
+			saved = in.LogoURL
+			return &models.UserProfile{}, nil
+		},
+		upsertByUserAndType: func(_ context.Context, in models.UserProfileCreateInput) (*models.UserProfile, bool, error) {
+			saved = in.LogoURL
+			return &models.UserProfile{}, true, nil
+		},
+		update: func(_ context.Context, id string, in models.UserProfileUpdateInput) (*models.UserProfile, error) {
+			saved = in.LogoURL
+			return &models.UserProfile{ID: id}, nil
+		},
+	}
+	svc := newUserProfileSvc(repo)
+	for name, call := range map[string]func() error{
+		"create": func() error {
+			_, err := svc.Create(context.Background(), models.UserProfileCreateInput{UserID: "u1", ProfileType: "mentor", LogoURL: &logo})
+			return err
+		},
+		"upsert": func() error {
+			_, _, err := svc.Upsert(context.Background(), models.UserProfileCreateInput{UserID: "u1", ProfileType: "mentor", LogoURL: &logo})
+			return err
+		},
+		"update": func() error {
+			_, err := svc.Update(context.Background(), "prof1", models.UserProfileUpdateInput{LogoURL: &logo})
+			return err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			saved = nil
+			if err := call(); err != nil {
+				t.Fatalf("err = %v", err)
+			}
+			if saved == nil || *saved != logo {
+				t.Fatalf("saved logo_url = %v; want %q", saved, logo)
 			}
 		})
 	}

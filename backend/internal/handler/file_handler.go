@@ -31,9 +31,6 @@ type fileService interface {
 	UploadProgramLogo(ctx context.Context, programID string, data []byte) (*models.UploadedFile, error)
 	DeleteProgramLogo(ctx context.Context, programID string) error
 	DownloadProgramLogo(ctx context.Context, program *models.Program, byteRange string) (*domain.StoredObject, error)
-	UploadProfileLogo(ctx context.Context, profileID, actorID string, data []byte) (*models.UploadedFile, error)
-	DeleteProfileLogo(ctx context.Context, profileID, actorID string) error
-	DownloadProfileLogo(ctx context.Context, profileID, byteRange string) (*domain.StoredObject, error)
 	UploadTaskFile(ctx context.Context, taskID, actorID, filename string, data []byte) (*models.UploadedFile, error)
 	DeleteTaskFile(ctx context.Context, taskID, actorID string) error
 	DownloadTaskFile(ctx context.Context, taskID, actorID, byteRange string) (*domain.StoredObject, string, error)
@@ -68,25 +65,6 @@ func (h *FileHandler) UploadProgramLogo(w http.ResponseWriter, r *http.Request) 
 	JSON(w, http.StatusCreated, uploaded)
 }
 
-// UploadProfileLogo handles POST /v1/me/profiles/by-id/{id}/logo-upload. The body is the raw image.
-func (h *FileHandler) UploadProfileLogo(w http.ResponseWriter, r *http.Request) {
-	principal := auth.PrincipalFromContext(r.Context())
-	if principal == nil {
-		Error(w, domain.ErrUnauthorized)
-		return
-	}
-	data, ok := readUploadBody(w, r, service.MaxLogoBytes)
-	if !ok {
-		return
-	}
-	uploaded, err := h.svc.UploadProfileLogo(r.Context(), chi.URLParam(r, "id"), principal.UserID, data)
-	if err != nil {
-		Error(w, err)
-		return
-	}
-	JSON(w, http.StatusCreated, uploaded)
-}
-
 // DownloadProgramLogo handles GET /v1/programs/{id}/logo-download, a fallback to the CDN URL.
 func (h *FileHandler) DownloadProgramLogo(w http.ResponseWriter, r *http.Request) {
 	program, ok := resolveVisibleProgram(w, r, h.programs)
@@ -94,16 +72,6 @@ func (h *FileHandler) DownloadProgramLogo(w http.ResponseWriter, r *http.Request
 		return
 	}
 	obj, err := h.svc.DownloadProgramLogo(r.Context(), program, byteRange(r))
-	if err != nil {
-		Error(w, err)
-		return
-	}
-	writeObject(w, obj, "")
-}
-
-// DownloadProfileLogo handles GET /v1/user-profiles/{id}/logo-download, a fallback to the CDN URL.
-func (h *FileHandler) DownloadProfileLogo(w http.ResponseWriter, r *http.Request) {
-	obj, err := h.svc.DownloadProfileLogo(r.Context(), chi.URLParam(r, "id"), byteRange(r))
 	if err != nil {
 		Error(w, err)
 		return
@@ -153,20 +121,6 @@ func (h *FileHandler) DeleteProgramLogo(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := h.svc.DeleteProgramLogo(r.Context(), chi.URLParam(r, "id")); err != nil {
-		Error(w, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// DeleteProfileLogo handles DELETE /v1/me/profiles/by-id/{id}/logo.
-func (h *FileHandler) DeleteProfileLogo(w http.ResponseWriter, r *http.Request) {
-	principal := auth.PrincipalFromContext(r.Context())
-	if principal == nil {
-		Error(w, domain.ErrUnauthorized)
-		return
-	}
-	if err := h.svc.DeleteProfileLogo(r.Context(), chi.URLParam(r, "id"), principal.UserID); err != nil {
 		Error(w, err)
 		return
 	}

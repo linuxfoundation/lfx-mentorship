@@ -38,17 +38,7 @@ func (s *stubFileSvc) DownloadProgramLogo(ctx context.Context, p *models.Program
 	return s.downloadProgramLogo(ctx, p, byteRange)
 }
 
-func (s *stubFileSvc) UploadProfileLogo(context.Context, string, string, []byte) (*models.UploadedFile, error) {
-	return nil, domain.ErrFileNotFound
-}
-
-func (s *stubFileSvc) DownloadProfileLogo(context.Context, string, string) (*domain.StoredObject, error) {
-	return nil, domain.ErrFileNotFound
-}
-
 func (s *stubFileSvc) DeleteProgramLogo(context.Context, string) error { return s.deleteErr }
-
-func (s *stubFileSvc) DeleteProfileLogo(context.Context, string, string) error { return s.deleteErr }
 
 func (s *stubFileSvc) DeleteTaskFile(context.Context, string, string) error { return s.deleteErr }
 
@@ -134,8 +124,6 @@ func TestFileHandler_PrincipalRoutesRequirePrincipal(t *testing.T) {
 	routes := map[string]http.HandlerFunc{
 		"program logo upload": h.UploadProgramLogo,
 		"program logo delete": h.DeleteProgramLogo,
-		"profile logo upload": h.UploadProfileLogo,
-		"profile logo delete": h.DeleteProfileLogo,
 		"task file upload":    h.UploadTaskFile,
 		"task file download":  h.DownloadTaskFile,
 		"task file delete":    h.DeleteTaskFile,
@@ -200,7 +188,6 @@ func TestFileHandler_DeleteRoutes(t *testing.T) {
 		h := handler.NewFileHandler(&stubFileSvc{deleteErr: tc.err}, &stubProgramSvc{})
 		for name, route := range map[string]http.HandlerFunc{
 			"program logo": h.DeleteProgramLogo,
-			"profile logo": h.DeleteProfileLogo,
 			"task file":    h.DeleteTaskFile,
 		} {
 			r := withPrincipal(requestWithChiParam(httptest.NewRequest(http.MethodDelete, "/v1/x", nil), "id", "x1"), "u1")
