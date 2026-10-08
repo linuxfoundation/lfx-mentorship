@@ -1664,14 +1664,15 @@ with an empty `data` array.
 
 | Parameter | Values | Description |
 |---|---|---|
-| `limit` / `offset` | — | Pagination (default 20, max 100) |
+| `limit` | `1`–`100` | Page size (default 20; `0` also means the default) |
+| `offset` | `0` or more | Rows to skip |
 
 **Response** `200`
 ```json
 { "data": [<MentoredProgram>, ...], "meta": {...} }
 ```
 
-**Errors** `400` (non-integer `limit`/`offset`), `401` (no principal, or a machine-to-machine client)
+**Errors** `400` (non-integer `limit`/`offset`, `limit` negative or above 100, negative `offset`), `401` (no principal, or a machine-to-machine client)
 
 ---
 

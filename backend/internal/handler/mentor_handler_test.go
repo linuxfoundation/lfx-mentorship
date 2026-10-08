@@ -6,6 +6,7 @@ package handler_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -256,6 +257,32 @@ func TestMentorHandler_ListMine_BadPagination(t *testing.T) {
 			r := requestWithPrincipal(httptest.NewRequest(http.MethodGet, "/v1/me/mentor-programs?"+query, nil), "caller-user")
 			w := httptest.NewRecorder()
 			h.ListMine(w, r)
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("got %d; want 400", w.Code)
+			}
+		})
+	}
+}
+
+func TestMentorHandler_ListMine_OutOfRangePagination(t *testing.T) {
+	for query, want := range map[string]models.MentoredProgramFilter{
+		"limit=101": {Limit: 101},
+		"offset=-1": {Offset: -1},
+	} {
+		t.Run(query, func(t *testing.T) {
+			var got models.MentoredProgramFilter
+			h := handler.NewMentorHandler(&stubMentorSvc{
+				listMine: func(_ context.Context, _ string, f models.MentoredProgramFilter) ([]*models.MentoredProgram, *models.PaginationMeta, error) {
+					got = f
+					return nil, nil, fmt.Errorf("%w: out of range", domain.ErrInvalidInput)
+				},
+			})
+			r := requestWithPrincipal(httptest.NewRequest(http.MethodGet, "/v1/me/mentor-programs?"+query, nil), "caller-user")
+			w := httptest.NewRecorder()
+			h.ListMine(w, r)
+			if got != want {
+				t.Errorf("filter = %+v; want %+v passed to the service", got, want)
+			}
 			if w.Code != http.StatusBadRequest {
 				t.Errorf("got %d; want 400", w.Code)
 			}

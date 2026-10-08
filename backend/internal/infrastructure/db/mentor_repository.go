@@ -297,7 +297,7 @@ func (r *MentorRepository) ListMentoredByUser(ctx context.Context, userID string
 	span.SetAttributes(attribute.String("db.user_id", userID))
 
 	limit := filter.Limit
-	if limit <= 0 || limit > 100 {
+	if limit <= 0 || limit > models.MentoredProgramMaxLimit {
 		limit = 20
 	}
 	offset := filter.Offset

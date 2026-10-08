@@ -202,3 +202,37 @@ func TestMentorService_ListMine_WrapsRepositoryError(t *testing.T) {
 		t.Errorf("got %v; want the repository error wrapped", err)
 	}
 }
+
+func TestMentorService_ListMine_RejectsOutOfRangePaging(t *testing.T) {
+	svc := service.NewMentorService(&stubMentorRepo{
+		listMine: func(context.Context, string, models.MentoredProgramFilter) ([]*models.MentoredProgram, *models.PaginationMeta, error) {
+			t.Fatal("repository must not be called with out-of-range paging")
+			return nil, nil, nil
+		},
+	})
+	for name, f := range map[string]models.MentoredProgramFilter{
+		"negative limit":  {Limit: -1},
+		"limit above max": {Limit: models.MentoredProgramMaxLimit + 1},
+		"negative offset": {Offset: -1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := svc.ListMine(context.Background(), "user-1", f); !errors.Is(err, domain.ErrInvalidInput) {
+				t.Errorf("got %v; want ErrInvalidInput", err)
+			}
+		})
+	}
+}
+
+func TestMentorService_ListMine_AcceptsPagingBounds(t *testing.T) {
+	svc := service.NewMentorService(&stubMentorRepo{})
+	for name, f := range map[string]models.MentoredProgramFilter{
+		"default limit": {Limit: 0},
+		"max limit":     {Limit: models.MentoredProgramMaxLimit, Offset: 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := svc.ListMine(context.Background(), "user-1", f); err != nil {
+				t.Errorf("got %v; want no error", err)
+			}
+		})
+	}
+}
