@@ -30,6 +30,34 @@ func TestUserRepository_UpsertByLFID_EmailInUse(t *testing.T) {
 	}
 }
 
+// Login refreshes the avatar from the identity's picture, and a login without one keeps it.
+func TestUserRepository_UpsertByLFID_RefreshesAvatar(t *testing.T) {
+	pool := integrationPool(t)
+	ctx := context.Background()
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM users WHERE lfid = 'avatar_lfid'`)
+	})
+	repo := NewUserRepository(pool)
+	lfid, first, second := "avatar_lfid", "https://auth0.example/first.png", "https://auth0.example/second.png"
+	for _, tc := range []struct {
+		name   string
+		avatar *string
+		want   string
+	}{
+		{"first login", &first, first},
+		{"new picture", &second, second},
+		{"no picture", nil, second},
+	} {
+		u, err := repo.UpsertByLFID(ctx, models.UserCreateInput{LFID: &lfid, AvatarURL: tc.avatar})
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if u.AvatarURL == nil || *u.AvatarURL != tc.want {
+			t.Fatalf("%s: avatar_url = %v; want %q", tc.name, u.AvatarURL, tc.want)
+		}
+	}
+}
+
 func TestUserRepository_SearchCandidates(t *testing.T) {
 	pool := integrationPool(t)
 	ctx := context.Background()
