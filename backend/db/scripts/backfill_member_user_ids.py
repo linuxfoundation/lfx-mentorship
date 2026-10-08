@@ -14,12 +14,15 @@ only email and name. This script links each such row to its real user:
 Dry-run by default. --apply writes only `userId`, guarded by
 attribute_not_exists(userId), so re-runs and concurrent app writes are safe.
 --rollback removes exactly the userIds a previous --apply report recorded.
+Reports contain emails: they are created 0600 and never overwritten, so each
+run needs a new --report path (reports/ is gitignored).
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import os
 import sys
 from collections import Counter, defaultdict
 from typing import Any, Iterable
@@ -111,7 +114,7 @@ def plan(members: Iterable[dict], users: Iterable[dict], projects: Iterable[dict
 
 
 def apply(table, rows: list[dict], report_path: str) -> None:
-    write_report(report_path, rows)
+    write_report(report_path, rows, create=True)
     try:
         for row in rows:
             if row["result"] not in RESOLVED:
@@ -154,8 +157,10 @@ def rollback(table, report_path: str) -> Counter:
     return counts
 
 
-def write_report(path: str, rows: list[dict]) -> None:
-    with open(path, "w", newline="") as f:
+def write_report(path: str, rows: list[dict], create: bool = False) -> None:
+    # create=True refuses an existing path so an earlier run's rollback manifest is never lost.
+    flags = os.O_WRONLY | os.O_CREAT | (os.O_EXCL if create else os.O_TRUNC)
+    with os.fdopen(os.open(path, flags, 0o600), "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=REPORT_FIELDS)
         writer.writeheader()
         writer.writerows(rows)
@@ -165,7 +170,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--table-prefix", required=True, help="e.g. jobspring-prod or jobspring-dev")
     parser.add_argument("--region", default="us-east-1")
-    parser.add_argument("--report", required=True, help="CSV to write (dry-run/apply) or read (--rollback); contains emails")
+    parser.add_argument("--report", required=True, help="new CSV to write (dry-run/apply) or existing one to read (--rollback); contains emails")
     parser.add_argument("--overrides", help="CSV with member_id,user_id for rows that automatic matching cannot settle")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--apply", action="store_true", help="write userId; default is dry-run")
@@ -178,6 +183,9 @@ def main() -> int:
     if args.rollback:
         print(f"rollback: {dict(rollback(members_table, args.report))}")
         return 0
+    if os.path.exists(args.report):
+        parser.error(f"--report {args.report} already exists; use a new path so earlier reports stay intact")
+    os.makedirs(os.path.dirname(args.report) or ".", mode=0o700, exist_ok=True)
 
     members = scan(members_table)
     users = scan(dynamo.Table(f"{args.table_prefix}-users"))
@@ -186,7 +194,7 @@ def main() -> int:
     if args.apply:
         apply(members_table, rows, args.report)
     else:
-        write_report(args.report, rows)
+        write_report(args.report, rows, create=True)
 
     print(f"scanned members={len(members)} users={len(users)} projects={len(projects)}")
     print(f"members without userId: {len(rows)}")

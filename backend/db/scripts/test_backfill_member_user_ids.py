@@ -126,3 +126,18 @@ def test_partial_apply_failure_keeps_committed_writes_rollbackable(tmp_path):
     table.update_item = real_update
     assert b.rollback(table, str(report)) == {"removed": 1}
     assert "userId" not in table.items["m-first"]
+
+
+def test_reports_are_private_and_never_overwritten(tmp_path):
+    rows = b.plan([member("m", "alice@example.org")], USERS, PROJECTS, {})
+    table = FakeTable([member("m", "alice@example.org")])
+    report = tmp_path / "apply.csv"
+    b.apply(table, rows, str(report))
+    assert report.stat().st_mode & 0o777 == 0o600
+
+    with pytest.raises(FileExistsError):
+        b.apply(table, [], str(report))
+    with pytest.raises(FileExistsError):
+        b.write_report(str(report), [], create=True)
+    with open(report, newline="") as f:
+        assert [r["applied"] for r in csv.DictReader(f)] == ["yes"]

@@ -3,6 +3,9 @@
 
 # ─── Secrets ─────────────────────────────────────────────────────────────────
 .env
+# Data-script reports contain user emails
+backend/db/scripts/reports/
+backend/db/scripts/*.csv
 
 # ─── Go build artefacts ──────────────────────────────────────────────────────
 backend/bin/
