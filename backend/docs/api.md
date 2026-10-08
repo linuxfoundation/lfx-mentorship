@@ -1664,7 +1664,7 @@ with an empty `data` array.
 
 | Parameter | Values | Description |
 |---|---|---|
-| `limit` | `1`–`100` | Page size (default 20; `0` also means the default) |
+| `limit` | `0`–`100` | Page size; omitted or `0` means the default of 20 |
 | `offset` | `0` or more | Rows to skip |
 
 **Response** `200`

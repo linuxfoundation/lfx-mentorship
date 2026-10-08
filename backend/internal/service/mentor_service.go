@@ -108,7 +108,7 @@ func (s *MentorService) ListMine(ctx context.Context, userID string, filter mode
 		return nil, nil, fmt.Errorf("%w: caller identity is required", domain.ErrUnauthorized)
 	}
 	if filter.Limit < 0 || filter.Limit > models.MentoredProgramMaxLimit {
-		return nil, nil, fmt.Errorf("%w: limit must be between 1 and %d", domain.ErrInvalidInput, models.MentoredProgramMaxLimit)
+		return nil, nil, fmt.Errorf("%w: limit must be between 0 (the default page size) and %d", domain.ErrInvalidInput, models.MentoredProgramMaxLimit)
 	}
 	if filter.Offset < 0 {
 		return nil, nil, fmt.Errorf("%w: offset must not be negative", domain.ErrInvalidInput)
