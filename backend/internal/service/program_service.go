@@ -473,26 +473,16 @@ func (s *ProgramService) Decide(ctx context.Context, id string, status models.Pr
 // Hide takes a published program out of public view. The hide guard in Update
 // refuses while the program has active applications.
 func (s *ProgramService) Hide(ctx context.Context, id string) (*models.Program, error) {
-	return s.changeVisibility(ctx, id, models.ProgramStatusPublished, models.ProgramStatusHidden)
+	from, to := models.ProgramStatusPublished, models.ProgramStatusHidden
+	return s.Update(ctx, id, models.ProgramUpdateInput{Status: &to, ExpectedStatus: &from})
 }
 
-// Unhide makes a hidden program public again.
+// Unhide makes a hidden program public again. It pins the source status because
+// programTransitions also allows submitted → published, which only the approver
+// team may apply through Decide.
 func (s *ProgramService) Unhide(ctx context.Context, id string) (*models.Program, error) {
-	return s.changeVisibility(ctx, id, models.ProgramStatusHidden, models.ProgramStatusPublished)
-}
-
-// changeVisibility moves a program from one visibility status to the other.
-// It checks the current status first because programTransitions also allows
-// submitted → published, which only the approver team may apply through Decide.
-func (s *ProgramService) changeVisibility(ctx context.Context, id string, from, to models.ProgramStatus) (*models.Program, error) {
-	current, err := s.repo.GetByID(ctx, id)
-	if err != nil {
-		return nil, fmt.Errorf("get program for visibility change: %w", err)
-	}
-	if current.Status != from {
-		return nil, fmt.Errorf("%w: only a %s program can be made %s, not %q", domain.ErrInvalidStateTransition, from, to, current.Status)
-	}
-	return s.Update(ctx, id, models.ProgramUpdateInput{Status: &to})
+	from, to := models.ProgramStatusHidden, models.ProgramStatusPublished
+	return s.Update(ctx, id, models.ProgramUpdateInput{Status: &to, ExpectedStatus: &from})
 }
 
 // Update validates and applies changes to the program with the given ID.
@@ -549,6 +539,9 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 		}
 
 		next := *input.Status
+		if input.ExpectedStatus != nil && current.Status != *input.ExpectedStatus {
+			return nil, fmt.Errorf("%w: only a %s program can be made %s, not %q", domain.ErrInvalidStateTransition, *input.ExpectedStatus, next, current.Status)
+		}
 		allowed := programTransitions[current.Status]
 		ok := false
 		for _, s := range allowed {

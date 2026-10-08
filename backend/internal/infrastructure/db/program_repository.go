@@ -1089,14 +1089,20 @@ func enqueueObjectMarker(ctx context.Context, tx pgx.Tx, objectType, objectID, o
 }
 
 // checkNoBlockingApplications re-checks the hide guard inside the hiding transaction, which
-// holds the program row lock. Locking the open terms waits out any application insert in
-// flight, since inserts lock their term first; one that starts later sees the program hidden.
+// holds the program row lock. Inserts lock their term and status changes lock their
+// application before writing, so locking the open terms and the applications waits out any
+// write in flight; one that starts later sees the program hidden.
 func checkNoBlockingApplications(ctx context.Context, tx pgx.Tx, programID string) error {
 	if _, err := tx.Exec(ctx, `SELECT 1 FROM program_terms WHERE program_id = $1 AND status = 'open' FOR UPDATE`, programID); err != nil {
 		return fmt.Errorf("lock open terms before hiding: %w", err)
 	}
+	if _, err := tx.Exec(ctx, `
+		SELECT 1 FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id
+		WHERE pt.program_id = $1 FOR UPDATE OF a`, programID); err != nil {
+		return fmt.Errorf("lock applications before hiding: %w", err)
+	}
 	var count int
-	if err := tx.QueryRow(ctx, countBlockingAppsForProgramSQL, programID).Scan(&count); err != nil {
+	if err := tx.QueryRow(ctx, countBlockingAppsForProgramSQL, programID, blockingApplicationStatuses).Scan(&count); err != nil {
 		return fmt.Errorf("count blocking applications before hiding: %w", err)
 	}
 	if count > 0 {

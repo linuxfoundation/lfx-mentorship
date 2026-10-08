@@ -285,8 +285,10 @@ func TestProgramService_HideUnhide(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var stored, expected *models.ProgramStatus
+			reads := 0
 			repo := &stubProgRepo{
 				getByID: func(_ context.Context, id string) (*models.Program, error) {
+					reads++
 					return &models.Program{ID: id, Status: tc.current}, nil
 				},
 				update: func(_ context.Context, id string, in models.ProgramUpdateInput) (*models.Program, error) {
@@ -301,6 +303,9 @@ func TestProgramService_HideUnhide(t *testing.T) {
 				change = svc.Unhide
 			}
 			program, err := change(context.Background(), "prog-1")
+			if reads != 1 {
+				t.Fatalf("program read %d times; want once", reads)
+			}
 			if tc.want != nil {
 				if !errors.Is(err, tc.want) {
 					t.Fatalf("got %v; want %v", err, tc.want)

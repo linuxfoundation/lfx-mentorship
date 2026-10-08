@@ -333,6 +333,7 @@ func TestProgramRepositoryIntegration_HideWaitsForInFlightApplication(t *testing
 		_, err := NewProgramRepository(pool).Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &hidden, ExpectedStatus: &published})
 		hideErr <- err
 	}()
+	waitForLockWait(t, pool, hideErr)
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatalf("commit application: %v", err)
 	}
@@ -345,7 +346,88 @@ func TestProgramRepositoryIntegration_HideWaitsForInFlightApplication(t *testing
 	}
 }
 
-func TestApplicationRepositoryIntegration_RefusesApplicationToHiddenProgram(t *testing.T) {
+func TestProgramRepositoryIntegration_HideWaitsForApplicationStatusChange(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ('00000000-0000-0000-0000-000000000080', $1, $2, 'mentee', 'declined')`, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatalf("insert application: %v", err)
+	}
+
+	// A declined → pending reopen that passed its checks holds the application row and has not committed.
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `UPDATE applications SET status = 'pending' WHERE id = '00000000-0000-0000-0000-000000000080'`); err != nil {
+		t.Fatalf("reopen application: %v", err)
+	}
+
+	published, hidden := models.ProgramStatusPublished, models.ProgramStatusHidden
+	hideErr := make(chan error, 1)
+	go func() {
+		_, err := NewProgramRepository(pool).Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &hidden, ExpectedStatus: &published})
+		hideErr <- err
+	}()
+	waitForLockWait(t, pool, hideErr)
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit reopen: %v", err)
+	}
+	if err := <-hideErr; !errors.Is(err, domain.ErrStateLocked) {
+		t.Fatalf("hide err = %v; want ErrStateLocked", err)
+	}
+}
+
+func TestApplicationRepositoryIntegration_StatusChangeWaitsForHide(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+	applicationID := "00000000-0000-0000-0000-000000000081"
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentee', 'hold')`, applicationID, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatalf("insert application: %v", err)
+	}
+
+	// A hide holds its locks and has not committed.
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM programs WHERE id = $1 FOR UPDATE`, fixture.ProgramID); err != nil {
+		t.Fatalf("lock program: %v", err)
+	}
+	if err := checkNoBlockingApplications(ctx, tx, fixture.ProgramID); err != nil {
+		t.Fatalf("hide guard: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE programs SET status = 'hidden' WHERE id = $1`, fixture.ProgramID); err != nil {
+		t.Fatalf("hide: %v", err)
+	}
+
+	repo := NewApplicationRepository(pool)
+	hold, accepted, pending := models.ApplicationStatusHold, models.ApplicationStatusAccepted, models.ApplicationStatusPending
+	acceptErr := make(chan error, 1)
+	go func() {
+		_, err := repo.Update(ctx, applicationID, models.ApplicationUpdateInput{Status: &accepted, ExpectedStatus: &hold})
+		acceptErr <- err
+	}()
+	waitForLockWait(t, pool, acceptErr)
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit hide: %v", err)
+	}
+	if err := <-acceptErr; !errors.Is(err, domain.ErrIneligible) {
+		t.Fatalf("accept err = %v; want ErrIneligible", err)
+	}
+	if _, err := repo.Update(ctx, applicationID, models.ApplicationUpdateInput{Status: &pending, ExpectedStatus: &hold}); !errors.Is(err, domain.ErrIneligible) {
+		t.Fatalf("reopen err = %v; want ErrIneligible", err)
+	}
+	var status models.ApplicationStatus
+	if err := pool.QueryRow(ctx, `SELECT status FROM applications WHERE id = $1`, applicationID).Scan(&status); err != nil || status != hold {
+		t.Fatalf("status = %q, err = %v; want hold", status, err)
+	}
+}
+
+func TestApplicationRepositoryIntegration_RefusesApplicationToUnpublishedProgram(t *testing.T) {
 	pool := integrationPool(t)
 	fixture := seedIntegrationFixture(t, pool)
 	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
@@ -366,6 +448,12 @@ func TestApplicationRepositoryIntegration_RefusesApplicationToHiddenProgram(t *t
 	}
 	if _, err := repo.Reapply(ctx, withdrawnID, fixture.OpenTerm, input); !errors.Is(err, domain.ErrIneligible) {
 		t.Fatalf("reapply err = %v; want ErrIneligible", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE programs SET status = 'archived' WHERE id = $1`, fixture.ProgramID); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	if _, err := repo.Create(ctx, fixture.OpenTerm, input); !errors.Is(err, domain.ErrIneligible) {
+		t.Fatalf("create on archived program err = %v; want ErrIneligible", err)
 	}
 }
 
