@@ -172,7 +172,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	rosterSvc := service.NewRosterService(rosterRepo)
 	fundingStatsSvc := service.NewFundingStatsService(programRepo)
 	objectDeletions := db.NewObjectDeletionRepository(pool)
-	fileSvc := service.NewFileService(db.NewFileRepository(pool), objectDeletions, programRepo, userProfileRepo, taskSvc, logoBucket, attachments)
+	fileSvc := service.NewFileService(db.NewFileRepository(pool), objectDeletions, programRepo, taskSvc, logoBucket, attachments)
 
 	relayCtx, relayCancel := context.WithCancel(ctx)
 	if logoStore != nil || attachmentStore != nil {
@@ -276,7 +276,6 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		r.Get("/programs/resolve/{id}", programH.ResolveID)
 		r.Get("/programs/{id}", programH.GetByID)
 		transfer.Get("/programs/{id}/logo-download", fileH.DownloadProgramLogo)
-		transfer.Get("/user-profiles/{id}/logo-download", fileH.DownloadProfileLogo)
 		r.Get("/programs/{id}/header", programH.GetHeaderProjection)
 		r.Get("/programs/{id}/catalog", programH.GetCatalog)
 		r.Get("/programs/{id}/mentees", programH.ListCatalogMentees)
@@ -320,6 +319,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			r.Delete("/me", userH.DeleteMe)
 			r.Get("/me/applications", applicationH.ListByMe)
 			r.Get("/me/programs", programH.ListMine)
+			r.Get("/me/mentor-programs", mentorH.ListMine)
 			r.Get("/me/program-memberships", programMemberH.ListMine)
 			r.Post("/me/program-memberships", programMemberH.RequestMine)
 			r.Post("/me/program-memberships/{id}/withdraw", programMemberH.WithdrawMine)
@@ -333,14 +333,14 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			r.Delete("/me/profiles/{profileType}", userProfileH.DeleteMeByType)
 			r.Patch("/me/profiles/by-id/{id}", userProfileH.UpdateMeByID)
 			r.Delete("/me/profiles/by-id/{id}", userProfileH.DeleteMeByID)
-			authTransfer.Post("/me/profiles/by-id/{id}/logo-upload", fileH.UploadProfileLogo)
-			r.Delete("/me/profiles/by-id/{id}/logo", fileH.DeleteProfileLogo)
 
 			// Programs
 			r.Post("/programs", programH.Create)
 			r.Patch("/programs/{id}", programH.Update)
 			r.Post("/programs/{id}/submit", programH.Submit)
 			r.Post("/programs/{id}/decision", programH.Decision)
+			r.Post("/programs/{id}/hide", programH.Hide)
+			r.Post("/programs/{id}/unhide", programH.Unhide)
 			r.Delete("/programs/{id}", programH.Delete)
 			authTransfer.Post("/programs/{id}/logo-upload", fileH.UploadProgramLogo)
 			r.Delete("/programs/{id}/logo", fileH.DeleteProgramLogo)

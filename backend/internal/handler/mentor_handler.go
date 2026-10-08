@@ -8,16 +8,20 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
+	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/auth"
 )
 
 type mentorService interface {
 	List(ctx context.Context, filter models.MentorFilter) (*models.MentorPage, error)
 	Summary(ctx context.Context) (*models.MentorSummary, error)
 	GetByUserID(ctx context.Context, userID string) (*models.MentorDetail, error)
+	ListMine(ctx context.Context, userID string, filter models.MentoredProgramFilter) ([]*models.MentoredProgram, *models.PaginationMeta, error)
 }
 
-// MentorHandler holds Chi handlers for the public mentor directory.
+// MentorHandler holds Chi handlers for the public mentor directory and the
+// caller's own mentor programs.
 type MentorHandler struct {
 	svc mentorService
 }
@@ -65,4 +69,28 @@ func (h *MentorHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	JSON(w, http.StatusOK, detail)
+}
+
+// ListMine handles GET /v1/me/mentor-programs — the programs the caller
+// mentors. The user is always the principal; M2M principals have no local user
+// and are rejected.
+func (h *MentorHandler) ListMine(w http.ResponseWriter, r *http.Request) {
+	principal := auth.PrincipalFromContext(r.Context())
+	if principal == nil || principal.IsM2M() {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	limit, offset, ok := parsePaginationParams(w, r)
+	if !ok {
+		return
+	}
+	programs, meta, err := h.svc.ListMine(r.Context(), principal.UserID, models.MentoredProgramFilter{
+		Limit:  limit,
+		Offset: offset,
+	})
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]any{"data": programs, "meta": meta})
 }

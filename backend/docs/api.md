@@ -20,6 +20,7 @@ The gateway-authorized API uses canonical resource paths:
 - User application reads use `/me/applications`.
 - Mentor self-service program requests use `/me/program-memberships`.
 - Program admins list their programs with `/me/programs`.
+- Mentors list the programs they mentor with `/me/mentor-programs`.
 - Program-admin collection reads use Query Service
   `/query/resources?v=1&type=mentorship_program&filter_grants=direct`.
 - Term-scoped routes use `/programs/{programUID}/terms/{termID}`.
@@ -306,12 +307,10 @@ Update mutable user fields.
   "lfid":        "new-lfid",
   "name":        "New Name",
   "given_name":  "New",
-  "family_name": "Name"
+  "family_name": "Name",
+  "avatar_url":  "https://..."
 }
 ```
-
-`avatar_url` is rejected: the service sets it from the login identity and the
-profile-logo routes ([Files](#14-files)).
 
 **Response** `200` → `<User>`  
 **Errors** `400`, `404`
@@ -1039,8 +1038,10 @@ The backend reads the project's slug, name, and logo from Project Service by `pr
 #### `PATCH /v1/programs/{id}` 🔒
 
 Update program fields. Status cannot be changed here: a body with `status` returns
-`400`; use [`POST /v1/programs/{id}/submit`](#post-v1programsidsubmit-) and
-[`POST /v1/programs/{id}/decision`](#post-v1programsiddecision-).
+`400`; use [`POST /v1/programs/{id}/submit`](#post-v1programsidsubmit-),
+[`POST /v1/programs/{id}/decision`](#post-v1programsiddecision-),
+[`POST /v1/programs/{id}/hide`](#post-v1programsidhide-) and
+[`POST /v1/programs/{id}/unhide`](#post-v1programsidunhide-).
 
 **Request body** (all optional)
 ```json
@@ -1129,6 +1130,30 @@ Publish or reject a `submitted` program. Approver team only.
 
 **Response** `200` → `<Program>`  
 **Errors** `400` (missing or other `status`), `404`, `409` (program is not `submitted`)
+
+---
+
+#### `POST /v1/programs/{id}/hide` 🔒
+
+Take a `published` program out of public view (`→ hidden`). No request body.
+Program admins only (`writer` on the program).
+
+**Guard**: the program has no pending, accepted, or graduated applications.
+
+**Response** `200` → `<Program>`  
+**Errors** `401`, `404`, `409` (program is not `published`, or it has active applications)
+
+---
+
+#### `POST /v1/programs/{id}/unhide` 🔒
+
+Make a `hidden` program public again (`→ published`). No request body. Program
+admins only (`writer` on the program). Only a `hidden` program can be unhidden: an
+`archived` program stays archived, and a `submitted` program is published only
+through [`POST /v1/programs/{id}/decision`](#post-v1programsiddecision-).
+
+**Response** `200` → `<Program>`  
+**Errors** `401`, `404`, `409` (program is not `hidden`)
 
 ---
 
@@ -1542,11 +1567,24 @@ request body.
 
 ### Program admin self-service
 
+#### Program list term
+
+`GET /v1/me/programs` and `GET /v1/me/mentor-programs` show one term per
+program, chosen the same way: the first match below. Deleted terms are never
+chosen, and ties break on `id`.
+
+| Priority | Term |
+|---|---|
+| 1 | An `open` term that has started: the one that started most recently |
+| 2 | An `open` term that has not started or has no start date: the first to start, undated last |
+| 3 | A `closed` term: the one that started most recently |
+| 4 | No term: `term` is omitted |
+
 #### AdministeredProgram Object
 
 One row of the caller's programs list. `term` is a
-[ProgramTerm](#programterm-object): the latest open term, else the latest
-closed term, and is omitted when the program has no terms. `stats` matches `GET /v1/programs/{id}/header`.
+[ProgramTerm](#programterm-object) chosen as in [Program list term](#program-list-term),
+and is omitted when the program has no open or closed term. `stats` matches `GET /v1/programs/{id}/header`.
 
 ```json
 {
@@ -1596,6 +1634,69 @@ this is not yet a Query Service collection.
 ```
 
 **Errors** `400` (unknown `status`, non-integer `limit`/`offset`), `401` (no principal, or a machine-to-machine client)
+
+---
+
+### Mentor programs
+
+#### MentoredProgram Object
+
+One row of the caller's mentor programs list. `term` is a
+[ProgramTerm](#programterm-object) chosen as in [Program list term](#program-list-term),
+and is omitted when the program has no open or closed term. `project_name` and
+`logo_url` are omitted when absent.
+
+```json
+{
+  "id":           "uuid",
+  "slug":         "example-program",
+  "name":         "Example Program",
+  "project_name": "Example Project",
+  "logo_url":     "https://...",
+  "term":         <ProgramTerm>,
+  "term_status":  "active_term",
+  "stats":        { "mentees": 3, "applicants": 12, "tasks_to_review": 2 }
+}
+```
+
+`term_status` follows the term's priority:
+
+| Priority | `term_status` |
+|---|---|
+| 1 | `active_term` |
+| 2 | `upcoming` |
+| 3 | `completed` |
+| 4 | `upcoming`, with zero `stats` |
+
+`stats` counts the chosen term only and matches
+`GET /v1/programs/{id}/applications?term=` for that term:
+
+- `applicants`: mentee applications, one per user (a withdrawn application kept beside its reapplication is not counted twice)
+- `mentees`: applicants whose status is `accepted` or `graduated`
+- `tasks_to_review`: `submitted` tasks of `accepted` mentees. A graduated mentee's leftover submission and a mentor-role application's tasks are not counted.
+
+#### `GET /v1/me/mentor-programs` 🔒
+
+Lists the `published` programs the caller is an `active` mentor of, ordered by
+`term_status` (`active_term`, `upcoming`, `completed`), then by name. The user
+is always the principal. The gateway requires only a signed-in user (`oidc`);
+see the [route matrix](../../docs/rewrite/06-route-matrix.md) for why this is
+not a Query Service collection. A caller who mentors no programs gets `200`
+with an empty `data` array.
+
+**Query parameters**
+
+| Parameter | Values | Description |
+|---|---|---|
+| `limit` | `0`–`100` | Page size; omitted or `0` means the default of 20 |
+| `offset` | `0` or more | Rows to skip |
+
+**Response** `200`
+```json
+{ "data": [<MentoredProgram>, ...], "meta": {...} }
+```
+
+**Errors** `400` (non-integer `limit`/`offset`, `limit` negative or above 100, negative `offset`), `401` (no principal, or a machine-to-machine client)
 
 ---
 
@@ -2136,7 +2237,7 @@ search index. The design is [02 §object storage](../../docs/rewrite/02-target-a
 and the authorization is [06 §file routes](../../docs/rewrite/06-route-matrix.md#file-routes),
 both added by #161.
 
-- **Logos** (programs, profiles) go to the public bucket. The column stores the full
+- **Program logos** go to the public bucket. The column stores the full
   CDN URL, returned as `public_url`. PNG or JPEG only (never SVG), at most 2 MB.
 - **Task submissions** go to the private bucket. The column stores the object key,
   which responses replace with the download route. PDF, DOC, DOCX or plain text,
@@ -2146,8 +2247,10 @@ both added by #161.
 - Every upload writes a fresh `{uuid}-{filename}` key and never overwrites. The
   superseded object, and any upload that never commits, are deleted through the
   `object_deletions` queue.
-- These routes are the only writers of `logo_url`, `avatar_url` and `file`. The
-  generic create and update routes reject those fields with `400`. They drop
+- These routes are the only writers of `programs.logo_url` and `tasks.file`. The
+  generic program and task routes reject those fields with `400`.
+- Profile logos are not stored here: another service hosts them, and the profile
+  create and update routes take its URL as `logo_url`. Profile writes drop
   `profile_links.resumeLink` rather than reject it, since resumes are not a file
   class and a client may echo back a migrated profile.
 - An archived program's logo cannot change (`409`); a rejected program's can,
@@ -2158,9 +2261,6 @@ both added by #161.
 | `POST /v1/programs/{id}/logo-upload` 🔒 | raw image | `201` `{ public_url, filename, content_type, size }` |
 | `DELETE /v1/programs/{id}/logo` 🔒 | — | `204` |
 | `GET /v1/programs/{id}/logo-download` 🔓 | — | `200` image; a fallback to `public_url` |
-| `POST /v1/me/profiles/by-id/{id}/logo-upload` 🔒 | raw image | `201`; also sets the user's `avatar_url` |
-| `DELETE /v1/me/profiles/by-id/{id}/logo` 🔒 | — | `204`; clears `avatar_url` while it holds that logo |
-| `GET /v1/user-profiles/{id}/logo-download` 🔓 | — | `200` image, publicly listed profiles only |
 | `POST /v1/tasks/{id}/file-upload` 🔒 | `multipart/form-data`, part `file` | `201` `{ filename, content_type, size }` |
 | `GET /v1/tasks/{id}/file-download` 🔒 | — | `200`/`206` attachment, `Cache-Control: private, no-store`, `Range` supported |
 | `DELETE /v1/tasks/{id}/file` 🔒 | — | `204`; only while `incomplete` or `in_progress` |
@@ -2199,9 +2299,9 @@ pending ────────────────────────
 | `pending` | `submitted` | All required fields present (linked LF project, description, repo_link, logo_url, ≥1 skill, ≥1 open term) |
 | `submitted` | `published` | Reviewer approves |
 | `submitted` | `rejected` | Reviewer declines |
-| `published` | `hidden` | No pending/accepted/graduated applications |
+| `published` | `hidden` | `POST /programs/{id}/hide`; no pending/accepted/graduated applications |
 | `published` | `archived` | Program complete |
-| `hidden` | `published` | Unhide |
+| `hidden` | `published` | `POST /programs/{id}/unhide` |
 | `hidden` | `archived` | Program complete while hidden |
 | `rejected` | `submitted` | Program Admin resubmits |
 

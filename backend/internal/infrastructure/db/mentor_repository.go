@@ -260,6 +260,113 @@ func (r *MentorRepository) GetByUserID(ctx context.Context, userID string) (*mod
 	}, nil
 }
 
+// mentoredProgramsFrom selects the published programs $1 is an active mentor
+// of, with the ID of the term shown on the list (see chosenProgramTermJoin) and
+// its term_status. A program with no open or closed term is upcoming with no
+// term.
+const mentoredProgramsFrom = `
+	FROM (
+		SELECT programs.id, programs.slug, programs.name, programs.lf_project_name, programs.logo_url,
+			chosen_term.id AS term_id,
+			CASE chosen_term.term_rank
+				WHEN ` + chosenTermRankStarted + ` THEN '` + string(models.MentoredProgramTermStatusActiveTerm) + `'
+				WHEN ` + chosenTermRankClosed + ` THEN '` + string(models.MentoredProgramTermStatusCompleted) + `'
+				ELSE '` + string(models.MentoredProgramTermStatusUpcoming) + `'
+			END AS term_status
+		FROM programs
+		JOIN program_members pm ON pm.program_id = programs.id` + chosenProgramTermJoin + `
+		WHERE pm.user_id = $1 AND pm.member_type = 'mentor' AND pm.status = 'active'
+		  AND programs.status = 'published'
+	) mp`
+
+// mentoredProgramsOrder orders rows of alias by term_status, then name, then id.
+func mentoredProgramsOrder(alias string) string {
+	return ` ORDER BY CASE ` + alias + `.term_status
+		WHEN '` + string(models.MentoredProgramTermStatusActiveTerm) + `' THEN 1
+		WHEN '` + string(models.MentoredProgramTermStatusUpcoming) + `' THEN 2
+		ELSE 3 END, LOWER(` + alias + `.name), ` + alias + `.id`
+}
+
+// ListMentoredByUser returns the published programs userID is an active mentor
+// of. Counts cover the chosen term only and match the program's applications
+// list for that term: applicants are counted once per user, as a withdrawn
+// application is kept beside its reapplication.
+func (r *MentorRepository) ListMentoredByUser(ctx context.Context, userID string, filter models.MentoredProgramFilter) ([]*models.MentoredProgram, *models.PaginationMeta, error) {
+	ctx, span := mentorTracer.Start(ctx, "db.mentors.ListMentoredByUser")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.user_id", userID))
+
+	limit := filter.Limit
+	if limit <= 0 || limit > models.MentoredProgramMaxLimit {
+		limit = 20
+	}
+	offset := filter.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	var total int
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*)`+mentoredProgramsFrom, userID).Scan(&total); err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("count mentored programs: %w", err)
+	}
+
+	rows, err := r.pool.Query(ctx, `
+		SELECT page.id, page.slug, page.name, page.lf_project_name, page.logo_url,
+			page.term_id, page.term_status,
+			apps.mentees, apps.applicants,
+			(SELECT COUNT(*) FROM tasks t
+				JOIN applications ta ON ta.id = t.application_id
+				WHERE ta.program_term_id = page.term_id AND ta.role = 'mentee'
+				  AND ta.status = 'accepted' AND t.status = 'submitted')
+		FROM (SELECT mp.*`+mentoredProgramsFrom+mentoredProgramsOrder("mp")+` LIMIT $2 OFFSET $3) page
+		LEFT JOIN LATERAL (
+			SELECT COUNT(*) FILTER (WHERE a.status IN ('accepted', 'graduated')) AS mentees,
+				COUNT(DISTINCT a.user_id) AS applicants
+			FROM applications a
+			WHERE a.program_term_id = page.term_id AND a.role = 'mentee'
+		) apps ON TRUE`+mentoredProgramsOrder("page"), userID, limit, offset)
+	if err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("list mentored programs: %w", err)
+	}
+	defer rows.Close()
+
+	programs := make([]*models.MentoredProgram, 0)
+	termIDs := make([]string, 0)
+	byTermID := make(map[string]*models.MentoredProgram)
+	for rows.Next() {
+		var p models.MentoredProgram
+		var termID *string
+		if err := rows.Scan(&p.ID, &p.Slug, &p.Name, &p.ProjectName, &p.LogoURL,
+			&termID, &p.TermStatus,
+			&p.Stats.Mentees, &p.Stats.Applicants, &p.Stats.TasksToReview); err != nil {
+			span.RecordError(err)
+			return nil, nil, fmt.Errorf("scan mentored program: %w", err)
+		}
+		programs = append(programs, &p)
+		if termID != nil {
+			termIDs = append(termIDs, *termID)
+			byTermID[*termID] = &p
+		}
+	}
+	if err := rows.Err(); err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("mentored program rows: %w", err)
+	}
+	rows.Close()
+
+	terms, err := loadProgramTermsByID(ctx, r.pool, termIDs)
+	if err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("list mentored program terms: %w", err)
+	}
+	for id, t := range terms {
+		byTermID[id].Term = t
+	}
+	return programs, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, nil
+}
+
 func (r *MentorRepository) loadMentorPrograms(ctx context.Context, userID string) ([]models.MentorProgram, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT p.id, p.name, p.slug, p.description, p.logo_url

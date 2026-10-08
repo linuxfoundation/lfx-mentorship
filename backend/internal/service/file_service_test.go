@@ -69,20 +69,13 @@ type clearCall struct{ id, previous string }
 
 type fakeFileRepo struct {
 	programLogo []domain.FileReplacement
-	profileLogo []domain.FileReplacement
 	taskFile    []domain.FileReplacement
 	cleared     []clearCall
 	replaceErr  error
-	listed      bool
 }
 
 func (f *fakeFileRepo) ReplaceProgramLogo(_ context.Context, r domain.FileReplacement) error {
 	f.programLogo = append(f.programLogo, r)
-	return f.replaceErr
-}
-
-func (f *fakeFileRepo) ReplaceProfileLogo(_ context.Context, r domain.FileReplacement) error {
-	f.profileLogo = append(f.profileLogo, r)
 	return f.replaceErr
 }
 
@@ -96,18 +89,9 @@ func (f *fakeFileRepo) ClearProgramLogo(_ context.Context, id, previous string) 
 	return nil
 }
 
-func (f *fakeFileRepo) ClearProfileLogo(_ context.Context, id, previous string) error {
-	f.cleared = append(f.cleared, clearCall{id, previous})
-	return nil
-}
-
 func (f *fakeFileRepo) ClearTaskFile(_ context.Context, id, previous string) error {
 	f.cleared = append(f.cleared, clearCall{id, previous})
 	return nil
-}
-
-func (f *fakeFileRepo) IsProfilePubliclyListed(context.Context, string) (bool, error) {
-	return f.listed, nil
 }
 
 type stubTaskAccess struct {
@@ -135,7 +119,6 @@ type fileSvcDeps struct {
 	files       *fakeFileRepo
 	scheduler   *fakeScheduler
 	programs    *stubProgRepo
-	profiles    *stubUserProfileRepo
 	tasks       *stubTaskAccess
 	logos       *fakeObjectStore
 	attachments *fakeObjectStore
@@ -151,9 +134,6 @@ func (d *fileSvcDeps) build() *service.FileService {
 	if d.programs == nil {
 		d.programs = &stubProgRepo{}
 	}
-	if d.profiles == nil {
-		d.profiles = &stubUserProfileRepo{}
-	}
 	if d.tasks == nil {
 		d.tasks = &stubTaskAccess{}
 	}
@@ -165,7 +145,7 @@ func (d *fileSvcDeps) build() *service.FileService {
 	if d.attachments != nil {
 		attachments = d.attachments
 	}
-	return service.NewFileService(d.files, d.scheduler, d.programs, d.profiles, d.tasks, logos, attachments)
+	return service.NewFileService(d.files, d.scheduler, d.programs, d.tasks, logos, attachments)
 }
 
 func TestFileService_UploadProgramLogo_ReplaceProtocol(t *testing.T) {
@@ -274,33 +254,6 @@ func TestFileService_NotConfigured(t *testing.T) {
 	}
 }
 
-func TestFileService_UploadProfileLogo(t *testing.T) {
-	profiles := &stubUserProfileRepo{getByID: func(_ context.Context, id string) (*models.UserProfile, error) {
-		return &models.UserProfile{ID: id, UserID: "owner"}, nil
-	}}
-
-	t.Run("other user's profile is forbidden", func(t *testing.T) {
-		d := &fileSvcDeps{logos: &fakeObjectStore{}, profiles: profiles}
-		if _, err := d.build().UploadProfileLogo(context.Background(), "prof1", "intruder", pngBytes); !errors.Is(err, domain.ErrForbidden) {
-			t.Fatalf("err = %v; want ErrForbidden", err)
-		}
-		if len(d.logos.puts) != 0 {
-			t.Fatal("forbidden upload must not be stored")
-		}
-	})
-
-	t.Run("owner replaces logo", func(t *testing.T) {
-		d := &fileSvcDeps{logos: &fakeObjectStore{}, profiles: profiles}
-		got, err := d.build().UploadProfileLogo(context.Background(), "prof1", "owner", pngBytes)
-		if err != nil {
-			t.Fatalf("UploadProfileLogo: %v", err)
-		}
-		if len(d.files.profileLogo) != 1 || d.files.profileLogo[0].Previous != nil || d.files.profileLogo[0].Next != got.PublicURL {
-			t.Fatalf("unexpected replacement %+v", d.files.profileLogo)
-		}
-	})
-}
-
 func TestFileService_DeleteLogos(t *testing.T) {
 	logo := cdnPrefix + "/abc-logo.png"
 
@@ -319,18 +272,6 @@ func TestFileService_DeleteLogos(t *testing.T) {
 	t.Run("no logo is a no-op", func(t *testing.T) {
 		d := &fileSvcDeps{}
 		if err := d.build().DeleteProgramLogo(context.Background(), "p1"); err != nil || len(d.files.cleared) != 0 {
-			t.Fatalf("err = %v, cleared = %+v", err, d.files.cleared)
-		}
-	})
-
-	t.Run("profile logo requires ownership", func(t *testing.T) {
-		d := &fileSvcDeps{profiles: &stubUserProfileRepo{getByID: func(_ context.Context, id string) (*models.UserProfile, error) {
-			return &models.UserProfile{ID: id, UserID: "owner", LogoURL: &logo}, nil
-		}}}
-		if err := d.build().DeleteProfileLogo(context.Background(), "prof1", "intruder"); !errors.Is(err, domain.ErrForbidden) {
-			t.Fatalf("err = %v; want ErrForbidden", err)
-		}
-		if err := d.build().DeleteProfileLogo(context.Background(), "prof1", "owner"); err != nil || len(d.files.cleared) != 1 {
 			t.Fatalf("err = %v, cleared = %+v", err, d.files.cleared)
 		}
 	})
@@ -369,16 +310,6 @@ func TestFileService_DownloadProgramLogo(t *testing.T) {
 			t.Fatalf("content type = %q; want application/octet-stream", obj.ContentType)
 		}
 	})
-}
-
-func TestFileService_DownloadProfileLogo_UnlistedIsNotFound(t *testing.T) {
-	d := &fileSvcDeps{logos: &fakeObjectStore{}}
-	if _, err := d.build().DownloadProfileLogo(context.Background(), "prof1", ""); !errors.Is(err, domain.ErrUserProfileNotFound) {
-		t.Fatalf("err = %v; want ErrUserProfileNotFound", err)
-	}
-	if len(d.logos.getKeys) != 0 {
-		t.Fatal("unlisted profile logo must not be fetched")
-	}
 }
 
 func TestFileService_UploadTaskFile(t *testing.T) {

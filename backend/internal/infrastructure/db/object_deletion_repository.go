@@ -84,13 +84,13 @@ func (r *ObjectDeletionRepository) Claim(ctx context.Context, buckets []domain.O
 }
 
 // IsReferenced implements domain.ObjectDeletionRepository. Migrated rows can share a
-// locator, since legacy program creation could inherit another program's logo.
+// locator, since legacy program creation could inherit another program's logo. Profile
+// logos and avatars are not checked: they are URLs a client chose, and a write to them
+// never queues a deletion, so an entry they held back would never be retried.
 func (r *ObjectDeletionRepository) IsReferenced(ctx context.Context, locator string) (bool, error) {
 	var referenced bool
 	err := r.pool.QueryRow(ctx, `
 		SELECT EXISTS (SELECT 1 FROM programs WHERE logo_url = $1)
-		    OR EXISTS (SELECT 1 FROM user_profiles WHERE logo_url = $1)
-		    OR EXISTS (SELECT 1 FROM users WHERE avatar_url = $1)
 		    OR EXISTS (SELECT 1 FROM tasks WHERE file = $1)
 		    OR EXISTS (SELECT 1 FROM quarantined_tasks WHERE file = $1)`, locator).Scan(&referenced)
 	if err != nil {

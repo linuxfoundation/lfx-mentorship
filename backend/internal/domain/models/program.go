@@ -131,6 +131,9 @@ type ProgramUpdateInput struct {
 	// Terms replaces the program's open terms when non-nil: unlisted open terms are
 	// removed and closed terms are untouched. nil leaves terms unchanged.
 	Terms []ProgramOpenTermInput `json:"terms,omitempty"`
+	// ExpectedStatus, when set, makes a status change apply only from this status. The service
+	// refuses any other current status and then pins the one it validated for the repository.
+	ExpectedStatus *ProgramStatus `json:"-"`
 }
 
 // ProgramSkill maps to the public.program_skills table.

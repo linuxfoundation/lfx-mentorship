@@ -96,6 +96,23 @@ func TestUserService_DeleteRejectsMissingActor(t *testing.T) {
 	}
 }
 
+func TestUserService_UpdateSavesAvatarURL(t *testing.T) {
+	avatar := "https://images.example.org/avatar.png"
+	var saved *string
+	svc := service.NewUserService(&stubUserRepository{
+		update: func(_ context.Context, _ string, in models.UserUpdateInput) (*models.User, error) {
+			saved = in.AvatarURL
+			return &models.User{}, nil
+		},
+	})
+	if _, err := svc.Update(context.Background(), "user-1", models.UserUpdateInput{AvatarURL: &avatar}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if saved == nil || *saved != avatar {
+		t.Fatalf("saved avatar_url = %v; want %q", saved, avatar)
+	}
+}
+
 func TestUserService_UpdateRejectsLFIDMutation(t *testing.T) {
 	called := false
 	svc := service.NewUserService(&stubUserRepository{
