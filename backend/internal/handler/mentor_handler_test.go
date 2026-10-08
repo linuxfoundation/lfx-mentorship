@@ -169,11 +169,10 @@ func TestMentorHandler_ListMine_ScopesToPrincipal(t *testing.T) {
 		listMine: func(_ context.Context, userID string, f models.MentoredProgramFilter) ([]*models.MentoredProgram, *models.PaginationMeta, error) {
 			gotUser, gotFilter = userID, f
 			return []*models.MentoredProgram{{
-				ID:         "p1",
-				Name:       "GridFlow",
-				Term:       &models.ProgramTerm{ID: "t1", ProgramID: "p1", Name: "Fall 2026", Status: models.ProgramTermStatusOpen},
-				TermStatus: models.MentoredProgramTermStatusActiveTerm,
-				Stats:      models.MentoredProgramStats{Mentees: 3, Applicants: 12, TasksToReview: 2},
+				ID:     "p1",
+				Name:   "GridFlow",
+				Status: models.MentoredProgramStatusOpen,
+				Stats:  models.MentoredProgramStats{Mentees: 3, Applicants: 12, TasksToReview: 2},
 			}}, &models.PaginationMeta{Total: 1, Limit: 5, Offset: 10}, nil
 		},
 	})
@@ -190,20 +189,36 @@ func TestMentorHandler_ListMine_ScopesToPrincipal(t *testing.T) {
 	if want := (models.MentoredProgramFilter{Limit: 5, Offset: 10}); gotFilter != want {
 		t.Errorf("filter = %+v; want %+v", gotFilter, want)
 	}
+	raw := w.Body.Bytes()
 	var body struct {
 		Data []models.MentoredProgram `json:"data"`
 		Meta models.PaginationMeta    `json:"meta"`
 	}
-	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+	if err := json.Unmarshal(raw, &body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	if len(body.Data) != 1 || body.Meta.Total != 1 {
 		t.Fatalf("unexpected body: %+v", body)
 	}
 	got := body.Data[0]
-	if got.TermStatus != models.MentoredProgramTermStatusActiveTerm || got.Term == nil || got.Term.ID != "t1" ||
+	if got.Status != models.MentoredProgramStatusOpen ||
 		got.Stats != (models.MentoredProgramStats{Mentees: 3, Applicants: 12, TasksToReview: 2}) {
-		t.Errorf("row = %+v; want active term t1 with the service's stats", got)
+		t.Errorf("row = %+v; want an open program with the service's stats", got)
+	}
+	// Typed decoding ignores unknown fields, so check the row's keys directly.
+	var fields struct {
+		Data []map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatalf("decode fields: %v", err)
+	}
+	for _, removed := range []string{"term", "term_status"} {
+		if _, ok := fields.Data[0][removed]; ok {
+			t.Errorf("row has %q; want it removed: %s", removed, raw)
+		}
+	}
+	if _, ok := fields.Data[0]["status"]; !ok {
+		t.Errorf("row has no status: %s", raw)
 	}
 }
 

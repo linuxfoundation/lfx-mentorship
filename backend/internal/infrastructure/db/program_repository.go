@@ -201,31 +201,47 @@ func (r *ProgramRepository) GetHeaderProjection(ctx context.Context, programID s
 // sqlUnreviewedProgramStatuses lists program statuses that have not passed review.
 const sqlUnreviewedProgramStatuses = `('` + string(models.ProgramStatusPending) + `', '` + string(models.ProgramStatusSubmitted) + `')`
 
+// sqlProgramTermsAllClosed is true for a programs row that has a closed term
+// and no open one; deleted terms are ignored. A published program in that state
+// is completed on the admin and mentor programs lists, and otherwise open.
+const sqlProgramTermsAllClosed = `(NOT EXISTS (SELECT 1 FROM program_terms pt WHERE pt.program_id = programs.id AND pt.status = 'open')
+	AND EXISTS (SELECT 1 FROM program_terms pt WHERE pt.program_id = programs.id AND pt.status = 'closed'))`
+
+// programListOrder orders the rows of alias on the admin and mentor programs
+// lists by their statusColumn (open, pending_review, completed, hidden, then
+// the rest), then by name, then by id. Mentor rows are only open or completed,
+// which share their values with AdministeredProgramStatus.
+func programListOrder(alias, statusColumn string) string {
+	return ` ORDER BY CASE ` + alias + `.` + statusColumn + `
+		WHEN '` + string(models.AdministeredProgramStatusOpen) + `' THEN 1
+		WHEN '` + string(models.AdministeredProgramStatusPendingReview) + `' THEN 2
+		WHEN '` + string(models.AdministeredProgramStatusCompleted) + `' THEN 3
+		WHEN '` + string(models.AdministeredProgramStatusHidden) + `' THEN 4
+		ELSE 5 END, LOWER(` + alias + `.name), ` + alias + `.id`
+}
+
 // administeredProgramsFrom selects the programs $1 is an active program admin
-// of, with the ID of the term shown on the list (see chosenProgramTermJoin) and
-// the admin status. A published program is completed when the chosen term is
-// closed, that is when it has closed terms and no open one; with no terms at
-// all it is still open.
+// of, with the admin status. A published program is completed once all its
+// terms are closed; with no terms at all it is still open.
 const administeredProgramsFrom = `
 	FROM (
 		SELECT programs.id, programs.slug, programs.name, programs.lf_project_uid, programs.lf_project_name,
 			programs.logo_url, programs.status, programs.created_on, programs.updated_on,
-			chosen_term.id AS term_id,
 			CASE
 				WHEN programs.status IN ` + sqlUnreviewedProgramStatuses + ` THEN 'pending_review'
-				WHEN programs.status = 'published' AND chosen_term.term_rank = ` + chosenTermRankClosed + ` THEN 'completed'
+				WHEN programs.status = 'published' AND ` + sqlProgramTermsAllClosed + ` THEN 'completed'
 				WHEN programs.status = 'published' THEN 'open'
 				WHEN programs.status = 'rejected' THEN 'rejected'
 				ELSE 'hidden' -- archived | hidden
 			END AS admin_status
 		FROM programs
-		JOIN program_members pm ON pm.program_id = programs.id` + chosenProgramTermJoin + `
+		JOIN program_members pm ON pm.program_id = programs.id
 		WHERE pm.user_id = $1 AND pm.member_type = 'program_admin' AND pm.status = 'active'
 	) ap`
 
 // ListAdministeredByUser returns the programs userID is an active program
-// admin of, ordered by name. Stats are counted for the returned page only and
-// match GetHeaderProjection.
+// admin of, ordered by programListOrder. Stats are counted for the returned
+// page only and match GetHeaderProjection.
 func (r *ProgramRepository) ListAdministeredByUser(ctx context.Context, userID string, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
 	ctx, span := programTracer.Start(ctx, "db.programs.ListAdministeredByUser")
 	defer span.End()
@@ -259,18 +275,17 @@ func (r *ProgramRepository) ListAdministeredByUser(ctx context.Context, userID s
 
 	args = append(args, limit, offset)
 	q := `SELECT page.id, page.slug, page.name, page.lf_project_uid, page.lf_project_name, page.logo_url,
-			page.status, page.admin_status, page.term_id, page.created_on, page.updated_on,
+			page.status, page.admin_status, page.created_on, page.updated_on,
 			(SELECT COUNT(*) FROM program_members m WHERE m.program_id = page.id AND m.member_type = 'mentor' AND m.status = 'active'),
 			mentees.accepted, mentees.graduated
 		FROM (SELECT ap.*` + administeredProgramsFrom + where +
-		fmt.Sprintf(` ORDER BY LOWER(ap.name), ap.id LIMIT $%d OFFSET $%d`, len(args)-1, len(args)) + `) page
+		programListOrder("ap", "admin_status") + fmt.Sprintf(` LIMIT $%d OFFSET $%d`, len(args)-1, len(args)) + `) page
 		LEFT JOIN LATERAL (
 			SELECT COUNT(*) FILTER (WHERE a.status = 'accepted') AS accepted,
 				COUNT(*) FILTER (WHERE a.status = 'graduated') AS graduated
 			FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id
 			WHERE pt.program_id = page.id AND a.role = 'mentee'
-		) mentees ON TRUE
-		ORDER BY LOWER(page.name), page.id`
+		) mentees ON TRUE` + programListOrder("page", "admin_status")
 
 	rows, err := r.pool.Query(ctx, q, args...)
 	if err != nil {
@@ -280,36 +295,19 @@ func (r *ProgramRepository) ListAdministeredByUser(ctx context.Context, userID s
 	defer rows.Close()
 
 	programs := make([]*models.AdministeredProgram, 0)
-	termIDs := make([]string, 0)
-	byTermID := make(map[string]*models.AdministeredProgram)
 	for rows.Next() {
 		var p models.AdministeredProgram
-		var termID *string
 		if err := rows.Scan(&p.ID, &p.Slug, &p.Name, &p.ProjectUID, &p.ProjectName, &p.LogoURL,
-			&p.Status, &p.AdminStatus, &termID, &p.CreatedOn, &p.UpdatedOn,
+			&p.Status, &p.AdminStatus, &p.CreatedOn, &p.UpdatedOn,
 			&p.Stats.Mentors, &p.Stats.Mentees, &p.Stats.Graduated); err != nil {
 			span.RecordError(err)
 			return nil, nil, fmt.Errorf("scan administered program: %w", err)
 		}
 		programs = append(programs, &p)
-		if termID != nil {
-			termIDs = append(termIDs, *termID)
-			byTermID[*termID] = &p
-		}
 	}
 	if err := rows.Err(); err != nil {
 		span.RecordError(err)
 		return nil, nil, fmt.Errorf("rows error: %w", err)
-	}
-	rows.Close()
-
-	terms, err := loadProgramTermsByID(ctx, r.pool, termIDs)
-	if err != nil {
-		span.RecordError(err)
-		return nil, nil, fmt.Errorf("list administered program terms: %w", err)
-	}
-	for id, t := range terms {
-		byTermID[id].Term = t
 	}
 	return programs, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, nil
 }

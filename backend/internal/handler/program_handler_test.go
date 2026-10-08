@@ -738,7 +738,6 @@ func TestProgramHandler_ListMine_ScopesToPrincipal(t *testing.T) {
 				ID:          "p1",
 				Name:        "GridFlow",
 				AdminStatus: models.AdministeredProgramStatusOpen,
-				Term:        &models.ProgramTerm{ID: "t1", ProgramID: "p1", Name: "Fall 2026", Status: models.ProgramTermStatusOpen},
 				Stats:       models.ProgramHeaderStats{Mentors: 2, Mentees: 3, Graduated: 6},
 			}}, &models.PaginationMeta{Total: 1, Limit: 5, Offset: 10}, nil
 		},
@@ -767,9 +766,6 @@ func TestProgramHandler_ListMine_ScopesToPrincipal(t *testing.T) {
 	}
 	if len(body.Data) != 1 || body.Data[0].ID != "p1" || body.Data[0].Stats.Graduated != 6 || body.Meta.Total != 1 {
 		t.Fatalf("unexpected body: %+v", body)
-	}
-	if term := body.Data[0].Term; term == nil || term.ID != "t1" || term.Name != "Fall 2026" || term.Status != models.ProgramTermStatusOpen {
-		t.Errorf("term = %+v; want open term t1 Fall 2026", term)
 	}
 }
 
