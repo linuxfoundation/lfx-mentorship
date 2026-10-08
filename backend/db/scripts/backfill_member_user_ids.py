@@ -110,22 +110,27 @@ def plan(members: Iterable[dict], users: Iterable[dict], projects: Iterable[dict
     return rows
 
 
-def apply(table, rows: list[dict]) -> None:
-    for row in rows:
-        if row["result"] not in RESOLVED:
-            continue
-        try:
-            table.update_item(
-                Key={"id": row["member_id"]},
-                UpdateExpression="SET userId = :u",
-                ConditionExpression="attribute_exists(id) AND attribute_not_exists(userId)",
-                ExpressionAttributeValues={":u": row["user_id"]},
-            )
-            row["applied"] = "yes"
-        except ClientError as e:
-            if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
-                raise
-            row["applied"] = "skipped_changed"
+def apply(table, rows: list[dict], report_path: str) -> None:
+    write_report(report_path, rows)
+    try:
+        for row in rows:
+            if row["result"] not in RESOLVED:
+                continue
+            try:
+                table.update_item(
+                    Key={"id": row["member_id"]},
+                    UpdateExpression="SET userId = :u",
+                    ConditionExpression="attribute_exists(id) AND attribute_not_exists(userId)",
+                    ExpressionAttributeValues={":u": row["user_id"]},
+                )
+                row["applied"] = "yes"
+            except ClientError as e:
+                if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                    raise
+                row["applied"] = "skipped_changed"
+    finally:
+        # A partial failure must still record every committed write so --rollback can undo it.
+        write_report(report_path, rows)
 
 
 def rollback(table, report_path: str) -> Counter:
@@ -161,7 +166,7 @@ def main() -> int:
     parser.add_argument("--table-prefix", required=True, help="e.g. jobspring-prod or jobspring-dev")
     parser.add_argument("--region", default="us-east-1")
     parser.add_argument("--report", required=True, help="CSV to write (dry-run/apply) or read (--rollback); contains emails")
-    parser.add_argument("--overrides", help="CSV with member_id,user_id for rows matching cannot settle")
+    parser.add_argument("--overrides", help="CSV with member_id,user_id for rows that automatic matching cannot settle")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--apply", action="store_true", help="write userId; default is dry-run")
     mode.add_argument("--rollback", action="store_true", help="remove userIds recorded as applied in --report")
@@ -179,8 +184,9 @@ def main() -> int:
     projects = scan(dynamo.Table(f"{args.table_prefix}-projects"))
     rows = plan(members, users, projects, load_overrides(args.overrides))
     if args.apply:
-        apply(members_table, rows)
-    write_report(args.report, rows)
+        apply(members_table, rows, args.report)
+    else:
+        write_report(args.report, rows)
 
     print(f"scanned members={len(members)} users={len(users)} projects={len(projects)}")
     print(f"members without userId: {len(rows)}")

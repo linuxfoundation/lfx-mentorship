@@ -72,8 +72,9 @@ def test_apply_writes_only_resolved_rows_and_respects_concurrent_writes(tmp_path
     rows = b.plan(members, USERS, PROJECTS, {})
     table = FakeTable(members)
     table.items["m-race"]["userId"] = "u-set-meanwhile"
+    report = tmp_path / "report.csv"
 
-    b.apply(table, rows)
+    b.apply(table, rows, str(report))
 
     applied = {r["member_id"]: r["applied"] for r in rows}
     assert applied == {"m-email": "yes", "m-race": "skipped_changed", "m-unknown": ""}
@@ -81,8 +82,6 @@ def test_apply_writes_only_resolved_rows_and_respects_concurrent_writes(tmp_path
     assert table.items["m-race"]["userId"] == "u-set-meanwhile"
     assert "userId" not in table.items["m-unknown"]
 
-    report = tmp_path / "report.csv"
-    b.write_report(str(report), rows)
     assert b.rollback(table, str(report)) == {"removed": 1}
     assert "userId" not in table.items["m-email"]
     assert table.items["m-race"]["userId"] == "u-set-meanwhile"
@@ -97,10 +96,33 @@ def test_load_overrides_skips_blank_user_ids(tmp_path):
 
 
 @pytest.mark.parametrize("code", ["ProvisionedThroughputExceededException", "AccessDeniedException"])
-def test_apply_surfaces_unexpected_errors(code):
+def test_apply_surfaces_unexpected_errors(code, tmp_path):
     class Failing:
         def update_item(self, **_):
             raise ClientError({"Error": {"Code": code}}, "UpdateItem")
 
     with pytest.raises(ClientError):
-        b.apply(Failing(), b.plan([member("m", "alice@example.org")], USERS, PROJECTS, {}))
+        b.apply(Failing(), b.plan([member("m", "alice@example.org")], USERS, PROJECTS, {}), str(tmp_path / "r.csv"))
+
+
+def test_partial_apply_failure_keeps_committed_writes_rollbackable(tmp_path):
+    members = [member("m-first", "alice@example.org"), member("m-second", "shared@example.org")]
+    table = FakeTable(members)
+    real_update = table.update_item
+
+    def throttle_after_first(**kwargs):
+        if kwargs["Key"]["id"] == "m-second":
+            raise ClientError({"Error": {"Code": "ProvisionedThroughputExceededException"}}, "UpdateItem")
+        real_update(**kwargs)
+
+    table.update_item = throttle_after_first
+    report = tmp_path / "report.csv"
+
+    with pytest.raises(ClientError):
+        b.apply(table, b.plan(members, USERS, PROJECTS, {}), str(report))
+
+    with open(report, newline="") as f:
+        assert {r["member_id"]: r["applied"] for r in csv.DictReader(f)} == {"m-first": "yes", "m-second": ""}
+    table.update_item = real_update
+    assert b.rollback(table, str(report)) == {"removed": 1}
+    assert "userId" not in table.items["m-first"]
