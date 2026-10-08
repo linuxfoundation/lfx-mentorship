@@ -796,7 +796,7 @@ Unfiltered directory totals for the header (“18 mentees across 7 programs”).
 
 Public mentee profile by **user ID**. Programs, skills, terms, and mentors are loaded in separate queries and returned in one response.
 
-Unlike the directory, the profile also covers applicants: it resolves for any user with a mentee application on a published program (non-deleted term) that is `accepted`, `graduated`, `pending`, `declined`, or `withdrawn`. `hold` applications are omitted. `programs` lists each such program, one entry per term. Where a withdrawn application sits beside a reapplication to the same term, the reapplication is shown. When statuses differ, the top-level `status` and `program` and each program's `status` take the first in this order: `accepted`, `graduated`, `pending`, `declined`, `withdrawn`. `joined_at` is the first accepted or graduated application when there is one, otherwise the first application.
+Unlike the directory, the profile also covers applicants: it resolves for any user with a mentee application on a published program (non-deleted term) that is `accepted`, `graduated`, `pending`, `declined`, or `withdrawn`. `hold` applications are omitted. `programs` has one entry per such program, with one `terms` item per term applied to. Where a withdrawn application sits beside a reapplication to the same term, the reapplication is shown. When statuses differ, the top-level `status` and `program` and each program's `status` take the first in this order: `accepted`, `graduated`, `pending`, `declined`, `withdrawn`. `joined_at` is the first accepted or graduated application when there is one, otherwise the first application.
 
 **Response** `200` → list item fields plus:
 ```json
