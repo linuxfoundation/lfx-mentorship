@@ -207,6 +207,19 @@ const sqlUnreviewedProgramStatuses = `('` + string(models.ProgramStatusPending) 
 const sqlProgramTermsAllClosed = `(NOT EXISTS (SELECT 1 FROM program_terms pt WHERE pt.program_id = programs.id AND pt.status = 'open')
 	AND EXISTS (SELECT 1 FROM program_terms pt WHERE pt.program_id = programs.id AND pt.status = 'closed'))`
 
+// programListOrder orders the rows of alias on the admin and mentor programs
+// lists by their statusColumn (open, pending_review, completed, hidden, then
+// the rest), then by name, then by id. Mentor rows are only open or completed,
+// which share their values with AdministeredProgramStatus.
+func programListOrder(alias, statusColumn string) string {
+	return ` ORDER BY CASE ` + alias + `.` + statusColumn + `
+		WHEN '` + string(models.AdministeredProgramStatusOpen) + `' THEN 1
+		WHEN '` + string(models.AdministeredProgramStatusPendingReview) + `' THEN 2
+		WHEN '` + string(models.AdministeredProgramStatusCompleted) + `' THEN 3
+		WHEN '` + string(models.AdministeredProgramStatusHidden) + `' THEN 4
+		ELSE 5 END, LOWER(` + alias + `.name), ` + alias + `.id`
+}
+
 // administeredProgramsFrom selects the programs $1 is an active program admin
 // of, with the admin status. A published program is completed once all its
 // terms are closed; with no terms at all it is still open.
@@ -227,8 +240,8 @@ const administeredProgramsFrom = `
 	) ap`
 
 // ListAdministeredByUser returns the programs userID is an active program
-// admin of, ordered by name. Stats are counted for the returned page only and
-// match GetHeaderProjection.
+// admin of, ordered by programListOrder. Stats are counted for the returned
+// page only and match GetHeaderProjection.
 func (r *ProgramRepository) ListAdministeredByUser(ctx context.Context, userID string, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
 	ctx, span := programTracer.Start(ctx, "db.programs.ListAdministeredByUser")
 	defer span.End()
@@ -266,14 +279,13 @@ func (r *ProgramRepository) ListAdministeredByUser(ctx context.Context, userID s
 			(SELECT COUNT(*) FROM program_members m WHERE m.program_id = page.id AND m.member_type = 'mentor' AND m.status = 'active'),
 			mentees.accepted, mentees.graduated
 		FROM (SELECT ap.*` + administeredProgramsFrom + where +
-		fmt.Sprintf(` ORDER BY LOWER(ap.name), ap.id LIMIT $%d OFFSET $%d`, len(args)-1, len(args)) + `) page
+		programListOrder("ap", "admin_status") + fmt.Sprintf(` LIMIT $%d OFFSET $%d`, len(args)-1, len(args)) + `) page
 		LEFT JOIN LATERAL (
 			SELECT COUNT(*) FILTER (WHERE a.status = 'accepted') AS accepted,
 				COUNT(*) FILTER (WHERE a.status = 'graduated') AS graduated
 			FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id
 			WHERE pt.program_id = page.id AND a.role = 'mentee'
-		) mentees ON TRUE
-		ORDER BY LOWER(page.name), page.id`
+		) mentees ON TRUE` + programListOrder("page", "admin_status")
 
 	rows, err := r.pool.Query(ctx, q, args...)
 	if err != nil {

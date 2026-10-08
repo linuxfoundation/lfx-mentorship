@@ -685,15 +685,17 @@ func TestProgramListAdministeredIntegration_GroupsStatusAndScopesToActiveAdmin(t
 		id     string
 		status models.AdministeredProgramStatus
 	}
+	// Ordered by admin_status (open, pending_review, completed, hidden, then
+	// the rest), then by name.
 	want := []row{
-		{completedID, models.AdministeredProgramStatusCompleted},
-		{pendingID, models.AdministeredProgramStatusPendingReview},
 		{fixture.ProgramID, models.AdministeredProgramStatusOpen},
-		{rejectedID, models.AdministeredProgramStatusRejected},
-		{hiddenID, models.AdministeredProgramStatusHidden},
-		{archivedID, models.AdministeredProgramStatusHidden},
 		{noTermsID, models.AdministeredProgramStatusOpen},
 		{deletedTermID, models.AdministeredProgramStatusOpen},
+		{pendingID, models.AdministeredProgramStatusPendingReview},
+		{completedID, models.AdministeredProgramStatusCompleted},
+		{hiddenID, models.AdministeredProgramStatusHidden},
+		{archivedID, models.AdministeredProgramStatusHidden},
+		{rejectedID, models.AdministeredProgramStatusRejected},
 	}
 	// Mentor-only and withdrawn memberships, and the other user's program, are excluded.
 	if meta.Total != len(want) || len(programs) != len(want) {
@@ -712,7 +714,7 @@ func TestProgramListAdministeredIntegration_GroupsStatusAndScopesToActiveAdmin(t
 			t.Errorf("programs[%d] stats = %+v; want header stats %+v", i, p.Stats, header.Stats)
 		}
 	}
-	if s := programs[2].Stats; s.Mentors != 1 || s.Mentees != 1 || s.Graduated != 1 {
+	if s := programs[0].Stats; s.Mentors != 1 || s.Mentees != 1 || s.Graduated != 1 {
 		t.Errorf("fixture program stats = %+v; want 1 active mentor, 1 mentee, 1 graduated", s)
 	}
 
@@ -754,8 +756,8 @@ func TestProgramListAdministeredIntegration_GroupsStatusAndScopesToActiveAdmin(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if meta.Total != len(want) || len(paged) != 1 || paged[0].ID != pendingID {
-		t.Errorf("limit=1 offset=1: total=%d programs=%+v; want %s of %d", meta.Total, paged, pendingID, len(want))
+	if meta.Total != len(want) || len(paged) != 1 || paged[0].ID != want[1].id {
+		t.Errorf("limit=1 offset=1: total=%d programs=%+v; want %s of %d", meta.Total, paged, want[1].id, len(want))
 	}
 }
 

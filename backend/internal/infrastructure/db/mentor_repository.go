@@ -276,12 +276,6 @@ const mentoredProgramsFrom = `
 		  AND programs.status = 'published'
 	) mp`
 
-// mentoredProgramsOrder orders rows of alias by status, open first, then name,
-// then id.
-func mentoredProgramsOrder(alias string) string {
-	return ` ORDER BY ` + alias + `.status = '` + string(models.MentoredProgramStatusCompleted) + `', LOWER(` + alias + `.name), ` + alias + `.id`
-}
-
 // ListMentoredByUser returns the published programs userID is an active mentor
 // of. Counts cover all the program's terms and match its management summary:
 // applicants are counted once per user per term, as a withdrawn application is
@@ -314,14 +308,14 @@ func (r *MentorRepository) ListMentoredByUser(ctx context.Context, userID string
 				JOIN program_terms tpt ON tpt.id = ta.program_term_id
 				WHERE tpt.program_id = page.id AND ta.role = 'mentee'
 				  AND ta.status = 'accepted' AND t.status = 'submitted')
-		FROM (SELECT mp.*`+mentoredProgramsFrom+mentoredProgramsOrder("mp")+` LIMIT $2 OFFSET $3) page
+		FROM (SELECT mp.*`+mentoredProgramsFrom+programListOrder("mp", "status")+` LIMIT $2 OFFSET $3) page
 		LEFT JOIN LATERAL (
 			SELECT COUNT(*) FILTER (WHERE a.status IN ('accepted', 'graduated')) AS mentees,
 				COUNT(DISTINCT (a.program_term_id, a.user_id)) AS applicants
 			FROM applications a
 			JOIN program_terms pt ON pt.id = a.program_term_id
 			WHERE pt.program_id = page.id AND a.role = 'mentee'
-		) apps ON TRUE`+mentoredProgramsOrder("page"), userID, limit, offset)
+		) apps ON TRUE`+programListOrder("page", "status"), userID, limit, offset)
 	if err != nil {
 		span.RecordError(err)
 		return nil, nil, fmt.Errorf("list mentored programs: %w", err)

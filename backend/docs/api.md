@@ -1600,8 +1600,9 @@ matches `GET /v1/programs/{id}/header`.
 
 #### `GET /v1/me/programs` 🔒
 
-Lists the programs the caller is an active `program_admin` of, ordered by name.
-The user is always the principal. The gateway requires only a signed-in user
+Lists the programs the caller is an active `program_admin` of, ordered by
+`admin_status` (`open`, `pending_review`, `completed`, `hidden`, then
+`rejected`), then by name. The user is always the principal. The gateway requires only a signed-in user
 (`oidc`); see the [route matrix](../../docs/rewrite/06-route-matrix.md) for why
 this is not yet a Query Service collection.
 
