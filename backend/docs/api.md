@@ -911,6 +911,7 @@ Public mentor profile by **user ID**. Programs, mentees, and profile links are l
       "slug": "kubernetes-contributors",
       "description": "...",
       "logo_url": "https://...",
+      "project_name": "Kubernetes",
       "skills": ["Go", "Kubernetes"],
       "terms": [
         {

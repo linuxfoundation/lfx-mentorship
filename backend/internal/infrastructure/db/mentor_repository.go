@@ -262,7 +262,7 @@ func (r *MentorRepository) GetByUserID(ctx context.Context, userID string) (*mod
 
 func (r *MentorRepository) loadMentorPrograms(ctx context.Context, userID string) ([]models.MentorProgram, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT p.id, p.name, p.slug, p.description, p.logo_url
+		SELECT p.id, p.name, p.slug, p.description, p.logo_url, p.lf_project_name
 		FROM program_members pm
 		JOIN programs p ON p.id = pm.program_id
 		WHERE pm.user_id = $1
@@ -279,7 +279,7 @@ func (r *MentorRepository) loadMentorPrograms(ctx context.Context, userID string
 	ids := []string{}
 	for rows.Next() {
 		var program models.MentorProgram
-		if err := rows.Scan(&program.ID, &program.Name, &program.Slug, &program.Description, &program.LogoURL); err != nil {
+		if err := rows.Scan(&program.ID, &program.Name, &program.Slug, &program.Description, &program.LogoURL, &program.ProjectName); err != nil {
 			return nil, fmt.Errorf("scan mentor program: %w", err)
 		}
 		program.Skills = []string{}

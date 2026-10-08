@@ -567,6 +567,26 @@ func TestDirectoryIntegration_NonStringSkillsAreDropped(t *testing.T) {
 	}
 }
 
+func TestMentorRepositoryIntegration_GetByUserIDIncludesProjectName(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `UPDATE programs SET lf_project_name = 'Fixture Project' WHERE id = $1`, fixture.ProgramID); err != nil {
+		t.Fatalf("set project name: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES ('00000000-0000-0000-0000-000000000084', $1, $2, 'mentor', 'active')`, fixture.ProgramID, fixture.UserID); err != nil {
+		t.Fatalf("insert active mentor membership: %v", err)
+	}
+
+	mentor, err := NewMentorRepository(pool).GetByUserID(ctx, fixture.UserID)
+	if err != nil {
+		t.Fatalf("mentor GetByUserID: %v", err)
+	}
+	if len(mentor.Programs) != 1 || mentor.Programs[0].ProjectName == nil || *mentor.Programs[0].ProjectName != "Fixture Project" {
+		t.Errorf("mentor programs = %+v, want one program with project name %q", mentor.Programs, "Fixture Project")
+	}
+}
+
 func assertTermProjectionStatus(t *testing.T, pool *pgxpool.Pool, termID, want string) {
 	t.Helper()
 	var applicationStatus, taskStatus, indexedStatus string
