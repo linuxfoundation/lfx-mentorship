@@ -139,48 +139,23 @@ func TestFileRepositoryIntegration_TaskFileStateRules(t *testing.T) {
 	}
 }
 
-func TestFileRepositoryIntegration_ProfileLogoKeepsAvatarAliased(t *testing.T) {
+// Profile logos are hosted by another service: profile writes store the URL as given, and
+// deleting the profile queues nothing.
+func TestUserProfileRepositoryIntegration_LogoURLIsStoredNotOwned(t *testing.T) {
 	pool, fixture := fileIntegrationPool(t)
 	ctx := context.Background()
-	queue, files := NewObjectDeletionRepository(pool), NewFileRepository(pool)
-	logo := fileTestCDN + "/abc-logo.png"
+	profiles := NewUserProfileRepository(pool)
+	logo := "https://images.example.org/profile.png"
 
-	pending, _ := queue.Schedule(ctx, domain.ObjectBucketLogos, logo, time.Hour)
-	if err := files.ReplaceProfileLogo(ctx, domain.FileReplacement{RowID: fileTestProfile, Next: logo, PendingDeletionID: pending}); err != nil {
-		t.Fatalf("replace: %v", err)
+	p, inserted, err := profiles.UpsertByUserAndType(ctx, models.UserProfileCreateInput{UserID: fixture.UserID, ProfileType: "mentor", LogoURL: &logo})
+	if err != nil || inserted || p.ID != fileTestProfile || p.LogoURL == nil || *p.LogoURL != logo {
+		t.Fatalf("upsert = %+v, inserted %v, err %v; want the existing profile with logo_url %q", p, inserted, err, logo)
 	}
-	// Login must not overwrite the alias with the OIDC picture.
-	lfid, picture := "fixture-user", "https://auth0.example/picture.png"
-	if _, err := NewUserRepository(pool).UpsertByLFID(ctx, models.UserCreateInput{LFID: &lfid, AvatarURL: &picture}); err != nil {
-		t.Fatalf("upsert: %v", err)
-	}
-	assertAvatar(t, pool, fixture.UserID, &logo)
-
-	if err := NewUserProfileRepository(pool).Delete(ctx, fileTestProfile); err != nil {
+	if err := profiles.Delete(ctx, fileTestProfile); err != nil {
 		t.Fatalf("delete profile: %v", err)
 	}
-	assertAvatar(t, pool, fixture.UserID, nil)
-	if got := deletionRows(t, pool); len(got) != 1 || got[0] != (deletionRow{"logos", logo, "pending"}) {
-		t.Fatalf("queue = %+v", got)
-	}
-}
-
-func TestFileRepositoryIntegration_ProfileLogoQueuesOverwrittenAvatar(t *testing.T) {
-	pool, fixture := fileIntegrationPool(t)
-	ctx := context.Background()
-	queue, files := NewObjectDeletionRepository(pool), NewFileRepository(pool)
-	migrated, logo := fileTestCDN+"/migrated-avatar.png", fileTestCDN+"/abc-logo.png"
-	if _, err := pool.Exec(ctx, `UPDATE users SET avatar_url = $2 WHERE id = $1`, fixture.UserID, migrated); err != nil {
-		t.Fatal(err)
-	}
-
-	pending, _ := queue.Schedule(ctx, domain.ObjectBucketLogos, logo, time.Hour)
-	if err := files.ReplaceProfileLogo(ctx, domain.FileReplacement{RowID: fileTestProfile, Next: logo, PendingDeletionID: pending}); err != nil {
-		t.Fatalf("replace: %v", err)
-	}
-	assertAvatar(t, pool, fixture.UserID, &logo)
-	if got := deletionRows(t, pool); len(got) != 1 || got[0] != (deletionRow{"logos", migrated, "pending"}) {
-		t.Fatalf("queue = %+v; want the overwritten avatar", got)
+	if got := deletionRows(t, pool); len(got) != 0 {
+		t.Fatalf("queue = %+v; profile logos are not this service's objects", got)
 	}
 }
 
@@ -402,44 +377,6 @@ func TestFileRepositoryIntegration_ArchivedProgramLogoIsLocked(t *testing.T) {
 	}
 	if err := files.ClearProgramLogo(ctx, fixture.ProgramID, logo); !errors.Is(err, domain.ErrStateLocked) {
 		t.Fatalf("clear err = %v; want ErrStateLocked", err)
-	}
-}
-
-func TestFileRepositoryIntegration_OnlyTheListedProfileIsPublic(t *testing.T) {
-	pool, fixture := fileIntegrationPool(t)
-	ctx := context.Background()
-	const newer = "00000000-0000-0000-0000-000000000083"
-	if _, err := pool.Exec(ctx, `UPDATE programs SET status = 'published' WHERE id = $1`, fixture.ProgramID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES (gen_random_uuid(), $1, $2, 'mentor', 'active')
-		ON CONFLICT DO NOTHING`, fixture.ProgramID, fixture.UserID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `UPDATE user_profiles SET updated_on = NOW() - INTERVAL '1 day' WHERE id = $1`, fileTestProfile); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `INSERT INTO user_profiles (id, user_id, profile_type) VALUES ($1, $2, 'mentor')`, newer, fixture.UserID); err != nil {
-		t.Fatal(err)
-	}
-	files := NewFileRepository(pool)
-	for id, want := range map[string]bool{newer: true, fileTestProfile: false} {
-		listed, err := files.IsProfilePubliclyListed(ctx, id)
-		if err != nil || listed != want {
-			t.Fatalf("profile %s listed = %v (err %v); want %v", id, listed, err, want)
-		}
-	}
-}
-
-func assertAvatar(t *testing.T, pool *pgxpool.Pool, userID string, want *string) {
-	t.Helper()
-	var got *string
-	if err := pool.QueryRow(context.Background(), `SELECT avatar_url FROM users WHERE id = $1`, userID).Scan(&got); err != nil {
-		t.Fatal(err)
-	}
-	if (got == nil) != (want == nil) || (got != nil && *got != *want) {
-		t.Fatalf("avatar_url = %v; want %v", got, want)
 	}
 }
 

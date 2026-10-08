@@ -307,12 +307,10 @@ Update mutable user fields.
   "lfid":        "new-lfid",
   "name":        "New Name",
   "given_name":  "New",
-  "family_name": "Name"
+  "family_name": "Name",
+  "avatar_url":  "https://..."
 }
 ```
-
-`avatar_url` is rejected: the service sets it from the login identity and the
-profile-logo routes ([Files](#14-files)).
 
 **Response** `200` → `<User>`  
 **Errors** `400`, `404`
@@ -2213,7 +2211,7 @@ search index. The design is [02 §object storage](../../docs/rewrite/02-target-a
 and the authorization is [06 §file routes](../../docs/rewrite/06-route-matrix.md#file-routes),
 both added by #161.
 
-- **Logos** (programs, profiles) go to the public bucket. The column stores the full
+- **Program logos** go to the public bucket. The column stores the full
   CDN URL, returned as `public_url`. PNG or JPEG only (never SVG), at most 2 MB.
 - **Task submissions** go to the private bucket. The column stores the object key,
   which responses replace with the download route. PDF, DOC, DOCX or plain text,
@@ -2223,8 +2221,10 @@ both added by #161.
 - Every upload writes a fresh `{uuid}-{filename}` key and never overwrites. The
   superseded object, and any upload that never commits, are deleted through the
   `object_deletions` queue.
-- These routes are the only writers of `logo_url`, `avatar_url` and `file`. The
-  generic create and update routes reject those fields with `400`. They drop
+- These routes are the only writers of `programs.logo_url` and `tasks.file`. The
+  generic program and task routes reject those fields with `400`.
+- Profile logos are not stored here: another service hosts them, and the profile
+  create and update routes take its URL as `logo_url`. Profile writes drop
   `profile_links.resumeLink` rather than reject it, since resumes are not a file
   class and a client may echo back a migrated profile.
 - An archived program's logo cannot change (`409`); a rejected program's can,
@@ -2235,9 +2235,6 @@ both added by #161.
 | `POST /v1/programs/{id}/logo-upload` 🔒 | raw image | `201` `{ public_url, filename, content_type, size }` |
 | `DELETE /v1/programs/{id}/logo` 🔒 | — | `204` |
 | `GET /v1/programs/{id}/logo-download` 🔓 | — | `200` image; a fallback to `public_url` |
-| `POST /v1/me/profiles/by-id/{id}/logo-upload` 🔒 | raw image | `201`; also sets the user's `avatar_url` |
-| `DELETE /v1/me/profiles/by-id/{id}/logo` 🔒 | — | `204`; clears `avatar_url` while it holds that logo |
-| `GET /v1/user-profiles/{id}/logo-download` 🔓 | — | `200` image, publicly listed profiles only |
 | `POST /v1/tasks/{id}/file-upload` 🔒 | `multipart/form-data`, part `file` | `201` `{ filename, content_type, size }` |
 | `GET /v1/tasks/{id}/file-download` 🔒 | — | `200`/`206` attachment, `Cache-Control: private, no-store`, `Range` supported |
 | `DELETE /v1/tasks/{id}/file` 🔒 | — | `204`; only while `incomplete` or `in_progress` |

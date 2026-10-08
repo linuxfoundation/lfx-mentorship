@@ -51,44 +51,6 @@ func (r *FileRepository) ReplaceProgramLogo(ctx context.Context, rep domain.File
 	})
 }
 
-// ReplaceProfileLogo implements domain.FileRepository.
-func (r *FileRepository) ReplaceProfileLogo(ctx context.Context, rep domain.FileReplacement) error {
-	ctx, span := fileTracer.Start(ctx, "db.files.ReplaceProfileLogo")
-	defer span.End()
-	span.SetAttributes(attribute.String("db.profile_id", rep.RowID))
-
-	return r.inTx(ctx, "replace profile logo", func(tx pgx.Tx) error {
-		userID, err := lockProfileOwner(ctx, tx, rep.RowID)
-		if err != nil {
-			return err
-		}
-		cmd, err := tx.Exec(ctx, `
-			UPDATE user_profiles SET logo_url = $3
-			WHERE id = $1 AND logo_url IS NOT DISTINCT FROM $2`, rep.RowID, rep.Previous, rep.Next)
-		if err != nil {
-			return err
-		}
-		if cmd.RowsAffected() == 0 {
-			return fmt.Errorf("%w: file changed concurrently", domain.ErrConflict)
-		}
-		// Directory reads prefer avatar_url over the profile logo, so keep it aliased.
-		var oldAvatar *string
-		if err := tx.QueryRow(ctx, `SELECT avatar_url FROM users WHERE id = $1`, userID).Scan(&oldAvatar); err != nil {
-			return fmt.Errorf("read user avatar: %w", err)
-		}
-		if _, err := tx.Exec(ctx, `UPDATE users SET avatar_url = $2 WHERE id = $1`, userID, rep.Next); err != nil {
-			return fmt.Errorf("alias user avatar to profile logo: %w", err)
-		}
-		if oldAvatar != nil && rep.Previous != nil && *oldAvatar == *rep.Previous {
-			oldAvatar = nil
-		}
-		if err := queueObjectDeletions(ctx, tx, domain.ObjectBucketLogos, oldAvatar); err != nil {
-			return err
-		}
-		return settleReplacement(ctx, tx, domain.ObjectBucketLogos, rep)
-	})
-}
-
 // ReplaceTaskFile implements domain.FileRepository.
 func (r *FileRepository) ReplaceTaskFile(ctx context.Context, rep domain.FileReplacement) error {
 	ctx, span := fileTracer.Start(ctx, "db.files.ReplaceTaskFile")
@@ -139,31 +101,6 @@ func (r *FileRepository) ClearProgramLogo(ctx context.Context, programID, previo
 	})
 }
 
-// ClearProfileLogo implements domain.FileRepository.
-func (r *FileRepository) ClearProfileLogo(ctx context.Context, profileID, previous string) error {
-	ctx, span := fileTracer.Start(ctx, "db.files.ClearProfileLogo")
-	defer span.End()
-	span.SetAttributes(attribute.String("db.profile_id", profileID))
-
-	return r.inTx(ctx, "clear profile logo", func(tx pgx.Tx) error {
-		userID, err := lockProfileOwner(ctx, tx, profileID)
-		if err != nil {
-			return err
-		}
-		cmd, err := tx.Exec(ctx, `UPDATE user_profiles SET logo_url = NULL WHERE id = $1 AND logo_url = $2`, profileID, previous)
-		if err != nil {
-			return err
-		}
-		if cmd.RowsAffected() == 0 {
-			return fmt.Errorf("%w: file changed concurrently", domain.ErrConflict)
-		}
-		if err := clearAvatarAlias(ctx, tx, userID, previous); err != nil {
-			return err
-		}
-		return queueObjectDeletions(ctx, tx, domain.ObjectBucketLogos, &previous)
-	})
-}
-
 // ClearTaskFile implements domain.FileRepository.
 func (r *FileRepository) ClearTaskFile(ctx context.Context, taskID, previous string) error {
 	ctx, span := fileTracer.Start(ctx, "db.files.ClearTaskFile")
@@ -194,48 +131,6 @@ func (r *FileRepository) ClearTaskFile(ctx context.Context, taskID, previous str
 	})
 }
 
-// IsProfilePubliclyListed implements domain.FileRepository. It mirrors the public mentor
-// and mentee directories, which list only a user's latest profile of each type.
-func (r *FileRepository) IsProfilePubliclyListed(ctx context.Context, profileID string) (bool, error) {
-	ctx, span := fileTracer.Start(ctx, "db.files.IsProfilePubliclyListed")
-	defer span.End()
-	span.SetAttributes(attribute.String("db.profile_id", profileID))
-
-	var listed bool
-	err := r.pool.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM user_profiles up
-			WHERE up.id = $1
-			  AND up.id = (
-				SELECT latest.id FROM user_profiles latest
-				WHERE latest.user_id = up.user_id AND latest.profile_type = up.profile_type
-				ORDER BY latest.updated_on DESC
-				LIMIT 1)
-			  AND (
-				(up.profile_type = 'mentor' AND EXISTS (
-					SELECT 1 FROM program_members pm
-					JOIN programs p ON p.id = pm.program_id
-					WHERE pm.user_id = up.user_id
-					  AND pm.member_type = 'mentor'
-					  AND pm.status = 'active'
-					  AND p.status = 'published'))
-				OR (up.profile_type = 'mentee' AND EXISTS (
-					SELECT 1 FROM applications a
-					JOIN program_terms pt ON pt.id = a.program_term_id
-					JOIN programs p ON p.id = pt.program_id
-					WHERE a.user_id = up.user_id
-					  AND a.role = 'mentee'
-					  AND a.status IN ('accepted', 'graduated')
-					  AND pt.status <> 'deleted'
-					  AND p.status = 'published'))
-			))`, profileID).Scan(&listed)
-	if err != nil {
-		span.RecordError(err)
-		return false, fmt.Errorf("check profile directory listing: %w", err)
-	}
-	return listed, nil
-}
-
 func (r *FileRepository) inTx(ctx context.Context, op string, fn func(tx pgx.Tx) error) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -263,30 +158,6 @@ func settleReplacement(ctx context.Context, tx pgx.Tx, bucket domain.ObjectBucke
 		return fmt.Errorf("%w: the upload expired before it was saved; retry it", domain.ErrConflict)
 	}
 	return queueObjectDeletions(ctx, tx, bucket, rep.Previous)
-}
-
-// lockProfileOwner locks a profile's user ahead of the profile, the order user deletion
-// takes, and returns the user ID.
-func lockProfileOwner(ctx context.Context, tx pgx.Tx, profileID string) (string, error) {
-	var userID string
-	err := tx.QueryRow(ctx, `
-		SELECT u.id FROM users u JOIN user_profiles up ON up.user_id = u.id
-		WHERE up.id = $1 FOR NO KEY UPDATE OF u`, profileID).Scan(&userID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", domain.ErrUserProfileNotFound
-	}
-	if err != nil {
-		return "", fmt.Errorf("lock profile owner: %w", err)
-	}
-	return userID, nil
-}
-
-// clearAvatarAlias nulls users.avatar_url while it still aliases logo.
-func clearAvatarAlias(ctx context.Context, tx pgx.Tx, userID, logo string) error {
-	if _, err := tx.Exec(ctx, `UPDATE users SET avatar_url = NULL WHERE id = $1 AND avatar_url = $2`, userID, logo); err != nil {
-		return fmt.Errorf("clear user avatar alias: %w", err)
-	}
-	return nil
 }
 
 // programLogoMiss resolves a missed program logo write into not-found, an archived program, or a lost race.

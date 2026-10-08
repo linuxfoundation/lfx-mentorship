@@ -92,10 +92,6 @@ func (s *UserService) Update(ctx context.Context, id string, input models.UserUp
 	if input.LFID != nil {
 		return nil, fmt.Errorf("%w: lfid cannot be updated", domain.ErrForbidden)
 	}
-	// avatar_url comes from the login identity and the profile-logo routes only.
-	if err := reservedFileField("avatar_url", input.AvatarURL); err != nil {
-		return nil, err
-	}
 
 	user, err := s.repo.Update(ctx, id, input)
 	if err != nil {

@@ -121,9 +121,6 @@ func (s *UserProfileService) validateCreateInput(ctx context.Context, input mode
 	if input.UserID == "" {
 		return fmt.Errorf("%w: user_id is required", domain.ErrInvalidInput)
 	}
-	if err := reservedFileField("logo_url", input.LogoURL); err != nil {
-		return err
-	}
 	if err := validateSkillSet(input.SkillSet); err != nil {
 		return err
 	}
@@ -209,9 +206,6 @@ func (s *UserProfileService) Update(ctx context.Context, id string, input models
 	defer span.End()
 	span.SetAttributes(attribute.String("profile.id", id))
 
-	if err := reservedFileField("logo_url", input.LogoURL); err != nil {
-		return nil, err
-	}
 	if err := validateSkillSet(input.SkillSet); err != nil {
 		return nil, err
 	}

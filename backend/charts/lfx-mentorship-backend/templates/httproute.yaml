@@ -22,7 +22,7 @@ spec:
     # only: Traefik's Buffering also buffers responses, which would break download
     # streaming and Range requests.
     - matches:
-        {{- range $path := list "/mentorship/v1/programs/[^/]+/logo-upload" "/mentorship/v1/me/profiles/by-id/[^/]+/logo-upload" "/mentorship/v1/tasks/[^/]+/file-upload" }}
+        {{- range $path := list "/mentorship/v1/programs/[^/]+/logo-upload" "/mentorship/v1/tasks/[^/]+/file-upload" }}
         - path:
             type: RegularExpression
             value: {{ $path | quote }}
