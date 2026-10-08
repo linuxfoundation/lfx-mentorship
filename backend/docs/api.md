@@ -1038,8 +1038,10 @@ The backend reads the project's slug, name, and logo from Project Service by `pr
 #### `PATCH /v1/programs/{id}` 🔒
 
 Update program fields. Status cannot be changed here: a body with `status` returns
-`400`; use [`POST /v1/programs/{id}/submit`](#post-v1programsidsubmit-) and
-[`POST /v1/programs/{id}/decision`](#post-v1programsiddecision-).
+`400`; use [`POST /v1/programs/{id}/submit`](#post-v1programsidsubmit-),
+[`POST /v1/programs/{id}/decision`](#post-v1programsiddecision-),
+[`POST /v1/programs/{id}/hide`](#post-v1programsidhide-) and
+[`POST /v1/programs/{id}/unhide`](#post-v1programsidunhide-).
 
 **Request body** (all optional)
 ```json
@@ -1128,6 +1130,30 @@ Publish or reject a `submitted` program. Approver team only.
 
 **Response** `200` → `<Program>`  
 **Errors** `400` (missing or other `status`), `404`, `409` (program is not `submitted`)
+
+---
+
+#### `POST /v1/programs/{id}/hide` 🔒
+
+Take a `published` program out of public view (`→ hidden`). No request body.
+Program admins only (`writer` on the program).
+
+**Guard**: the program has no pending, accepted, or graduated applications.
+
+**Response** `200` → `<Program>`  
+**Errors** `401`, `404`, `409` (program is not `published`, or it has active applications)
+
+---
+
+#### `POST /v1/programs/{id}/unhide` 🔒
+
+Make a `hidden` program public again (`→ published`). No request body. Program
+admins only (`writer` on the program). Only a `hidden` program can be unhidden: an
+`archived` program stays archived, and a `submitted` program is published only
+through [`POST /v1/programs/{id}/decision`](#post-v1programsiddecision-).
+
+**Response** `200` → `<Program>`  
+**Errors** `401`, `404`, `409` (program is not `hidden`)
 
 ---
 
@@ -2273,9 +2299,9 @@ pending ────────────────────────
 | `pending` | `submitted` | All required fields present (linked LF project, description, repo_link, logo_url, ≥1 skill, ≥1 open term) |
 | `submitted` | `published` | Reviewer approves |
 | `submitted` | `rejected` | Reviewer declines |
-| `published` | `hidden` | No pending/accepted/graduated applications |
+| `published` | `hidden` | `POST /programs/{id}/hide`; no pending/accepted/graduated applications |
 | `published` | `archived` | Program complete |
-| `hidden` | `published` | Unhide |
+| `hidden` | `published` | `POST /programs/{id}/unhide` |
 | `hidden` | `archived` | Program complete while hidden |
 | `rejected` | `submitted` | Program Admin resubmits |
 

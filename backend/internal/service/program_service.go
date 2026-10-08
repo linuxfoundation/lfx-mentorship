@@ -470,6 +470,31 @@ func (s *ProgramService) Decide(ctx context.Context, id string, status models.Pr
 	return s.Update(ctx, id, models.ProgramUpdateInput{Status: &status})
 }
 
+// Hide takes a published program out of public view. The hide guard in Update
+// refuses while the program has active applications.
+func (s *ProgramService) Hide(ctx context.Context, id string) (*models.Program, error) {
+	return s.changeVisibility(ctx, id, models.ProgramStatusPublished, models.ProgramStatusHidden)
+}
+
+// Unhide makes a hidden program public again.
+func (s *ProgramService) Unhide(ctx context.Context, id string) (*models.Program, error) {
+	return s.changeVisibility(ctx, id, models.ProgramStatusHidden, models.ProgramStatusPublished)
+}
+
+// changeVisibility moves a program from one visibility status to the other.
+// It checks the current status first because programTransitions also allows
+// submitted → published, which only the approver team may apply through Decide.
+func (s *ProgramService) changeVisibility(ctx context.Context, id string, from, to models.ProgramStatus) (*models.Program, error) {
+	current, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("get program for visibility change: %w", err)
+	}
+	if current.Status != from {
+		return nil, fmt.Errorf("%w: only a %s program can be made %s, not %q", domain.ErrInvalidStateTransition, from, to, current.Status)
+	}
+	return s.Update(ctx, id, models.ProgramUpdateInput{Status: &to})
+}
+
 // Update validates and applies changes to the program with the given ID.
 func (s *ProgramService) Update(ctx context.Context, id string, input models.ProgramUpdateInput) (*models.Program, error) {
 	ctx, span := programSvcTracer.Start(ctx, "ProgramService.Update")

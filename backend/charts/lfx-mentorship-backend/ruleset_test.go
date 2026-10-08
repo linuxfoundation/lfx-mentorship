@@ -280,6 +280,34 @@ func TestResendInviteRequiresProgramWriter(t *testing.T) {
 	}
 }
 
+// Hiding and unhiding are program-admin actions, gated like submit and not like
+// the approver-team decision.
+func TestProgramVisibilityRequiresProgramWriter(t *testing.T) {
+	block := ruleBlock(t, "program-visibility")
+	if strings.Count(block, "- path:") != 2 ||
+		!strings.Contains(block, "- path: /mentorship/v1/programs/:id/hide\n") ||
+		!strings.Contains(block, "- path: /mentorship/v1/programs/:id/unhide\n") {
+		t.Errorf("program-visibility rule must cover only hide and unhide:\n%s", block)
+	}
+	if !strings.Contains(block, "methods: [POST]\n") {
+		t.Errorf("program-visibility rule must allow only POST:\n%s", block)
+	}
+	expected := `      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_program:{{ "{{- .Request.URL.Captures.id -}}" }}'
+              relation: writer
+        - finalizer: create_jwt`
+	if !strings.Contains(block, expected) {
+		t.Errorf("program-visibility rule lacks oidc -> openfga writer -> create_jwt sequence:\n%s", block)
+	}
+	if strings.Contains(block, "anonymous_authenticator") || strings.Contains(block, "allow_all") || strings.Contains(block, "mentorship_approver_team") {
+		t.Errorf("program-visibility rule must check only the program writer relation:\n%s", block)
+	}
+}
+
 func TestMentorCandidatesRequiresProgramWriter(t *testing.T) {
 	block := ruleBlock(t, "program-mentor-candidates")
 	if strings.Count(block, "- path:") != 1 || !strings.Contains(block, "- path: /mentorship/v1/programs/:id/mentor-candidates\n") {

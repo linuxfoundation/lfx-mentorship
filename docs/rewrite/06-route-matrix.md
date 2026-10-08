@@ -88,6 +88,8 @@ Per [04 §decision 7](./04-authorization-model.md), `user` has no relations of i
 | `POST /v1/programs` | required | — | `allow_all` | **Per AQ-6 the create route does not check `mentorship_program_creator`** — any authenticated user creates, and approval publishes. The relation stays in the model so this can tighten to a `project:{uid}` check later without a model migration |
 | `PATCH /v1/programs/{uid}` | required | `mentorship_program:{uid}` | `writer` | **Metadata only — must reject a `status` field** rather than ignoring it, so a smuggled transition fails loudly ([04 §decision 6](./04-authorization-model.md)) |
 | `POST /v1/programs/{uid}/submit` | required | `mentorship_program:{uid}` | `writer` | New route (`pending → submitted`) |
+| `POST /v1/programs/{uid}/hide` | required | `mentorship_program:{uid}` | `writer` | New route (`published → hidden`). Refuses while the program has active applications |
+| `POST /v1/programs/{uid}/unhide` | required | `mentorship_program:{uid}` | `writer` | New route (`hidden → published`). Must check the source is `hidden`, so a program admin cannot publish a `submitted` program past the approver team |
 | `POST /v1/programs/{uid}/decision` | required | `mentorship_approver_team:global` | `member` | New route (`submitted → published \| rejected`). **The one rule whose object is static**, not extracted from the path — approval is deliberately outside the program's own relations so admins cannot approve their own programs |
 | `DELETE /v1/programs/{uid}` | required | `mentorship_program:{uid}` | `writer` | Emit `delete_access` for the program **and** every application and task beneath it, or their tuples are orphaned |
 | `POST /v1/programs/{uid}/skills` | required | `mentorship_program:{uid}` | `writer` | — |

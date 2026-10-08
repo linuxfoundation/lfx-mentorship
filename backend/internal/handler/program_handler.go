@@ -36,6 +36,8 @@ type programService interface {
 	CreateEnrollment(ctx context.Context, input models.ProgramEnrollmentInput) (*models.Program, error)
 	Update(ctx context.Context, id string, input models.ProgramUpdateInput) (*models.Program, error)
 	Decide(ctx context.Context, id string, status models.ProgramStatus) (*models.Program, error)
+	Hide(ctx context.Context, id string) (*models.Program, error)
+	Unhide(ctx context.Context, id string) (*models.Program, error)
 	Delete(ctx context.Context, id string) error
 	ListSkills(ctx context.Context, programID string) ([]*models.ProgramSkill, error)
 	AddSkill(ctx context.Context, programID string, input models.ProgramSkillCreateInput) (*models.ProgramSkill, error)
@@ -385,6 +387,29 @@ func (h *ProgramHandler) Decision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	program, err := h.svc.Decide(r.Context(), chi.URLParam(r, "id"), *input.Status)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, program)
+}
+
+// Hide handles POST /v1/programs/{id}/hide — moves a published program to hidden.
+func (h *ProgramHandler) Hide(w http.ResponseWriter, r *http.Request) {
+	h.changeVisibility(w, r, h.svc.Hide)
+}
+
+// Unhide handles POST /v1/programs/{id}/unhide — moves a hidden program to published.
+func (h *ProgramHandler) Unhide(w http.ResponseWriter, r *http.Request) {
+	h.changeVisibility(w, r, h.svc.Unhide)
+}
+
+func (h *ProgramHandler) changeVisibility(w http.ResponseWriter, r *http.Request, change func(context.Context, string) (*models.Program, error)) {
+	if auth.PrincipalFromContext(r.Context()) == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	program, err := change(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		Error(w, err)
 		return
