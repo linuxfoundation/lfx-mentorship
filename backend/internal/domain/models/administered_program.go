@@ -7,8 +7,8 @@ import "time"
 
 // AdministeredProgramStatus is the status a program admin sees on their
 // programs list. It groups ProgramStatus with the program's terms: a published
-// program with an open term, or with no terms yet, is open; one whose terms are
-// all closed is completed.
+// program with an open term, or with no terms yet, is open; one whose
+// non-deleted terms are all closed is completed.
 type AdministeredProgramStatus string
 
 const (
@@ -40,7 +40,8 @@ type AdministeredProgram struct {
 	LogoURL     *string                   `json:"logo_url,omitempty"`
 	Status      ProgramStatus             `json:"status"`
 	AdminStatus AdministeredProgramStatus `json:"admin_status"`
-	// Term is the latest open term, else the latest closed term.
+	// Term is the started open term, else the next open term, else the latest
+	// closed term — the same choice as MentoredProgram.Term.
 	Term      *ProgramTerm       `json:"term,omitempty"`
 	Stats     ProgramHeaderStats `json:"stats"`
 	CreatedOn time.Time          `json:"created_on"`

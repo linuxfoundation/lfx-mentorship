@@ -63,6 +63,12 @@ type AdministeredProgramFilter struct {
 	Status AdministeredProgramStatus // empty for every status
 }
 
+// MentoredProgramFilter pages the caller's mentor programs list.
+type MentoredProgramFilter struct {
+	Limit  int
+	Offset int
+}
+
 // ProgramEnrollmentTemplate contains the fields needed to prefill enrollment.
 type ProgramEnrollmentTemplate struct {
 	Program       Program         `json:"program"`

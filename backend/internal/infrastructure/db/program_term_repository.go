@@ -47,6 +47,64 @@ func scanProgramTerm(row pgx.Row) (*models.ProgramTerm, error) {
 	return &t, nil
 }
 
+// Ranks of the term chosenProgramTermJoin picks for a programs list.
+const (
+	chosenTermRankStarted    = "1" // an open term that has started
+	chosenTermRankNotStarted = "2" // an open term not started yet, or with no start date
+	chosenTermRankClosed     = "3" // a closed term
+)
+
+// chosenProgramTermJoin joins the term the admin and mentor programs lists show
+// for each row of programs, as chosen_term(id, term_rank). It is the open term
+// that started most recently; else the open term that starts first, undated
+// last; else the closed term that started most recently. Deleted terms are
+// never chosen, ties break on id, and a program with no open or closed term
+// joins NULLs.
+const chosenProgramTermJoin = `
+	LEFT JOIN LATERAL (
+		SELECT ranked.id, ranked.term_rank
+		FROM (
+			SELECT pt.id, pt.start_date_time,
+				CASE
+					WHEN pt.status = 'open' AND pt.start_date_time <= NOW() THEN ` + chosenTermRankStarted + `
+					WHEN pt.status = 'open' THEN ` + chosenTermRankNotStarted + `
+					ELSE ` + chosenTermRankClosed + `
+				END AS term_rank
+			FROM program_terms pt
+			WHERE pt.program_id = programs.id AND pt.status IN ('open', 'closed')
+		) ranked
+		ORDER BY ranked.term_rank,
+			CASE WHEN ranked.term_rank = ` + chosenTermRankStarted + ` THEN ranked.start_date_time END DESC,
+			CASE WHEN ranked.term_rank = ` + chosenTermRankNotStarted + ` THEN ranked.start_date_time END ASC NULLS LAST,
+			CASE WHEN ranked.term_rank = ` + chosenTermRankClosed + ` THEN ranked.start_date_time END DESC NULLS LAST,
+			ranked.id
+		LIMIT 1
+	) chosen_term ON TRUE`
+
+// loadProgramTermsByID returns the terms with the given IDs, keyed by ID.
+func loadProgramTermsByID(ctx context.Context, pool *pgxpool.Pool, ids []string) (map[string]*models.ProgramTerm, error) {
+	out := make(map[string]*models.ProgramTerm, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := pool.Query(ctx, `SELECT`+programTermCols+` FROM program_terms WHERE id = ANY($1)`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("list program terms by id: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		t, err := scanProgramTerm(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan program term: %w", err)
+		}
+		out[t.ID] = t
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("program term rows: %w", err)
+	}
+	return out, nil
+}
+
 // GetByID returns the program term with the given UUID or ErrProgramTermNotFound.
 func (r *ProgramTermRepository) GetByID(ctx context.Context, id string) (*models.ProgramTerm, error) {
 	ctx, span := programTermTracer.Start(ctx, "db.program_terms.GetByID")
