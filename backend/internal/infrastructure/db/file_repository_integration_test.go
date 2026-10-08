@@ -215,6 +215,23 @@ func TestObjectDeletionIntegration_ClaimReferenceRetryAndDeadLetter(t *testing.T
 	}
 }
 
+// A profile or avatar pointing at a program logo must not hold back its deletion: neither
+// column queues one when it changes, so the object would never be reclaimed.
+func TestObjectDeletionIntegration_ProfileReferencesDoNotKeepObjects(t *testing.T) {
+	pool, fixture := fileIntegrationPool(t)
+	ctx := context.Background()
+	logo := fileTestCDN + "/abc-program.png"
+	if _, err := pool.Exec(ctx, `UPDATE user_profiles SET logo_url = $2 WHERE id = $1`, fileTestProfile, logo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE users SET avatar_url = $2 WHERE id = $1`, fixture.UserID, logo); err != nil {
+		t.Fatal(err)
+	}
+	if referenced, err := NewObjectDeletionRepository(pool).IsReferenced(ctx, logo); err != nil || referenced {
+		t.Fatalf("referenced = %v, %v; want false", referenced, err)
+	}
+}
+
 func TestObjectDeletionIntegration_MarkDoneRemovesTheEntry(t *testing.T) {
 	pool, _ := fileIntegrationPool(t)
 	ctx := context.Background()
