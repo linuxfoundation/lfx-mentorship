@@ -195,17 +195,19 @@ func TestMentorRepositoryIntegration_ListMentoredByUserStatusAndOrder(t *testing
 	}
 }
 
-func TestMentorRepositoryIntegration_ListMentoredByUserCountsWholeProgram(t *testing.T) {
+func TestMentorRepositoryIntegration_ListMentoredByUserCountsOpenTermsOnly(t *testing.T) {
 	pool := integrationPool(t)
 	ctx := context.Background()
 	seed := newMentoredSeed(t, pool)
-	for _, u := range []string{"mentor", "accepted", "graduated", "pending", "reapplied", "withdrawn", "past", "mentor-applicant", "elsewhere"} {
+	for _, u := range []string{"mentor", "accepted", "graduated", "pending", "reapplied", "withdrawn", "next", "past", "removed", "done-mentee", "mentor-applicant", "elsewhere"} {
 		seed.user(u)
 	}
 	program := seed.program("counted", "Counted", "published")
 	seed.member("counted", "mentor", "mentor", "active")
 	seed.term("counted", "current", "open", daysFromNow(-7))
+	seed.term("counted", "upcoming", "open", daysFromNow(30))
 	seed.term("counted", "previous", "closed", daysFromNow(-120))
+	seed.term("counted", "removed-term", "deleted", daysFromNow(-60))
 	base := time.Now().Add(-48 * time.Hour)
 
 	// Current term. An accepted mentee: both submitted tasks count, the complete one does not.
@@ -230,11 +232,23 @@ func TestMentorRepositoryIntegration_ListMentoredByUserCountsWholeProgram(t *tes
 	seed.application("app-mentor", "current", "mentor-applicant", "mentor", "accepted", base)
 	seed.task("task-mentor", "app-mentor", "current", "mentor-applicant", "submitted")
 
-	// Previous term: counted too. The accepted mentee above also graduated
-	// here, so they are an applicant and a mentee once per term.
+	// A second open term is counted too.
+	seed.application("app-next", "upcoming", "next", "mentee", "pending", base)
+
+	// Closed and deleted terms are not counted, even for a mentee who is also
+	// on the current term.
 	seed.application("app-past", "previous", "past", "mentee", "accepted", base)
 	seed.task("task-past", "app-past", "previous", "past", "submitted")
 	seed.application("app-accepted-before", "previous", "accepted", "mentee", "graduated", base)
+	seed.application("app-removed", "removed-term", "removed", "mentee", "accepted", base)
+	seed.task("task-removed", "app-removed", "removed-term", "removed", "submitted")
+
+	// A completed program, with only a closed term, counts zero.
+	done := seed.program("done", "Done", "published")
+	seed.member("done", "mentor", "mentor", "active")
+	seed.term("done", "done-term", "closed", daysFromNow(-90))
+	seed.application("app-done", "done-term", "done-mentee", "mentee", "accepted", base)
+	seed.task("task-done", "app-done", "done-term", "done-mentee", "submitted")
 
 	// Another program's applications are not counted.
 	seed.program("other", "Other", "published")
@@ -246,21 +260,25 @@ func TestMentorRepositoryIntegration_ListMentoredByUserCountsWholeProgram(t *tes
 	if err != nil {
 		t.Fatalf("ListMentoredByUser: %v", err)
 	}
-	if len(got) != 1 || got[0].ID != program {
-		t.Fatalf("got %+v; want only the counted program", got)
+	if len(got) != 2 || got[0].ID != program || got[1].ID != done {
+		t.Fatalf("got %+v; want the counted program, then the completed one", got)
 	}
-	want := models.MentoredProgramStats{Mentees: 4, Applicants: 7, TasksToReview: 3}
+	want := models.MentoredProgramStats{Mentees: 2, Applicants: 6, TasksToReview: 2}
 	if got[0].Stats != want {
 		t.Errorf("stats = %+v; want %+v", got[0].Stats, want)
 	}
+	if got[1].Status != models.MentoredProgramStatusCompleted || got[1].Stats != (models.MentoredProgramStats{}) {
+		t.Errorf("completed program = %s %+v; want completed with zero stats", got[1].Status, got[1].Stats)
+	}
 
-	// The card's applicant count agrees with the program's management summary.
+	// The card's mentee count agrees with the program's management summary,
+	// which also counts mentees on open terms only.
 	summary, err := NewProgramRepository(pool).GetManagementSummary(ctx, program)
 	if err != nil {
 		t.Fatalf("GetManagementSummary: %v", err)
 	}
-	if summary.Applicants != want.Applicants {
-		t.Errorf("management summary applicants = %d; want %d", summary.Applicants, want.Applicants)
+	if summary.Mentees != want.Mentees {
+		t.Errorf("management summary mentees = %d; want %d", summary.Mentees, want.Mentees)
 	}
 }
 
