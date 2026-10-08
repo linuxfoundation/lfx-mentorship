@@ -4,7 +4,10 @@
 // Package models defines the domain model types shared across the application.
 package models
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // User maps to the public.users table.
 type User struct {
@@ -30,6 +33,22 @@ type UserCreateInput struct {
 	AvatarURL  *string `json:"avatar_url,omitempty"`
 }
 
+// LFAccount is an LF account's profile as the platform's auth-service reports it.
+type LFAccount struct {
+	Username   string
+	Name       *string
+	GivenName  *string
+	FamilyName *string
+	AvatarURL  *string
+}
+
+// MentorCandidate is a person a Program Admin can invite. It carries no email.
+type MentorCandidate struct {
+	LFID      string  `json:"lfid"`
+	Name      *string `json:"name,omitempty"`
+	AvatarURL *string `json:"avatar_url,omitempty"`
+}
+
 // UserUpdateInput is the request body for updating a user.
 type UserUpdateInput struct {
 	Email      *string `json:"email,omitempty"`
@@ -51,4 +70,13 @@ type Principal struct {
 	GivenName     string
 	FamilyName    string
 	Picture       string
+}
+
+// m2mUsernameSuffix marks a machine-to-machine (client credentials) principal.
+const m2mUsernameSuffix = "@clients"
+
+// IsM2M reports whether the principal is a machine-to-machine client rather
+// than a human user. M2M principals have no local user row.
+func (p *Principal) IsM2M() bool {
+	return strings.HasSuffix(p.Username, m2mUsernameSuffix)
 }

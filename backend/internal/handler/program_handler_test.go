@@ -7,8 +7,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
@@ -25,10 +27,15 @@ type stubProgramSvc struct {
 	getManagementSummary       func(context.Context, string) (*models.ProgramManagementSummary, error)
 	nameAvailable              func(context.Context, string, string) (bool, error)
 	listMentees                func(context.Context, string) ([]*models.ProgramCatalogMentee, error)
+	listMine                   func(context.Context, string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error)
 	listSkills                 func(context.Context, string) ([]*models.ProgramSkill, error)
 	deleteSkill                func(context.Context, string, string, string) error
 	getCategorizedTransactions func(context.Context, string, string, bool, int, int) (*models.ProgramCategorizedTransactions, error)
 	getProgramSponsors         func(context.Context, string, string, bool, bool) ([]models.ProgramSponsor, error)
+	createEnrollment           func(context.Context, models.ProgramEnrollmentInput) (*models.Program, error)
+	update                     func(context.Context, string, models.ProgramUpdateInput) (*models.Program, error)
+	hide                       func(context.Context, string) (*models.Program, error)
+	unhide                     func(context.Context, string) (*models.Program, error)
 }
 
 func (s *stubProgramSvc) GetByID(ctx context.Context, id string) (*models.Program, error) {
@@ -82,13 +89,40 @@ func (s *stubProgramSvc) ListCatalogMentees(ctx context.Context, id string) ([]*
 	}
 	return []*models.ProgramCatalogMentee{}, nil
 }
+func (s *stubProgramSvc) ListMine(ctx context.Context, userID string, f models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+	if s.listMine != nil {
+		return s.listMine(ctx, userID, f)
+	}
+	return []*models.AdministeredProgram{}, &models.PaginationMeta{}, nil
+}
 func (s *stubProgramSvc) Create(context.Context, models.ProgramCreateInput) (*models.Program, error) {
 	return &models.Program{}, nil
 }
 func (s *stubProgramSvc) CreateEnrollment(ctx context.Context, input models.ProgramEnrollmentInput) (*models.Program, error) {
+	if s.createEnrollment != nil {
+		return s.createEnrollment(ctx, input)
+	}
 	return s.Create(ctx, input.Program)
 }
-func (s *stubProgramSvc) Update(context.Context, string, models.ProgramUpdateInput) (*models.Program, error) {
+func (s *stubProgramSvc) Update(ctx context.Context, id string, input models.ProgramUpdateInput) (*models.Program, error) {
+	if s.update != nil {
+		return s.update(ctx, id, input)
+	}
+	return &models.Program{}, nil
+}
+func (s *stubProgramSvc) Decide(context.Context, string, models.ProgramStatus) (*models.Program, error) {
+	return &models.Program{}, nil
+}
+func (s *stubProgramSvc) Hide(ctx context.Context, id string) (*models.Program, error) {
+	if s.hide != nil {
+		return s.hide(ctx, id)
+	}
+	return &models.Program{}, nil
+}
+func (s *stubProgramSvc) Unhide(ctx context.Context, id string) (*models.Program, error) {
+	if s.unhide != nil {
+		return s.unhide(ctx, id)
+	}
 	return &models.Program{}, nil
 }
 func (s *stubProgramSvc) Delete(context.Context, string) error { return nil }
@@ -434,15 +468,15 @@ func TestProgramHandler_ResolveID_HiddenReturns404(t *testing.T) {
 	}
 }
 
-func TestProgramHandler_ResolveID_DraftReturns404ToAnonymous(t *testing.T) {
+func TestProgramHandler_ResolveID_PendingReturns404ToAnonymous(t *testing.T) {
 	h := handler.NewProgramHandler(&stubProgramSvc{
 		getBySlug: func(_ context.Context, slug string) (*models.Program, error) {
-			return &models.Program{ID: "draft-uuid", Slug: slug, Status: models.ProgramStatusDraft}, nil
+			return &models.Program{ID: "pending-uuid", Slug: slug, Status: models.ProgramStatusPending}, nil
 		},
 	})
 
-	r := httptest.NewRequest(http.MethodGet, "/v1/programs/resolve/my-draft", nil)
-	r = requestWithChiParam(r, "id", "my-draft")
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/resolve/my-pending", nil)
+	r = requestWithChiParam(r, "id", "my-pending")
 	w := httptest.NewRecorder()
 	h.ResolveID(w, r)
 
@@ -451,15 +485,15 @@ func TestProgramHandler_ResolveID_DraftReturns404ToAnonymous(t *testing.T) {
 	}
 }
 
-func TestProgramHandler_ResolveID_DraftReturns404ToAuthenticatedNonOwner(t *testing.T) {
+func TestProgramHandler_ResolveID_PendingReturns404ToAuthenticatedNonOwner(t *testing.T) {
 	owner := "owner"
 	h := handler.NewProgramHandler(&stubProgramSvc{
 		getBySlug: func(_ context.Context, slug string) (*models.Program, error) {
-			return &models.Program{ID: "draft-uuid", Slug: slug, Status: models.ProgramStatusDraft, LFID: &owner}, nil
+			return &models.Program{ID: "pending-uuid", Slug: slug, Status: models.ProgramStatusPending, LFID: &owner}, nil
 		},
 	})
-	r := httptest.NewRequest(http.MethodGet, "/v1/programs/resolve/my-draft", nil)
-	r = requestWithChiParam(r, "id", "my-draft")
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/resolve/my-pending", nil)
+	r = requestWithChiParam(r, "id", "my-pending")
 	r = r.WithContext(auth.ContextWithPrincipal(r.Context(), &models.Principal{UserID: "someone", Username: "someone"}))
 	w := httptest.NewRecorder()
 	h.ResolveID(w, r)
@@ -468,16 +502,16 @@ func TestProgramHandler_ResolveID_DraftReturns404ToAuthenticatedNonOwner(t *test
 	}
 }
 
-func TestProgramHandler_ResolveID_DraftResolvesForOwner(t *testing.T) {
+func TestProgramHandler_ResolveID_PendingResolvesForOwner(t *testing.T) {
 	owner := "owner"
 	h := handler.NewProgramHandler(&stubProgramSvc{
 		getBySlug: func(_ context.Context, slug string) (*models.Program, error) {
-			return &models.Program{ID: "draft-uuid", Slug: slug, Status: models.ProgramStatusDraft, LFID: &owner}, nil
+			return &models.Program{ID: "pending-uuid", Slug: slug, Status: models.ProgramStatusPending, LFID: &owner}, nil
 		},
 	})
 
-	r := httptest.NewRequest(http.MethodGet, "/v1/programs/resolve/my-draft", nil)
-	r = requestWithChiParam(r, "id", "my-draft")
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/resolve/my-pending", nil)
+	r = requestWithChiParam(r, "id", "my-pending")
 	r = r.WithContext(auth.ContextWithPrincipal(r.Context(), &models.Principal{UserID: "owner-user", Username: owner}))
 	w := httptest.NewRecorder()
 	h.ResolveID(w, r)
@@ -489,8 +523,8 @@ func TestProgramHandler_ResolveID_DraftResolvesForOwner(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if body["id"] != "draft-uuid" {
-		t.Fatalf("id = %q; want draft-uuid", body["id"])
+	if body["id"] != "pending-uuid" {
+		t.Fatalf("id = %q; want pending-uuid", body["id"])
 	}
 }
 
@@ -511,19 +545,19 @@ func TestProgramHandler_ResolveID_SubmittedReturns404ToAnonymous(t *testing.T) {
 	}
 }
 
-func TestProgramHandler_GetCatalog_DraftReturnsOK(t *testing.T) {
+func TestProgramHandler_GetCatalog_PendingReturnsOK(t *testing.T) {
 	h := handler.NewProgramHandler(&stubProgramSvc{
 		getCatalog: func(_ context.Context, id string) (*models.ProgramCatalogItem, error) {
 			return &models.ProgramCatalogItem{
-				Program: models.Program{ID: id, Name: "Draft Program", Status: models.ProgramStatusDraft},
+				Program: models.Program{ID: id, Name: "Pending Program", Status: models.ProgramStatusPending},
 				Skills:  []string{},
 				Terms:   []models.ProgramCatalogTerm{},
 				Mentors: []models.ProgramCatalogMentor{},
 			}, nil
 		},
 	})
-	r := httptest.NewRequest(http.MethodGet, "/v1/programs/draft-1/catalog", nil)
-	r = requestWithChiParam(r, "id", "draft-1")
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/pending-1/catalog", nil)
+	r = requestWithChiParam(r, "id", "pending-1")
 	w := httptest.NewRecorder()
 	h.GetCatalog(w, r)
 	if w.Code != http.StatusOK {
@@ -691,5 +725,239 @@ func TestProgramHandler_DeleteSkill_DeletesWhenSkillBelongsToProgram(t *testing.
 	}
 	if !deleteCalled {
 		t.Fatal("expected delete to be called")
+	}
+}
+
+func TestProgramHandler_ListMine_ScopesToPrincipal(t *testing.T) {
+	var gotUser string
+	var gotFilter models.AdministeredProgramFilter
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		listMine: func(_ context.Context, userID string, f models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+			gotUser, gotFilter = userID, f
+			return []*models.AdministeredProgram{{
+				ID:          "p1",
+				Name:        "GridFlow",
+				AdminStatus: models.AdministeredProgramStatusOpen,
+				Stats:       models.ProgramHeaderStats{Mentors: 2, Mentees: 3, Graduated: 6},
+			}}, &models.PaginationMeta{Total: 1, Limit: 5, Offset: 10}, nil
+		},
+	})
+	r := httptest.NewRequest(http.MethodGet, "/v1/me/programs?search=grid&status=open&limit=5&offset=10", nil)
+	r = requestWithPrincipal(r, "caller-user")
+	w := httptest.NewRecorder()
+	h.ListMine(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d; want 200: %s", w.Code, w.Body.String())
+	}
+	if gotUser != "caller-user" {
+		t.Errorf("user = %q; want caller-user", gotUser)
+	}
+	want := models.AdministeredProgramFilter{Limit: 5, Offset: 10, Search: "grid", Status: models.AdministeredProgramStatusOpen}
+	if gotFilter != want {
+		t.Errorf("filter = %+v; want %+v", gotFilter, want)
+	}
+	var body struct {
+		Data []models.AdministeredProgram `json:"data"`
+		Meta models.PaginationMeta        `json:"meta"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.Data) != 1 || body.Data[0].ID != "p1" || body.Data[0].Stats.Graduated != 6 || body.Meta.Total != 1 {
+		t.Fatalf("unexpected body: %+v", body)
+	}
+}
+
+func TestProgramHandler_ListMine_RequiresUserPrincipal(t *testing.T) {
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		listMine: func(context.Context, string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+			t.Fatal("service must not be called without a user principal")
+			return nil, nil, nil
+		},
+	})
+	for name, principal := range map[string]*models.Principal{
+		"none": nil,
+		"m2m":  {UserID: "client-id@clients", Username: "client-id@clients"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "/v1/me/programs", nil)
+			if principal != nil {
+				r = r.WithContext(auth.ContextWithPrincipal(r.Context(), principal))
+			}
+			w := httptest.NewRecorder()
+			h.ListMine(w, r)
+			if w.Code != http.StatusUnauthorized {
+				t.Errorf("got %d; want 401", w.Code)
+			}
+		})
+	}
+}
+
+func TestProgramHandler_ListMine_InvalidStatus(t *testing.T) {
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		listMine: func(context.Context, string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+			return nil, nil, fmt.Errorf("%w: bad status", domain.ErrInvalidInput)
+		},
+	})
+	r := requestWithPrincipal(httptest.NewRequest(http.MethodGet, "/v1/me/programs?status=bogus", nil), "caller-user")
+	w := httptest.NewRecorder()
+	h.ListMine(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("got %d; want 400", w.Code)
+	}
+}
+
+func TestProgramHandler_Update_PassesSkills(t *testing.T) {
+	var captured models.ProgramUpdateInput
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		update: func(_ context.Context, _ string, input models.ProgramUpdateInput) (*models.Program, error) {
+			captured = input
+			return &models.Program{ID: "p1"}, nil
+		},
+	})
+	r := httptest.NewRequest(http.MethodPatch, "/v1/programs/p1", strings.NewReader(`{"skills":["Go","Kubernetes"]}`))
+	r = requestWithPrincipal(r, "admin-1")
+	r = requestWithChiParam(r, "id", "p1")
+	w := httptest.NewRecorder()
+	h.Update(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d; want 200: %s", w.Code, w.Body.String())
+	}
+	if len(captured.Skills) != 2 || captured.Skills[0] != "Go" || captured.Skills[1] != "Kubernetes" {
+		t.Fatalf("skills = %v; want [Go Kubernetes]", captured.Skills)
+	}
+}
+
+func TestProgramHandler_Update_PassesTerms(t *testing.T) {
+	var captured models.ProgramUpdateInput
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		update: func(_ context.Context, _ string, input models.ProgramUpdateInput) (*models.Program, error) {
+			captured = input
+			return &models.Program{ID: "p1"}, nil
+		},
+	})
+	body := `{"terms":[{"id":"t1","name":"Fall 2026","start_date_time":"2026-11-01T00:00:00Z"},{"name":"Spring 2027"}]}`
+	r := httptest.NewRequest(http.MethodPatch, "/v1/programs/p1", strings.NewReader(body))
+	r = requestWithPrincipal(r, "admin-1")
+	r = requestWithChiParam(r, "id", "p1")
+	w := httptest.NewRecorder()
+	h.Update(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d; want 200: %s", w.Code, w.Body.String())
+	}
+	if len(captured.Terms) != 2 || captured.Terms[0].ID != "t1" || captured.Terms[0].StartDateTime == nil || captured.Terms[1].ID != "" || captured.Terms[1].Name != "Spring 2027" {
+		t.Fatalf("terms = %+v", captured.Terms)
+	}
+}
+
+func TestProgramHandler_Update_PassesProject(t *testing.T) {
+	var captured models.ProgramUpdateInput
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		update: func(_ context.Context, _ string, input models.ProgramUpdateInput) (*models.Program, error) {
+			captured = input
+			return &models.Program{ID: "p1"}, nil
+		},
+	})
+	body := `{"project_uid":"7cad5a8d-19d0-41a4-81a6-043453daf9ee","project_slug":"new-project","project_name":"New Project","project_logo_url":"https://example.com/logo.svg"}`
+	r := httptest.NewRequest(http.MethodPatch, "/v1/programs/p1", strings.NewReader(body))
+	r = requestWithPrincipal(r, "admin-1")
+	r = requestWithChiParam(r, "id", "p1")
+	w := httptest.NewRecorder()
+	h.Update(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d; want 200: %s", w.Code, w.Body.String())
+	}
+	if captured.ProjectUID == nil || *captured.ProjectUID != "7cad5a8d-19d0-41a4-81a6-043453daf9ee" ||
+		captured.ProjectSlug == nil || *captured.ProjectSlug != "new-project" ||
+		captured.ProjectName == nil || *captured.ProjectName != "New Project" ||
+		captured.ProjectLogoURL == nil || *captured.ProjectLogoURL != "https://example.com/logo.svg" {
+		t.Fatalf("project fields = %v %v %v %v", captured.ProjectUID, captured.ProjectSlug, captured.ProjectName, captured.ProjectLogoURL)
+	}
+}
+
+func TestProgramHandler_Create_MapsIndustry(t *testing.T) {
+	var captured models.ProgramEnrollmentInput
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		createEnrollment: func(_ context.Context, input models.ProgramEnrollmentInput) (*models.Program, error) {
+			captured = input
+			return &models.Program{ID: "p1"}, nil
+		},
+	})
+	body := `{"projectId":"7cad5a8d-19d0-41a4-81a6-043453daf9ee","name":"CNCF Mentorship","industry":"Cloud Native","skills":["Go"],"termsAccepted":true,` +
+		`"terms":[{"name":"Spring","startDate":"2026-03-01","endDate":"2026-05-31","applicationStartDate":"2026-01-15","applicationEndDate":"2026-02-15"}]}`
+	r := requestWithPrincipal(httptest.NewRequest(http.MethodPost, "/v1/programs", strings.NewReader(body)), "creator-1")
+	w := httptest.NewRecorder()
+	h.Create(w, r)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("got %d; want 201: %s", w.Code, w.Body.String())
+	}
+	if captured.Program.Industry == nil || *captured.Program.Industry != "Cloud Native" {
+		t.Fatalf("industry = %v; want Cloud Native", captured.Program.Industry)
+	}
+}
+
+func TestProgramHandler_HideUnhide(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		unhide    bool
+		principal bool
+		err       error
+		want      int
+	}{
+		{name: "hide published", principal: true, want: http.StatusOK},
+		{name: "hide blocked by active applications", principal: true, err: fmt.Errorf("%w: program has 2 active application(s) and cannot be hidden", domain.ErrStateLocked), want: http.StatusConflict},
+		{name: "hide non-published", principal: true, err: domain.ErrInvalidStateTransition, want: http.StatusConflict},
+		{name: "hide unauthenticated", want: http.StatusUnauthorized},
+		{name: "unhide hidden", unhide: true, principal: true, want: http.StatusOK},
+		{name: "unhide archived", unhide: true, principal: true, err: domain.ErrInvalidStateTransition, want: http.StatusConflict},
+		{name: "unhide unauthenticated", unhide: true, want: http.StatusUnauthorized},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calledWith string
+			change := func(_ context.Context, id string) (*models.Program, error) {
+				calledWith = id
+				if tc.err != nil {
+					return nil, tc.err
+				}
+				return &models.Program{ID: id}, nil
+			}
+			svc := &stubProgramSvc{hide: change}
+			route, serve := "/v1/programs/p1/hide", handler.NewProgramHandler(svc).Hide
+			if tc.unhide {
+				svc = &stubProgramSvc{unhide: change}
+				route, serve = "/v1/programs/p1/unhide", handler.NewProgramHandler(svc).Unhide
+			}
+			r := httptest.NewRequest(http.MethodPost, route, nil)
+			if tc.principal {
+				r = requestWithPrincipal(r, "admin-1")
+			}
+			r = requestWithChiParam(r, "id", "p1")
+			w := httptest.NewRecorder()
+			serve(w, r)
+
+			if w.Code != tc.want {
+				t.Fatalf("got %d; want %d: %s", w.Code, tc.want, w.Body.String())
+			}
+			if !tc.principal {
+				if calledWith != "" {
+					t.Fatal("service must not be called without a principal")
+				}
+				return
+			}
+			if calledWith != "p1" {
+				t.Fatalf("service called with %q; want p1", calledWith)
+			}
+			if tc.want == http.StatusOK {
+				var got models.Program
+				if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got.ID != "p1" {
+					t.Fatalf("body = %s (%v); want the program", w.Body.String(), err)
+				}
+			}
+		})
 	}
 }

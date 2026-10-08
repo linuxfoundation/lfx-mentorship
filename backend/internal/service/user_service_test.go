@@ -38,6 +38,10 @@ func (s *stubUserRepository) UpsertByLFID(context.Context, models.UserCreateInpu
 	return &models.User{}, nil
 }
 
+func (s *stubUserRepository) SearchCandidates(context.Context, string, int) ([]*models.User, error) {
+	return []*models.User{}, nil
+}
+
 func (s *stubUserRepository) Update(ctx context.Context, id string, input models.UserUpdateInput) (*models.User, error) {
 	if s.update != nil {
 		return s.update(ctx, id, input)
@@ -89,6 +93,23 @@ func TestUserService_DeleteRejectsMissingActor(t *testing.T) {
 
 	if err := svc.Delete(context.Background(), "user-1", ""); !errors.Is(err, domain.ErrForbidden) {
 		t.Fatalf("err = %v; want ErrForbidden", err)
+	}
+}
+
+func TestUserService_UpdateSavesAvatarURL(t *testing.T) {
+	avatar := "https://images.example.org/avatar.png"
+	var saved *string
+	svc := service.NewUserService(&stubUserRepository{
+		update: func(_ context.Context, _ string, in models.UserUpdateInput) (*models.User, error) {
+			saved = in.AvatarURL
+			return &models.User{}, nil
+		},
+	})
+	if _, err := svc.Update(context.Background(), "user-1", models.UserUpdateInput{AvatarURL: &avatar}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if saved == nil || *saved != avatar {
+		t.Fatalf("saved avatar_url = %v; want %q", saved, avatar)
 	}
 }
 

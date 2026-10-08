@@ -74,10 +74,11 @@ type TaskIndexDocument struct {
 	ProgramTermStatus *models.ProgramTermStatus `json:"program_term_status,omitempty"`
 	Custom            bool                      `json:"custom"`
 	SubmitFile        *string                   `json:"submit_file,omitempty"`
-	File              *string                   `json:"file,omitempty"`
-	DueDate           *string                   `json:"due_date,omitempty"`
-	CreatedOn         time.Time                 `json:"created_on"`
-	UpdatedOn         time.Time                 `json:"updated_on"`
+	// HasFile stands in for tasks.file, a private object key that must never be indexed.
+	HasFile   bool      `json:"has_file"`
+	DueDate   *string   `json:"due_date,omitempty"`
+	CreatedOn time.Time `json:"created_on"`
+	UpdatedOn time.Time `json:"updated_on"`
 }
 
 func NewTaskIndexDocument(task *models.Task) TaskIndexDocument {
@@ -94,7 +95,7 @@ func NewTaskIndexDocument(task *models.Task) TaskIndexDocument {
 		ProgramTermStatus: task.ProgramTermStatus,
 		Custom:            task.Custom,
 		SubmitFile:        task.SubmitFile,
-		File:              task.File,
+		HasFile:           task.File != nil && *task.File != "",
 		DueDate:           task.DueDate,
 		CreatedOn:         task.CreatedOn,
 		UpdatedOn:         task.UpdatedOn,

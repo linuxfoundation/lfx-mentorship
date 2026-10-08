@@ -18,6 +18,35 @@ spec:
   hostnames:
     - {{ printf "lfx-api.%s" .Values.lfx.domain | quote }}
   rules:
+    # Uploads get the body cap and upload timeout. Buffering is attached to this rule
+    # only: Traefik's Buffering also buffers responses, which would break download
+    # streaming and Range requests.
+    - matches:
+        {{- range $path := list "/mentorship/v1/programs/[^/]+/logo-upload" "/mentorship/v1/tasks/[^/]+/file-upload" }}
+        - path:
+            type: RegularExpression
+            value: {{ $path | quote }}
+          method: POST
+        {{- end }}
+      filters:
+        - type: ExtensionRef
+          extensionRef:
+            group: traefik.io
+            kind: Middleware
+            name: {{ include "lfx-v2-mentorship-service.fullname" . }}-heimdall
+        - type: ExtensionRef
+          extensionRef:
+            group: traefik.io
+            kind: Middleware
+            name: {{ include "lfx-v2-mentorship-service.fullname" . }}-upload-buffering
+      timeouts:
+        request: {{ .Values.uploads.timeout | quote }}
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: {{ include "lfx-v2-mentorship-service.fullname" . }}
+          port: {{ .Values.service.port }}
+          weight: 1
     - matches:
         - path:
             type: PathPrefix

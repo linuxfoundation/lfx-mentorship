@@ -21,7 +21,7 @@ The resource ID is the program UUID.
 
 `data` contains the program card fields required by Mentorship clients: `id`,
 `name`, `slug`, `status`, `logo_url`, `project_uid`, `project_slug`,
-`project_name`, `created_on`, and
+`project_name`, `skills` (sorted, `[]` when none), `created_on`, and
 `updated_on`, plus public enrollment statistics:
 
 ```json
@@ -33,8 +33,9 @@ The resource ID is the program UUID.
 ```
 
 The stats are rebuilt from PostgreSQL in the same transaction as the index
-outbox snapshot. Application lifecycle changes and active mentor membership
-changes re-enqueue the program snapshot so counts do not remain stale.
+outbox snapshot, as are the skills. Application lifecycle changes, active mentor
+membership changes, and skill changes re-enqueue the program snapshot so counts
+and skills do not remain stale.
 
 The Query Service uses the access-check fields to include direct and inherited
 program viewers, including Project Service's `mentorship_program_admin` tuples.
@@ -107,8 +108,9 @@ resource ID is the task UUID.
 
 The document contains the task ID, application ID, assignee ID, name,
 description, category, `prerequisite`, status, application/term status, custom
-flag, `submit_file`, submission `file`, due date, and creation/update
-timestamps. These fields cover the task rows described by the mentee, mentor,
+flag, `submit_file`, a `has_file` flag, due date, and creation/update
+timestamps. The submission's object key is never indexed; clients fetch the file
+from `GET /v1/tasks/{id}/file-download`. These fields cover the task rows described by the mentee, mentor,
 and admin UI contracts. Tasks created with an application, updated, deleted,
 or created as part of an application/reapply transaction are coalesced through
 the same generation-guarded index outbox.

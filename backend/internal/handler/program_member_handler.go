@@ -18,8 +18,10 @@ type programMemberService interface {
 	ListByProgram(ctx context.Context, programID string, filter models.ProgramMemberFilter) ([]*models.ProgramMember, *models.PaginationMeta, error)
 	ListMentorManagement(ctx context.Context, programID string, filter models.ProgramMemberFilter) ([]*models.ProgramMentorManagementRow, *models.PaginationMeta, error)
 	Create(ctx context.Context, programID string, input models.ProgramMemberCreateInput) (*models.ProgramMember, error)
+	SearchCandidates(ctx context.Context, programID, query string) ([]*models.MentorCandidate, error)
 	Update(ctx context.Context, programID, id string, input models.ProgramMemberUpdateInput, actorID string) (*models.ProgramMember, error)
 	Delete(ctx context.Context, programID, id, actorID string) error
+	ResendInvite(ctx context.Context, programID, id, actorID string) error
 	ListMine(ctx context.Context, userID string, filter models.ProgramMemberFilter) ([]*models.ProgramMembership, *models.PaginationMeta, error)
 	RequestMentorship(ctx context.Context, programID, userID string) (*models.ProgramMember, error)
 	WithdrawMine(ctx context.Context, id, userID string) error
@@ -122,6 +124,20 @@ func (h *ProgramMemberHandler) Create(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusCreated, member)
 }
 
+// SearchCandidates handles GET /v1/programs/{id}/mentor-candidates?search= — Heimdall requires program writer.
+func (h *ProgramMemberHandler) SearchCandidates(w http.ResponseWriter, r *http.Request) {
+	if auth.PrincipalFromContext(r.Context()) == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	candidates, err := h.svc.SearchCandidates(r.Context(), chi.URLParam(r, "id"), r.URL.Query().Get("search"))
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]any{"data": candidates})
+}
+
 // Update handles PATCH /v1/programs/{id}/members/{memberId} — requires JWT.
 func (h *ProgramMemberHandler) Update(w http.ResponseWriter, r *http.Request) {
 	principal := auth.PrincipalFromContext(r.Context())
@@ -147,7 +163,7 @@ func (h *ProgramMemberHandler) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 // Delete handles DELETE /v1/programs/{id}/members/{memberId} — requires JWT.
-// Per FR-022, removing a mentor sets status to "withdrawn" rather than deleting the record.
+// Per FR-022 it deletes the record in any status; PATCH to withdrawn is the soft removal.
 func (h *ProgramMemberHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	principal := auth.PrincipalFromContext(r.Context())
 	if principal == nil {
@@ -155,11 +171,22 @@ func (h *ProgramMemberHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	programID := chi.URLParam(r, "id")
-	memberID := chi.URLParam(r, "memberId")
+	if err := h.svc.Delete(r.Context(), chi.URLParam(r, "id"), chi.URLParam(r, "memberId"), principal.UserID); err != nil {
+		Error(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
 
-	withdrawn := models.ProgramMemberStatusWithdrawn
-	if _, err := h.svc.Update(r.Context(), programID, memberID, models.ProgramMemberUpdateInput{Status: &withdrawn}, principal.UserID); err != nil {
+// ResendInvite handles POST /v1/programs/{id}/members/{memberId}/resend-invite — requires JWT.
+func (h *ProgramMemberHandler) ResendInvite(w http.ResponseWriter, r *http.Request) {
+	principal := auth.PrincipalFromContext(r.Context())
+	if principal == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+
+	if err := h.svc.ResendInvite(r.Context(), chi.URLParam(r, "id"), chi.URLParam(r, "memberId"), principal.UserID); err != nil {
 		Error(w, err)
 		return
 	}

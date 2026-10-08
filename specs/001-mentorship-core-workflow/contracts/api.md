@@ -12,32 +12,43 @@ Auth required unless marked **public**.
 
 The existing `PATCH /v1/programs/{id}` is extended with state-machine validation.
 
-### Existing endpoint — now with state guards
+### Status transitions — dedicated routes
+
+`PATCH /v1/programs/{id}` does not change status; a body with `status` returns `400`.
 
 ```
-PATCH /v1/programs/{id}
+POST /v1/programs/{id}/submit
+Authorization: Bearer {token}
+```
+
+Moves a `pending` or `rejected` program to `submitted`. Requires a linked LF
+project, description, repository URL, logo, ≥1 skill tag and ≥1 open term.
+
+```
+POST /v1/programs/{id}/decision
 Authorization: Bearer {token}
 Content-Type: application/json
 
-{ "status": "submitted" | "published" | "rejected" | "hidden" | "archived" | "draft" }
+{ "status": "published" | "rejected" }
 ```
 
-**Valid transitions** (all others → 409):
+Approver team only; moves a `submitted` program to `published` or `rejected`.
 
-| From | To | Notes |
-|------|----|-------|
-| `draft` | `submitted` | Requires ≥1 open term and all required fields |
-| `submitted` | `published` | Reviewer only |
-| `submitted` | `rejected` | Reviewer only |
-| `rejected` | `submitted` | Program Admin resubmit |
-| `published` | `hidden` | Guard: no blocking apps (pending/accepted/graduated/hold) |
-| `hidden` | `published` | |
-| `published` \| `hidden` | `archived` | |
+```
+POST /v1/programs/{id}/hide
+POST /v1/programs/{id}/unhide
+Authorization: Bearer {token}
+```
+
+Program admins only; no request body. `hide` moves a `published` program to
+`hidden` and is refused while the program has pending, accepted, or graduated
+applications. `unhide` moves a `hidden` program back to `published`; any other
+source status, including `archived`, is an invalid transition.
 
 **Responses**:
 - `200 OK` — updated program object
-- `409 Conflict` — invalid transition or guard blocks
-- `422 Unprocessable Entity` — submission guard (missing required fields or no open terms)
+- `400 Bad Request` — decision `status` missing or not `published`/`rejected`
+- `409 Conflict` — invalid transition, or a submission or hide guard blocks
 
 ---
 

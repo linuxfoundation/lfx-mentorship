@@ -8,8 +8,11 @@ package db
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
+	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
@@ -283,6 +286,458 @@ func TestApplicationRepositoryIntegration_StatusChangeAppliesOnlyFromExpectedSta
 	}
 }
 
+func TestProgramRepositoryIntegration_StatusChangeAppliesOnlyFromExpectedStatus(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+	repo := NewProgramRepository(pool)
+	published, hidden, archived := models.ProgramStatusPublished, models.ProgramStatusHidden, models.ProgramStatusArchived
+	if _, err := repo.Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &hidden, ExpectedStatus: &published}); err != nil {
+		t.Fatalf("hide: %v", err)
+	}
+
+	// An unhide validated against hidden must not overwrite an archive that committed first.
+	if _, err := repo.Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &archived, ExpectedStatus: &hidden}); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	if _, err := repo.Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &published, ExpectedStatus: &hidden}); !errors.Is(err, domain.ErrInvalidStateTransition) {
+		t.Fatalf("stale unhide err = %v; want ErrInvalidStateTransition", err)
+	}
+	var status models.ProgramStatus
+	if err := pool.QueryRow(ctx, `SELECT status FROM programs WHERE id = $1`, fixture.ProgramID).Scan(&status); err != nil || status != archived {
+		t.Fatalf("status = %q, err = %v; want archived", status, err)
+	}
+}
+
+func TestProgramRepositoryIntegration_HideWaitsForInFlightApplication(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+
+	// An application create that passed its checks holds the term lock and has not committed.
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM program_terms WHERE id = $1 FOR UPDATE`, fixture.OpenTerm); err != nil {
+		t.Fatalf("lock term: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ('00000000-0000-0000-0000-000000000077', $1, $2, 'mentee', 'pending')`, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatalf("insert application: %v", err)
+	}
+
+	published, hidden := models.ProgramStatusPublished, models.ProgramStatusHidden
+	hideErr := make(chan error, 1)
+	go func() {
+		_, err := NewProgramRepository(pool).Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &hidden, ExpectedStatus: &published})
+		hideErr <- err
+	}()
+	waitForLockWait(t, pool, hideErr)
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit application: %v", err)
+	}
+	if err := <-hideErr; !errors.Is(err, domain.ErrStateLocked) {
+		t.Fatalf("hide err = %v; want ErrStateLocked", err)
+	}
+	var status models.ProgramStatus
+	if err := pool.QueryRow(ctx, `SELECT status FROM programs WHERE id = $1`, fixture.ProgramID).Scan(&status); err != nil || status != published {
+		t.Fatalf("status = %q, err = %v; want published", status, err)
+	}
+}
+
+func TestProgramRepositoryIntegration_HideWaitsForApplicationStatusChange(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ('00000000-0000-0000-0000-000000000080', $1, $2, 'mentee', 'declined')`, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatalf("insert application: %v", err)
+	}
+
+	// A declined → pending reopen that passed its checks holds the application row and has not committed.
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `UPDATE applications SET status = 'pending' WHERE id = '00000000-0000-0000-0000-000000000080'`); err != nil {
+		t.Fatalf("reopen application: %v", err)
+	}
+
+	published, hidden := models.ProgramStatusPublished, models.ProgramStatusHidden
+	hideErr := make(chan error, 1)
+	go func() {
+		_, err := NewProgramRepository(pool).Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &hidden, ExpectedStatus: &published})
+		hideErr <- err
+	}()
+	waitForLockWait(t, pool, hideErr)
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit reopen: %v", err)
+	}
+	if err := <-hideErr; !errors.Is(err, domain.ErrStateLocked) {
+		t.Fatalf("hide err = %v; want ErrStateLocked", err)
+	}
+}
+
+func TestApplicationRepositoryIntegration_StatusChangeWaitsForHide(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+	applicationID := "00000000-0000-0000-0000-000000000081"
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentee', 'hold')`, applicationID, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatalf("insert application: %v", err)
+	}
+
+	// A hide holds its locks and has not committed.
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM programs WHERE id = $1 FOR UPDATE`, fixture.ProgramID); err != nil {
+		t.Fatalf("lock program: %v", err)
+	}
+	if err := checkNoBlockingApplications(ctx, tx, fixture.ProgramID); err != nil {
+		t.Fatalf("hide guard: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE programs SET status = 'hidden' WHERE id = $1`, fixture.ProgramID); err != nil {
+		t.Fatalf("hide: %v", err)
+	}
+
+	repo := NewApplicationRepository(pool)
+	hold, accepted, pending := models.ApplicationStatusHold, models.ApplicationStatusAccepted, models.ApplicationStatusPending
+	acceptErr := make(chan error, 1)
+	go func() {
+		_, err := repo.Update(ctx, applicationID, models.ApplicationUpdateInput{Status: &accepted, ExpectedStatus: &hold})
+		acceptErr <- err
+	}()
+	waitForLockWait(t, pool, acceptErr)
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit hide: %v", err)
+	}
+	if err := <-acceptErr; !errors.Is(err, domain.ErrIneligible) {
+		t.Fatalf("accept err = %v; want ErrIneligible", err)
+	}
+	if _, err := repo.Update(ctx, applicationID, models.ApplicationUpdateInput{Status: &pending, ExpectedStatus: &hold}); !errors.Is(err, domain.ErrIneligible) {
+		t.Fatalf("reopen err = %v; want ErrIneligible", err)
+	}
+	var status models.ApplicationStatus
+	if err := pool.QueryRow(ctx, `SELECT status FROM applications WHERE id = $1`, applicationID).Scan(&status); err != nil || status != hold {
+		t.Fatalf("status = %q, err = %v; want hold", status, err)
+	}
+}
+
+func TestApplicationRepositoryIntegration_RefusesApplicationToUnpublishedProgram(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+	withdrawnID := "00000000-0000-0000-0000-000000000078"
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentee', 'withdrawn')`, withdrawnID, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatalf("insert withdrawn application: %v", err)
+	}
+	published, hidden := models.ProgramStatusPublished, models.ProgramStatusHidden
+	if _, err := NewProgramRepository(pool).Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &hidden, ExpectedStatus: &published}); err != nil {
+		t.Fatalf("hide: %v", err)
+	}
+
+	repo := NewApplicationRepository(pool)
+	input := models.ApplicationCreateInput{UserID: fixture.UserID, Role: models.ApplicationRoleMentee, Status: models.ApplicationStatusPending}
+	input.ID = "00000000-0000-0000-0000-000000000079"
+	if _, err := repo.Create(ctx, fixture.OpenTerm, input); !errors.Is(err, domain.ErrIneligible) {
+		t.Fatalf("create err = %v; want ErrIneligible", err)
+	}
+	if _, err := repo.Reapply(ctx, withdrawnID, fixture.OpenTerm, input); !errors.Is(err, domain.ErrIneligible) {
+		t.Fatalf("reapply err = %v; want ErrIneligible", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE programs SET status = 'archived' WHERE id = $1`, fixture.ProgramID); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	if _, err := repo.Create(ctx, fixture.OpenTerm, input); !errors.Is(err, domain.ErrIneligible) {
+		t.Fatalf("create on archived program err = %v; want ErrIneligible", err)
+	}
+}
+
+func TestApplicationRepositoryIntegration_ReapplyKeepsWithdrawnApplication(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	oldID, newID := "00000000-0000-0000-0000-000000000077", "00000000-0000-0000-0000-00000000007b"
+	oldTaskID := "00000000-0000-0000-0000-000000000078"
+	// The withdrawn application's created_on is later than the reapplication's will be, so the live
+	// application must win on status rather than timestamp. The user also holds a live mentor application.
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status, reviewer_note, evaluation, created_on) VALUES ($1, $2, $3, 'mentee', 'withdrawn', 'do not accept', 'partial', NOW() + INTERVAL '1 day')`, oldID, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatalf("insert application: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ('00000000-0000-0000-0000-000000000079', $1, $2, 'mentor', 'pending')`, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatalf("insert mentor application: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO tasks (id, application_id, program_term_id, assignee_id, status, category, application_status, program_term_status) VALUES ($1, $2, $3, $4, 'incomplete', 'non_prerequisite', 'withdrawn', 'open')`, oldTaskID, oldID, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatalf("insert task: %v", err)
+	}
+	repo := NewApplicationRepository(pool)
+	input := models.ApplicationCreateInput{ID: newID, UserID: fixture.UserID, Role: models.ApplicationRoleMentee, Status: models.ApplicationStatusPending}
+
+	a, err := repo.ReapplyWithTasks(ctx, oldID, fixture.OpenTerm, input, nil)
+	if err != nil {
+		t.Fatalf("ReapplyWithTasks: %v", err)
+	}
+	if a.ID != newID || a.Status != models.ApplicationStatusPending {
+		t.Fatalf("reapplication = id %q status %q; want a new pending application %q", a.ID, a.Status, newID)
+	}
+
+	// The withdrawn application, its reviewer data, and its tasks are kept untouched.
+	old, err := repo.GetByID(ctx, oldID)
+	if err != nil {
+		t.Fatalf("withdrawn application after reapply: %v", err)
+	}
+	if old.Status != models.ApplicationStatusWithdrawn || old.ReviewerNote == nil || *old.ReviewerNote != "do not accept" || old.Evaluation == nil || *old.Evaluation != "partial" {
+		t.Fatalf("withdrawn application = status %q note %v evaluation %v; want it unchanged", old.Status, old.ReviewerNote, old.Evaluation)
+	}
+	var taskParent string
+	if err := pool.QueryRow(ctx, `SELECT application_id FROM tasks WHERE id = $1`, oldTaskID).Scan(&taskParent); err != nil || taskParent != oldID {
+		t.Fatalf("withdrawn application task parent = %q, err = %v; want %q", taskParent, err, oldID)
+	}
+
+	// The reapply guard now sees the live mentee application, not the withdrawn one or the mentor one.
+	current, err := repo.FindByTermAndUser(ctx, fixture.OpenTerm, fixture.UserID, models.ApplicationRoleMentee)
+	if err != nil || current == nil || current.ID != newID {
+		t.Fatalf("FindByTermAndUser = %+v, err = %v; want %q", current, err, newID)
+	}
+
+	// Only the withdrawn application counts toward the reapplication limit.
+	if n, err := repo.CountWithdrawnByTermAndUser(ctx, fixture.OpenTerm, fixture.UserID, models.ApplicationRoleMentee); err != nil || n != 1 {
+		t.Fatalf("CountWithdrawnByTermAndUser = %d, err = %v; want 1", n, err)
+	}
+
+	// The applicants list shows the reapplication only, and agrees with the summary count.
+	rows, meta, err := repo.ListByProgram(ctx, fixture.ProgramID, models.ProgramApplicationFilter{})
+	if err != nil || meta.Total != 1 || len(rows) != 1 || rows[0].ApplicationID != newID {
+		t.Fatalf("ListByProgram = %d rows, meta %+v, err = %v; want only %q", len(rows), meta, err, newID)
+	}
+	summary, err := NewProgramRepository(pool).GetManagementSummary(ctx, fixture.ProgramID)
+	if err != nil || summary.Applicants != 1 {
+		t.Fatalf("GetManagementSummary = %+v, err = %v; want 1 applicant", summary, err)
+	}
+
+	// A second reapply from the same withdrawn application cannot add another live one.
+	input.ID = "00000000-0000-0000-0000-00000000007c"
+	var pgErr *pgconn.PgError
+	if _, err := repo.ReapplyWithTasks(ctx, oldID, fixture.OpenTerm, input, nil); !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+		t.Fatalf("second reapply err = %v; want unique violation", err)
+	}
+	if _, err := repo.ReapplyWithTasks(ctx, newID, fixture.OpenTerm, input, nil); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("reapply from pending err = %v; want ErrConflict", err)
+	}
+}
+
+func TestApplicationRepositoryIntegration_ReapplyEnforcesWithdrawnLimit(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	withdrawnIDs := []string{"00000000-0000-0000-0000-000000000081", "00000000-0000-0000-0000-000000000082", "00000000-0000-0000-0000-000000000083"}
+	for _, id := range withdrawnIDs {
+		// Identical created_on, so the list must break the tie on id.
+		if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status, created_on) VALUES ($1, $2, $3, 'mentee', 'withdrawn', '2026-01-01T00:00:00Z')`, id, fixture.OpenTerm, fixture.UserID); err != nil {
+			t.Fatalf("insert withdrawn application: %v", err)
+		}
+	}
+	repo := NewApplicationRepository(pool)
+	input := models.ApplicationCreateInput{ID: "00000000-0000-0000-0000-000000000084", UserID: fixture.UserID, Role: models.ApplicationRoleMentee, Status: models.ApplicationStatusPending}
+	if _, err := repo.ReapplyWithTasks(ctx, withdrawnIDs[2], fixture.OpenTerm, input, nil); !errors.Is(err, domain.ErrIneligible) {
+		t.Fatalf("reapply past the limit err = %v; want ErrIneligible", err)
+	}
+	var count int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM applications WHERE id = $1`, input.ID).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("applications created past the limit = %d, err = %v; want 0", count, err)
+	}
+
+	// Only the newest withdrawn application is listed, one applicant as in the summary.
+	rows, meta, err := repo.ListByProgram(ctx, fixture.ProgramID, models.ProgramApplicationFilter{})
+	if err != nil || meta.Total != 1 || len(rows) != 1 || rows[0].ApplicationID != withdrawnIDs[2] {
+		t.Fatalf("ListByProgram = %d rows, meta %+v, err = %v; want only %q", len(rows), meta, err, withdrawnIDs[2])
+	}
+}
+
+func TestApplicationRepositoryIntegration_ReapplyRejectsClosedTerm(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	oldID := "00000000-0000-0000-0000-000000000085"
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentee', 'withdrawn')`, oldID, fixture.ClosedTerm, fixture.UserID); err != nil {
+		t.Fatalf("insert withdrawn application: %v", err)
+	}
+	input := models.ApplicationCreateInput{ID: "00000000-0000-0000-0000-000000000086", UserID: fixture.UserID, Role: models.ApplicationRoleMentee, Status: models.ApplicationStatusPending}
+	if _, err := NewApplicationRepository(pool).ReapplyWithTasks(ctx, oldID, fixture.ClosedTerm, input, nil); !errors.Is(err, domain.ErrIneligible) {
+		t.Fatalf("reapply to a closed term err = %v; want ErrIneligible", err)
+	}
+}
+
+// A withdrawal that commits while a reapply waits must count toward the limit: with two withdrawn
+// applications and a live one being withdrawn, the reapply sees three and creates nothing.
+func TestApplicationRepositoryIntegration_ReapplyCountsConcurrentWithdrawal(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	oldID, liveID := "00000000-0000-0000-0000-000000000092", "00000000-0000-0000-0000-000000000093"
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES
+		('00000000-0000-0000-0000-000000000091', $1, $2, 'mentee', 'withdrawn'),
+		($3, $1, $2, 'mentee', 'withdrawn'),
+		($4, $1, $2, 'mentee', 'pending')`, fixture.OpenTerm, fixture.UserID, oldID, liveID); err != nil {
+		t.Fatalf("insert applications: %v", err)
+	}
+
+	withdrawal, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin withdrawal: %v", err)
+	}
+	defer func() { _ = withdrawal.Rollback(ctx) }()
+	if _, err := withdrawal.Exec(ctx, `UPDATE applications SET status = 'withdrawn' WHERE id = $1`, liveID); err != nil {
+		t.Fatalf("withdraw live application: %v", err)
+	}
+
+	reapplied := make(chan error, 1)
+	go func() {
+		input := models.ApplicationCreateInput{ID: "00000000-0000-0000-0000-000000000094", UserID: fixture.UserID, Role: models.ApplicationRoleMentee, Status: models.ApplicationStatusPending}
+		_, err := NewApplicationRepository(pool).ReapplyWithTasks(ctx, oldID, fixture.OpenTerm, input, nil)
+		reapplied <- err
+	}()
+	waitForLockWait(t, pool, reapplied)
+	if err := withdrawal.Commit(ctx); err != nil {
+		t.Fatalf("commit withdrawal: %v", err)
+	}
+
+	if err := <-reapplied; !errors.Is(err, domain.ErrIneligible) {
+		t.Fatalf("reapply racing a withdrawal err = %v; want ErrIneligible", err)
+	}
+	var count int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM applications WHERE user_id = $1`, fixture.UserID).Scan(&count); err != nil {
+		t.Fatalf("count applications: %v", err)
+	}
+	if count != 3 {
+		t.Fatalf("applications = %d; want the 3 withdrawn and no reapplication", count)
+	}
+}
+
+// waitForLockWait returns once another session is blocked on a row lock, failing if the
+// operation reported on done finishes first or nothing blocks in time.
+func waitForLockWait(t *testing.T, pool *pgxpool.Pool, done <-chan error) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		select {
+		case err := <-done:
+			t.Fatalf("operation finished without waiting for the lock: %v", err)
+		default:
+		}
+		var waiting bool
+		if err := pool.QueryRow(context.Background(), `SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+			WHERE datname = current_database() AND wait_event_type = 'Lock')`).Scan(&waiting); err != nil {
+			t.Fatalf("read lock waits: %v", err)
+		}
+		if waiting {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("timed out waiting for the operation to block on a lock")
+}
+
+// A withdrawn application is kept as history when its applicant reapplies, so its tasks and their
+// files cannot change. The check reads the application itself, not the task's denormalised status.
+func TestTaskRepositoryIntegration_WithdrawnApplicationTasksAreLocked(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	applicationID, taskID := "00000000-0000-0000-0000-000000000095", "00000000-0000-0000-0000-000000000096"
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentee', 'withdrawn')`, applicationID, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatalf("insert application: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO tasks (id, application_id, program_term_id, assignee_id, status, file, application_status) VALUES ($1, $2, $3, $4, 'in_progress', 'evidence', 'pending')`, taskID, applicationID, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatalf("insert task: %v", err)
+	}
+
+	submitted := models.TaskStatusSubmitted
+	if _, err := NewTaskRepository(pool).Update(ctx, taskID, models.TaskUpdateInput{Status: &submitted}); !errors.Is(err, domain.ErrStateLocked) {
+		t.Fatalf("update err = %v; want ErrStateLocked", err)
+	}
+	files := NewFileRepository(pool)
+	if err := files.ReplaceTaskFile(ctx, domain.FileReplacement{RowID: taskID, Previous: ptrTo("evidence"), Next: "replacement"}); !errors.Is(err, domain.ErrStateLocked) {
+		t.Fatalf("replace file err = %v; want ErrStateLocked", err)
+	}
+	if err := files.ClearTaskFile(ctx, taskID, "evidence"); !errors.Is(err, domain.ErrStateLocked) {
+		t.Fatalf("clear file err = %v; want ErrStateLocked", err)
+	}
+
+	var status, file string
+	if err := pool.QueryRow(ctx, `SELECT status, file FROM tasks WHERE id = $1`, taskID).Scan(&status, &file); err != nil {
+		t.Fatalf("read task: %v", err)
+	}
+	if status != string(models.TaskStatusInProgress) || file != "evidence" {
+		t.Fatalf("task = status %q file %q; want it unchanged", status, file)
+	}
+}
+
+// Reapply ordering and models.Application both rely on applications always carrying timestamps.
+func TestApplicationRepositoryIntegration_TimestampsAreRequired(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	var pgErr *pgconn.PgError
+	for _, column := range []string{"created_on", "updated_on"} {
+		_, err := pool.Exec(context.Background(), `INSERT INTO applications (id, program_term_id, user_id, role, status, `+column+`)
+			VALUES ('00000000-0000-0000-0000-000000000087', $1, $2, 'mentee', 'withdrawn', NULL)`, fixture.OpenTerm, fixture.UserID)
+		if !errors.As(err, &pgErr) || pgErr.Code != "23502" {
+			t.Fatalf("insert with NULL %s err = %v; want not_null_violation", column, err)
+		}
+	}
+}
+
+func TestDirectoryIntegration_NonStringSkillsAreDropped(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	skillSet := `{"skills":[null,"Rust",{"name":"Kubernetes"},7,"Go"]}`
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ('00000000-0000-0000-0000-000000000080', $1, $2, 'mentee', 'accepted')`, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatalf("insert accepted mentee application: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES ('00000000-0000-0000-0000-000000000081', $1, $2, 'mentor', 'active')`, fixture.ProgramID, fixture.UserID); err != nil {
+		t.Fatalf("insert active mentor membership: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO user_profiles (id, user_id, profile_type, skill_set) VALUES ('00000000-0000-0000-0000-000000000082', $1, 'mentee', $2), ('00000000-0000-0000-0000-000000000083', $1, 'mentor', $2)`, fixture.UserID, skillSet); err != nil {
+		t.Fatalf("insert profiles: %v", err)
+	}
+	want := []string{"Go", "Rust"}
+
+	mentees, err := NewMenteeRepository(pool).List(ctx, models.MenteeFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("mentee List: %v", err)
+	}
+	if len(mentees.Data) != 1 || !slices.Equal(mentees.Data[0].Skills, want) {
+		t.Errorf("mentee list = %+v, want one mentee with skills %v", mentees.Data, want)
+	}
+	mentee, err := NewMenteeRepository(pool).GetByUserID(ctx, fixture.UserID)
+	if err != nil {
+		t.Fatalf("mentee GetByUserID: %v", err)
+	}
+	if !slices.Equal(mentee.Skills, want) {
+		t.Errorf("mentee detail skills = %v, want %v", mentee.Skills, want)
+	}
+
+	mentors, err := NewMentorRepository(pool).List(ctx, models.MentorFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("mentor List: %v", err)
+	}
+	if len(mentors.Data) != 1 || !slices.Equal(mentors.Data[0].Skills, want) {
+		t.Errorf("mentor list = %+v, want one mentor with skills %v", mentors.Data, want)
+	}
+	mentor, err := NewMentorRepository(pool).GetByUserID(ctx, fixture.UserID)
+	if err != nil {
+		t.Fatalf("mentor GetByUserID: %v", err)
+	}
+	if !slices.Equal(mentor.Skills, want) {
+		t.Errorf("mentor detail skills = %v, want %v", mentor.Skills, want)
+	}
+}
+
 func assertTermProjectionStatus(t *testing.T, pool *pgxpool.Pool, termID, want string) {
 	t.Helper()
 	var applicationStatus, taskStatus, indexedStatus string
@@ -297,6 +752,77 @@ func assertTermProjectionStatus(t *testing.T, pool *pgxpool.Pool, termID, want s
 	}
 	if applicationStatus != want || taskStatus != want || indexedStatus != want {
 		t.Fatalf("projection statuses = application=%q task=%q index=%q, want %q", applicationStatus, taskStatus, indexedStatus, want)
+	}
+}
+
+func TestApplicationRepositoryIntegration_ListByProgramStatusFilterAndOrder(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	// Applicants in their expected order. Across ranks created_on rises down the list, so recency
+	// alone would reverse it, and ids rise too, so the id tiebreaker alone would as well. Within the
+	// two pending ranks the newer application comes first.
+	applicants := []struct {
+		id, status     string
+		tasksSubmitted bool
+		prerequisite   string // status of its one prerequisite task, or "" for none
+		day            int
+	}{
+		{"00000000-0000-0000-0000-0000000000c1", "graduated", false, "", 0},
+		{"00000000-0000-0000-0000-0000000000c2", "accepted", false, "", 1},
+		{"00000000-0000-0000-0000-0000000000c3", "pending", false, "submitted", 3}, // tasks_submitted, not yet flagged
+		{"00000000-0000-0000-0000-0000000000c4", "pending", false, "", 2},          // tasks_submitted: none to submit
+		{"00000000-0000-0000-0000-0000000000c5", "pending", true, "incomplete", 5}, // applied: flagged, then reset by a reviewer
+		{"00000000-0000-0000-0000-0000000000c6", "pending", false, "in_progress", 4},
+		{"00000000-0000-0000-0000-0000000000c7", "hold", false, "", 6},
+		{"00000000-0000-0000-0000-0000000000c8", "declined", false, "", 7},
+		{"00000000-0000-0000-0000-0000000000c9", "withdrawn", false, "", 8},
+	}
+	for _, a := range applicants {
+		suffix := a.id[len(a.id)-1:]
+		userID := "00000000-0000-0000-0000-0000000000d" + suffix
+		if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name) VALUES ($1, $2, $2)`, userID, "applicant-"+suffix); err != nil {
+			t.Fatalf("insert user: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status, tasks_submitted, created_on)
+			VALUES ($1, $2, $3, 'mentee', $4, $5, '2026-01-01T00:00:00Z'::timestamptz + make_interval(days => $6))`,
+			a.id, fixture.OpenTerm, userID, a.status, a.tasksSubmitted, a.day); err != nil {
+			t.Fatalf("insert %s application: %v", a.status, err)
+		}
+		if a.prerequisite != "" {
+			if _, err := pool.Exec(ctx, `INSERT INTO tasks (id, application_id, program_term_id, assignee_id, status, category, application_status, program_term_status)
+				VALUES ($1, $2, $3, $4, $5, 'prerequisite', 'pending', 'open')`,
+				"00000000-0000-0000-0000-0000000000e"+suffix, a.id, fixture.OpenTerm, userID, a.prerequisite); err != nil {
+				t.Fatalf("insert prerequisite task: %v", err)
+			}
+		}
+	}
+	repo := NewApplicationRepository(pool)
+
+	rows, _, err := repo.ListByProgram(ctx, fixture.ProgramID, models.ProgramApplicationFilter{Limit: 50})
+	if err != nil || len(rows) != len(applicants) {
+		t.Fatalf("ListByProgram = %d rows, err = %v; want %d", len(rows), err, len(applicants))
+	}
+	for i, row := range rows {
+		if want := applicants[i].id; row.ApplicationID != want {
+			t.Fatalf("row %d = %q (%s); want %q", i, row.ApplicationID, row.Status, want)
+		}
+	}
+
+	for status, want := range map[models.ProgramApplicationStatus][]string{
+		models.ProgramApplicationStatusApplied:                           {"00000000-0000-0000-0000-0000000000c5", "00000000-0000-0000-0000-0000000000c6"},
+		models.ProgramApplicationStatusTasksSubmitted:                    {"00000000-0000-0000-0000-0000000000c3", "00000000-0000-0000-0000-0000000000c4"},
+		models.ProgramApplicationStatus(models.ApplicationStatusPending): {"00000000-0000-0000-0000-0000000000c3", "00000000-0000-0000-0000-0000000000c4", "00000000-0000-0000-0000-0000000000c5", "00000000-0000-0000-0000-0000000000c6"},
+	} {
+		rows, meta, err := repo.ListByProgram(ctx, fixture.ProgramID, models.ProgramApplicationFilter{Status: status, Limit: 50})
+		if err != nil || meta.Total != len(want) || len(rows) != len(want) {
+			t.Fatalf("ListByProgram(status %q) = %d rows, meta %+v, err = %v; want %v", status, len(rows), meta, err, want)
+		}
+		for i, row := range rows {
+			if row.ApplicationID != want[i] {
+				t.Fatalf("ListByProgram(status %q) row %d = %q; want %q", status, i, row.ApplicationID, want[i])
+			}
+		}
 	}
 }
 

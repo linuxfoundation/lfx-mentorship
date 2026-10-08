@@ -31,9 +31,13 @@ type programService interface {
 	ListCatalog(ctx context.Context, filter models.ProgramFilter) ([]*models.ProgramCatalogItem, *models.PaginationMeta, error)
 	GetCatalog(ctx context.Context, id string) (*models.ProgramCatalogItem, error)
 	ListCatalogMentees(ctx context.Context, programID string) ([]*models.ProgramCatalogMentee, error)
+	ListMine(ctx context.Context, userID string, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error)
 	Create(ctx context.Context, input models.ProgramCreateInput) (*models.Program, error)
 	CreateEnrollment(ctx context.Context, input models.ProgramEnrollmentInput) (*models.Program, error)
 	Update(ctx context.Context, id string, input models.ProgramUpdateInput) (*models.Program, error)
+	Decide(ctx context.Context, id string, status models.ProgramStatus) (*models.Program, error)
+	Hide(ctx context.Context, id string) (*models.Program, error)
+	Unhide(ctx context.Context, id string) (*models.Program, error)
 	Delete(ctx context.Context, id string) error
 	ListSkills(ctx context.Context, programID string) ([]*models.ProgramSkill, error)
 	AddSkill(ctx context.Context, programID string, input models.ProgramSkillCreateInput) (*models.ProgramSkill, error)
@@ -73,6 +77,7 @@ type enrollmentRequest struct {
 	RepositoryURL    *string                 `json:"repositoryUrl,omitempty"`
 	WebsiteURL       *string                 `json:"websiteUrl,omitempty"`
 	CodeOfConductURL *string                 `json:"codeOfConductUrl,omitempty"`
+	Industry         *string                 `json:"industry,omitempty"`
 	Skills           []string                `json:"skills"`
 	CIIProjectID     *string                 `json:"ciiProjectId,omitempty"`
 	LogoFileName     *string                 `json:"logoFileName,omitempty"`
@@ -137,7 +142,7 @@ func resolveVisibleProgram(w http.ResponseWriter, r *http.Request, svc programLo
 	if !ok {
 		return nil, false
 	}
-	if program.Status != models.ProgramStatusPublished && program.Status != models.ProgramStatusDraft {
+	if program.Status != models.ProgramStatusPublished && program.Status != models.ProgramStatusPending {
 		principal := auth.PrincipalFromContext(r.Context())
 		if auth.IsGatewayPrincipal(r.Context()) && principal != nil && principal.UserID != "_anonymous" {
 			return program, true
@@ -252,6 +257,32 @@ func (h *ProgramHandler) ListCatalog(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, map[string]any{"data": items, "meta": meta})
 }
 
+// ListMine handles GET /v1/me/programs — the programs the caller administers.
+// The user is always the principal; M2M principals have no local user and are
+// rejected.
+func (h *ProgramHandler) ListMine(w http.ResponseWriter, r *http.Request) {
+	principal := auth.PrincipalFromContext(r.Context())
+	if principal == nil || principal.IsM2M() {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	limit, offset, ok := parsePaginationParams(w, r)
+	if !ok {
+		return
+	}
+	programs, meta, err := h.svc.ListMine(r.Context(), principal.UserID, models.AdministeredProgramFilter{
+		Limit:  limit,
+		Offset: offset,
+		Search: r.URL.Query().Get("search"),
+		Status: models.AdministeredProgramStatus(r.URL.Query().Get("status")),
+	})
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]any{"data": programs, "meta": meta})
+}
+
 // GetCatalog handles GET /v1/programs/{id}/catalog.
 func (h *ProgramHandler) GetCatalog(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
@@ -326,7 +357,7 @@ func (h *ProgramHandler) NameAvailable(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, map[string]bool{"available": available})
 }
 
-// Submit transitions a program from draft or rejected to submitted.
+// Submit transitions a program from pending or rejected to submitted.
 func (h *ProgramHandler) Submit(w http.ResponseWriter, r *http.Request) {
 	if auth.PrincipalFromContext(r.Context()) == nil {
 		Error(w, domain.ErrUnauthorized)
@@ -355,11 +386,30 @@ func (h *ProgramHandler) Decision(w http.ResponseWriter, r *http.Request) {
 		Error(w, fmt.Errorf("%w: status is required", domain.ErrInvalidInput))
 		return
 	}
-	if *input.Status != models.ProgramStatusPublished && *input.Status != models.ProgramStatusRejected {
-		Error(w, fmt.Errorf("%w: decision must publish or reject a submitted program", domain.ErrInvalidInput))
+	program, err := h.svc.Decide(r.Context(), chi.URLParam(r, "id"), *input.Status)
+	if err != nil {
+		Error(w, err)
 		return
 	}
-	program, err := h.svc.Update(r.Context(), chi.URLParam(r, "id"), models.ProgramUpdateInput{Status: input.Status})
+	JSON(w, http.StatusOK, program)
+}
+
+// Hide handles POST /v1/programs/{id}/hide — moves a published program to hidden.
+func (h *ProgramHandler) Hide(w http.ResponseWriter, r *http.Request) {
+	h.changeVisibility(w, r, h.svc.Hide)
+}
+
+// Unhide handles POST /v1/programs/{id}/unhide — moves a hidden program to published.
+func (h *ProgramHandler) Unhide(w http.ResponseWriter, r *http.Request) {
+	h.changeVisibility(w, r, h.svc.Unhide)
+}
+
+func (h *ProgramHandler) changeVisibility(w http.ResponseWriter, r *http.Request, change func(context.Context, string) (*models.Program, error)) {
+	if auth.PrincipalFromContext(r.Context()) == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	program, err := change(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		Error(w, err)
 		return
@@ -434,6 +484,7 @@ func (h *ProgramHandler) Create(w http.ResponseWriter, r *http.Request) {
 			RepoLink:           request.RepositoryURL,
 			WebsiteURL:         request.WebsiteURL,
 			CodeOfConduct:      request.CodeOfConductURL,
+			Industry:           request.Industry,
 			CIIProjectID:       request.CIIProjectID,
 			TermsAndConditions: request.TermsAccepted,
 		},

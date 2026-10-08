@@ -133,6 +133,34 @@ func assertAnonymousReadOnly(t *testing.T, name, block string) {
 	}
 }
 
+func TestFileRoutesUseTheirClassRelation(t *testing.T) {
+	for _, tc := range []struct {
+		rule, method, path, relation string
+	}{
+		{"program-logo-upload", "POST", "/mentorship/v1/programs/:id/logo-upload", "relation: writer"},
+		{"program-logo-delete", "DELETE", "/mentorship/v1/programs/:id/logo", "relation: writer"},
+		{"programs-public", "GET", "/mentorship/v1/programs/:id/logo-download", "relation: viewer"},
+		{"tasks-file-upload", "POST", "/mentorship/v1/tasks/:id/file-upload", "relation: assignee"},
+		{"tasks-file-delete", "DELETE", "/mentorship/v1/tasks/:id/file", "relation: assignee"},
+		{"tasks-auditor", "GET", "/mentorship/v1/tasks/:id/file-download", "relation: auditor"},
+	} {
+		block := ruleBlock(t, tc.rule)
+		if !strings.Contains(block, "- path: "+tc.path+"\n") {
+			t.Errorf("rule %q is missing %q", tc.rule, tc.path)
+		}
+		if !strings.Contains(block, tc.method) {
+			t.Errorf("rule %q does not allow %s", tc.rule, tc.method)
+		}
+		if !strings.Contains(block, tc.relation) {
+			t.Errorf("rule %q for %q lacks %q", tc.rule, tc.path, tc.relation)
+		}
+	}
+	// No private-class download route may be anonymous.
+	if strings.Contains(ruleBlock(t, "tasks-auditor"), "anonymous_authenticator") {
+		t.Error("task file download must not be anonymous")
+	}
+}
+
 func TestReviewerFieldsRequireReviewerRelation(t *testing.T) {
 	contents, err := os.ReadFile("templates/ruleset.yaml")
 	if err != nil {
@@ -201,6 +229,7 @@ func TestMentorModuleRoutesAreCoveredByHeimdall(t *testing.T) {
 		"/mentorship/v1/me/profiles",
 		"/mentorship/v1/me/profiles/:profileType",
 		"/mentorship/v1/me/applications",
+		"/mentorship/v1/me/mentor-programs",
 		"/mentorship/v1/mentor-invites/:token/accept",
 		"/mentorship/v1/mentor-invites/:token/decline",
 		"/mentorship/v1/programs/:programID/terms/:id/applications",
@@ -225,6 +254,104 @@ func TestMentorModuleRoutesAreCoveredByHeimdall(t *testing.T) {
 		if !strings.Contains(ruleset, required) {
 			t.Errorf("RuleSet is missing mentor module authorization group %q", required)
 		}
+	}
+}
+
+func TestResendInviteRequiresProgramWriter(t *testing.T) {
+	block := ruleBlock(t, "program-member-resend-invite")
+	if strings.Count(block, "- path:") != 1 || !strings.Contains(block, "- path: /mentorship/v1/programs/:id/members/:memberId/resend-invite\n") {
+		t.Errorf("resend-invite rule must cover only its route:\n%s", block)
+	}
+	if !strings.Contains(block, "methods: [POST]\n") {
+		t.Errorf("resend-invite rule must allow only POST:\n%s", block)
+	}
+	for _, want := range []string{
+		"- authenticator: oidc",
+		"- authorizer: openfga_check",
+		`object: 'mentorship_program:{{ "{{- .Request.URL.Captures.id -}}" }}'`,
+		"relation: writer",
+	} {
+		if !strings.Contains(block, want) {
+			t.Errorf("resend-invite rule lacks %q:\n%s", want, block)
+		}
+	}
+	if strings.Contains(block, "anonymous_authenticator") || strings.Contains(block, "allow_all") {
+		t.Errorf("resend-invite rule must not admit anonymous or unchecked callers:\n%s", block)
+	}
+}
+
+// Hiding and unhiding are program-admin actions, gated like submit and not like
+// the approver-team decision.
+func TestProgramVisibilityRequiresProgramWriter(t *testing.T) {
+	block := ruleBlock(t, "program-visibility")
+	if strings.Count(block, "- path:") != 2 ||
+		!strings.Contains(block, "- path: /mentorship/v1/programs/:id/hide\n") ||
+		!strings.Contains(block, "- path: /mentorship/v1/programs/:id/unhide\n") {
+		t.Errorf("program-visibility rule must cover only hide and unhide:\n%s", block)
+	}
+	if !strings.Contains(block, "methods: [POST]\n") {
+		t.Errorf("program-visibility rule must allow only POST:\n%s", block)
+	}
+	expected := `      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_program:{{ "{{- .Request.URL.Captures.id -}}" }}'
+              relation: writer
+        - finalizer: create_jwt`
+	if !strings.Contains(block, expected) {
+		t.Errorf("program-visibility rule lacks oidc -> openfga writer -> create_jwt sequence:\n%s", block)
+	}
+	if strings.Contains(block, "anonymous_authenticator") || strings.Contains(block, "allow_all") || strings.Contains(block, "mentorship_approver_team") {
+		t.Errorf("program-visibility rule must check only the program writer relation:\n%s", block)
+	}
+}
+
+func TestMentorCandidatesRequiresProgramWriter(t *testing.T) {
+	block := ruleBlock(t, "program-mentor-candidates")
+	if strings.Count(block, "- path:") != 1 || !strings.Contains(block, "- path: /mentorship/v1/programs/:id/mentor-candidates\n") {
+		t.Errorf("mentor-candidates rule must cover only its route:\n%s", block)
+	}
+	if !strings.Contains(block, "methods: [GET]\n") {
+		t.Errorf("mentor-candidates rule must allow only GET:\n%s", block)
+	}
+	for _, want := range []string{
+		"- authenticator: oidc",
+		"- authorizer: openfga_check",
+		`object: 'mentorship_program:{{ "{{- .Request.URL.Captures.id -}}" }}'`,
+		"relation: writer",
+	} {
+		if !strings.Contains(block, want) {
+			t.Errorf("mentor-candidates rule lacks %q:\n%s", want, block)
+		}
+	}
+	if strings.Contains(block, "anonymous_authenticator") || strings.Contains(block, "allow_all") {
+		t.Errorf("mentor-candidates rule must not admit anonymous or unchecked callers:\n%s", block)
+	}
+}
+
+// The caller's program lists take the user from the principal, so the gateway
+// needs only a signed-in user.
+func TestMeProgramListsNeedOnlyASignedInUser(t *testing.T) {
+	block := ruleBlock(t, "identity")
+	for _, route := range []string{
+		"/mentorship/v1/me/programs",
+		"/mentorship/v1/me/mentor-programs",
+	} {
+		if !strings.Contains(block, "- path: "+route+"\n") {
+			t.Errorf("identity rule is missing %q:\n%s", route, block)
+		}
+	}
+	expected := `      execute:
+        - authenticator: oidc
+        - authorizer: allow_all
+        - finalizer: create_jwt`
+	if !strings.Contains(block, expected) {
+		t.Errorf("identity rule lacks oidc -> allow_all -> create_jwt sequence:\n%s", block)
+	}
+	if strings.Contains(block, "anonymous_authenticator") {
+		t.Errorf("identity rule must not admit anonymous callers:\n%s", block)
 	}
 }
 

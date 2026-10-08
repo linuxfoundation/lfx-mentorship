@@ -61,6 +61,10 @@ const (
 	ApplicationStatusHold      ApplicationStatus = "hold"
 )
 
+// MaxWithdrawnApplicationsPerTerm caps reapplication: each reapply keeps the withdrawn application
+// as history, so once a user has withdrawn this many for a term they cannot apply to it again.
+const MaxWithdrawnApplicationsPerTerm = 3
+
 // IsValid reports whether the status value is one of the allowed enum members.
 func (s ApplicationStatus) IsValid() bool {
 	switch s {
@@ -70,6 +74,21 @@ func (s ApplicationStatus) IsValid() bool {
 		return true
 	}
 	return false
+}
+
+// ProgramApplicationStatus is the applicants-list status filter. It accepts every ApplicationStatus
+// and adds two that split pending on the prerequisite tasks' current statuses: applied (one is
+// outstanding) and tasks_submitted (every one is submitted or complete, or there are none).
+type ProgramApplicationStatus string
+
+const (
+	ProgramApplicationStatusApplied        ProgramApplicationStatus = "applied"
+	ProgramApplicationStatusTasksSubmitted ProgramApplicationStatus = "tasks_submitted"
+)
+
+// IsValid reports whether the filter is applied, tasks_submitted, or an ApplicationStatus.
+func (s ProgramApplicationStatus) IsValid() bool {
+	return s == ProgramApplicationStatusApplied || s == ProgramApplicationStatusTasksSubmitted || ApplicationStatus(s).IsValid()
 }
 
 // ApplicationRole enumerates valid values for applications.role.

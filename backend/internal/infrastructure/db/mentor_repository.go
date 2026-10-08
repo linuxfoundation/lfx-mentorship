@@ -62,13 +62,15 @@ const mentorEligibleCTE = `
 			COALESCE(u.avatar_url, up.logo_url) AS avatar_url,
 			up.introduction,
 			COALESCE((
-				SELECT ARRAY_AGG(s ORDER BY s)
-				FROM jsonb_array_elements_text(
+				SELECT ARRAY_AGG(e #>> '{}' ORDER BY e #>> '{}')
+				FROM jsonb_array_elements(
 					CASE
 						WHEN jsonb_typeof(up.skill_set->'skills') = 'array' THEN up.skill_set->'skills'
 						ELSE '[]'::jsonb
 					END
-				) AS s
+				) AS e
+				-- A null element would scan as NULL into []string and fail the whole page.
+				WHERE jsonb_typeof(e) = 'string'
 			), '{}') AS skills
 		FROM joined j
 		LEFT JOIN users u ON u.id = j.user_id
@@ -256,6 +258,85 @@ func (r *MentorRepository) GetByUserID(ctx context.Context, userID string) (*mod
 			MenteesGraduated:  len(graduated),
 		},
 	}, nil
+}
+
+// mentoredProgramsFrom selects the published programs $1 is an active mentor
+// of, with the status the admin list also shows for them: completed once all
+// the program's terms are closed, otherwise open.
+const mentoredProgramsFrom = `
+	FROM (
+		SELECT programs.id, programs.slug, programs.name, programs.lf_project_name, programs.logo_url,
+			CASE WHEN ` + sqlProgramTermsAllClosed + `
+				THEN '` + string(models.MentoredProgramStatusCompleted) + `'
+				ELSE '` + string(models.MentoredProgramStatusOpen) + `'
+			END AS status
+		FROM programs
+		JOIN program_members pm ON pm.program_id = programs.id
+		WHERE pm.user_id = $1 AND pm.member_type = 'mentor' AND pm.status = 'active'
+		  AND programs.status = 'published'
+	) mp`
+
+// ListMentoredByUser returns the published programs userID is an active mentor
+// of. Counts cover all the program's terms and match its management summary:
+// applicants are counted once per user per term, as a withdrawn application is
+// kept beside its reapplication.
+func (r *MentorRepository) ListMentoredByUser(ctx context.Context, userID string, filter models.MentoredProgramFilter) ([]*models.MentoredProgram, *models.PaginationMeta, error) {
+	ctx, span := mentorTracer.Start(ctx, "db.mentors.ListMentoredByUser")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.user_id", userID))
+
+	limit := filter.Limit
+	if limit <= 0 || limit > models.MentoredProgramMaxLimit {
+		limit = 20
+	}
+	offset := filter.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	var total int
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*)`+mentoredProgramsFrom, userID).Scan(&total); err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("count mentored programs: %w", err)
+	}
+
+	rows, err := r.pool.Query(ctx, `
+		SELECT page.id, page.slug, page.name, page.lf_project_name, page.logo_url, page.status,
+			apps.mentees, apps.applicants,
+			(SELECT COUNT(*) FROM tasks t
+				JOIN applications ta ON ta.id = t.application_id
+				JOIN program_terms tpt ON tpt.id = ta.program_term_id
+				WHERE tpt.program_id = page.id AND ta.role = 'mentee'
+				  AND ta.status = 'accepted' AND t.status = 'submitted')
+		FROM (SELECT mp.*`+mentoredProgramsFrom+programListOrder("mp", "status")+` LIMIT $2 OFFSET $3) page
+		LEFT JOIN LATERAL (
+			SELECT COUNT(*) FILTER (WHERE a.status IN ('accepted', 'graduated')) AS mentees,
+				COUNT(DISTINCT (a.program_term_id, a.user_id)) AS applicants
+			FROM applications a
+			JOIN program_terms pt ON pt.id = a.program_term_id
+			WHERE pt.program_id = page.id AND a.role = 'mentee'
+		) apps ON TRUE`+programListOrder("page", "status"), userID, limit, offset)
+	if err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("list mentored programs: %w", err)
+	}
+	defer rows.Close()
+
+	programs := make([]*models.MentoredProgram, 0)
+	for rows.Next() {
+		var p models.MentoredProgram
+		if err := rows.Scan(&p.ID, &p.Slug, &p.Name, &p.ProjectName, &p.LogoURL, &p.Status,
+			&p.Stats.Mentees, &p.Stats.Applicants, &p.Stats.TasksToReview); err != nil {
+			span.RecordError(err)
+			return nil, nil, fmt.Errorf("scan mentored program: %w", err)
+		}
+		programs = append(programs, &p)
+	}
+	if err := rows.Err(); err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("mentored program rows: %w", err)
+	}
+	return programs, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, nil
 }
 
 func (r *MentorRepository) loadMentorPrograms(ctx context.Context, userID string) ([]models.MentorProgram, error) {

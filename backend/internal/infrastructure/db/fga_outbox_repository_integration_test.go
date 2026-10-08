@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -619,6 +620,147 @@ func TestProgramHeaderProjectionIntegration_LeavesActiveTermNilWithoutOpenTerm(t
 	}
 }
 
+func TestProgramListAdministeredIntegration_GroupsStatusAndScopesToActiveAdmin(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	const (
+		otherUserID   = "00000000-0000-0000-0000-000000000002"
+		completedID   = "00000000-0000-0000-0000-000000000040"
+		pendingID     = "00000000-0000-0000-0000-000000000041"
+		mentorOnlyID  = "00000000-0000-0000-0000-000000000042"
+		withdrawnID   = "00000000-0000-0000-0000-000000000043"
+		rejectedID    = "00000000-0000-0000-0000-000000000060"
+		hiddenID      = "00000000-0000-0000-0000-000000000061"
+		archivedID    = "00000000-0000-0000-0000-000000000062"
+		noTermsID     = "00000000-0000-0000-0000-000000000063"
+		deletedTermID = "00000000-0000-0000-0000-000000000064"
+		otherAdminID  = "00000000-0000-0000-0000-000000000065"
+	)
+	for _, q := range []string{
+		`INSERT INTO users (id, lfid, name) VALUES ('` + otherUserID + `', 'fixture-user-2', 'Fixture User 2')`,
+		`INSERT INTO programs (id, name, slug, status, lf_project_name) VALUES
+			('` + completedID + `', 'Alpha', 'alpha', 'published', 'LF Energy'),
+			('` + pendingID + `', 'beta', 'beta', 'submitted', 'CNCF'),
+			('` + mentorOnlyID + `', 'Mentored', 'mentored', 'published', NULL),
+			('` + withdrawnID + `', 'Withdrawn', 'withdrawn', 'published', NULL),
+			('` + rejectedID + `', 'Gamma', 'gamma', 'rejected', NULL),
+			('` + hiddenID + `', 'Hidden', 'hidden', 'hidden', NULL),
+			('` + archivedID + `', 'Iota', 'iota', 'archived', NULL),
+			('` + noTermsID + `', 'Kappa', 'kappa', 'published', NULL),
+			('` + deletedTermID + `', 'Lambda', 'lambda', 'published', NULL),
+			('` + otherAdminID + `', 'Other', 'other', 'pending', NULL)`,
+		`INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES
+			('00000000-0000-0000-0000-000000000044', '` + completedID + `', '` + fixture.UserID + `', 'program_admin', 'active'),
+			('00000000-0000-0000-0000-000000000045', '` + pendingID + `', '` + fixture.UserID + `', 'program_admin', 'active'),
+			('00000000-0000-0000-0000-000000000046', '` + mentorOnlyID + `', '` + fixture.UserID + `', 'mentor', 'active'),
+			('00000000-0000-0000-0000-000000000047', '` + withdrawnID + `', '` + fixture.UserID + `', 'program_admin', 'withdrawn'),
+			('00000000-0000-0000-0000-000000000048', '` + fixture.ProgramID + `', '` + fixture.UserID + `', 'mentor', 'active'),
+			('00000000-0000-0000-0000-000000000066', '` + fixture.ProgramID + `', '` + otherUserID + `', 'mentor', 'withdrawn'),
+			('00000000-0000-0000-0000-000000000067', '` + rejectedID + `', '` + fixture.UserID + `', 'program_admin', 'active'),
+			('00000000-0000-0000-0000-000000000068', '` + hiddenID + `', '` + fixture.UserID + `', 'program_admin', 'active'),
+			('00000000-0000-0000-0000-000000000069', '` + archivedID + `', '` + fixture.UserID + `', 'program_admin', 'active'),
+			('00000000-0000-0000-0000-00000000006a', '` + noTermsID + `', '` + fixture.UserID + `', 'program_admin', 'active'),
+			('00000000-0000-0000-0000-00000000006b', '` + deletedTermID + `', '` + fixture.UserID + `', 'program_admin', 'active'),
+			('00000000-0000-0000-0000-00000000006c', '` + otherAdminID + `', '` + otherUserID + `', 'program_admin', 'active')`,
+		`INSERT INTO program_terms (id, program_id, name, status, start_date_time) VALUES
+			('00000000-0000-0000-0000-000000000049', '` + completedID + `', 'Spring 2026', 'closed', '2026-01-01'),
+			('00000000-0000-0000-0000-00000000004a', '` + completedID + `', 'Summer 2026', 'closed', '2026-05-01'),
+			('00000000-0000-0000-0000-00000000006d', '` + deletedTermID + `', 'Deleted', 'deleted', '2026-01-01')`,
+		`INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES
+			('00000000-0000-0000-0000-00000000004b', '` + fixture.OpenTerm + `', '` + fixture.UserID + `', 'mentee', 'accepted'),
+			('00000000-0000-0000-0000-00000000006e', '` + fixture.OpenTerm + `', '` + otherUserID + `', 'mentee', 'graduated')`,
+	} {
+		if _, err := pool.Exec(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	repo := NewProgramRepository(pool)
+
+	programs, meta, err := repo.ListAdministeredByUser(ctx, fixture.UserID, models.AdministeredProgramFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	type row struct {
+		id     string
+		status models.AdministeredProgramStatus
+	}
+	// Ordered by admin_status (open, pending_review, completed, hidden, then
+	// the rest), then by name.
+	want := []row{
+		{fixture.ProgramID, models.AdministeredProgramStatusOpen},
+		{noTermsID, models.AdministeredProgramStatusOpen},
+		{deletedTermID, models.AdministeredProgramStatusOpen},
+		{pendingID, models.AdministeredProgramStatusPendingReview},
+		{completedID, models.AdministeredProgramStatusCompleted},
+		{hiddenID, models.AdministeredProgramStatusHidden},
+		{archivedID, models.AdministeredProgramStatusHidden},
+		{rejectedID, models.AdministeredProgramStatusRejected},
+	}
+	// Mentor-only and withdrawn memberships, and the other user's program, are excluded.
+	if meta.Total != len(want) || len(programs) != len(want) {
+		t.Fatalf("total=%d len=%d; want %d", meta.Total, len(programs), len(want))
+	}
+	for i, w := range want {
+		p := programs[i]
+		if p.ID != w.id || p.AdminStatus != w.status {
+			t.Errorf("programs[%d] = {%s %s}; want %+v", i, p.ID, p.AdminStatus, w)
+		}
+		header, err := repo.GetHeaderProjection(ctx, p.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.Stats != header.Stats {
+			t.Errorf("programs[%d] stats = %+v; want header stats %+v", i, p.Stats, header.Stats)
+		}
+	}
+	if s := programs[0].Stats; s.Mentors != 1 || s.Mentees != 1 || s.Graduated != 1 {
+		t.Errorf("fixture program stats = %+v; want 1 active mentor, 1 mentee, 1 graduated", s)
+	}
+
+	others, meta, err := repo.ListAdministeredByUser(ctx, otherUserID, models.AdministeredProgramFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Total != 1 || len(others) != 1 || others[0].ID != otherAdminID {
+		t.Errorf("other user: total=%d programs=%+v; want only %s", meta.Total, others, otherAdminID)
+	}
+
+	for status, wantIDs := range map[models.AdministeredProgramStatus][]string{
+		models.AdministeredProgramStatusCompleted: {completedID},
+		models.AdministeredProgramStatusOpen:      {fixture.ProgramID, noTermsID, deletedTermID},
+		models.AdministeredProgramStatusHidden:    {hiddenID, archivedID},
+	} {
+		got, meta, err := repo.ListAdministeredByUser(ctx, fixture.UserID, models.AdministeredProgramFilter{Status: status})
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotIDs := make([]string, len(got))
+		for i, p := range got {
+			gotIDs[i] = p.ID
+		}
+		if meta.Total != len(wantIDs) || !slices.Equal(gotIDs, wantIDs) {
+			t.Errorf("status=%s: total=%d ids=%v; want %v", status, meta.Total, gotIDs, wantIDs)
+		}
+	}
+
+	byProject, meta, err := repo.ListAdministeredByUser(ctx, fixture.UserID, models.AdministeredProgramFilter{Search: "cncf"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Total != 1 || len(byProject) != 1 || byProject[0].ID != pendingID {
+		t.Errorf("search=cncf: total=%d programs=%+v; want only %s", meta.Total, byProject, pendingID)
+	}
+
+	paged, meta, err := repo.ListAdministeredByUser(ctx, fixture.UserID, models.AdministeredProgramFilter{Limit: 1, Offset: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Total != len(want) || len(paged) != 1 || paged[0].ID != want[1].id {
+		t.Errorf("limit=1 offset=1: total=%d programs=%+v; want %s of %d", meta.Total, paged, want[1].id, len(want))
+	}
+}
+
 func TestProgramTermDeleteIntegration_BlocksWhenApplicationsExist(t *testing.T) {
 	pool := integrationPool(t)
 	fixture := seedIntegrationFixture(t, pool)
@@ -779,7 +921,7 @@ func TestEnrollmentIntegration_RollsBackWhenSkillInsertFails(t *testing.T) {
 	}
 	repo := NewProgramRepository(pool)
 	projectUID := "00000000-0000-0000-0000-000000000099"
-	_, err := repo.CreateEnrollment(ctx, models.ProgramEnrollmentInput{Program: models.ProgramCreateInput{ID: "00000000-0000-0000-0000-000000000061", CreatorUserID: "00000000-0000-0000-0000-000000000060", ProjectUID: &projectUID, Name: "Rollback", Slug: "rollback", Status: models.ProgramStatusDraft}, Skills: []string{"Go", "Go"}})
+	_, err := repo.CreateEnrollment(ctx, models.ProgramEnrollmentInput{Program: models.ProgramCreateInput{ID: "00000000-0000-0000-0000-000000000061", CreatorUserID: "00000000-0000-0000-0000-000000000060", ProjectUID: &projectUID, Name: "Rollback", Slug: "rollback", Status: models.ProgramStatusPending}, Skills: []string{"Go", "Go"}})
 	if err == nil {
 		t.Fatal("expected duplicate skill failure")
 	}
@@ -799,7 +941,7 @@ func TestEnrollmentIntegration_PersistsProjectMetadataInIndexSnapshot(t *testing
 		t.Fatal(err)
 	}
 	projectUID, projectSlug, projectName, projectLogo := "00000000-0000-0000-0000-000000000099", "enroll-project", "Enroll Project", "https://example.com/logo.svg"
-	program, err := NewProgramRepository(pool).CreateEnrollment(ctx, models.ProgramEnrollmentInput{Program: models.ProgramCreateInput{ID: "00000000-0000-0000-0000-000000000061", CreatorUserID: "00000000-0000-0000-0000-000000000060", ProjectUID: &projectUID, ProjectSlug: &projectSlug, ProjectName: &projectName, ProjectLogoURL: &projectLogo, Name: "Enroll", Slug: "enroll", Status: models.ProgramStatusDraft}, Skills: []string{"Go"}})
+	program, err := NewProgramRepository(pool).CreateEnrollment(ctx, models.ProgramEnrollmentInput{Program: models.ProgramCreateInput{ID: "00000000-0000-0000-0000-000000000061", CreatorUserID: "00000000-0000-0000-0000-000000000060", ProjectUID: &projectUID, ProjectSlug: &projectSlug, ProjectName: &projectName, ProjectLogoURL: &projectLogo, Name: "Enroll", Slug: "enroll", Status: models.ProgramStatusPending}, Skills: []string{"Go"}})
 	if err != nil {
 		t.Fatalf("create enrollment: %v", err)
 	}
@@ -811,15 +953,180 @@ func TestEnrollmentIntegration_PersistsProjectMetadataInIndexSnapshot(t *testing
 		t.Fatalf("read program index snapshot: %v", err)
 	}
 	var document struct {
-		ProjectSlug    string `json:"project_slug"`
-		ProjectName    string `json:"project_name"`
-		ProjectLogoURL string `json:"project_logo_url"`
+		ProjectSlug    string   `json:"project_slug"`
+		ProjectName    string   `json:"project_name"`
+		ProjectLogoURL string   `json:"project_logo_url"`
+		Skills         []string `json:"skills"`
 	}
 	if err := json.Unmarshal(data, &document); err != nil {
 		t.Fatalf("decode program index snapshot: %v", err)
 	}
 	if document.ProjectSlug != projectSlug || document.ProjectName != projectName || document.ProjectLogoURL != projectLogo {
 		t.Fatalf("program index project metadata = %+v", document)
+	}
+	if len(document.Skills) != 1 || document.Skills[0] != "Go" {
+		t.Fatalf("program index skills = %v; want [Go]", document.Skills)
+	}
+}
+
+func TestProgramUpdateIntegration_ReplacesSkills(t *testing.T) {
+	pool := integrationPool(t)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name) VALUES ('00000000-0000-0000-0000-000000000060', 'enroll-admin', 'Enroll Admin')`); err != nil {
+		t.Fatal(err)
+	}
+	repo := NewProgramRepository(pool)
+	projectUID := "00000000-0000-0000-0000-000000000099"
+	program, err := repo.CreateEnrollment(ctx, models.ProgramEnrollmentInput{Program: models.ProgramCreateInput{ID: "00000000-0000-0000-0000-000000000061", CreatorUserID: "00000000-0000-0000-0000-000000000060", ProjectUID: &projectUID, Name: "Skills", Slug: "skills", Status: models.ProgramStatusPending}, Skills: []string{"Go", "Rust"}})
+	if err != nil {
+		t.Fatalf("create enrollment: %v", err)
+	}
+	var keptID string
+	if err := pool.QueryRow(ctx, `SELECT id FROM program_skills WHERE program_id = $1 AND skill = 'Go'`, program.ID).Scan(&keptID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Skills: []string{"Go", "Kubernetes"}}); err != nil {
+		t.Fatalf("update skills: %v", err)
+	}
+	skills, err := repo.ListSkills(ctx, program.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, skill := range skills {
+		got[skill.Skill] = skill.ID
+	}
+	if len(got) != 2 || got["Kubernetes"] == "" || got["Go"] != keptID {
+		t.Fatalf("skills after update = %v; want Go (id %s) and Kubernetes", got, keptID)
+	}
+	var data []byte
+	if err := pool.QueryRow(ctx, `SELECT data FROM index_outbox WHERE object_type = 'mentorship_program' AND object_uid = $1`, program.ID).Scan(&data); err != nil {
+		t.Fatalf("read program index snapshot: %v", err)
+	}
+	var document struct {
+		Skills []string `json:"skills"`
+	}
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatalf("decode program index snapshot: %v", err)
+	}
+	if len(document.Skills) != 2 || document.Skills[0] != "Go" || document.Skills[1] != "Kubernetes" {
+		t.Fatalf("program index skills = %v; want [Go Kubernetes]", document.Skills)
+	}
+
+	name := "Skills Renamed"
+	if _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Name: &name}); err != nil {
+		t.Fatalf("update name: %v", err)
+	}
+	if skills, err := repo.ListSkills(ctx, program.ID); err != nil || len(skills) != 2 {
+		t.Fatalf("skills after name-only update = %d, %v; want 2 unchanged", len(skills), err)
+	}
+}
+
+func TestProgramUpdateIntegration_ReplacesOpenTerms(t *testing.T) {
+	pool := integrationPool(t)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+	const userID = "00000000-0000-0000-0000-000000000070"
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name) VALUES ($1, 'terms-admin', 'Terms Admin')`, userID); err != nil {
+		t.Fatal(err)
+	}
+	appStart := time.Now().Add(24 * time.Hour).UTC().Truncate(time.Microsecond)
+	appEnd, start, end := appStart.Add(24*time.Hour), appStart.Add(48*time.Hour), appStart.Add(30*24*time.Hour)
+	term := func(id, name string) models.ProgramOpenTermInput {
+		return models.ProgramOpenTermInput{ID: id, Name: name, ApplicationStartDate: &appStart, ApplicationEndDate: &appEnd, StartDateTime: &start, EndDateTime: &end}
+	}
+	const keptID, removedID, closedID = "00000000-0000-0000-0000-000000000072", "00000000-0000-0000-0000-000000000073", "00000000-0000-0000-0000-000000000074"
+	repo := NewProgramRepository(pool)
+	projectUID := "00000000-0000-0000-0000-000000000099"
+	program, err := repo.CreateEnrollment(ctx, models.ProgramEnrollmentInput{
+		Program: models.ProgramCreateInput{ID: "00000000-0000-0000-0000-000000000071", CreatorUserID: userID, ProjectUID: &projectUID, Name: "Terms", Slug: "terms", Status: models.ProgramStatusPending},
+		Terms: []models.ProgramTermCreateInput{
+			{ID: keptID, Name: "Fall", ApplicationStartDate: &appStart, ApplicationEndDate: &appEnd, StartDateTime: &start, EndDateTime: &end},
+			{ID: removedID, Name: "Winter", ApplicationStartDate: &appStart, ApplicationEndDate: &appEnd, StartDateTime: &start, EndDateTime: &end},
+		},
+		Skills: []string{"Go"},
+	})
+	if err != nil {
+		t.Fatalf("create enrollment: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO program_terms (id, program_id, name, status) VALUES ($1, $2, 'Spring 2025', 'closed')`, closedID, program.ID); err != nil {
+		t.Fatal(err)
+	}
+	termsByName := func() map[string][2]string {
+		rows, err := pool.Query(ctx, `SELECT id::text, name, status FROM program_terms WHERE program_id = $1`, program.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		got := map[string][2]string{}
+		for rows.Next() {
+			var id, name, status string
+			if err := rows.Scan(&id, &name, &status); err != nil {
+				t.Fatal(err)
+			}
+			got[name] = [2]string{id, status}
+		}
+		return got
+	}
+
+	if _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Terms: []models.ProgramOpenTermInput{term(keptID, "Fall 2026"), term("", "Spring 2027")}}); err != nil {
+		t.Fatalf("replace open terms: %v", err)
+	}
+	got := termsByName()
+	if got["Fall 2026"] != [2]string{keptID, "open"} || got["Spring 2027"][1] != "open" || got["Winter"] != [2]string{removedID, "deleted"} || got["Spring 2025"] != [2]string{closedID, "closed"} {
+		t.Fatalf("terms after replace = %v; want Fall 2026 kept, Spring 2027 added, Winter deleted, Spring 2025 closed and untouched", got)
+	}
+	newID := got["Spring 2027"][0]
+
+	// Only open terms of the program can be listed.
+	if _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Terms: []models.ProgramOpenTermInput{term(keptID, "Fall 2026"), term(newID, "Spring 2027"), term(closedID, "Edited")}}); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("listing a closed term: got %v; want ErrInvalidInput", err)
+	}
+
+	// An open term with applications cannot be removed.
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ('00000000-0000-0000-0000-000000000075', $1, $2, 'mentee', 'pending')`, keptID, userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Terms: []models.ProgramOpenTermInput{term(newID, "Spring 2027")}}); !errors.Is(err, domain.ErrStateLocked) {
+		t.Fatalf("removing a term with applications: got %v; want ErrStateLocked", err)
+	}
+	if after := termsByName(); after["Fall 2026"] != [2]string{keptID, "open"} || after["Spring 2025"] != [2]string{closedID, "closed"} {
+		t.Fatalf("terms after rejected updates = %v; want unchanged", after)
+	}
+}
+
+func TestProgramUpdateIntegration_ChangesProject(t *testing.T) {
+	pool := integrationPool(t)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name) VALUES ('00000000-0000-0000-0000-000000000060', 'enroll-admin', 'Enroll Admin')`); err != nil {
+		t.Fatal(err)
+	}
+	repo := NewProgramRepository(pool)
+	oldUID, oldSlug, oldName, oldLogo := "00000000-0000-0000-0000-000000000099", "old-project", "Old Project", "https://example.com/old.svg"
+	program, err := repo.CreateEnrollment(ctx, models.ProgramEnrollmentInput{Program: models.ProgramCreateInput{ID: "00000000-0000-0000-0000-000000000061", CreatorUserID: "00000000-0000-0000-0000-000000000060", ProjectUID: &oldUID, ProjectSlug: &oldSlug, ProjectName: &oldName, ProjectLogoURL: &oldLogo, Name: "Moving", Slug: "moving", Status: models.ProgramStatusPending}, Skills: []string{"Go"}})
+	if err != nil {
+		t.Fatalf("create enrollment: %v", err)
+	}
+
+	newUID, newSlug, newName := "00000000-0000-0000-0000-000000000098", "new-project", "New Project"
+	updated, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{ProjectUID: &newUID, ProjectSlug: &newSlug, ProjectName: &newName})
+	if err != nil {
+		t.Fatalf("update project: %v", err)
+	}
+	if updated.ProjectUID == nil || *updated.ProjectUID != newUID || updated.ProjectSlug == nil || *updated.ProjectSlug != newSlug ||
+		updated.ProjectName == nil || *updated.ProjectName != newName {
+		t.Fatalf("project after update = %v %v %v", updated.ProjectUID, updated.ProjectSlug, updated.ProjectName)
+	}
+	if updated.ProjectLogoURL != nil {
+		t.Fatalf("project_logo_url = %q; want old logo cleared", *updated.ProjectLogoURL)
+	}
+
+	name := "Moving Renamed"
+	if updated, err = repo.Update(ctx, program.ID, models.ProgramUpdateInput{Name: &name}); err != nil {
+		t.Fatalf("update name: %v", err)
+	}
+	if updated.ProjectUID == nil || *updated.ProjectUID != newUID {
+		t.Fatalf("project_uid after name-only update = %v; want %s", updated.ProjectUID, newUID)
 	}
 }
 

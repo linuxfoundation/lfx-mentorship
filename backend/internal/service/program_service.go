@@ -42,6 +42,7 @@ type ProgramService struct {
 	appRepo    domain.ApplicationRepository
 	memberRepo domain.ProgramMemberRepository
 	cfClient   clients.CrowdfundingClient
+	projects   domain.ProjectLookup
 }
 
 // NewProgramService returns a ProgramService.
@@ -55,12 +56,19 @@ func (s *ProgramService) SetCrowdfundingClient(client clients.CrowdfundingClient
 	s.cfClient = client
 }
 
+// SetProjectLookup makes Project Service the source of the project slug, name,
+// and logo stored with a new program. Without it, the values the caller sent
+// are stored, which only local development without NATS relies on.
+func (s *ProgramService) SetProjectLookup(projects domain.ProjectLookup) {
+	s.projects = projects
+}
+
 // programTransitions defines the valid next states for each program status.
 var programTransitions = map[models.ProgramStatus][]models.ProgramStatus{
-	models.ProgramStatusDraft:     {models.ProgramStatusSubmitted},
+	models.ProgramStatusPending:   {models.ProgramStatusSubmitted},
 	models.ProgramStatusSubmitted: {models.ProgramStatusPublished, models.ProgramStatusRejected},
 	models.ProgramStatusPublished: {models.ProgramStatusArchived, models.ProgramStatusHidden},
-	models.ProgramStatusRejected:  {models.ProgramStatusSubmitted}, // resubmit directly; no detour through draft
+	models.ProgramStatusRejected:  {models.ProgramStatusSubmitted}, // resubmit directly; no detour through pending
 	models.ProgramStatusArchived:  {},
 	models.ProgramStatusHidden:    {models.ProgramStatusPublished, models.ProgramStatusArchived},
 }
@@ -212,7 +220,7 @@ func (s *ProgramService) GetCatalog(ctx context.Context, id string) (*models.Pro
 		span.RecordError(err)
 		return nil, fmt.Errorf("get program catalog: %w", err)
 	}
-	if item.Status != models.ProgramStatusPublished && item.Status != models.ProgramStatusDraft {
+	if item.Status != models.ProgramStatusPublished && item.Status != models.ProgramStatusPending {
 		return nil, fmt.Errorf("get program catalog: %w", domain.ErrProgramNotFound)
 	}
 	applyCatalogLabels([]*models.ProgramCatalogItem{item}, time.Now())
@@ -233,6 +241,28 @@ func (s *ProgramService) ListCatalogMentees(ctx context.Context, programID strin
 	return mentees, nil
 }
 
+// ListMine returns the programs the caller is an active program admin of.
+func (s *ProgramService) ListMine(ctx context.Context, userID string, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+	ctx, span := programSvcTracer.Start(ctx, "ProgramService.ListMine")
+	defer span.End()
+	span.SetAttributes(attribute.String("user.id", userID))
+
+	if userID == "" {
+		return nil, nil, fmt.Errorf("%w: caller identity is required", domain.ErrUnauthorized)
+	}
+	if filter.Status != "" && !filter.Status.IsValid() {
+		return nil, nil, fmt.Errorf("%w: status must be open, pending_review, completed, rejected, or hidden", domain.ErrInvalidInput)
+	}
+	filter.Search = strings.TrimSpace(filter.Search)
+
+	programs, meta, err := s.repo.ListAdministeredByUser(ctx, userID, filter)
+	if err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("list my programs: %w", err)
+	}
+	return programs, meta, nil
+}
+
 // Create validates input and creates a program.
 func (s *ProgramService) Create(ctx context.Context, input models.ProgramCreateInput) (*models.Program, error) {
 	ctx, span := programSvcTracer.Start(ctx, "ProgramService.Create")
@@ -240,6 +270,9 @@ func (s *ProgramService) Create(ctx context.Context, input models.ProgramCreateI
 
 	if strings.TrimSpace(input.Name) == "" {
 		return nil, fmt.Errorf("%w: name is required", domain.ErrInvalidInput)
+	}
+	if err := reservedFileField("logo_url", input.LogoURL); err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(input.Slug) == "" {
 		return nil, fmt.Errorf("%w: slug is required", domain.ErrInvalidInput)
@@ -253,10 +286,10 @@ func (s *ProgramService) Create(ctx context.Context, input models.ProgramCreateI
 	}
 	canonicalProjectUID := projectUID.String()
 	input.ProjectUID = &canonicalProjectUID
-	if err := normalizeProjectMetadata(&input); err != nil {
+	if input.ProjectSlug, input.ProjectName, input.ProjectLogoURL, err = s.resolveProjectMetadata(ctx, canonicalProjectUID, input.ProjectSlug, input.ProjectName, input.ProjectLogoURL); err != nil {
 		return nil, err
 	}
-	input.Status = models.ProgramStatusDraft // programs always start as draft
+	input.Status = models.ProgramStatusPending // programs always start as pending
 	input.ID = uuid.New().String()
 
 	p, err := s.repo.Create(ctx, input)
@@ -268,26 +301,16 @@ func (s *ProgramService) Create(ctx context.Context, input models.ProgramCreateI
 }
 
 func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.ProgramEnrollmentInput) (*models.Program, error) {
+	if err := reservedFileField("logo_url", input.Program.LogoURL); err != nil {
+		return nil, err
+	}
 	if len(input.Terms) == 0 {
 		return nil, fmt.Errorf("%w: at least one term is required", domain.ErrInvalidInput)
 	}
 	if len(input.Terms) > maxEnrollmentTerms {
 		return nil, fmt.Errorf("%w: at most %d terms are allowed", domain.ErrInvalidInput, maxEnrollmentTerms)
 	}
-	normalizedSkills := make([]string, 0, len(input.Skills))
-	seenSkills := make(map[string]struct{}, len(input.Skills))
-	for _, skill := range input.Skills {
-		skill = strings.TrimSpace(skill)
-		if skill == "" {
-			continue
-		}
-		if _, exists := seenSkills[strings.ToLower(skill)]; exists {
-			continue
-		}
-		seenSkills[strings.ToLower(skill)] = struct{}{}
-		normalizedSkills = append(normalizedSkills, skill)
-	}
-	input.Skills = normalizedSkills
+	input.Skills = normalizeSkills(input.Skills)
 	if len(input.Skills) == 0 {
 		return nil, fmt.Errorf("%w: at least one skill is required", domain.ErrInvalidInput)
 	}
@@ -345,17 +368,13 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 	if !available {
 		return nil, fmt.Errorf("%w: program name is already in use", domain.ErrConflict)
 	}
-	for _, value := range []*string{input.Program.RepoLink, input.Program.WebsiteURL, input.Program.CodeOfConduct, input.Program.ProjectLogoURL} {
-		if value == nil || strings.TrimSpace(*value) == "" {
-			continue
-		}
-		parsed, err := url.ParseRequestURI(*value)
-		if err != nil || parsed.Host == "" {
-			return nil, fmt.Errorf("%w: invalid URL", domain.ErrInvalidInput)
-		}
-		scheme := strings.ToLower(parsed.Scheme)
-		if scheme != "http" && scheme != "https" {
-			return nil, fmt.Errorf("%w: invalid URL", domain.ErrInvalidInput)
+	urls := []*string{input.Program.RepoLink, input.Program.WebsiteURL, input.Program.CodeOfConduct}
+	if s.projects == nil { // otherwise Project Service's logo replaces the caller's
+		urls = append(urls, input.Program.ProjectLogoURL)
+	}
+	for _, value := range urls {
+		if err := validateHTTPURL(value); err != nil {
+			return nil, err
 		}
 	}
 	if strings.TrimSpace(input.Program.Slug) == "" {
@@ -370,18 +389,36 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 	}
 	canonicalProjectUID := projectUID.String()
 	input.Program.ProjectUID = &canonicalProjectUID
-	if err := normalizeProjectMetadata(&input.Program); err != nil {
+	if input.Program.ProjectSlug, input.Program.ProjectName, input.Program.ProjectLogoURL, err = s.resolveProjectMetadata(ctx, canonicalProjectUID, input.Program.ProjectSlug, input.Program.ProjectName, input.Program.ProjectLogoURL); err != nil {
 		return nil, err
 	}
-	input.Program.Status = models.ProgramStatusDraft
+	input.Program.Status = models.ProgramStatusPending
 	input.Program.ID = uuid.New().String()
 	return s.repo.CreateEnrollment(ctx, input)
 }
 
-// normalizeProjectMetadata trims the Project Service slug, name, and logo the
-// caller resolved alongside project_uid. The program index snapshot is derived
-// from the persisted row, so slug and name must be present at creation.
-func normalizeProjectMetadata(input *models.ProgramCreateInput) error {
+// resolveProjectMetadata replaces the caller's project slug, name, and logo
+// with Project Service's, so a program cannot carry another project's
+// branding. It runs after all other validation to spend no lookup on a
+// request that is rejected anyway.
+func (s *ProgramService) resolveProjectMetadata(ctx context.Context, projectUID string, slug, name, logoURL *string) (*string, *string, *string, error) {
+	if s.projects != nil {
+		project, err := s.projects.GetProject(ctx, projectUID)
+		if errors.Is(err, domain.ErrProjectNotFound) {
+			return nil, nil, nil, fmt.Errorf("%w: project ID does not match a Project Service project", domain.ErrInvalidInput)
+		}
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("resolve project: %w", err)
+		}
+		slug, name, logoURL = &project.Slug, &project.Name, project.LogoURL
+	}
+	return normalizeProjectMetadata(slug, name, logoURL)
+}
+
+// normalizeProjectMetadata trims the Project Service slug, name, and logo
+// stored alongside project_uid. The program index snapshot is derived
+// from the persisted row, so slug and name must be present whenever the project is set.
+func normalizeProjectMetadata(slug, name, logoURL *string) (*string, *string, *string, error) {
 	trim := func(value *string) *string {
 		if value == nil {
 			return nil
@@ -392,16 +429,60 @@ func normalizeProjectMetadata(input *models.ProgramCreateInput) error {
 		}
 		return &trimmed
 	}
-	input.ProjectSlug = trim(input.ProjectSlug)
-	input.ProjectName = trim(input.ProjectName)
-	input.ProjectLogoURL = trim(input.ProjectLogoURL)
-	if input.ProjectSlug == nil {
-		return fmt.Errorf("%w: project_slug is required", domain.ErrInvalidInput)
+	slug, name, logoURL = trim(slug), trim(name), trim(logoURL)
+	if slug == nil {
+		return nil, nil, nil, fmt.Errorf("%w: project_slug is required", domain.ErrInvalidInput)
 	}
-	if input.ProjectName == nil {
-		return fmt.Errorf("%w: project_name is required", domain.ErrInvalidInput)
+	if name == nil {
+		return nil, nil, nil, fmt.Errorf("%w: project_name is required", domain.ErrInvalidInput)
+	}
+	return slug, name, logoURL, nil
+}
+
+// validateHTTPURL accepts an absent or blank value, or an absolute http(s) URL.
+func validateHTTPURL(value *string) error {
+	if value == nil || strings.TrimSpace(*value) == "" {
+		return nil
+	}
+	parsed, err := url.ParseRequestURI(*value)
+	if err != nil || parsed.Host == "" {
+		return fmt.Errorf("%w: invalid URL", domain.ErrInvalidInput)
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return fmt.Errorf("%w: invalid URL", domain.ErrInvalidInput)
 	}
 	return nil
+}
+
+// Decide publishes or rejects a submitted program.
+func (s *ProgramService) Decide(ctx context.Context, id string, status models.ProgramStatus) (*models.Program, error) {
+	if status != models.ProgramStatusPublished && status != models.ProgramStatusRejected {
+		return nil, fmt.Errorf("%w: decision must publish or reject a submitted program", domain.ErrInvalidInput)
+	}
+	current, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("get program for decision: %w", err)
+	}
+	if current.Status != models.ProgramStatusSubmitted {
+		return nil, fmt.Errorf("%w: only a submitted program can be decided, not %q", domain.ErrInvalidStateTransition, current.Status)
+	}
+	return s.Update(ctx, id, models.ProgramUpdateInput{Status: &status})
+}
+
+// Hide takes a published program out of public view. The hide guard in Update
+// refuses while the program has active applications.
+func (s *ProgramService) Hide(ctx context.Context, id string) (*models.Program, error) {
+	from, to := models.ProgramStatusPublished, models.ProgramStatusHidden
+	return s.Update(ctx, id, models.ProgramUpdateInput{Status: &to, ExpectedStatus: &from})
+}
+
+// Unhide makes a hidden program public again. It pins the source status because
+// programTransitions also allows submitted → published, which only the approver
+// team may apply through Decide.
+func (s *ProgramService) Unhide(ctx context.Context, id string) (*models.Program, error) {
+	from, to := models.ProgramStatusHidden, models.ProgramStatusPublished
+	return s.Update(ctx, id, models.ProgramUpdateInput{Status: &to, ExpectedStatus: &from})
 }
 
 // Update validates and applies changes to the program with the given ID.
@@ -416,6 +497,39 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 	if input.ProgramTermStatus != nil && !input.ProgramTermStatus.IsValid() {
 		return nil, fmt.Errorf("%w: invalid program term status %q", domain.ErrInvalidInput, *input.ProgramTermStatus)
 	}
+	if err := reservedFileField("logo_url", input.LogoURL); err != nil {
+		return nil, err
+	}
+	if input.Skills != nil {
+		input.Skills = normalizeSkills(input.Skills)
+		if len(input.Skills) == 0 {
+			return nil, fmt.Errorf("%w: at least one skill is required", domain.ErrInvalidInput)
+		}
+	}
+	if input.Terms != nil {
+		if err := validateOpenTerms(input.Terms); err != nil {
+			return nil, err
+		}
+	}
+	if input.ProjectUID != nil || input.ProjectSlug != nil || input.ProjectName != nil || input.ProjectLogoURL != nil {
+		if input.ProjectUID == nil || strings.TrimSpace(*input.ProjectUID) == "" {
+			return nil, fmt.Errorf("%w: project_uid is required when changing the project", domain.ErrInvalidInput)
+		}
+		projectUID, err := uuid.Parse(strings.TrimSpace(*input.ProjectUID))
+		if err != nil {
+			return nil, fmt.Errorf("%w: project_uid must be a UUID", domain.ErrInvalidInput)
+		}
+		canonicalProjectUID := projectUID.String()
+		input.ProjectUID = &canonicalProjectUID
+		if input.ProjectSlug, input.ProjectName, input.ProjectLogoURL, err = s.resolveProjectMetadata(ctx, canonicalProjectUID, input.ProjectSlug, input.ProjectName, input.ProjectLogoURL); err != nil {
+			return nil, err
+		}
+		if s.projects == nil { // otherwise the logo is Project Service's, not the caller's
+			if err := validateHTTPURL(input.ProjectLogoURL); err != nil {
+				return nil, err
+			}
+		}
+	}
 
 	if input.Status != nil {
 		current, err := s.repo.GetByID(ctx, id)
@@ -425,6 +539,9 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 		}
 
 		next := *input.Status
+		if input.ExpectedStatus != nil && current.Status != *input.ExpectedStatus {
+			return nil, fmt.Errorf("%w: only a %s program can be made %s, not %q", domain.ErrInvalidStateTransition, *input.ExpectedStatus, next, current.Status)
+		}
 		allowed := programTransitions[current.Status]
 		ok := false
 		for _, s := range allowed {
@@ -436,6 +553,8 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 		if !ok {
 			return nil, fmt.Errorf("%w: cannot transition program from %q to %q", domain.ErrInvalidStateTransition, current.Status, next)
 		}
+		// The transition was validated against current.Status, so the write must apply only while the row still has it.
+		input.ExpectedStatus = &current.Status
 
 		// Submission guard (FR-004): all required fields must be present and at least one open term.
 		if next == models.ProgramStatusSubmitted {
@@ -469,7 +588,7 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 			}
 		}
 
-		// Hide guard: must have no active applications.
+		// Hide guard: must have no active applications. The repository re-checks it under the program lock.
 		if next == models.ProgramStatusHidden {
 			count, err := s.appRepo.CountBlockingAppsForProgram(ctx, id)
 			if err != nil {
@@ -488,6 +607,60 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 		return nil, fmt.Errorf("update program: %w", err)
 	}
 	return p, nil
+}
+
+// validateOpenTerms checks a program update's open-term set and trims term names
+// in place. Every listed term is open, so the list length is the open-term count.
+func validateOpenTerms(terms []models.ProgramOpenTermInput) error {
+	if len(terms) == 0 {
+		return fmt.Errorf("%w: at least one open term is required", domain.ErrInvalidInput)
+	}
+	if len(terms) > maxOpenTermsPerProgram {
+		return fmt.Errorf("%w: at most %d open terms are allowed", domain.ErrInvalidInput, maxOpenTermsPerProgram)
+	}
+	seen := make(map[string]struct{}, len(terms))
+	for i := range terms {
+		term := &terms[i]
+		term.Name = strings.TrimSpace(term.Name)
+		if term.Name == "" {
+			return fmt.Errorf("%w: term name is required", domain.ErrInvalidInput)
+		}
+		if term.ID != "" {
+			id, err := uuid.Parse(term.ID)
+			if err != nil {
+				return fmt.Errorf("%w: term id %q must be a UUID", domain.ErrInvalidInput, term.ID)
+			}
+			term.ID = id.String()
+			if _, dup := seen[term.ID]; dup {
+				return fmt.Errorf("%w: term %s is listed more than once", domain.ErrInvalidInput, term.ID)
+			}
+			seen[term.ID] = struct{}{}
+		}
+		if err := validateTermDates(term.StartDateTime, term.EndDateTime, term.ApplicationStartDate, term.ApplicationEndDate); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// normalizeSkills trims skills and drops blanks and case-insensitive duplicates,
+// keeping the first spelling of each.
+func normalizeSkills(skills []string) []string {
+	normalized := make([]string, 0, len(skills))
+	seen := make(map[string]struct{}, len(skills))
+	for _, skill := range skills {
+		skill = strings.TrimSpace(skill)
+		if skill == "" {
+			continue
+		}
+		key := strings.ToLower(skill)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		normalized = append(normalized, skill)
+	}
+	return normalized
 }
 
 // Delete removes the program with the given ID.

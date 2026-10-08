@@ -5,11 +5,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"expvar"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -19,16 +19,42 @@ import (
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/handler"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/auth"
+	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/authservice"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/clients"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/db"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/email"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/fga"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/indexer"
+	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/objectstore"
+	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/projects"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/service"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
+
+// objectDeletionRelayInterval paces the object deletion relay; deletes are not latency-sensitive.
+const objectDeletionRelayInterval = 10 * time.Second
+
+// objectDeletionRelayBatch is independent of the FGA and index relays: deletes are cheap and idempotent.
+const objectDeletionRelayBatch = 50
+
+// fileTransferTimeout matches the gateway's upload timeout (chart value uploads.timeout).
+const fileTransferTimeout = 120 * time.Second
+
+// fileTransfer replaces the API-wide request timeout on file routes and lifts the
+// server's read and write deadlines, so a slow client can finish a 20 MB transfer.
+func fileTransfer(next http.Handler) http.Handler {
+	timed := chimiddleware.Timeout(fileTransferTimeout)(next)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		deadline := time.Now().Add(fileTransferTimeout)
+		rc := http.NewResponseController(w)
+		if err := errors.Join(rc.SetReadDeadline(deadline), rc.SetWriteDeadline(deadline)); err != nil {
+			slog.WarnContext(r.Context(), "could not extend file transfer deadline", "error", err)
+		}
+		timed.ServeHTTP(w, r)
+	})
+}
 
 // Server wraps the Chi router and all service dependencies.
 type Server struct {
@@ -53,6 +79,26 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	})
 	if err != nil {
 		return nil, fmt.Errorf("database pool: %w", err)
+	}
+
+	// Object storage is checked before serving traffic; a configured bucket that is unreachable fails startup.
+	logoStore, err := newObjectStore(ctx, cfg.Storage.Region, cfg.Storage.Logos, logger)
+	if err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("logos object store: %w", err)
+	}
+	attachmentStore, err := newObjectStore(ctx, cfg.Storage.Region, cfg.Storage.Attachments, logger)
+	if err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("attachments object store: %w", err)
+	}
+	var logoBucket *service.LogoBucket
+	if logoStore != nil {
+		logoBucket = &service.LogoBucket{Store: logoStore, CDNURLPrefix: cfg.Storage.Logos.CDNURLPrefix}
+	}
+	var attachments domain.ObjectStore
+	if attachmentStore != nil {
+		attachments = attachmentStore
 	}
 
 	// Repositories
@@ -80,7 +126,9 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	// Notifier
 	var notifier domain.Notifier = infrastructure.NewLogNotifier(logger)
 	var emailNotifier *email.Notifier
+	var accounts domain.AccountDirectory
 	if natsConn != nil {
+		accounts = authservice.NewClient(natsConn, 0)
 		emailNotifier = email.NewNotifier(email.NewClient(natsConn, email.Config{}), email.Repositories{
 			Users:        userRepo,
 			Profiles:     userProfileRepo,
@@ -92,8 +140,13 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			PublicSiteURL: cfg.Email.PublicSiteURL,
 			SelfServeURL:  cfg.Email.SelfServeURL,
 			HRInbox:       cfg.Email.HRInbox,
+
+			AllowedRecipients: cfg.Email.AllowedRecipients,
 		}, logger)
 		notifier = emailNotifier
+		if len(cfg.Email.AllowedRecipients) > 0 {
+			logger.Warn("email restricted to EMAIL_ALLOWED_RECIPIENTS; all other recipients are suppressed", "allowed", len(cfg.Email.AllowedRecipients))
+		}
 	}
 
 	// Services
@@ -106,8 +159,11 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			Timeout: cfg.Crowdfunding.Timeout,
 		}))
 	}
+	if natsConn != nil {
+		programSvc.SetProjectLookup(projects.NewClient(natsConn))
+	}
 	programTermSvc := service.NewProgramTermService(programTermRepo, applicationRepo)
-	programMemberSvc := service.NewProgramMemberService(programMemberRepo, programRepo, notifier, cfg.Local.InviteSecret)
+	programMemberSvc := service.NewProgramMemberService(programMemberRepo, programRepo, userRepo, accounts, notifier, cfg.Local.InviteSecret)
 	applicationSvc := service.NewApplicationService(applicationRepo, taskRepo, programTermRepo, programRepo, programMemberRepo, notifier)
 	taskSvc := service.NewTaskService(taskRepo, applicationRepo, programTermRepo, programMemberRepo, notifier)
 	menteeSvc := service.NewMenteeService(menteeRepo)
@@ -115,11 +171,24 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	platformSummarySvc := service.NewPlatformSummaryService(platformSummaryRepo)
 	rosterSvc := service.NewRosterService(rosterRepo)
 	fundingStatsSvc := service.NewFundingStatsService(programRepo)
+	objectDeletions := db.NewObjectDeletionRepository(pool)
+	fileSvc := service.NewFileService(db.NewFileRepository(pool), objectDeletions, programRepo, taskSvc, logoBucket, attachments)
 
-	var relayCancel context.CancelFunc
+	relayCtx, relayCancel := context.WithCancel(ctx)
+	if logoStore != nil || attachmentStore != nil {
+		relayBuckets := map[domain.ObjectBucket]objectstore.RelayBucket{}
+		if logoStore != nil {
+			relayBuckets[domain.ObjectBucketLogos] = objectstore.RelayBucket{Store: logoStore, CDNURLPrefix: cfg.Storage.Logos.CDNURLPrefix}
+		}
+		if attachmentStore != nil {
+			relayBuckets[domain.ObjectBucketAttachments] = objectstore.RelayBucket{Store: attachmentStore}
+		}
+		go objectstore.NewRelay(objectDeletions, relayBuckets, objectDeletionRelayBatch, logger).Run(relayCtx, objectDeletionRelayInterval)
+	}
 	if natsConn != nil {
 		js, jsErr := jetstream.New(natsConn)
 		if jsErr != nil {
+			relayCancel()
 			natsConn.Close()
 			pool.Close()
 			return nil, fmt.Errorf("FGA JetStream client: %w", jsErr)
@@ -132,8 +201,6 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		relay := fga.NewRelay(outbox, builder, publisher, cfg.FGA.RelayBatch, cfg.FGA.RelayRetryDelay)
 		relay.SetLogger(logger)
 		relay.SetMaxAttempts(cfg.FGA.RelayMaxAttempts)
-		var relayCtx context.Context
-		relayCtx, relayCancel = context.WithCancel(ctx)
 		go relay.Run(relayCtx, cfg.FGA.RelayInterval)
 		indexOutbox := db.NewIndexOutboxRepository(pool)
 		indexOutbox.SetMaxAttempts(cfg.Indexer.MaxAttempts)
@@ -157,13 +224,12 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	platformSummaryH := handler.NewPlatformSummaryHandler(platformSummarySvc)
 	rosterH := handler.NewRosterHandler(rosterSvc)
 	fundingStatsH := handler.NewFundingStatsHandler(fundingStatsSvc)
+	fileH := handler.NewFileHandler(fileSvc, programSvc)
 
 	// JWT authenticator
 	jwtAuth, err := auth.NewJWTAuthenticator(ctx, cfg.jwtAuthConfig(), logger)
 	if err != nil {
-		if relayCancel != nil {
-			relayCancel()
-		}
+		relayCancel()
 		if natsConn != nil {
 			natsConn.Close()
 		}
@@ -177,22 +243,29 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	r.Use(chimiddleware.RequestID)
 	r.Use(chimiddleware.Recoverer)
 	r.Use(otelhttp.NewMiddleware("mentorship-api"))
-	r.Use(chimiddleware.Timeout(time.Duration(float64(cfg.Server.WriteTimeout) * 0.8)))
+	// Applied per route rather than globally so file routes can use fileTransfer instead.
+	requestTimeout := chimiddleware.Timeout(time.Duration(float64(cfg.Server.WriteTimeout) * 0.8))
+	probes := r.With(requestTimeout)
 
 	// Health probes
-	r.Get("/livez", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-	r.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
+	probes.Get("/livez", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	probes.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	probes.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		// Object storage is checked at startup only: an S3 outage fails the file routes, not the whole API.
 		if err := pool.Ping(r.Context()); err != nil {
 			handler.JSON(w, http.StatusServiceUnavailable, map[string]any{"error": "db unavailable"})
 			return
 		}
 		w.WriteHeader(http.StatusOK)
 	})
-	r.Handle("/internal/metrics", expvar.Handler())
+	probes.Handle("/internal/metrics", expvar.Handler())
 
 	var requireGatewayPrincipal func(http.Handler) http.Handler
 	routes := func(r chi.Router) {
+		transfer := r.With(fileTransfer)
+		authTransfer := transfer.With(requireGatewayPrincipal)
+		r = r.With(requestTimeout)
+
 		// ── Public endpoints ─────────────────────────────────────────────────
 		// The fully public lists and aggregates stay service-owned and are
 		// publicly cacheable (docs/rewrite/05-heimdall-gateway.md).
@@ -202,6 +275,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		public.Get("/programs/catalog", programH.ListCatalog)
 		r.Get("/programs/resolve/{id}", programH.ResolveID)
 		r.Get("/programs/{id}", programH.GetByID)
+		transfer.Get("/programs/{id}/logo-download", fileH.DownloadProgramLogo)
 		r.Get("/programs/{id}/header", programH.GetHeaderProjection)
 		r.Get("/programs/{id}/management-summary", programH.GetManagementSummary)
 		r.Get("/programs/{id}/catalog", programH.GetCatalog)
@@ -242,6 +316,8 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			r.Patch("/me", userH.UpdateMe)
 			r.Delete("/me", userH.DeleteMe)
 			r.Get("/me/applications", applicationH.ListByMe)
+			r.Get("/me/programs", programH.ListMine)
+			r.Get("/me/mentor-programs", mentorH.ListMine)
 			r.Get("/me/program-memberships", programMemberH.ListMine)
 			r.Post("/me/program-memberships", programMemberH.RequestMine)
 			r.Post("/me/program-memberships/{id}/withdraw", programMemberH.WithdrawMine)
@@ -261,14 +337,20 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			r.Patch("/programs/{id}", programH.Update)
 			r.Post("/programs/{id}/submit", programH.Submit)
 			r.Post("/programs/{id}/decision", programH.Decision)
+			r.Post("/programs/{id}/hide", programH.Hide)
+			r.Post("/programs/{id}/unhide", programH.Unhide)
 			r.Delete("/programs/{id}", programH.Delete)
+			authTransfer.Post("/programs/{id}/logo-upload", fileH.UploadProgramLogo)
+			r.Delete("/programs/{id}/logo", fileH.DeleteProgramLogo)
 			r.Post("/programs/{id}/skills", programH.AddSkill)
 			r.Delete("/programs/{id}/skills/{skillId}", programH.DeleteSkill)
 
 			// Program members
+			r.Get("/programs/{id}/mentor-candidates", programMemberH.SearchCandidates)
 			r.Post("/programs/{id}/members", programMemberH.Create)
 			r.Patch("/programs/{id}/members/{memberId}", programMemberH.Update)
 			r.Delete("/programs/{id}/members/{memberId}", programMemberH.Delete)
+			r.Post("/programs/{id}/members/{memberId}/resend-invite", programMemberH.ResendInvite)
 
 			// Program terms
 			r.Post("/programs/{id}/terms", programTermH.Create)
@@ -304,6 +386,9 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			r.Patch("/tasks/{id}/submission", taskH.UpdateSubmission)
 			r.Patch("/tasks/{id}/review", taskH.UpdateReview)
 			r.Delete("/tasks/{id}", taskH.Delete)
+			authTransfer.Post("/tasks/{id}/file-upload", fileH.UploadTaskFile)
+			authTransfer.Get("/tasks/{id}/file-download", fileH.DownloadTaskFile)
+			r.Delete("/tasks/{id}/file", fileH.DeleteTaskFile)
 
 			// These cluster-local platform-management routes use backend scope checks;
 			// they are intentionally not exposed through the Heimdall RuleSet yet.
@@ -324,7 +409,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 				return
 			}
 			// M2M principals are authorization identities, not local human users.
-			if strings.HasSuffix(principal.Username, "@clients") {
+			if principal.IsM2M() {
 				next.ServeHTTP(w, req)
 				return
 			}
@@ -379,6 +464,26 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 func (s *Server) Start() error {
 	s.logger.Info("starting mentorship API", "addr", s.httpSrv.Addr)
 	return s.httpSrv.ListenAndServe()
+}
+
+// newObjectStore connects to one bucket, returning nil when the bucket is not configured.
+func newObjectStore(ctx context.Context, region string, cfg BucketConfig, logger *slog.Logger) (*objectstore.Store, error) {
+	if cfg.Bucket == "" {
+		return nil, nil
+	}
+	store, err := objectstore.New(ctx, objectstore.Config{
+		Bucket:              cfg.Bucket,
+		Region:              region,
+		EndpointURL:         cfg.EndpointURL,
+		CreateMissingBucket: cfg.CreateMissingBucket,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := store.EnsureBucket(ctx, logger); err != nil {
+		return nil, err
+	}
+	return store, nil
 }
 
 // Shutdown gracefully stops the server and closes the database pool.

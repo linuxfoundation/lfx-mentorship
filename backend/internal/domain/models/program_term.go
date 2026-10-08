@@ -78,6 +78,17 @@ type ProgramTermCreateInput struct {
 	ApplicationEndDate   *time.Time        `json:"application_end_date,omitempty"`
 }
 
+// ProgramOpenTermInput is one entry of the open-term set sent on a program update:
+// an entry with ID updates that open term, one without creates a new open term.
+type ProgramOpenTermInput struct {
+	ID                   string     `json:"id,omitempty"`
+	Name                 string     `json:"name"`
+	StartDateTime        *time.Time `json:"start_date_time,omitempty"`
+	EndDateTime          *time.Time `json:"end_date_time,omitempty"`
+	ApplicationStartDate *time.Time `json:"application_start_date,omitempty"`
+	ApplicationEndDate   *time.Time `json:"application_end_date,omitempty"`
+}
+
 // ProgramTermUpdateInput is the request body for updating a program term.
 type ProgramTermUpdateInput struct {
 	Name                 *string            `json:"name,omitempty"`

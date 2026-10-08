@@ -24,6 +24,16 @@ type stubProgramMemberSvc struct {
 	listMine       func(context.Context, string, models.ProgramMemberFilter) ([]*models.ProgramMembership, *models.PaginationMeta, error)
 	requestMentor  func(context.Context, string, string) (*models.ProgramMember, error)
 	withdrawMine   func(context.Context, string, string) error
+	delete         func(context.Context, string, string, string) error
+	resendInvite   func(context.Context, string, string, string) error
+	search         func(context.Context, string, string) ([]*models.MentorCandidate, error)
+}
+
+func (s *stubProgramMemberSvc) SearchCandidates(ctx context.Context, programID, query string) ([]*models.MentorCandidate, error) {
+	if s.search != nil {
+		return s.search(ctx, programID, query)
+	}
+	return []*models.MentorCandidate{}, nil
 }
 
 func (s *stubProgramMemberSvc) GetByID(ctx context.Context, id string) (*models.ProgramMember, error) {
@@ -53,7 +63,18 @@ func (s *stubProgramMemberSvc) Update(ctx context.Context, programID, id string,
 	}
 	return &models.ProgramMember{}, nil
 }
-func (s *stubProgramMemberSvc) Delete(context.Context, string, string, string) error { return nil }
+func (s *stubProgramMemberSvc) Delete(ctx context.Context, programID, id, actorID string) error {
+	if s.delete != nil {
+		return s.delete(ctx, programID, id, actorID)
+	}
+	return nil
+}
+func (s *stubProgramMemberSvc) ResendInvite(ctx context.Context, programID, id, actorID string) error {
+	if s.resendInvite != nil {
+		return s.resendInvite(ctx, programID, id, actorID)
+	}
+	return nil
+}
 func (s *stubProgramMemberSvc) ListMine(ctx context.Context, userID string, f models.ProgramMemberFilter) ([]*models.ProgramMembership, *models.PaginationMeta, error) {
 	if s.listMine != nil {
 		return s.listMine(ctx, userID, f)
@@ -71,6 +92,56 @@ func (s *stubProgramMemberSvc) WithdrawMine(ctx context.Context, id, userID stri
 		return s.withdrawMine(ctx, id, userID)
 	}
 	return nil
+}
+
+func TestProgramMemberHandler_SearchCandidates(t *testing.T) {
+	var programID, query string
+	name := "Ada"
+	h := handler.NewProgramMemberHandler(&stubProgramMemberSvc{
+		search: func(_ context.Context, id, q string) ([]*models.MentorCandidate, error) {
+			programID, query = id, q
+			return []*models.MentorCandidate{{LFID: "ada", Name: &name}}, nil
+		},
+	}, &stubProgramSvc{})
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/p1/mentor-candidates?search=ada%40example.org", nil)
+	r = withPrincipal(requestWithChiParam(r, "id", "p1"), "u1")
+	w := httptest.NewRecorder()
+	h.SearchCandidates(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d; want 200", w.Code)
+	}
+	if programID != "p1" || query != "ada@example.org" {
+		t.Errorf("program, query = %q, %q; want p1, ada@example.org", programID, query)
+	}
+	if body := w.Body.String(); !strings.Contains(body, `"lfid":"ada"`) || strings.Contains(body, "email") {
+		t.Errorf("body = %s; want the candidate without email", body)
+	}
+}
+
+func TestProgramMemberHandler_SearchCandidates_Errors(t *testing.T) {
+	for name, tc := range map[string]struct {
+		principal bool
+		err       error
+		want      int
+	}{
+		"no principal":      {false, nil, http.StatusUnauthorized},
+		"short query":       {true, domain.ErrInvalidInput, http.StatusBadRequest},
+		"auth-service down": {true, domain.ErrUpstreamUnavailable, http.StatusServiceUnavailable},
+	} {
+		h := handler.NewProgramMemberHandler(&stubProgramMemberSvc{
+			search: func(context.Context, string, string) ([]*models.MentorCandidate, error) { return nil, tc.err },
+		}, &stubProgramSvc{})
+		r := requestWithChiParam(httptest.NewRequest(http.MethodGet, "/v1/programs/p1/mentor-candidates?search=a", nil), "id", "p1")
+		if tc.principal {
+			r = withPrincipal(r, "u1")
+		}
+		w := httptest.NewRecorder()
+		h.SearchCandidates(w, r)
+		if w.Code != tc.want {
+			t.Errorf("%s: got %d; want %d", name, w.Code, tc.want)
+		}
+	}
 }
 
 // The public roster is active members only, and the caller must not be able to
@@ -108,10 +179,10 @@ func TestProgramMemberHandler_List_HidesUnpublishedProgram(t *testing.T) {
 		},
 	}, &stubProgramSvc{
 		getByID: func(context.Context, string) (*models.Program, error) {
-			return &models.Program{ID: "p1", Status: models.ProgramStatusDraft}, nil
+			return &models.Program{ID: "p1", Status: models.ProgramStatusPending}, nil
 		},
 		getBySlug: func(context.Context, string) (*models.Program, error) {
-			return &models.Program{ID: "p1", Status: models.ProgramStatusDraft}, nil
+			return &models.Program{ID: "p1", Status: models.ProgramStatusPending}, nil
 		},
 	})
 	r := httptest.NewRequest(http.MethodGet, "/v1/programs/p1/members", nil)
@@ -199,12 +270,34 @@ func TestProgramMemberHandler_Update_RejectsMemberFromDifferentProgram(t *testin
 	}
 }
 
-func TestProgramMemberHandler_Delete_RejectsMemberFromDifferentProgram(t *testing.T) {
-	updateCalled := false
+func TestProgramMemberHandler_Delete_DeletesTheRecord(t *testing.T) {
+	var got [3]string
 	h := handler.NewProgramMemberHandler(&stubProgramMemberSvc{
-		update: func(_ context.Context, _, _ string, _ models.ProgramMemberUpdateInput, _ string) (*models.ProgramMember, error) {
-			updateCalled = true
-			return nil, domain.ErrProgramMemberNotFound
+		delete: func(_ context.Context, programID, id, actorID string) error {
+			got = [3]string{programID, id, actorID}
+			return nil
+		},
+		update: func(context.Context, string, string, models.ProgramMemberUpdateInput, string) (*models.ProgramMember, error) {
+			t.Fatal("DELETE must not fall back to a status update")
+			return nil, nil
+		},
+	}, &stubProgramSvc{})
+	r := httptest.NewRequest(http.MethodDelete, "/v1/programs/p1/members/m1", nil)
+	r = requestWithPrincipal(r, "admin-1")
+	r = requestWithChiParam(r, "id", "p1")
+	r = requestWithChiParam(r, "memberId", "m1")
+	w := httptest.NewRecorder()
+	h.Delete(w, r)
+
+	if w.Code != http.StatusNoContent || got != [3]string{"p1", "m1", "admin-1"} {
+		t.Fatalf("got %d %v; want 204 [p1 m1 admin-1]", w.Code, got)
+	}
+}
+
+func TestProgramMemberHandler_Delete_RejectsMemberFromDifferentProgram(t *testing.T) {
+	h := handler.NewProgramMemberHandler(&stubProgramMemberSvc{
+		delete: func(context.Context, string, string, string) error {
+			return domain.ErrProgramMemberNotFound
 		},
 	}, &stubProgramSvc{})
 	r := httptest.NewRequest(http.MethodDelete, "/v1/programs/p1/members/m1", nil)
@@ -217,8 +310,32 @@ func TestProgramMemberHandler_Delete_RejectsMemberFromDifferentProgram(t *testin
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("got %d; want 404", w.Code)
 	}
-	if !updateCalled {
-		t.Fatal("expected update to be called")
+}
+
+func TestProgramMemberHandler_ResendInvite(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err  error
+		want int
+	}{
+		"sent":        {nil, http.StatusNoContent},
+		"not invited": {domain.ErrInvalidStateTransition, http.StatusConflict},
+	} {
+		var got [3]string
+		h := handler.NewProgramMemberHandler(&stubProgramMemberSvc{
+			resendInvite: func(_ context.Context, programID, id, actorID string) error {
+				got = [3]string{programID, id, actorID}
+				return tc.err
+			},
+		}, &stubProgramSvc{})
+		r := httptest.NewRequest(http.MethodPost, "/v1/programs/p1/members/m1/resend-invite", nil)
+		r = requestWithPrincipal(r, "admin-1")
+		r = requestWithChiParam(r, "id", "p1")
+		r = requestWithChiParam(r, "memberId", "m1")
+		w := httptest.NewRecorder()
+		h.ResendInvite(w, r)
+		if w.Code != tc.want || got != [3]string{"p1", "m1", "admin-1"} {
+			t.Errorf("%s: got %d %v; want %d [p1 m1 admin-1]", name, w.Code, got, tc.want)
+		}
 	}
 }
 

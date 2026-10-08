@@ -5,6 +5,7 @@ package service_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -189,5 +190,63 @@ func TestUserProfileService_Create_InvalidProfileType(t *testing.T) {
 	})
 	if !errors.Is(err, domain.ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for invalid profile_type, got %v", err)
+	}
+}
+
+// ── skill_set validation ──────────────────────────────────────────────────────
+
+func TestUserProfileService_SkillSetValidation(t *testing.T) {
+	cases := []struct {
+		name     string
+		skillSet string
+		wantErr  bool
+	}{
+		{"valid", `{"skills":["Go"],"improvementSkills":[],"comments":""}`, false},
+		{"null skill_set", `null`, false},
+		{"null skills", `{"skills":null}`, false},
+		{"not an object", `["Go"]`, true},
+		{"skills not an array", `{"skills":"Go"}`, true},
+		{"null skill", `{"skills":["Go",null]}`, true},
+		{"object skill", `{"skills":[{"name":"Go"}]}`, true},
+		{"blank skill", `{"skills":[" "]}`, true},
+		{"null improvement skill", `{"improvementSkills":[null]}`, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			writes := 0
+			repo := &stubUserProfileRepo{
+				upsertByUserAndType: func(_ context.Context, in models.UserProfileCreateInput) (*models.UserProfile, bool, error) {
+					writes++
+					return &models.UserProfile{UserID: in.UserID}, true, nil
+				},
+				update: func(_ context.Context, id string, _ models.UserProfileUpdateInput) (*models.UserProfile, error) {
+					writes++
+					return &models.UserProfile{ID: id}, nil
+				},
+			}
+			svc := newUserProfileSvc(repo)
+			skillSet := json.RawMessage(tc.skillSet)
+
+			_, err := svc.Create(context.Background(), models.UserProfileCreateInput{UserID: "u1", ProfileType: "mentor", SkillSet: skillSet})
+			assertSkillSetErr(t, "Create", err, tc.wantErr)
+			_, _, err = svc.Upsert(context.Background(), models.UserProfileCreateInput{UserID: "u1", ProfileType: "mentor", SkillSet: skillSet})
+			assertSkillSetErr(t, "Upsert", err, tc.wantErr)
+			_, err = svc.Update(context.Background(), "p1", models.UserProfileUpdateInput{SkillSet: skillSet})
+			assertSkillSetErr(t, "Update", err, tc.wantErr)
+
+			if tc.wantErr && writes != 0 {
+				t.Errorf("repository written %d times; a rejected skill_set must not be persisted", writes)
+			}
+		})
+	}
+}
+
+func assertSkillSetErr(t *testing.T, op string, err error, wantErr bool) {
+	t.Helper()
+	if wantErr && !errors.Is(err, domain.ErrInvalidInput) {
+		t.Errorf("%s: expected ErrInvalidInput, got %v", op, err)
+	}
+	if !wantErr && err != nil {
+		t.Errorf("%s: unexpected error %v", op, err)
 	}
 }

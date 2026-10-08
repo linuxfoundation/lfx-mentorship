@@ -80,6 +80,12 @@ func enqueueProgramIndex(ctx context.Context, tx pgx.Tx, program *models.Program
 		WHERE program_id = $1`, program.ID).Scan(&document.Stats.Mentors, &document.Stats.Mentees, &document.Stats.Graduated); err != nil {
 		return fmt.Errorf("resolve program index stats: %w", err)
 	}
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE(array_agg(skill ORDER BY skill), ARRAY[]::text[])
+		FROM program_skills
+		WHERE program_id = $1`, program.ID).Scan(&document.Skills); err != nil {
+		return fmt.Errorf("resolve program index skills: %w", err)
+	}
 	data, err := json.Marshal(document)
 	if err != nil {
 		return err
@@ -192,6 +198,120 @@ func (r *ProgramRepository) GetHeaderProjection(ctx context.Context, programID s
 	return projection, nil
 }
 
+// sqlUnreviewedProgramStatuses lists program statuses that have not passed review.
+const sqlUnreviewedProgramStatuses = `('` + string(models.ProgramStatusPending) + `', '` + string(models.ProgramStatusSubmitted) + `')`
+
+// sqlProgramTermsAllClosed is true for a programs row that has a closed term
+// and no open one; deleted terms are ignored. A published program in that state
+// is completed on the admin and mentor programs lists, and otherwise open.
+const sqlProgramTermsAllClosed = `(NOT EXISTS (SELECT 1 FROM program_terms pt WHERE pt.program_id = programs.id AND pt.status = 'open')
+	AND EXISTS (SELECT 1 FROM program_terms pt WHERE pt.program_id = programs.id AND pt.status = 'closed'))`
+
+// programListOrder orders the rows of alias on the admin and mentor programs
+// lists by their statusColumn (open, pending_review, completed, hidden, then
+// the rest), then by name, then by id. Mentor rows are only open or completed,
+// which share their values with AdministeredProgramStatus.
+func programListOrder(alias, statusColumn string) string {
+	return ` ORDER BY CASE ` + alias + `.` + statusColumn + `
+		WHEN '` + string(models.AdministeredProgramStatusOpen) + `' THEN 1
+		WHEN '` + string(models.AdministeredProgramStatusPendingReview) + `' THEN 2
+		WHEN '` + string(models.AdministeredProgramStatusCompleted) + `' THEN 3
+		WHEN '` + string(models.AdministeredProgramStatusHidden) + `' THEN 4
+		ELSE 5 END, LOWER(` + alias + `.name), ` + alias + `.id`
+}
+
+// administeredProgramsFrom selects the programs $1 is an active program admin
+// of, with the admin status. A published program is completed once all its
+// terms are closed; with no terms at all it is still open.
+const administeredProgramsFrom = `
+	FROM (
+		SELECT programs.id, programs.slug, programs.name, programs.lf_project_uid, programs.lf_project_name,
+			programs.logo_url, programs.status, programs.created_on, programs.updated_on,
+			CASE
+				WHEN programs.status IN ` + sqlUnreviewedProgramStatuses + ` THEN 'pending_review'
+				WHEN programs.status = 'published' AND ` + sqlProgramTermsAllClosed + ` THEN 'completed'
+				WHEN programs.status = 'published' THEN 'open'
+				WHEN programs.status = 'rejected' THEN 'rejected'
+				ELSE 'hidden' -- archived | hidden
+			END AS admin_status
+		FROM programs
+		JOIN program_members pm ON pm.program_id = programs.id
+		WHERE pm.user_id = $1 AND pm.member_type = 'program_admin' AND pm.status = 'active'
+	) ap`
+
+// ListAdministeredByUser returns the programs userID is an active program
+// admin of, ordered by programListOrder. Stats are counted for the returned
+// page only and match GetHeaderProjection.
+func (r *ProgramRepository) ListAdministeredByUser(ctx context.Context, userID string, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+	ctx, span := programTracer.Start(ctx, "db.programs.ListAdministeredByUser")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.user_id", userID))
+
+	limit := filter.Limit
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	offset := filter.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	args := []any{userID}
+	where := ` WHERE 1=1`
+	if filter.Status != "" {
+		args = append(args, string(filter.Status))
+		where += fmt.Sprintf(` AND ap.admin_status = $%d`, len(args))
+	}
+	if filter.Search != "" {
+		args = append(args, "%"+filter.Search+"%")
+		where += fmt.Sprintf(` AND (ap.name ILIKE $%d OR ap.lf_project_name ILIKE $%d)`, len(args), len(args))
+	}
+
+	var total int
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*)`+administeredProgramsFrom+where, args...).Scan(&total); err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("count administered programs: %w", err)
+	}
+
+	args = append(args, limit, offset)
+	q := `SELECT page.id, page.slug, page.name, page.lf_project_uid, page.lf_project_name, page.logo_url,
+			page.status, page.admin_status, page.created_on, page.updated_on,
+			(SELECT COUNT(*) FROM program_members m WHERE m.program_id = page.id AND m.member_type = 'mentor' AND m.status = 'active'),
+			mentees.accepted, mentees.graduated
+		FROM (SELECT ap.*` + administeredProgramsFrom + where +
+		programListOrder("ap", "admin_status") + fmt.Sprintf(` LIMIT $%d OFFSET $%d`, len(args)-1, len(args)) + `) page
+		LEFT JOIN LATERAL (
+			SELECT COUNT(*) FILTER (WHERE a.status = 'accepted') AS accepted,
+				COUNT(*) FILTER (WHERE a.status = 'graduated') AS graduated
+			FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id
+			WHERE pt.program_id = page.id AND a.role = 'mentee'
+		) mentees ON TRUE` + programListOrder("page", "admin_status")
+
+	rows, err := r.pool.Query(ctx, q, args...)
+	if err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("list administered programs: %w", err)
+	}
+	defer rows.Close()
+
+	programs := make([]*models.AdministeredProgram, 0)
+	for rows.Next() {
+		var p models.AdministeredProgram
+		if err := rows.Scan(&p.ID, &p.Slug, &p.Name, &p.ProjectUID, &p.ProjectName, &p.LogoURL,
+			&p.Status, &p.AdminStatus, &p.CreatedOn, &p.UpdatedOn,
+			&p.Stats.Mentors, &p.Stats.Mentees, &p.Stats.Graduated); err != nil {
+			span.RecordError(err)
+			return nil, nil, fmt.Errorf("scan administered program: %w", err)
+		}
+		programs = append(programs, &p)
+	}
+	if err := rows.Err(); err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("rows error: %w", err)
+	}
+	return programs, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, nil
+}
+
 // List returns a paginated slice of programs optionally filtered by status or search.
 func (r *ProgramRepository) List(ctx context.Context, filter models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error) {
 	ctx, span := programTracer.Start(ctx, "db.programs.List")
@@ -286,9 +406,10 @@ func (r *ProgramRepository) GetManagementSummary(ctx context.Context, programID 
 		SELECT
 			EXISTS (SELECT 1 FROM program_terms WHERE program_id = $1 AND status = 'open'),
 			EXISTS (SELECT 1 FROM program_terms WHERE program_id = $1 AND status = 'closed'),
-			COUNT(a.id) FILTER (WHERE pt.status = 'open' AND p.status NOT IN ('draft', 'submitted') AND a.role = 'mentee' AND a.status IN ('accepted', 'graduated')),
-			COUNT(a.id) FILTER (WHERE pt.status = 'closed' AND p.status NOT IN ('draft', 'submitted') AND a.role = 'mentee'),
-			COUNT(a.id) FILTER (WHERE p.status NOT IN ('draft', 'submitted') AND a.role = 'mentee'),
+			COUNT(a.id) FILTER (WHERE pt.status = 'open' AND p.status NOT IN ` + sqlUnreviewedProgramStatuses + ` AND a.role = 'mentee' AND a.status IN ('accepted', 'graduated')),
+			-- Counted per (term, user): a withdrawn application is kept beside its reapplication.
+			COUNT(DISTINCT (a.program_term_id, a.user_id)) FILTER (WHERE pt.status = 'closed' AND p.status NOT IN ` + sqlUnreviewedProgramStatuses + ` AND a.role = 'mentee'),
+			COUNT(DISTINCT (a.program_term_id, a.user_id)) FILTER (WHERE p.status NOT IN ` + sqlUnreviewedProgramStatuses + ` AND a.role = 'mentee'),
 			(SELECT COUNT(*) FROM program_members pm WHERE pm.program_id = $1 AND pm.member_type = 'mentor' AND pm.status = 'active'),
 			(SELECT COUNT(*) FROM program_terms WHERE program_id = $1 AND status <> 'deleted')
 		FROM program_terms pt
@@ -759,6 +880,10 @@ func (r *ProgramRepository) CreateEnrollment(ctx context.Context, input models.P
 			return nil, fmt.Errorf("create enrollment skill: %w", err)
 		}
 	}
+	// createInTx indexed the program before its skills existed; refresh the snapshot.
+	if err := enqueueProgramIndex(ctx, tx, program, "created"); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create enrollment transaction: %w", err)
 	}
@@ -775,6 +900,21 @@ func (r *ProgramRepository) Update(ctx context.Context, id string, input models.
 		return nil, fmt.Errorf("begin update program transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if input.Status != nil {
+		var current models.ProgramStatus
+		if err := tx.QueryRow(ctx, `SELECT status FROM programs WHERE id = $1 FOR UPDATE`, id).Scan(&current); errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrProgramNotFound
+		} else if err != nil {
+			return nil, fmt.Errorf("lock program for status change: %w", err)
+		} else if input.ExpectedStatus != nil && current != *input.ExpectedStatus {
+			return nil, fmt.Errorf("%w: program status changed concurrently", domain.ErrInvalidStateTransition)
+		}
+		if *input.Status == models.ProgramStatusHidden {
+			if err := checkNoBlockingApplications(ctx, tx, id); err != nil {
+				return nil, err
+			}
+		}
+	}
 
 	const q = `
 		UPDATE programs SET
@@ -821,6 +961,27 @@ func (r *ProgramRepository) Update(ctx context.Context, id string, input models.
 		span.RecordError(err)
 		return nil, fmt.Errorf("update program: %w", err)
 	}
+	if input.ProjectUID != nil {
+		if _, err := tx.Exec(ctx, `
+			UPDATE programs SET lf_project_uid = $2, lf_project_slug = $3, lf_project_name = $4, lf_project_logo_url = $5
+			WHERE id = $1`, updatedID, input.ProjectUID, input.ProjectSlug, input.ProjectName, input.ProjectLogoURL); err != nil {
+			span.RecordError(err)
+			return nil, fmt.Errorf("update program project: %w", err)
+		}
+	}
+	if input.Skills != nil {
+		if err := replaceProgramSkills(ctx, tx, updatedID, input.Skills); err != nil {
+			span.RecordError(err)
+			return nil, err
+		}
+	}
+	// The UPDATE above holds the program row lock that replaceOpenTerms requires.
+	if input.Terms != nil {
+		if err := replaceOpenTerms(ctx, tx, updatedID, input.Terms); err != nil {
+			span.RecordError(err)
+			return nil, err
+		}
+	}
 
 	p, err := scanProgram(tx.QueryRow(ctx, `SELECT`+programSelectCols+programsWithFundingFrom+` WHERE programs.id = $1`, updatedID))
 	if err != nil {
@@ -848,8 +1009,23 @@ func (r *ProgramRepository) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("begin delete program transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	var logoURL *string
+	if err := tx.QueryRow(ctx, `SELECT logo_url FROM programs WHERE id = $1 FOR UPDATE`, id).Scan(&logoURL); errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrProgramNotFound
+	} else if err != nil {
+		return fmt.Errorf("lock program before delete: %w", err)
+	}
+	if err := lockProgramDescendants(ctx, tx, id); err != nil {
+		return err
+	}
 	applicationIDs, taskIDs, err := descendantIDsForProgram(ctx, tx, id)
 	if err != nil {
+		return err
+	}
+	if err := queueObjectDeletions(ctx, tx, domain.ObjectBucketLogos, logoURL); err != nil {
+		return err
+	}
+	if err := queueTaskFileDeletions(ctx, tx, "id = ANY($1)", taskIDs); err != nil {
 		return err
 	}
 
@@ -906,6 +1082,43 @@ func enqueueObjectMarker(ctx context.Context, tx pgx.Tx, objectType, objectID, o
 		              updated_on = NOW()`
 	if _, err := tx.Exec(ctx, q, objectType, objectID, operation); err != nil {
 		return fmt.Errorf("enqueue %s FGA marker: %w", objectType, err)
+	}
+	return nil
+}
+
+// checkNoBlockingApplications re-checks the hide guard inside the hiding transaction, which
+// holds the program row lock. Inserts lock their term and status changes lock their
+// application before writing, so locking the open terms and the applications waits out any
+// write in flight; one that starts later sees the program hidden.
+func checkNoBlockingApplications(ctx context.Context, tx pgx.Tx, programID string) error {
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM program_terms WHERE program_id = $1 AND status = 'open' FOR UPDATE`, programID); err != nil {
+		return fmt.Errorf("lock open terms before hiding: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		SELECT 1 FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id
+		WHERE pt.program_id = $1 FOR UPDATE OF a`, programID); err != nil {
+		return fmt.Errorf("lock applications before hiding: %w", err)
+	}
+	var count int
+	if err := tx.QueryRow(ctx, countBlockingAppsForProgramSQL, programID, blockingApplicationStatuses).Scan(&count); err != nil {
+		return fmt.Errorf("count blocking applications before hiding: %w", err)
+	}
+	if count > 0 {
+		return fmt.Errorf("%w: program has %d active application(s) and cannot be hidden", domain.ErrStateLocked, count)
+	}
+	return nil
+}
+
+// lockProgramDescendants write-locks a program's terms and applications, which blocks new
+// tasks under them, so the task set read for file deletion cannot grow before the delete.
+func lockProgramDescendants(ctx context.Context, tx pgx.Tx, programID string) error {
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM program_terms WHERE program_id = $1 FOR UPDATE`, programID); err != nil {
+		return fmt.Errorf("lock program terms before delete: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		SELECT 1 FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id
+		WHERE pt.program_id = $1 FOR UPDATE OF a`, programID); err != nil {
+		return fmt.Errorf("lock program applications before delete: %w", err)
 	}
 	return nil
 }
@@ -974,6 +1187,21 @@ func (r *ProgramRepository) ListSkills(ctx context.Context, programID string) ([
 		skills = []*models.ProgramSkill{}
 	}
 	return skills, rows.Err()
+}
+
+// replaceProgramSkills makes skills the program's full skill set, keeping the
+// rows (and IDs) of skills that already exist with the same spelling.
+func replaceProgramSkills(ctx context.Context, tx pgx.Tx, programID string, skills []string) error {
+	if _, err := tx.Exec(ctx, `DELETE FROM program_skills WHERE program_id = $1 AND NOT (skill = ANY($2))`, programID, skills); err != nil {
+		return fmt.Errorf("remove program skills: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO program_skills (program_id, skill)
+		SELECT $1, unnest($2::text[])
+		ON CONFLICT (program_id, skill) DO NOTHING`, programID, skills); err != nil {
+		return fmt.Errorf("add program skills: %w", err)
+	}
+	return nil
 }
 
 // AddSkill inserts a new skill for a program.
@@ -1094,7 +1322,7 @@ func (r *ProgramRepository) ListFundingSyncProgramIDs(ctx context.Context) ([]st
 	const q = `
 		SELECT programs.id
 		FROM programs
-		WHERE status NOT IN ('archived', 'draft')
+		WHERE status NOT IN ('` + string(models.ProgramStatusArchived) + `', '` + string(models.ProgramStatusPending) + `')
 		ORDER BY programs.id`
 
 	rows, err := r.pool.Query(ctx, q)

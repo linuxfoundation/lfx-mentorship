@@ -32,13 +32,13 @@ All `curl` examples below assume `BASE=http://localhost:8090/v1` and
 
 ## Scenario 1 — Program Lifecycle (happy path)
 
-### 1a. Create a draft program
+### 1a. Create a pending program
 
 ```bash
 curl -s -X POST $BASE/programs $AUTH \
   -H 'Content-Type: application/json' \
   -d '{"name":"Go Mentorship 2026","slug":"go-2026","description":"Learn Go.","repo_link":"https://github.com/example/go","logo_url":"https://example.com/logo.png"}'
-# Expected: 201, body contains "status":"draft"
+# Expected: 201, body contains "status":"pending"
 ```
 
 ### 1b. Add a term (required before submission)
@@ -226,7 +226,7 @@ curl -s -X PATCH $BASE/applications/$APP_ID $AUTH -d '{"status":"graduated"}'
 ```bash
 # FR-008: pending, accepted, and graduated applications all block hiding.
 # $APP_ID is `graduated` after 4f, so this program is still blocked.
-curl -s -X PATCH $BASE/programs/$PROGRAM_ID $AUTH -d '{"status":"hidden"}'
+curl -s -X POST $BASE/programs/$PROGRAM_ID/hide $AUTH
 # Expected: 409, error listing blocking application count
 
 # Hiding requires a program with no pending/accepted/graduated application.
@@ -234,11 +234,11 @@ curl -s -X PATCH $BASE/programs/$PROGRAM_ID $AUTH -d '{"status":"hidden"}'
 # a second published program whose only application was declined or withdrawn.
 HIDEABLE_PROGRAM_ID=<id of a published program with no blocking application>
 
-curl -s -X PATCH $BASE/programs/$HIDEABLE_PROGRAM_ID $AUTH -d '{"status":"hidden"}'
+curl -s -X POST $BASE/programs/$HIDEABLE_PROGRAM_ID/hide $AUTH
 # Expected: 200, "status":"hidden"
 
 # Unhide
-curl -s -X PATCH $BASE/programs/$HIDEABLE_PROGRAM_ID $AUTH -d '{"status":"published"}'
+curl -s -X POST $BASE/programs/$HIDEABLE_PROGRAM_ID/unhide $AUTH
 # Expected: 200, "status":"published"
 ```
 
