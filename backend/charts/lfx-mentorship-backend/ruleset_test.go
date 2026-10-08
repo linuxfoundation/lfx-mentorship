@@ -232,6 +232,7 @@ func TestMentorModuleRoutesAreCoveredByHeimdall(t *testing.T) {
 		"/mentorship/v1/me/profiles",
 		"/mentorship/v1/me/profiles/:profileType",
 		"/mentorship/v1/me/applications",
+		"/mentorship/v1/me/mentor-programs",
 		"/mentorship/v1/mentor-invites/:token/accept",
 		"/mentorship/v1/mentor-invites/:token/decline",
 		"/mentorship/v1/programs/:programID/terms/:id/applications",
@@ -302,6 +303,30 @@ func TestMentorCandidatesRequiresProgramWriter(t *testing.T) {
 	}
 	if strings.Contains(block, "anonymous_authenticator") || strings.Contains(block, "allow_all") {
 		t.Errorf("mentor-candidates rule must not admit anonymous or unchecked callers:\n%s", block)
+	}
+}
+
+// The caller's program lists take the user from the principal, so the gateway
+// needs only a signed-in user.
+func TestMeProgramListsNeedOnlyASignedInUser(t *testing.T) {
+	block := ruleBlock(t, "identity")
+	for _, route := range []string{
+		"/mentorship/v1/me/programs",
+		"/mentorship/v1/me/mentor-programs",
+	} {
+		if !strings.Contains(block, "- path: "+route+"\n") {
+			t.Errorf("identity rule is missing %q:\n%s", route, block)
+		}
+	}
+	expected := `      execute:
+        - authenticator: oidc
+        - authorizer: allow_all
+        - finalizer: create_jwt`
+	if !strings.Contains(block, expected) {
+		t.Errorf("identity rule lacks oidc -> allow_all -> create_jwt sequence:\n%s", block)
+	}
+	if strings.Contains(block, "anonymous_authenticator") {
+		t.Errorf("identity rule must not admit anonymous callers:\n%s", block)
 	}
 }
 
