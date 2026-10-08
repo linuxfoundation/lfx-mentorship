@@ -63,6 +63,16 @@ type AdministeredProgramFilter struct {
 	Status AdministeredProgramStatus // empty for every status
 }
 
+// MentoredProgramMaxLimit is the largest page of the caller's mentor programs list.
+const MentoredProgramMaxLimit = 100
+
+// MentoredProgramFilter pages the caller's mentor programs list. A zero Limit
+// means the default page size.
+type MentoredProgramFilter struct {
+	Limit  int
+	Offset int
+}
+
 // ProgramEnrollmentTemplate contains the fields needed to prefill enrollment.
 type ProgramEnrollmentTemplate struct {
 	Program       Program         `json:"program"`

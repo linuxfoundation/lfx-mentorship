@@ -202,34 +202,24 @@ func (r *ProgramRepository) GetHeaderProjection(ctx context.Context, programID s
 const sqlUnreviewedProgramStatuses = `('` + string(models.ProgramStatusPending) + `', '` + string(models.ProgramStatusSubmitted) + `')`
 
 // administeredProgramsFrom selects the programs $1 is an active program admin
-// of, with the ID of the term shown on the list (the latest open term, else the
-// latest closed one) and the admin status. A published program with no open
-// term is completed once it has a closed term; with no terms at all it is still
-// open.
+// of, with the ID of the term shown on the list (see chosenProgramTermJoin) and
+// the admin status. A published program is completed when the chosen term is
+// closed, that is when it has closed terms and no open one; with no terms at
+// all it is still open.
 const administeredProgramsFrom = `
 	FROM (
 		SELECT programs.id, programs.slug, programs.name, programs.lf_project_uid, programs.lf_project_name,
 			programs.logo_url, programs.status, programs.created_on, programs.updated_on,
-			COALESCE(open_term.id, closed_term.id) AS term_id,
+			chosen_term.id AS term_id,
 			CASE
 				WHEN programs.status IN ` + sqlUnreviewedProgramStatuses + ` THEN 'pending_review'
-				WHEN programs.status = 'published' AND open_term.id IS NULL AND closed_term.id IS NOT NULL THEN 'completed'
+				WHEN programs.status = 'published' AND chosen_term.term_rank = ` + chosenTermRankClosed + ` THEN 'completed'
 				WHEN programs.status = 'published' THEN 'open'
 				WHEN programs.status = 'rejected' THEN 'rejected'
 				ELSE 'hidden' -- archived | hidden
 			END AS admin_status
 		FROM programs
-		JOIN program_members pm ON pm.program_id = programs.id
-		LEFT JOIN LATERAL (
-			SELECT pt.id FROM program_terms pt
-			WHERE pt.program_id = programs.id AND pt.status = 'open'
-			ORDER BY pt.start_date_time DESC NULLS LAST LIMIT 1
-		) open_term ON TRUE
-		LEFT JOIN LATERAL (
-			SELECT pt.id FROM program_terms pt
-			WHERE pt.program_id = programs.id AND pt.status = 'closed'
-			ORDER BY pt.start_date_time DESC NULLS LAST LIMIT 1
-		) closed_term ON TRUE
+		JOIN program_members pm ON pm.program_id = programs.id` + chosenProgramTermJoin + `
 		WHERE pm.user_id = $1 AND pm.member_type = 'program_admin' AND pm.status = 'active'
 	) ap`
 
@@ -313,25 +303,13 @@ func (r *ProgramRepository) ListAdministeredByUser(ctx context.Context, userID s
 	}
 	rows.Close()
 
-	if len(termIDs) > 0 {
-		termRows, err := r.pool.Query(ctx, `SELECT`+programTermCols+` FROM program_terms WHERE id = ANY($1)`, termIDs)
-		if err != nil {
-			span.RecordError(err)
-			return nil, nil, fmt.Errorf("list administered program terms: %w", err)
-		}
-		defer termRows.Close()
-		for termRows.Next() {
-			t, err := scanProgramTerm(termRows)
-			if err != nil {
-				span.RecordError(err)
-				return nil, nil, fmt.Errorf("scan administered program term: %w", err)
-			}
-			byTermID[t.ID].Term = t
-		}
-		if err := termRows.Err(); err != nil {
-			span.RecordError(err)
-			return nil, nil, fmt.Errorf("rows error: %w", err)
-		}
+	terms, err := loadProgramTermsByID(ctx, r.pool, termIDs)
+	if err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("list administered program terms: %w", err)
+	}
+	for id, t := range terms {
+		byTermID[id].Term = t
 	}
 	return programs, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, nil
 }

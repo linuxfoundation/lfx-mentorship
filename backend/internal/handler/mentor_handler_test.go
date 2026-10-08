@@ -6,20 +6,31 @@ package handler_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/handler"
+	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/auth"
 )
 
 type stubMentorSvc struct {
 	list        func(context.Context, models.MentorFilter) (*models.MentorPage, error)
 	summary     func(context.Context) (*models.MentorSummary, error)
 	getByUserID func(context.Context, string) (*models.MentorDetail, error)
+	listMine    func(context.Context, string, models.MentoredProgramFilter) ([]*models.MentoredProgram, *models.PaginationMeta, error)
+}
+
+func (s *stubMentorSvc) ListMine(ctx context.Context, userID string, f models.MentoredProgramFilter) ([]*models.MentoredProgram, *models.PaginationMeta, error) {
+	if s.listMine != nil {
+		return s.listMine(ctx, userID, f)
+	}
+	return []*models.MentoredProgram{}, &models.PaginationMeta{}, nil
 }
 
 func (s *stubMentorSvc) List(ctx context.Context, f models.MentorFilter) (*models.MentorPage, error) {
@@ -148,5 +159,133 @@ func TestMentorHandler_GetByID_NotFound(t *testing.T) {
 	h.GetByID(w, r)
 	if w.Code != http.StatusNotFound {
 		t.Errorf("got %d; want 404", w.Code)
+	}
+}
+
+func TestMentorHandler_ListMine_ScopesToPrincipal(t *testing.T) {
+	var gotUser string
+	var gotFilter models.MentoredProgramFilter
+	h := handler.NewMentorHandler(&stubMentorSvc{
+		listMine: func(_ context.Context, userID string, f models.MentoredProgramFilter) ([]*models.MentoredProgram, *models.PaginationMeta, error) {
+			gotUser, gotFilter = userID, f
+			return []*models.MentoredProgram{{
+				ID:         "p1",
+				Name:       "GridFlow",
+				Term:       &models.ProgramTerm{ID: "t1", ProgramID: "p1", Name: "Fall 2026", Status: models.ProgramTermStatusOpen},
+				TermStatus: models.MentoredProgramTermStatusActiveTerm,
+				Stats:      models.MentoredProgramStats{Mentees: 3, Applicants: 12, TasksToReview: 2},
+			}}, &models.PaginationMeta{Total: 1, Limit: 5, Offset: 10}, nil
+		},
+	})
+	r := requestWithPrincipal(httptest.NewRequest(http.MethodGet, "/v1/me/mentor-programs?limit=5&offset=10", nil), "caller-user")
+	w := httptest.NewRecorder()
+	h.ListMine(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d; want 200: %s", w.Code, w.Body.String())
+	}
+	if gotUser != "caller-user" {
+		t.Errorf("user = %q; want caller-user", gotUser)
+	}
+	if want := (models.MentoredProgramFilter{Limit: 5, Offset: 10}); gotFilter != want {
+		t.Errorf("filter = %+v; want %+v", gotFilter, want)
+	}
+	var body struct {
+		Data []models.MentoredProgram `json:"data"`
+		Meta models.PaginationMeta    `json:"meta"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.Data) != 1 || body.Meta.Total != 1 {
+		t.Fatalf("unexpected body: %+v", body)
+	}
+	got := body.Data[0]
+	if got.TermStatus != models.MentoredProgramTermStatusActiveTerm || got.Term == nil || got.Term.ID != "t1" ||
+		got.Stats != (models.MentoredProgramStats{Mentees: 3, Applicants: 12, TasksToReview: 2}) {
+		t.Errorf("row = %+v; want active term t1 with the service's stats", got)
+	}
+}
+
+func TestMentorHandler_ListMine_EmptyIsDataArray(t *testing.T) {
+	h := handler.NewMentorHandler(&stubMentorSvc{})
+	r := requestWithPrincipal(httptest.NewRequest(http.MethodGet, "/v1/me/mentor-programs", nil), "caller-user")
+	w := httptest.NewRecorder()
+	h.ListMine(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d; want 200", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), `"data":[]`) {
+		t.Errorf("body = %s; want an empty data array", w.Body.String())
+	}
+}
+
+func TestMentorHandler_ListMine_RequiresUserPrincipal(t *testing.T) {
+	h := handler.NewMentorHandler(&stubMentorSvc{
+		listMine: func(context.Context, string, models.MentoredProgramFilter) ([]*models.MentoredProgram, *models.PaginationMeta, error) {
+			t.Fatal("service must not be called without a user principal")
+			return nil, nil, nil
+		},
+	})
+	for name, principal := range map[string]*models.Principal{
+		"none": nil,
+		"m2m":  {UserID: "client-id@clients", Username: "client-id@clients"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "/v1/me/mentor-programs", nil)
+			if principal != nil {
+				r = r.WithContext(auth.ContextWithPrincipal(r.Context(), principal))
+			}
+			w := httptest.NewRecorder()
+			h.ListMine(w, r)
+			if w.Code != http.StatusUnauthorized {
+				t.Errorf("got %d; want 401", w.Code)
+			}
+		})
+	}
+}
+
+func TestMentorHandler_ListMine_BadPagination(t *testing.T) {
+	h := handler.NewMentorHandler(&stubMentorSvc{
+		listMine: func(context.Context, string, models.MentoredProgramFilter) ([]*models.MentoredProgram, *models.PaginationMeta, error) {
+			t.Fatal("service must not be called with bad paging")
+			return nil, nil, nil
+		},
+	})
+	for _, query := range []string{"limit=abc", "offset=abc"} {
+		t.Run(query, func(t *testing.T) {
+			r := requestWithPrincipal(httptest.NewRequest(http.MethodGet, "/v1/me/mentor-programs?"+query, nil), "caller-user")
+			w := httptest.NewRecorder()
+			h.ListMine(w, r)
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("got %d; want 400", w.Code)
+			}
+		})
+	}
+}
+
+func TestMentorHandler_ListMine_OutOfRangePagination(t *testing.T) {
+	for query, want := range map[string]models.MentoredProgramFilter{
+		"limit=101": {Limit: 101},
+		"offset=-1": {Offset: -1},
+	} {
+		t.Run(query, func(t *testing.T) {
+			var got models.MentoredProgramFilter
+			h := handler.NewMentorHandler(&stubMentorSvc{
+				listMine: func(_ context.Context, _ string, f models.MentoredProgramFilter) ([]*models.MentoredProgram, *models.PaginationMeta, error) {
+					got = f
+					return nil, nil, fmt.Errorf("%w: out of range", domain.ErrInvalidInput)
+				},
+			})
+			r := requestWithPrincipal(httptest.NewRequest(http.MethodGet, "/v1/me/mentor-programs?"+query, nil), "caller-user")
+			w := httptest.NewRecorder()
+			h.ListMine(w, r)
+			if got != want {
+				t.Errorf("filter = %+v; want %+v passed to the service", got, want)
+			}
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("got %d; want 400", w.Code)
+			}
+		})
 	}
 }

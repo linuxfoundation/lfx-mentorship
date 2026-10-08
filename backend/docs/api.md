@@ -20,6 +20,7 @@ The gateway-authorized API uses canonical resource paths:
 - User application reads use `/me/applications`.
 - Mentor self-service program requests use `/me/program-memberships`.
 - Program admins list their programs with `/me/programs`.
+- Mentors list the programs they mentor with `/me/mentor-programs`.
 - Program-admin collection reads use Query Service
   `/query/resources?v=1&type=mentorship_program&filter_grants=direct`.
 - Term-scoped routes use `/programs/{programUID}/terms/{termID}`.
@@ -1542,11 +1543,24 @@ request body.
 
 ### Program admin self-service
 
+#### Program list term
+
+`GET /v1/me/programs` and `GET /v1/me/mentor-programs` show one term per
+program, chosen the same way: the first match below. Deleted terms are never
+chosen, and ties break on `id`.
+
+| Priority | Term |
+|---|---|
+| 1 | An `open` term that has started: the one that started most recently |
+| 2 | An `open` term that has not started or has no start date: the first to start, undated last |
+| 3 | A `closed` term: the one that started most recently |
+| 4 | No term: `term` is omitted |
+
 #### AdministeredProgram Object
 
 One row of the caller's programs list. `term` is a
-[ProgramTerm](#programterm-object): the latest open term, else the latest
-closed term, and is omitted when the program has no terms. `stats` matches `GET /v1/programs/{id}/header`.
+[ProgramTerm](#programterm-object) chosen as in [Program list term](#program-list-term),
+and is omitted when the program has no open or closed term. `stats` matches `GET /v1/programs/{id}/header`.
 
 ```json
 {
@@ -1596,6 +1610,69 @@ this is not yet a Query Service collection.
 ```
 
 **Errors** `400` (unknown `status`, non-integer `limit`/`offset`), `401` (no principal, or a machine-to-machine client)
+
+---
+
+### Mentor programs
+
+#### MentoredProgram Object
+
+One row of the caller's mentor programs list. `term` is a
+[ProgramTerm](#programterm-object) chosen as in [Program list term](#program-list-term),
+and is omitted when the program has no open or closed term. `project_name` and
+`logo_url` are omitted when absent.
+
+```json
+{
+  "id":           "uuid",
+  "slug":         "example-program",
+  "name":         "Example Program",
+  "project_name": "Example Project",
+  "logo_url":     "https://...",
+  "term":         <ProgramTerm>,
+  "term_status":  "active_term",
+  "stats":        { "mentees": 3, "applicants": 12, "tasks_to_review": 2 }
+}
+```
+
+`term_status` follows the term's priority:
+
+| Priority | `term_status` |
+|---|---|
+| 1 | `active_term` |
+| 2 | `upcoming` |
+| 3 | `completed` |
+| 4 | `upcoming`, with zero `stats` |
+
+`stats` counts the chosen term only and matches
+`GET /v1/programs/{id}/applications?term=` for that term:
+
+- `applicants`: mentee applications, one per user (a withdrawn application kept beside its reapplication is not counted twice)
+- `mentees`: applicants whose status is `accepted` or `graduated`
+- `tasks_to_review`: `submitted` tasks of `accepted` mentees. A graduated mentee's leftover submission and a mentor-role application's tasks are not counted.
+
+#### `GET /v1/me/mentor-programs` 🔒
+
+Lists the `published` programs the caller is an `active` mentor of, ordered by
+`term_status` (`active_term`, `upcoming`, `completed`), then by name. The user
+is always the principal. The gateway requires only a signed-in user (`oidc`);
+see the [route matrix](../../docs/rewrite/06-route-matrix.md) for why this is
+not a Query Service collection. A caller who mentors no programs gets `200`
+with an empty `data` array.
+
+**Query parameters**
+
+| Parameter | Values | Description |
+|---|---|---|
+| `limit` | `0`–`100` | Page size; omitted or `0` means the default of 20 |
+| `offset` | `0` or more | Rows to skip |
+
+**Response** `200`
+```json
+{ "data": [<MentoredProgram>, ...], "meta": {...} }
+```
+
+**Errors** `400` (non-integer `limit`/`offset`, `limit` negative or above 100, negative `offset`), `401` (no principal, or a machine-to-machine client)
 
 ---
 
