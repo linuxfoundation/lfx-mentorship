@@ -277,7 +277,6 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		r.Get("/programs/{id}", programH.GetByID)
 		transfer.Get("/programs/{id}/logo-download", fileH.DownloadProgramLogo)
 		r.Get("/programs/{id}/header", programH.GetHeaderProjection)
-		r.Get("/programs/{id}/management-summary", programH.GetManagementSummary)
 		r.Get("/programs/{id}/catalog", programH.GetCatalog)
 		r.Get("/programs/{id}/mentees", programH.ListCatalogMentees)
 		r.Get("/programs/{id}/skills", programH.ListSkills)
@@ -294,9 +293,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		r.Get("/programs/{id}/transactions", programH.GetCategorizedTransactions)
 		r.Get("/programs/{id}/sponsors", programH.GetProgramSponsors)
 		r.Get("/programs/{id}/terms", programTermH.ListByProgram)
-		r.Get("/programs/{id}/term-management", programTermH.ListManagementByProgram)
 		r.Get("/programs/{id}/members", programMemberH.List)
-		r.Get("/programs/{id}/member-management", programMemberH.ListMentorManagement)
 
 		r.Get("/programs/{programID}/terms/{termID}", programTermH.GetByID)
 
@@ -305,6 +302,11 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			r.Use(requireGatewayPrincipal)
 
 			r.Get("/programs/{id}/enroll-template", programH.GetEnrollmentTemplate)
+
+			// Program management views
+			r.Get("/programs/{id}/management-summary", programH.GetManagementSummary)
+			r.Get("/programs/{id}/term-management", programTermH.ListManagementByProgram)
+			r.Get("/programs/{id}/member-management", programMemberH.ListMentorManagement)
 
 			// Mentor invite — both the invite token and signed principal are required.
 			r.Post("/mentor-invites/{token}/accept", mentorInviteH.AcceptInvite)

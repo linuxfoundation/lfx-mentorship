@@ -79,7 +79,7 @@ Per [04 §decision 7](./04-authorization-model.md), `user` has no relations of i
 | `PATCH`/`DELETE /v1/user-profiles/{id}` → **`/v1/me/profile`** | required | — | `allow_all` | As above — removed in the same PR, replacements in the follow-up |
 | `GET /v1/users/{userId}/applications` → **`/v1/me/applications`** | required | — | `allow_all` | Filter by `principal`. As a `{userId}` route it is uncheckable *and* lets any caller read another user's applications |
 | `GET /v1/me/programs` | required | — | `allow_all` | Return only programs where `principal` is an active `program_admin` member. **An exception to the caller-owned-collection rule above, pending platform sign-off**: the admin list needs the open/completed grouping, program-wide counts, and search, status filter, and paging across them, which the program index document does not yet carry |
-| `GET /v1/me/mentor-programs` | required | — | `allow_all` | Return only `published` programs where `principal` is an active `mentor` member. **An exception to the caller-owned-collection rule above, pending platform sign-off**, as `/v1/me/programs` is: the mentor list needs the open/completed grouping and the program's mentee, applicant, and tasks-to-review counts, which the program index document does not carry |
+| `GET /v1/me/mentor-programs` | required | — | `allow_all` | Return only `published` programs where `principal` is an active `mentor` member. **An exception to the caller-owned-collection rule above, pending platform sign-off**, as `/v1/me/programs` is: the mentor list needs the open/completed grouping and the mentee, applicant, and tasks-to-review counts on the program's open terms, which the program index document does not carry |
 
 ## Program routes
 
