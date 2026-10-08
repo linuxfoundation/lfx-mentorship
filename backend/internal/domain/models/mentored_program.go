@@ -22,7 +22,7 @@ func (s MentoredProgramStatus) IsValid() bool {
 	return false
 }
 
-// MentoredProgramStats counts the program's rows across all its terms.
+// MentoredProgramStats counts the program's rows on its open terms only.
 type MentoredProgramStats struct {
 	// Mentees are the mentee applications whose status is accepted or graduated.
 	Mentees int `json:"mentees"`

@@ -1646,10 +1646,11 @@ are omitted when absent.
 [`admin_status`](#administeredprogram-object): `completed` once every term is
 closed (deleted terms are ignored), otherwise `open`.
 
-`stats` counts the whole program, across all its terms:
+`stats` counts the program's `open` terms only; closed and deleted terms are
+not counted, so a `completed` program has zero `stats`:
 
-- `applicants`: mentee applications, one per user per term (a withdrawn application kept beside its reapplication is not counted twice). Matches `applicants` in `GET /v1/programs/{id}/management-summary`.
-- `mentees`: mentee applications whose status is `accepted` or `graduated`
+- `applicants`: mentee applications, one per user per term (a withdrawn application kept beside its reapplication is not counted twice)
+- `mentees`: mentee applications whose status is `accepted` or `graduated`. Matches `mentees` in `GET /v1/programs/{id}/management-summary`.
 - `tasks_to_review`: `submitted` tasks of `accepted` mentees. A graduated mentee's leftover submission and a mentor-role application's tasks are not counted.
 
 #### `GET /v1/me/mentor-programs` 🔒
