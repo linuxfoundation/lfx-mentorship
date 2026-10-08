@@ -836,7 +836,7 @@ Unlike the directory, the profile also resolves for applicants, so Program Admin
 }
 ```
 
-**Errors** `400` when `{id}` is not a UUID. `404` when the user has no mentee application on a published program.
+**Errors** `400` when `{id}` is not a UUID. `404` when the user has no mentee application on a published program in a non-deleted term.
 
 ---
 
