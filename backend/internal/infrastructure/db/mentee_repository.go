@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -35,30 +34,9 @@ func NewMenteeRepository(pool *pgxpool.Pool) *MenteeRepository {
 	return &MenteeRepository{pool: pool}
 }
 
-// menteeProfileStatuses are the application statuses shown on a public mentee
-// profile, in display precedence: when a mentee holds several, the earliest in
-// the list is the one featured in the header and on the program card.
-var menteeProfileStatuses = []string{
-	string(models.MenteeStatusAccepted),
-	string(models.MenteeStatusGraduated),
-	string(models.MenteeStatusPending),
-	string(models.MenteeStatusDeclined),
-	string(models.MenteeStatusWithdrawn),
-}
-
-// menteeDirectoryStatuses are the statuses that list a mentee in the directory
-// and its counts: only accepted and graduated mentees are publicly listed.
-var menteeDirectoryStatuses = menteeProfileStatuses[:2]
-
-// menteeStatusPrecedence ranks a status by its position in menteeProfileStatuses;
-// a lower rank wins.
-func menteeStatusPrecedence(status models.MenteeStatus) int {
-	return slices.Index(menteeProfileStatuses, string(status))
-}
-
-// menteeEligibleCTE takes the visible application statuses, in precedence
-// order, as $1.
-const menteeEligibleCTE = `
+// menteeFeaturedCTE picks each mentee's featured accepted or graduated
+// application: the one their card, status, and program are shown from.
+const menteeFeaturedCTE = `
 	eligible AS (
 		SELECT
 			a.user_id,
@@ -77,7 +55,7 @@ const menteeEligibleCTE = `
 		JOIN program_terms pt ON pt.id = a.program_term_id
 		JOIN programs p ON p.id = pt.program_id
 		WHERE a.role = 'mentee'
-		  AND a.status = ANY($1::text[])
+		  AND a.status IN ('accepted', 'graduated')
 		  AND pt.status <> 'deleted'
 		  AND p.status = 'published'
 	),
@@ -87,20 +65,19 @@ const menteeEligibleCTE = `
 			j.joined_at
 		FROM eligible e
 		JOIN (
-			-- Dated from the first accepted or graduated application when there is
-			-- one, so a profile and its directory card agree.
-			SELECT user_id, COALESCE(
-				MIN(created_on) FILTER (WHERE application_status IN ('accepted', 'graduated')),
-				MIN(created_on)
-			) AS joined_at
+			SELECT user_id, MIN(created_on) AS joined_at
 			FROM eligible
 			GROUP BY user_id
 		) j ON j.user_id = e.user_id
 		ORDER BY e.user_id,
-			array_position($1::text[], e.application_status::text),
+			CASE WHEN e.application_status = 'graduated' THEN 1 ELSE 0 END,
 			e.start_date_time DESC NULLS LAST,
 			e.created_on DESC
-	),
+	)`
+
+// menteeEnrichedCTE adds the display fields to the rows of a preceding
+// "listed" CTE, which has featured's user, status, joined_at, and program columns.
+const menteeEnrichedCTE = `
 	enriched AS (
 		SELECT
 			f.user_id,
@@ -124,7 +101,7 @@ const menteeEligibleCTE = `
 				-- A null element would scan as NULL into []string and fail the whole page.
 				WHERE jsonb_typeof(e) = 'string'
 			), '{}') AS skills
-		FROM featured f
+		FROM listed f
 		LEFT JOIN users u ON u.id = f.user_id
 		LEFT JOIN LATERAL (
 			SELECT introduction, logo_url, skill_set, first_name, last_name, created_on
@@ -135,6 +112,39 @@ const menteeEligibleCTE = `
 			LIMIT 1
 		) up ON true
 	)`
+
+// menteeEligibleCTE lists the directory: mentees with an accepted or graduated
+// application on a published program.
+const menteeEligibleCTE = menteeFeaturedCTE + `,
+	listed AS (SELECT * FROM featured),` + menteeEnrichedCTE
+
+// menteeProfileCTE resolves the profile of user $1 for anyone who applied as a
+// mentee to a published program, so Program Admins and mentors can open an
+// applicant's profile. Status and program still come only from an accepted or
+// graduated application; an applicant without one has neither.
+const menteeProfileCTE = menteeFeaturedCTE + `,
+	listed AS (
+		SELECT
+			a.user_id,
+			f.application_status,
+			COALESCE(f.joined_at, a.first_applied_on) AS joined_at,
+			f.program_id,
+			f.program_name,
+			f.program_slug,
+			f.program_logo_url
+		FROM (
+			SELECT a.user_id, MIN(a.created_on) AS first_applied_on
+			FROM applications a
+			JOIN program_terms pt ON pt.id = a.program_term_id
+			JOIN programs p ON p.id = pt.program_id
+			WHERE a.user_id = $1
+			  AND a.role = 'mentee'
+			  AND pt.status <> 'deleted'
+			  AND p.status = 'published'
+			GROUP BY a.user_id
+		) a
+		LEFT JOIN featured f ON f.user_id = a.user_id
+	),` + menteeEnrichedCTE
 
 func scanMenteeItem(row pgx.Row) (*models.MenteeItem, error) {
 	var item models.MenteeItem
@@ -219,7 +229,7 @@ func (r *MenteeRepository) List(ctx context.Context, filter models.MenteeFilter)
 		offset = 0
 	}
 
-	args := []any{menteeDirectoryStatuses}
+	args := []any{}
 	where, args := menteeListWhere(filter, args)
 
 	var total int
@@ -279,7 +289,7 @@ func (r *MenteeRepository) Summary(ctx context.Context) (*models.MenteeSummary, 
 		WITH `+menteeEligibleCTE+`
 		SELECT
 			(SELECT COUNT(*) FROM featured),
-			(SELECT COUNT(DISTINCT program_id) FROM eligible)`, menteeDirectoryStatuses).Scan(&menteeCount, &programCount); err != nil {
+			(SELECT COUNT(DISTINCT program_id) FROM eligible)`).Scan(&menteeCount, &programCount); err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("count mentee summary: %w", err)
 	}
@@ -287,19 +297,19 @@ func (r *MenteeRepository) Summary(ctx context.Context) (*models.MenteeSummary, 
 }
 
 // GetByUserID returns one public mentee profile by user ID. Unlike the
-// directory, it includes mentees whose applications are pending, declined, or
-// withdrawn.
+// directory, it also resolves for a mentee who applied but was never accepted;
+// their profile has no status and no programs.
 func (r *MenteeRepository) GetByUserID(ctx context.Context, userID string) (*models.MenteeDetail, error) {
 	ctx, span := menteeTracer.Start(ctx, "db.mentees.GetByUserID")
 	defer span.End()
 	span.SetAttributes(attribute.String("db.user_id", userID))
 
 	item, err := scanMenteeItem(r.pool.QueryRow(ctx, `
-		WITH `+menteeEligibleCTE+`
+		WITH `+menteeProfileCTE+`
 		SELECT user_id, application_status, joined_at, program_id, program_name, program_slug,
 		       program_logo_url, name, avatar_url, introduction, skills
 		FROM enriched
-		WHERE user_id = $2`, menteeProfileStatuses, userID))
+		WHERE user_id = $1`, userID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrMenteeNotFound
 	}
@@ -376,26 +386,19 @@ func (r *MenteeRepository) attachFeaturedMentors(ctx context.Context, items []*m
 }
 
 func (r *MenteeRepository) loadMenteePrograms(ctx context.Context, userID string) ([]models.MenteeProgram, error) {
-	// One row per term: a withdrawn application is kept beside its
-	// reapplication, and the reapplication is the one to show.
 	rows, err := r.pool.Query(ctx, `
-		SELECT program_id, program_name, slug, description, logo_url,
-		       term_id, term_name, start_date_time, end_date_time, status
-		FROM (
-			SELECT DISTINCT ON (pt.id)
-				p.id AS program_id, p.name AS program_name, p.slug, p.description, p.logo_url,
-				pt.id AS term_id, pt.name AS term_name, pt.start_date_time, pt.end_date_time, a.status
-			FROM applications a
-			JOIN program_terms pt ON pt.id = a.program_term_id
-			JOIN programs p ON p.id = pt.program_id
-			WHERE a.user_id = $1
-			  AND a.role = 'mentee'
-			  AND a.status = ANY($2::text[])
-			  AND pt.status <> 'deleted'
-			  AND p.status = 'published'
-			ORDER BY pt.id, array_position($2::text[], a.status::text), a.created_on DESC
-		) terms
-		ORDER BY program_name, start_date_time DESC NULLS LAST`, userID, menteeProfileStatuses)
+		SELECT
+			p.id, p.name, p.slug, p.description, p.logo_url,
+			pt.id, pt.name, pt.start_date_time, pt.end_date_time, a.status
+		FROM applications a
+		JOIN program_terms pt ON pt.id = a.program_term_id
+		JOIN programs p ON p.id = pt.program_id
+		WHERE a.user_id = $1
+		  AND a.role = 'mentee'
+		  AND a.status IN ('accepted', 'graduated')
+		  AND pt.status <> 'deleted'
+		  AND p.status = 'published'
+		ORDER BY p.name, pt.start_date_time DESC NULLS LAST`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list mentee programs: %w", err)
 	}
@@ -425,7 +428,7 @@ func (r *MenteeRepository) loadMenteePrograms(ctx context.Context, userID string
 			order = append(order, program.ID)
 		}
 		existing.Terms = append(existing.Terms, term)
-		if menteeStatusPrecedence(term.ApplicationStatus) < menteeStatusPrecedence(existing.Status) {
+		if existing.Status == models.MenteeStatusGraduated && term.ApplicationStatus != models.MenteeStatusGraduated {
 			existing.Status = term.ApplicationStatus
 		}
 	}

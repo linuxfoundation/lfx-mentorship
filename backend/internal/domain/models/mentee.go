@@ -9,24 +9,18 @@ import "time"
 // cards, programs, and terms. It is a display vocabulary, not a stored one:
 // "active" is a UI label for an enrolled mentee and has no corresponding
 // applications.status value — the stored status for those rows is "accepted".
-// The directory lists only accepted and graduated mentees; the profile page
-// also shows pending, declined, and withdrawn applications.
 type MenteeStatus string
 
 const (
 	MenteeStatusAccepted  MenteeStatus = "accepted"
 	MenteeStatusActive    MenteeStatus = "active"
 	MenteeStatusGraduated MenteeStatus = "graduated"
-	MenteeStatusPending   MenteeStatus = "pending"
-	MenteeStatusDeclined  MenteeStatus = "declined"
-	MenteeStatusWithdrawn MenteeStatus = "withdrawn"
 )
 
-// IsValid reports whether the status is one of the publicly visible values.
+// IsValid reports whether the status is one of the directory-visible values.
 func (s MenteeStatus) IsValid() bool {
 	switch s {
-	case MenteeStatusAccepted, MenteeStatusActive, MenteeStatusGraduated,
-		MenteeStatusPending, MenteeStatusDeclined, MenteeStatusWithdrawn:
+	case MenteeStatusAccepted, MenteeStatusActive, MenteeStatusGraduated:
 		return true
 	}
 	return false
@@ -40,7 +34,7 @@ type MenteeProgramRef struct {
 	LogoURL *string `json:"logo_url,omitempty"`
 }
 
-// MenteeProgramTerm is one term the mentee applied to on a program.
+// MenteeProgramTerm is one term the mentee enrolled in on a program.
 type MenteeProgramTerm struct {
 	ID                string       `json:"id"`
 	Name              string       `json:"name"`
@@ -49,7 +43,7 @@ type MenteeProgramTerm struct {
 	ApplicationStatus MenteeStatus `json:"application_status"`
 }
 
-// MenteeProgram is a published program the mentee applied to.
+// MenteeProgram is a published program the mentee joined.
 type MenteeProgram struct {
 	ID          string                 `json:"id"`
 	Name        string                 `json:"name"`
