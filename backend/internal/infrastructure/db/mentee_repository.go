@@ -34,7 +34,9 @@ func NewMenteeRepository(pool *pgxpool.Pool) *MenteeRepository {
 	return &MenteeRepository{pool: pool}
 }
 
-const menteeEligibleCTE = `
+// menteeFeaturedCTE picks each mentee's featured accepted or graduated
+// application: the one their card, status, and program are shown from.
+const menteeFeaturedCTE = `
 	eligible AS (
 		SELECT
 			a.user_id,
@@ -71,7 +73,11 @@ const menteeEligibleCTE = `
 			CASE WHEN e.application_status = 'graduated' THEN 1 ELSE 0 END,
 			e.start_date_time DESC NULLS LAST,
 			e.created_on DESC
-	),
+	)`
+
+// menteeEnrichedCTE adds the display fields to the rows of a preceding
+// "listed" CTE, which has featured's user, status, joined_at, and program columns.
+const menteeEnrichedCTE = `
 	enriched AS (
 		SELECT
 			f.user_id,
@@ -95,7 +101,7 @@ const menteeEligibleCTE = `
 				-- A null element would scan as NULL into []string and fail the whole page.
 				WHERE jsonb_typeof(e) = 'string'
 			), '{}') AS skills
-		FROM featured f
+		FROM listed f
 		LEFT JOIN users u ON u.id = f.user_id
 		LEFT JOIN LATERAL (
 			SELECT introduction, logo_url, skill_set, first_name, last_name, created_on
@@ -106,6 +112,39 @@ const menteeEligibleCTE = `
 			LIMIT 1
 		) up ON true
 	)`
+
+// menteeEligibleCTE lists the directory: mentees with an accepted or graduated
+// application on a published program.
+const menteeEligibleCTE = menteeFeaturedCTE + `,
+	listed AS (SELECT * FROM featured),` + menteeEnrichedCTE
+
+// menteeProfileCTE resolves the profile of user $1 for anyone who applied as a
+// mentee to a published program, so Program Admins and mentors can open an
+// applicant's profile. Status and program still come only from an accepted or
+// graduated application; an applicant without one has neither.
+const menteeProfileCTE = menteeFeaturedCTE + `,
+	listed AS (
+		SELECT
+			a.user_id,
+			f.application_status,
+			COALESCE(f.joined_at, a.first_applied_on) AS joined_at,
+			f.program_id,
+			f.program_name,
+			f.program_slug,
+			f.program_logo_url
+		FROM (
+			SELECT a.user_id, MIN(a.created_on) AS first_applied_on
+			FROM applications a
+			JOIN program_terms pt ON pt.id = a.program_term_id
+			JOIN programs p ON p.id = pt.program_id
+			WHERE a.user_id = $1
+			  AND a.role = 'mentee'
+			  AND pt.status <> 'deleted'
+			  AND p.status = 'published'
+			GROUP BY a.user_id
+		) a
+		LEFT JOIN featured f ON f.user_id = a.user_id
+	),` + menteeEnrichedCTE
 
 func scanMenteeItem(row pgx.Row) (*models.MenteeItem, error) {
 	var item models.MenteeItem
@@ -257,14 +296,16 @@ func (r *MenteeRepository) Summary(ctx context.Context) (*models.MenteeSummary, 
 	return &models.MenteeSummary{MenteeCount: menteeCount, ProgramCount: programCount}, nil
 }
 
-// GetByUserID returns one public mentee profile by user ID.
+// GetByUserID returns one public mentee profile by user ID. Unlike the
+// directory, it also resolves for a mentee who applied but was never accepted;
+// their profile has no status and no programs.
 func (r *MenteeRepository) GetByUserID(ctx context.Context, userID string) (*models.MenteeDetail, error) {
 	ctx, span := menteeTracer.Start(ctx, "db.mentees.GetByUserID")
 	defer span.End()
 	span.SetAttributes(attribute.String("db.user_id", userID))
 
 	item, err := scanMenteeItem(r.pool.QueryRow(ctx, `
-		WITH `+menteeEligibleCTE+`
+		WITH `+menteeProfileCTE+`
 		SELECT user_id, application_status, joined_at, program_id, program_name, program_slug,
 		       program_logo_url, name, avatar_url, introduction, skills
 		FROM enriched
