@@ -595,7 +595,7 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 			}
 		}
 
-		// Hide guard: must have no active applications.
+		// Hide guard: must have no active applications. The repository re-checks it under the program lock.
 		if next == models.ProgramStatusHidden {
 			count, err := s.appRepo.CountBlockingAppsForProgram(ctx, id)
 			if err != nil {

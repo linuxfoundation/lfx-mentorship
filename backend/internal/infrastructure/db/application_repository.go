@@ -321,6 +321,9 @@ func (r *ApplicationRepository) CreateWithTasks(ctx context.Context, programTerm
 	if term.Status != models.ProgramTermStatusOpen {
 		return nil, fmt.Errorf("%w: applications are not open for this term", domain.ErrIneligible)
 	}
+	if err := checkProgramNotHidden(ctx, tx, programTermID); err != nil {
+		return nil, err
+	}
 
 	a, err := insertApplicationWithTasks(ctx, tx, programTermID, term.Status, input, tasks)
 	if err != nil {
@@ -361,6 +364,9 @@ func (r *ApplicationRepository) ReapplyWithTasks(ctx context.Context, oldID, pro
 	}
 	if termStatus != models.ProgramTermStatusOpen {
 		return nil, fmt.Errorf("%w: applications are not open for this term", domain.ErrIneligible)
+	}
+	if err := checkProgramNotHidden(ctx, tx, programTermID); err != nil {
+		return nil, err
 	}
 	// Re-check under lock that the application being reapplied from is still withdrawn in this
 	// term; the service validated it before the transaction began.
@@ -404,6 +410,19 @@ func (r *ApplicationRepository) ReapplyWithTasks(ctx context.Context, oldID, pro
 		return nil, fmt.Errorf("commit reapply transaction: %w", err)
 	}
 	return a, nil
+}
+
+// checkProgramNotHidden refuses an application to a hidden program. The caller must hold the
+// term lock, which a concurrent hide waits on, so the status read here is the committed one.
+func checkProgramNotHidden(ctx context.Context, tx pgx.Tx, programTermID string) error {
+	var status models.ProgramStatus
+	if err := tx.QueryRow(ctx, `SELECT p.status FROM programs p JOIN program_terms pt ON pt.program_id = p.id WHERE pt.id = $1`, programTermID).Scan(&status); err != nil {
+		return fmt.Errorf("check program status for application: %w", err)
+	}
+	if status == models.ProgramStatusHidden {
+		return fmt.Errorf("%w: applications are not open for this program", domain.ErrIneligible)
+	}
+	return nil
 }
 
 // insertApplicationWithTasks inserts a pending application with its prerequisite tasks and queues
@@ -836,6 +855,14 @@ func enqueueApplicationMarker(ctx context.Context, tx pgx.Tx, application *model
 	return nil
 }
 
+// countBlockingAppsForProgramSQL counts the applications that block hiding a program.
+// NOTE: status literals must stay in sync with models.ApplicationStatus.
+const countBlockingAppsForProgramSQL = `
+	SELECT COUNT(*) FROM applications a
+	JOIN program_terms pt ON pt.id = a.program_term_id
+	WHERE pt.program_id = $1
+	AND a.status IN ('pending', 'accepted', 'graduated')`
+
 // CountBlockingAppsForProgram returns applications in a non-terminal state across all terms of a program.
 func (r *ApplicationRepository) CountBlockingAppsForProgram(ctx context.Context, programID string) (int, error) {
 	ctx, span := applicationTracer.Start(ctx, "db.applications.CountBlockingAppsForProgram")
@@ -843,13 +870,7 @@ func (r *ApplicationRepository) CountBlockingAppsForProgram(ctx context.Context,
 	span.SetAttributes(attribute.String("db.program_id", programID))
 
 	var count int
-	// NOTE: status literals must stay in sync with models.ApplicationStatus.
-	const q = `
-		SELECT COUNT(*) FROM applications a
-		JOIN program_terms pt ON pt.id = a.program_term_id
-		WHERE pt.program_id = $1
-		AND a.status IN ('pending', 'accepted', 'graduated')`
-	if err := r.pool.QueryRow(ctx, q, programID).Scan(&count); err != nil {
+	if err := r.pool.QueryRow(ctx, countBlockingAppsForProgramSQL, programID).Scan(&count); err != nil {
 		span.RecordError(err)
 		return 0, fmt.Errorf("count blocking applications: %w", err)
 	}

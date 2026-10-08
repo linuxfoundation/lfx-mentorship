@@ -309,6 +309,66 @@ func TestProgramRepositoryIntegration_StatusChangeAppliesOnlyFromExpectedStatus(
 	}
 }
 
+func TestProgramRepositoryIntegration_HideWaitsForInFlightApplication(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+
+	// An application create that passed its checks holds the term lock and has not committed.
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM program_terms WHERE id = $1 FOR UPDATE`, fixture.OpenTerm); err != nil {
+		t.Fatalf("lock term: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ('00000000-0000-0000-0000-000000000077', $1, $2, 'mentee', 'pending')`, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatalf("insert application: %v", err)
+	}
+
+	published, hidden := models.ProgramStatusPublished, models.ProgramStatusHidden
+	hideErr := make(chan error, 1)
+	go func() {
+		_, err := NewProgramRepository(pool).Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &hidden, ExpectedStatus: &published})
+		hideErr <- err
+	}()
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit application: %v", err)
+	}
+	if err := <-hideErr; !errors.Is(err, domain.ErrStateLocked) {
+		t.Fatalf("hide err = %v; want ErrStateLocked", err)
+	}
+	var status models.ProgramStatus
+	if err := pool.QueryRow(ctx, `SELECT status FROM programs WHERE id = $1`, fixture.ProgramID).Scan(&status); err != nil || status != published {
+		t.Fatalf("status = %q, err = %v; want published", status, err)
+	}
+}
+
+func TestApplicationRepositoryIntegration_RefusesApplicationToHiddenProgram(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+	withdrawnID := "00000000-0000-0000-0000-000000000078"
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentee', 'withdrawn')`, withdrawnID, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatalf("insert withdrawn application: %v", err)
+	}
+	published, hidden := models.ProgramStatusPublished, models.ProgramStatusHidden
+	if _, err := NewProgramRepository(pool).Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &hidden, ExpectedStatus: &published}); err != nil {
+		t.Fatalf("hide: %v", err)
+	}
+
+	repo := NewApplicationRepository(pool)
+	input := models.ApplicationCreateInput{UserID: fixture.UserID, Role: models.ApplicationRoleMentee, Status: models.ApplicationStatusPending}
+	input.ID = "00000000-0000-0000-0000-000000000079"
+	if _, err := repo.Create(ctx, fixture.OpenTerm, input); !errors.Is(err, domain.ErrIneligible) {
+		t.Fatalf("create err = %v; want ErrIneligible", err)
+	}
+	if _, err := repo.Reapply(ctx, withdrawnID, fixture.OpenTerm, input); !errors.Is(err, domain.ErrIneligible) {
+		t.Fatalf("reapply err = %v; want ErrIneligible", err)
+	}
+}
+
 func TestApplicationRepositoryIntegration_ReapplyKeepsWithdrawnApplication(t *testing.T) {
 	pool := integrationPool(t)
 	fixture := seedIntegrationFixture(t, pool)
