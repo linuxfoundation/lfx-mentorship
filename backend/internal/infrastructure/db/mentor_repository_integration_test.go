@@ -8,7 +8,6 @@ package db
 import (
 	"context"
 	"fmt"
-	"slices"
 	"testing"
 	"time"
 
@@ -128,103 +127,88 @@ func TestMentorRepositoryIntegration_ListMentoredByUserScopesToActivePublished(t
 	}
 }
 
-func TestMentorRepositoryIntegration_ListMentoredByUserChoosesTermAndOrders(t *testing.T) {
+// A program is completed once all its terms are closed and open otherwise, the
+// same grouping as admin_status, so the admin and mentor lists agree on it.
+func TestMentorRepositoryIntegration_ListMentoredByUserStatusAndOrder(t *testing.T) {
 	pool := integrationPool(t)
+	ctx := context.Background()
 	seed := newMentoredSeed(t, pool)
-	seed.user("mentor")
-	mentor := func(label, name string) {
+	seed.user("both")
+	both := func(label, name string) {
 		seed.program(label, name, "published")
-		seed.member(label, "mentor", "mentor", "active")
+		seed.member(label, "both", "program_admin", "active")
+		seed.member(label, "both", "mentor", "active")
 	}
 
-	// The open term that started most recently wins over older, future, and closed terms.
-	mentor("started", "delta")
-	seed.term("started", "started-old", "open", daysFromNow(-30))
-	seed.term("started", "started-new", "open", daysFromNow(-2))
-	seed.term("started", "started-future", "open", daysFromNow(10))
-	seed.term("started", "started-closed", "closed", daysFromNow(-1))
-	seed.term("started", "started-deleted", "deleted", daysFromNow(-1))
+	both("running", "delta")
+	seed.term("running", "running-open", "open", daysFromNow(-10))
+	both("no-terms", "Bravo")
+	both("mixed", "charlie")
+	seed.term("mixed", "mixed-closed", "closed", daysFromNow(-200))
+	seed.term("mixed", "mixed-open", "open", daysFromNow(30))
+	both("deleted-only", "echo")
+	seed.term("deleted-only", "deleted-only-term", "deleted", daysFromNow(-5))
+	both("done", "foxtrot")
+	seed.term("done", "done-closed", "closed", daysFromNow(-100))
+	seed.term("done", "done-deleted", "deleted", daysFromNow(-1))
+	both("done-early", "Alpha")
+	seed.term("done-early", "done-early-closed", "closed", daysFromNow(-300))
 
-	// Two open terms that started together: the lower id wins.
-	mentor("tied", "Alpha")
-	tiedStart := daysFromNow(-5)
-	seed.term("tied", "tied-first", "open", tiedStart)
-	seed.term("tied", "tied-second", "open", tiedStart)
-
-	// No started open term: the first to start wins, undated last; closed terms lose.
-	mentor("future", "charlie")
-	seed.term("future", "future-late", "open", daysFromNow(30))
-	seed.term("future", "future-undated", "open", nil)
-	seed.term("future", "future-soon", "open", daysFromNow(5))
-	seed.term("future", "future-closed", "closed", daysFromNow(-60))
-
-	// Only an undated open term (and a deleted one): it is upcoming.
-	mentor("undated", "Bravo")
-	seed.term("undated", "undated-open", "open", nil)
-	seed.term("undated", "undated-deleted", "deleted", daysFromNow(-3))
-
-	// Only closed terms: the latest to start wins; a deleted term is never chosen.
-	mentor("closed", "echo")
-	seed.term("closed", "closed-old", "closed", daysFromNow(-200))
-	seed.term("closed", "closed-new", "closed", daysFromNow(-100))
-	seed.term("closed", "closed-deleted", "deleted", daysFromNow(-1))
-
-	// No terms at all: upcoming, with no term.
-	mentor("empty", "Foxtrot")
-
-	got, meta, err := NewMentorRepository(pool).ListMentoredByUser(context.Background(), seed.id("mentor"), models.MentoredProgramFilter{})
+	mentored, meta, err := NewMentorRepository(pool).ListMentoredByUser(ctx, seed.id("both"), models.MentoredProgramFilter{})
 	if err != nil {
 		t.Fatalf("ListMentoredByUser: %v", err)
 	}
 	type row struct {
-		program, term string
-		status        models.MentoredProgramTermStatus
+		program string
+		status  models.MentoredProgramStatus
 	}
 	want := []row{
-		{"tied", "tied-first", models.MentoredProgramTermStatusActiveTerm},
-		{"started", "started-new", models.MentoredProgramTermStatusActiveTerm},
-		{"undated", "undated-open", models.MentoredProgramTermStatusUpcoming},
-		{"future", "future-soon", models.MentoredProgramTermStatusUpcoming},
-		{"empty", "", models.MentoredProgramTermStatusUpcoming},
-		{"closed", "closed-new", models.MentoredProgramTermStatusCompleted},
+		{"no-terms", models.MentoredProgramStatusOpen},
+		{"mixed", models.MentoredProgramStatusOpen},
+		{"running", models.MentoredProgramStatusOpen},
+		{"deleted-only", models.MentoredProgramStatusOpen},
+		{"done-early", models.MentoredProgramStatusCompleted},
+		{"done", models.MentoredProgramStatusCompleted},
 	}
-	if meta.Total != len(want) || len(got) != len(want) {
-		t.Fatalf("got %d rows (total %d); want %d", len(got), meta.Total, len(want))
+	if meta.Total != len(want) || len(mentored) != len(want) {
+		t.Fatalf("got %d rows (total %d); want %d", len(mentored), meta.Total, len(want))
 	}
 	for i, w := range want {
-		g := got[i]
-		termID := ""
-		if g.Term != nil {
-			termID = g.Term.ID
-		}
-		wantTermID := ""
-		if w.term != "" {
-			wantTermID = seed.id(w.term)
-		}
-		if g.ID != seed.id(w.program) || termID != wantTermID || g.TermStatus != w.status {
-			t.Errorf("row %d = program %s term %q status %s; want program %s term %s status %s",
-				i, g.ID, termID, g.TermStatus, seed.id(w.program), w.term, w.status)
+		if g := mentored[i]; g.ID != seed.id(w.program) || g.Status != w.status {
+			t.Errorf("row %d = program %s status %s; want program %s (%s) status %s",
+				i, g.ID, g.Status, seed.id(w.program), w.program, w.status)
 		}
 	}
-	if empty := got[4]; empty.Stats != (models.MentoredProgramStats{}) {
-		t.Errorf("program with no terms has stats %+v; want zero", empty.Stats)
+
+	administered, _, err := NewProgramRepository(pool).ListAdministeredByUser(ctx, seed.id("both"), models.AdministeredProgramFilter{})
+	if err != nil {
+		t.Fatalf("ListAdministeredByUser: %v", err)
+	}
+	mentorStatus := map[string]models.MentoredProgramStatus{}
+	for _, p := range mentored {
+		mentorStatus[p.ID] = p.Status
+	}
+	for _, p := range administered {
+		if string(p.AdminStatus) != string(mentorStatus[p.ID]) {
+			t.Errorf("program %s: admin_status %s, mentor status %s; want them equal", p.ID, p.AdminStatus, mentorStatus[p.ID])
+		}
 	}
 }
 
-func TestMentorRepositoryIntegration_ListMentoredByUserCountsChosenTermOnly(t *testing.T) {
+func TestMentorRepositoryIntegration_ListMentoredByUserCountsWholeProgram(t *testing.T) {
 	pool := integrationPool(t)
 	ctx := context.Background()
 	seed := newMentoredSeed(t, pool)
-	for _, u := range []string{"mentor", "accepted", "graduated", "pending", "reapplied", "withdrawn", "past", "mentor-applicant"} {
+	for _, u := range []string{"mentor", "accepted", "graduated", "pending", "reapplied", "withdrawn", "past", "mentor-applicant", "elsewhere"} {
 		seed.user(u)
 	}
 	program := seed.program("counted", "Counted", "published")
 	seed.member("counted", "mentor", "mentor", "active")
-	current := seed.term("counted", "current", "open", daysFromNow(-7))
+	seed.term("counted", "current", "open", daysFromNow(-7))
 	seed.term("counted", "previous", "closed", daysFromNow(-120))
 	base := time.Now().Add(-48 * time.Hour)
 
-	// An accepted mentee: both submitted tasks count, the complete one does not.
+	// Current term. An accepted mentee: both submitted tasks count, the complete one does not.
 	seed.application("app-accepted", "current", "accepted", "mentee", "accepted", base)
 	seed.task("task-accepted-1", "app-accepted", "current", "accepted", "submitted")
 	seed.task("task-accepted-2", "app-accepted", "current", "accepted", "submitted")
@@ -242,38 +226,41 @@ func TestMentorRepositoryIntegration_ListMentoredByUserCountsChosenTermOnly(t *t
 	// Withdrawn twice with no reapplication: still one applicant.
 	seed.application("app-withdrawn-1", "current", "withdrawn", "mentee", "withdrawn", base)
 	seed.application("app-withdrawn-2", "current", "withdrawn", "mentee", "withdrawn", base.Add(time.Hour))
-	// A mentee on the previous term is not counted.
-	seed.application("app-past", "previous", "past", "mentee", "accepted", base)
-	seed.task("task-past", "app-past", "previous", "past", "submitted")
 	// A mentor-role application and its prerequisite task are not counted.
 	seed.application("app-mentor", "current", "mentor-applicant", "mentor", "accepted", base)
 	seed.task("task-mentor", "app-mentor", "current", "mentor-applicant", "submitted")
+
+	// Previous term: counted too. The accepted mentee above also graduated
+	// here, so they are an applicant and a mentee once per term.
+	seed.application("app-past", "previous", "past", "mentee", "accepted", base)
+	seed.task("task-past", "app-past", "previous", "past", "submitted")
+	seed.application("app-accepted-before", "previous", "accepted", "mentee", "graduated", base)
+
+	// Another program's applications are not counted.
+	seed.program("other", "Other", "published")
+	seed.term("other", "other-term", "open", daysFromNow(-7))
+	seed.application("app-elsewhere", "other-term", "elsewhere", "mentee", "accepted", base)
+	seed.task("task-elsewhere", "app-elsewhere", "other-term", "elsewhere", "submitted")
 
 	got, _, err := NewMentorRepository(pool).ListMentoredByUser(ctx, seed.id("mentor"), models.MentoredProgramFilter{})
 	if err != nil {
 		t.Fatalf("ListMentoredByUser: %v", err)
 	}
-	if len(got) != 1 || got[0].Term == nil || got[0].Term.ID != current {
-		t.Fatalf("got %+v; want one program on the current term", got)
+	if len(got) != 1 || got[0].ID != program {
+		t.Fatalf("got %+v; want only the counted program", got)
 	}
-	want := models.MentoredProgramStats{Mentees: 2, Applicants: 5, TasksToReview: 2}
+	want := models.MentoredProgramStats{Mentees: 4, Applicants: 7, TasksToReview: 3}
 	if got[0].Stats != want {
 		t.Errorf("stats = %+v; want %+v", got[0].Stats, want)
 	}
 
-	// The card's counts agree with the program's applications list for the term.
-	rows, meta, err := NewApplicationRepository(pool).ListByProgram(ctx, program, models.ProgramApplicationFilter{TermID: current, Limit: 50})
+	// The card's applicant count agrees with the program's management summary.
+	summary, err := NewProgramRepository(pool).GetManagementSummary(ctx, program)
 	if err != nil {
-		t.Fatalf("ListByProgram: %v", err)
+		t.Fatalf("GetManagementSummary: %v", err)
 	}
-	mentees := 0
-	for _, r := range rows {
-		if slices.Contains([]models.ApplicationStatus{models.ApplicationStatusAccepted, models.ApplicationStatusGraduated}, r.Status) {
-			mentees++
-		}
-	}
-	if meta.Total != want.Applicants || mentees != want.Mentees {
-		t.Errorf("applications list = %d applicants, %d mentees; want %d and %d", meta.Total, mentees, want.Applicants, want.Mentees)
+	if summary.Applicants != want.Applicants {
+		t.Errorf("management summary applicants = %d; want %d", summary.Applicants, want.Applicants)
 	}
 }
 
@@ -295,67 +282,5 @@ func TestMentorRepositoryIntegration_ListMentoredByUserPages(t *testing.T) {
 	}
 	if meta.Total != 3 || meta.Limit != 1 || meta.Offset != 1 {
 		t.Errorf("meta = %+v; want total 3, limit 1, offset 1", meta)
-	}
-}
-
-// The admin and mentor programs lists share chosenProgramTermJoin, so they show
-// the same term for the same program.
-func TestProgramListsIntegration_AdminAndMentorShareTermChoice(t *testing.T) {
-	pool := integrationPool(t)
-	ctx := context.Background()
-	seed := newMentoredSeed(t, pool)
-	seed.user("both")
-	both := func(label, name string) {
-		seed.program(label, name, "published")
-		seed.member(label, "both", "program_admin", "active")
-		seed.member(label, "both", "mentor", "active")
-	}
-
-	// A started term beats a later-starting future one.
-	both("running", "Alpha")
-	seed.term("running", "running-started", "open", daysFromNow(-10))
-	seed.term("running", "running-future", "open", daysFromNow(60))
-	// With nothing started, the first future term to start wins.
-	both("waiting", "Bravo")
-	seed.term("waiting", "waiting-late", "open", daysFromNow(90))
-	seed.term("waiting", "waiting-soon", "open", daysFromNow(15))
-	// With only closed terms, the latest to start wins.
-	both("finished", "Charlie")
-	seed.term("finished", "finished-old", "closed", daysFromNow(-300))
-	seed.term("finished", "finished-new", "closed", daysFromNow(-150))
-
-	want := map[string]string{
-		seed.id("running"):  seed.id("running-started"),
-		seed.id("waiting"):  seed.id("waiting-soon"),
-		seed.id("finished"): seed.id("finished-new"),
-	}
-
-	administered, _, err := NewProgramRepository(pool).ListAdministeredByUser(ctx, seed.id("both"), models.AdministeredProgramFilter{})
-	if err != nil {
-		t.Fatalf("ListAdministeredByUser: %v", err)
-	}
-	mentored, _, err := NewMentorRepository(pool).ListMentoredByUser(ctx, seed.id("both"), models.MentoredProgramFilter{})
-	if err != nil {
-		t.Fatalf("ListMentoredByUser: %v", err)
-	}
-	if len(administered) != len(want) || len(mentored) != len(want) {
-		t.Fatalf("got %d administered and %d mentored programs; want %d each", len(administered), len(mentored), len(want))
-	}
-	for _, p := range administered {
-		if p.Term == nil || p.Term.ID != want[p.ID] {
-			t.Errorf("admin list program %s term = %+v; want %s", p.ID, p.Term, want[p.ID])
-		}
-		wantStatus := models.AdministeredProgramStatusOpen
-		if p.ID == seed.id("finished") {
-			wantStatus = models.AdministeredProgramStatusCompleted
-		}
-		if p.AdminStatus != wantStatus {
-			t.Errorf("admin list program %s admin_status = %s; want %s", p.ID, p.AdminStatus, wantStatus)
-		}
-	}
-	for _, p := range mentored {
-		if p.Term == nil || p.Term.ID != want[p.ID] {
-			t.Errorf("mentor list program %s term = %+v; want %s", p.ID, p.Term, want[p.ID])
-		}
 	}
 }
