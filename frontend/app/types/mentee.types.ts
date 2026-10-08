@@ -7,6 +7,13 @@ export type MenteeStatus = (typeof MENTEE_STATUSES)[number];
 
 export type MenteeStatusFilter = 'all' | MenteeStatus;
 
+/** Application statuses shown only on a mentee's profile page; the directory never lists them. */
+export const MENTEE_APPLICANT_STATUSES = ['pending', 'declined', 'withdrawn'] as const;
+
+export type MenteeApplicantStatus = (typeof MENTEE_APPLICANT_STATUSES)[number];
+
+export type MenteeProfileStatus = MenteeStatus | MenteeApplicantStatus;
+
 export const PROFILE_PROGRAM_STATUSES = [
   'accepting',
   'closed',
@@ -16,6 +23,7 @@ export const PROFILE_PROGRAM_STATUSES = [
   'acceptance',
   'in-progress',
   'completed',
+  ...MENTEE_APPLICANT_STATUSES,
 ] as const;
 
 export type ProfileProgramStatus = (typeof PROFILE_PROGRAM_STATUSES)[number];
@@ -61,7 +69,7 @@ export interface Mentee {
   name: string;
   introduction: string;
   skills: string[];
-  status?: MenteeStatus;
+  status?: MenteeProfileStatus;
   /** Display label, e.g. "Since Aug. 2023". */
   sinceLabel: string;
   /** ISO date used for sorting / filtering. */

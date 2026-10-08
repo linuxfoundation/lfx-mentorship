@@ -5,7 +5,7 @@ import type {
   DirectoryMentorRef,
   Mentee,
   MenteeDetail,
-  MenteeStatus,
+  MenteeProfileStatus,
   MenteesListResponse,
   MenteesSummaryResponse,
   ProfileProgram,
@@ -84,11 +84,14 @@ function fetchErrorStatus(error: unknown): number {
   return 502;
 }
 
-function toMenteeStatus(status?: string): MenteeStatus | undefined {
+function toMenteeStatus(status?: string): MenteeProfileStatus | undefined {
   if (!status) return undefined;
   switch (status) {
     case 'graduated':
-      return 'graduated';
+    case 'pending':
+    case 'declined':
+    case 'withdrawn':
+      return status;
     case 'active':
     case 'accepted':
       return 'active';
@@ -143,7 +146,15 @@ function mapMentor(mentor: MenteeMentor): DirectoryMentorRef {
 }
 
 function mapProgramStatus(status: string): ProfileProgramStatus {
-  return status === 'graduated' ? 'graduated' : 'active';
+  switch (status) {
+    case 'graduated':
+    case 'pending':
+    case 'declined':
+    case 'withdrawn':
+      return status;
+    default:
+      return 'active';
+  }
 }
 
 function mapProgramTerm(term: MenteeProgramTerm): ProfileProgramTerm {

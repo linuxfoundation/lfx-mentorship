@@ -21,4 +21,7 @@ export const PROFILE_PROGRAM_STATUS_CONFIG: Record<
   'open-soon': { label: 'Opens soon', variation: 'info' },
   'in-progress': { label: 'In progress', variation: 'warning' },
   completed: { label: 'Completed', variation: 'neutral' },
+  pending: { label: 'Applied', variation: 'warning' },
+  declined: { label: 'Declined', variation: 'neutral' },
+  withdrawn: { label: 'Withdrawn', variation: 'neutral' },
 };
