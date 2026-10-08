@@ -1567,24 +1567,10 @@ request body.
 
 ### Program admin self-service
 
-#### Program list term
-
-`GET /v1/me/programs` and `GET /v1/me/mentor-programs` show one term per
-program, chosen the same way: the first match below. Deleted terms are never
-chosen, and ties break on `id`.
-
-| Priority | Term |
-|---|---|
-| 1 | An `open` term that has started: the one that started most recently |
-| 2 | An `open` term that has not started or has no start date: the first to start, undated last |
-| 3 | A `closed` term: the one that started most recently |
-| 4 | No term: `term` is omitted |
-
 #### AdministeredProgram Object
 
-One row of the caller's programs list. `term` is a
-[ProgramTerm](#programterm-object) chosen as in [Program list term](#program-list-term),
-and is omitted when the program has no open or closed term. `stats` matches `GET /v1/programs/{id}/header`.
+One row of the caller's programs list. `stats` counts the whole program and
+matches `GET /v1/programs/{id}/header`.
 
 ```json
 {
@@ -1596,7 +1582,6 @@ and is omitted when the program has no open or closed term. `stats` matches `GET
   "logo_url":     "https://...",
   "status":       "published",
   "admin_status": "open",
-  "term":         <ProgramTerm>,
   "stats":        { "mentors": 2, "mentees": 3, "graduated": 6 },
   "created_on":   "2026-01-01T00:00:00Z",
   "updated_on":   "2026-01-01T00:00:00Z"
@@ -1609,7 +1594,7 @@ and is omitted when the program has no open or closed term. `stats` matches `GET
 |---|---|
 | `pending_review` | `status` is `pending` or `submitted` |
 | `open` | `status` is `published` and the program has an open term, or no terms yet |
-| `completed` | `status` is `published` and every term is closed |
+| `completed` | `status` is `published` and every term is closed (deleted terms are ignored) |
 | `rejected` | `status` is `rejected` |
 | `hidden` | `status` is `archived` or `hidden` |
 
@@ -1641,10 +1626,8 @@ this is not yet a Query Service collection.
 
 #### MentoredProgram Object
 
-One row of the caller's mentor programs list. `term` is a
-[ProgramTerm](#programterm-object) chosen as in [Program list term](#program-list-term),
-and is omitted when the program has no open or closed term. `project_name` and
-`logo_url` are omitted when absent.
+One row of the caller's mentor programs list. `project_name` and `logo_url`
+are omitted when absent.
 
 ```json
 {
@@ -1653,32 +1636,25 @@ and is omitted when the program has no open or closed term. `project_name` and
   "name":         "Example Program",
   "project_name": "Example Project",
   "logo_url":     "https://...",
-  "term":         <ProgramTerm>,
-  "term_status":  "active_term",
+  "status":       "open",
   "stats":        { "mentees": 3, "applicants": 12, "tasks_to_review": 2 }
 }
 ```
 
-`term_status` follows the term's priority:
+`status` uses the same rule as the `open` and `completed` values of
+[`admin_status`](#administeredprogram-object): `completed` once every term is
+closed (deleted terms are ignored), otherwise `open`.
 
-| Priority | `term_status` |
-|---|---|
-| 1 | `active_term` |
-| 2 | `upcoming` |
-| 3 | `completed` |
-| 4 | `upcoming`, with zero `stats` |
+`stats` counts the whole program, across all its terms:
 
-`stats` counts the chosen term only and matches
-`GET /v1/programs/{id}/applications?term=` for that term:
-
-- `applicants`: mentee applications, one per user (a withdrawn application kept beside its reapplication is not counted twice)
-- `mentees`: applicants whose status is `accepted` or `graduated`
+- `applicants`: mentee applications, one per user per term (a withdrawn application kept beside its reapplication is not counted twice). Matches `applicants` in `GET /v1/programs/{id}/management-summary`.
+- `mentees`: mentee applications whose status is `accepted` or `graduated`
 - `tasks_to_review`: `submitted` tasks of `accepted` mentees. A graduated mentee's leftover submission and a mentor-role application's tasks are not counted.
 
 #### `GET /v1/me/mentor-programs` 🔒
 
 Lists the `published` programs the caller is an `active` mentor of, ordered by
-`term_status` (`active_term`, `upcoming`, `completed`), then by name. The user
+`status` (`open`, then `completed`), then by name. The user
 is always the principal. The gateway requires only a signed-in user (`oidc`);
 see the [route matrix](../../docs/rewrite/06-route-matrix.md) for why this is
 not a Query Service collection. A caller who mentors no programs gets `200`

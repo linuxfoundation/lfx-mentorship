@@ -30,7 +30,7 @@ func (s AdministeredProgramStatus) IsValid() bool {
 }
 
 // AdministeredProgram is one row of the caller's programs list: a program the
-// caller is an active program admin of, with its current term and counts.
+// caller is an active program admin of, with its program-wide counts.
 type AdministeredProgram struct {
 	ID          string                    `json:"id"`
 	Slug        string                    `json:"slug"`
@@ -40,10 +40,7 @@ type AdministeredProgram struct {
 	LogoURL     *string                   `json:"logo_url,omitempty"`
 	Status      ProgramStatus             `json:"status"`
 	AdminStatus AdministeredProgramStatus `json:"admin_status"`
-	// Term is the started open term, else the next open term, else the latest
-	// closed term — the same choice as MentoredProgram.Term.
-	Term      *ProgramTerm       `json:"term,omitempty"`
-	Stats     ProgramHeaderStats `json:"stats"`
-	CreatedOn time.Time          `json:"created_on"`
-	UpdatedOn time.Time          `json:"updated_on"`
+	Stats       ProgramHeaderStats        `json:"stats"`
+	CreatedOn   time.Time                 `json:"created_on"`
+	UpdatedOn   time.Time                 `json:"updated_on"`
 }

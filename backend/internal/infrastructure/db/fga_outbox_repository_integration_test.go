@@ -684,17 +684,16 @@ func TestProgramListAdministeredIntegration_GroupsStatusAndScopesToActiveAdmin(t
 	type row struct {
 		id     string
 		status models.AdministeredProgramStatus
-		term   string
 	}
 	want := []row{
-		{completedID, models.AdministeredProgramStatusCompleted, "Summer 2026"},
-		{pendingID, models.AdministeredProgramStatusPendingReview, ""},
-		{fixture.ProgramID, models.AdministeredProgramStatusOpen, "Open"},
-		{rejectedID, models.AdministeredProgramStatusRejected, ""},
-		{hiddenID, models.AdministeredProgramStatusHidden, ""},
-		{archivedID, models.AdministeredProgramStatusHidden, ""},
-		{noTermsID, models.AdministeredProgramStatusOpen, ""},
-		{deletedTermID, models.AdministeredProgramStatusOpen, ""},
+		{completedID, models.AdministeredProgramStatusCompleted},
+		{pendingID, models.AdministeredProgramStatusPendingReview},
+		{fixture.ProgramID, models.AdministeredProgramStatusOpen},
+		{rejectedID, models.AdministeredProgramStatusRejected},
+		{hiddenID, models.AdministeredProgramStatusHidden},
+		{archivedID, models.AdministeredProgramStatusHidden},
+		{noTermsID, models.AdministeredProgramStatusOpen},
+		{deletedTermID, models.AdministeredProgramStatusOpen},
 	}
 	// Mentor-only and withdrawn memberships, and the other user's program, are excluded.
 	if meta.Total != len(want) || len(programs) != len(want) {
@@ -702,15 +701,8 @@ func TestProgramListAdministeredIntegration_GroupsStatusAndScopesToActiveAdmin(t
 	}
 	for i, w := range want {
 		p := programs[i]
-		term := ""
-		if p.Term != nil {
-			term = p.Term.Name
-			if p.Term.ProgramID != p.ID {
-				t.Errorf("programs[%d].Term.ProgramID = %s; want %s", i, p.Term.ProgramID, p.ID)
-			}
-		}
-		if p.ID != w.id || p.AdminStatus != w.status || term != w.term {
-			t.Errorf("programs[%d] = {%s %s %q}; want %+v", i, p.ID, p.AdminStatus, term, w)
+		if p.ID != w.id || p.AdminStatus != w.status {
+			t.Errorf("programs[%d] = {%s %s}; want %+v", i, p.ID, p.AdminStatus, w)
 		}
 		header, err := repo.GetHeaderProjection(ctx, p.ID)
 		if err != nil {
@@ -719,9 +711,6 @@ func TestProgramListAdministeredIntegration_GroupsStatusAndScopesToActiveAdmin(t
 		if p.Stats != header.Stats {
 			t.Errorf("programs[%d] stats = %+v; want header stats %+v", i, p.Stats, header.Stats)
 		}
-	}
-	if programs[0].Term.Status != models.ProgramTermStatusClosed || programs[2].Term.Status != models.ProgramTermStatusOpen {
-		t.Errorf("term statuses = %s, %s; want closed, open", programs[0].Term.Status, programs[2].Term.Status)
 	}
 	if s := programs[2].Stats; s.Mentors != 1 || s.Mentees != 1 || s.Graduated != 1 {
 		t.Errorf("fixture program stats = %+v; want 1 active mentor, 1 mentee, 1 graduated", s)

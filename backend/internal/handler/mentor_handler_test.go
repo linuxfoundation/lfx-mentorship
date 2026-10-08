@@ -169,11 +169,10 @@ func TestMentorHandler_ListMine_ScopesToPrincipal(t *testing.T) {
 		listMine: func(_ context.Context, userID string, f models.MentoredProgramFilter) ([]*models.MentoredProgram, *models.PaginationMeta, error) {
 			gotUser, gotFilter = userID, f
 			return []*models.MentoredProgram{{
-				ID:         "p1",
-				Name:       "GridFlow",
-				Term:       &models.ProgramTerm{ID: "t1", ProgramID: "p1", Name: "Fall 2026", Status: models.ProgramTermStatusOpen},
-				TermStatus: models.MentoredProgramTermStatusActiveTerm,
-				Stats:      models.MentoredProgramStats{Mentees: 3, Applicants: 12, TasksToReview: 2},
+				ID:     "p1",
+				Name:   "GridFlow",
+				Status: models.MentoredProgramStatusOpen,
+				Stats:  models.MentoredProgramStats{Mentees: 3, Applicants: 12, TasksToReview: 2},
 			}}, &models.PaginationMeta{Total: 1, Limit: 5, Offset: 10}, nil
 		},
 	})
@@ -201,9 +200,12 @@ func TestMentorHandler_ListMine_ScopesToPrincipal(t *testing.T) {
 		t.Fatalf("unexpected body: %+v", body)
 	}
 	got := body.Data[0]
-	if got.TermStatus != models.MentoredProgramTermStatusActiveTerm || got.Term == nil || got.Term.ID != "t1" ||
+	if got.Status != models.MentoredProgramStatusOpen ||
 		got.Stats != (models.MentoredProgramStats{Mentees: 3, Applicants: 12, TasksToReview: 2}) {
-		t.Errorf("row = %+v; want active term t1 with the service's stats", got)
+		t.Errorf("row = %+v; want an open program with the service's stats", got)
+	}
+	if strings.Contains(w.Body.String(), `"term`) {
+		t.Errorf("body = %s; want no term fields", w.Body.String())
 	}
 }
 
