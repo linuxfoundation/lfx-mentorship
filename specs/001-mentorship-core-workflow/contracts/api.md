@@ -34,10 +34,21 @@ Content-Type: application/json
 
 Approver team only; moves a `submitted` program to `published` or `rejected`.
 
+```
+POST /v1/programs/{id}/hide
+POST /v1/programs/{id}/unhide
+Authorization: Bearer {token}
+```
+
+Program admins only; no request body. `hide` moves a `published` program to
+`hidden` and is refused while the program has pending, accepted, or graduated
+applications. `unhide` moves a `hidden` program back to `published`; any other
+source status, including `archived`, is an invalid transition.
+
 **Responses**:
 - `200 OK` — updated program object
 - `400 Bad Request` — decision `status` missing or not `published`/`rejected`
-- `409 Conflict` — invalid transition or a submission guard blocks
+- `409 Conflict` — invalid transition, or a submission or hide guard blocks
 
 ---
 

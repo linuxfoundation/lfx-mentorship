@@ -263,6 +263,85 @@ func TestProgramService_Decide(t *testing.T) {
 	}
 }
 
+func TestProgramService_HideUnhide(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		unhide   bool
+		current  models.ProgramStatus
+		blocking int
+		want     error
+		stored   models.ProgramStatus
+	}{
+		{name: "hide published", current: models.ProgramStatusPublished, stored: models.ProgramStatusHidden},
+		{name: "hide blocked by active applications", current: models.ProgramStatusPublished, blocking: 2, want: domain.ErrStateLocked},
+		{name: "hide hidden", current: models.ProgramStatusHidden, want: domain.ErrInvalidStateTransition},
+		{name: "hide submitted", current: models.ProgramStatusSubmitted, want: domain.ErrInvalidStateTransition},
+		{name: "hide archived", current: models.ProgramStatusArchived, want: domain.ErrInvalidStateTransition},
+		{name: "unhide hidden", unhide: true, current: models.ProgramStatusHidden, stored: models.ProgramStatusPublished},
+		{name: "unhide archived", unhide: true, current: models.ProgramStatusArchived, want: domain.ErrInvalidStateTransition},
+		// programTransitions allows submitted → published; only Decide may apply it.
+		{name: "unhide submitted", unhide: true, current: models.ProgramStatusSubmitted, want: domain.ErrInvalidStateTransition},
+		{name: "unhide published", unhide: true, current: models.ProgramStatusPublished, want: domain.ErrInvalidStateTransition},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stored, expected *models.ProgramStatus
+			reads := 0
+			repo := &stubProgRepo{
+				getByID: func(_ context.Context, id string) (*models.Program, error) {
+					reads++
+					return &models.Program{ID: id, Status: tc.current}, nil
+				},
+				update: func(_ context.Context, id string, in models.ProgramUpdateInput) (*models.Program, error) {
+					stored, expected = in.Status, in.ExpectedStatus
+					return &models.Program{ID: id, Status: *in.Status}, nil
+				},
+			}
+			appRepo := &stubAppRepo{countBlocking: func(context.Context, string) (int, error) { return tc.blocking, nil }}
+			svc := newProgramSvc(repo, &stubTermRepo{}, appRepo)
+			change := svc.Hide
+			if tc.unhide {
+				change = svc.Unhide
+			}
+			program, err := change(context.Background(), "prog-1")
+			if reads != 1 {
+				t.Fatalf("program read %d times; want once", reads)
+			}
+			if tc.want != nil {
+				if !errors.Is(err, tc.want) {
+					t.Fatalf("got %v; want %v", err, tc.want)
+				}
+				if stored != nil {
+					t.Fatalf("status %q was stored despite the error", *stored)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if stored == nil || *stored != tc.stored || program.Status != tc.stored {
+				t.Fatalf("stored %v, returned %q; want %q", stored, program.Status, tc.stored)
+			}
+			// The repository must apply the change only while the row is still in the status that was validated.
+			if expected == nil || *expected != tc.current {
+				t.Fatalf("ExpectedStatus = %v; want %q", expected, tc.current)
+			}
+		})
+	}
+}
+
+func TestProgramService_HideUnhide_NotFound(t *testing.T) {
+	repo := &stubProgRepo{getByID: func(context.Context, string) (*models.Program, error) {
+		return nil, domain.ErrProgramNotFound
+	}}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	if _, err := svc.Hide(context.Background(), "missing"); !errors.Is(err, domain.ErrProgramNotFound) {
+		t.Errorf("Hide: got %v; want ErrProgramNotFound", err)
+	}
+	if _, err := svc.Unhide(context.Background(), "missing"); !errors.Is(err, domain.ErrProgramNotFound) {
+		t.Errorf("Unhide: got %v; want ErrProgramNotFound", err)
+	}
+}
+
 func TestProgramService_Update_ArchivedTerminal(t *testing.T) {
 	repo := &stubProgRepo{
 		getByID: func(_ context.Context, id string) (*models.Program, error) {

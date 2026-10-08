@@ -902,6 +902,21 @@ func (r *ProgramRepository) Update(ctx context.Context, id string, input models.
 		return nil, fmt.Errorf("begin update program transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if input.Status != nil {
+		var current models.ProgramStatus
+		if err := tx.QueryRow(ctx, `SELECT status FROM programs WHERE id = $1 FOR UPDATE`, id).Scan(&current); errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrProgramNotFound
+		} else if err != nil {
+			return nil, fmt.Errorf("lock program for status change: %w", err)
+		} else if input.ExpectedStatus != nil && current != *input.ExpectedStatus {
+			return nil, fmt.Errorf("%w: program status changed concurrently", domain.ErrInvalidStateTransition)
+		}
+		if *input.Status == models.ProgramStatusHidden {
+			if err := checkNoBlockingApplications(ctx, tx, id); err != nil {
+				return nil, err
+			}
+		}
+	}
 
 	const q = `
 		UPDATE programs SET
@@ -1069,6 +1084,29 @@ func enqueueObjectMarker(ctx context.Context, tx pgx.Tx, objectType, objectID, o
 		              updated_on = NOW()`
 	if _, err := tx.Exec(ctx, q, objectType, objectID, operation); err != nil {
 		return fmt.Errorf("enqueue %s FGA marker: %w", objectType, err)
+	}
+	return nil
+}
+
+// checkNoBlockingApplications re-checks the hide guard inside the hiding transaction, which
+// holds the program row lock. Inserts lock their term and status changes lock their
+// application before writing, so locking the open terms and the applications waits out any
+// write in flight; one that starts later sees the program hidden.
+func checkNoBlockingApplications(ctx context.Context, tx pgx.Tx, programID string) error {
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM program_terms WHERE program_id = $1 AND status = 'open' FOR UPDATE`, programID); err != nil {
+		return fmt.Errorf("lock open terms before hiding: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		SELECT 1 FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id
+		WHERE pt.program_id = $1 FOR UPDATE OF a`, programID); err != nil {
+		return fmt.Errorf("lock applications before hiding: %w", err)
+	}
+	var count int
+	if err := tx.QueryRow(ctx, countBlockingAppsForProgramSQL, programID, blockingApplicationStatuses).Scan(&count); err != nil {
+		return fmt.Errorf("count blocking applications before hiding: %w", err)
+	}
+	if count > 0 {
+		return fmt.Errorf("%w: program has %d active application(s) and cannot be hidden", domain.ErrStateLocked, count)
 	}
 	return nil
 }

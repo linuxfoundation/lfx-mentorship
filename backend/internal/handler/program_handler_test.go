@@ -34,6 +34,8 @@ type stubProgramSvc struct {
 	getProgramSponsors         func(context.Context, string, string, bool, bool) ([]models.ProgramSponsor, error)
 	createEnrollment           func(context.Context, models.ProgramEnrollmentInput) (*models.Program, error)
 	update                     func(context.Context, string, models.ProgramUpdateInput) (*models.Program, error)
+	hide                       func(context.Context, string) (*models.Program, error)
+	unhide                     func(context.Context, string) (*models.Program, error)
 }
 
 func (s *stubProgramSvc) GetByID(ctx context.Context, id string) (*models.Program, error) {
@@ -109,6 +111,18 @@ func (s *stubProgramSvc) Update(ctx context.Context, id string, input models.Pro
 	return &models.Program{}, nil
 }
 func (s *stubProgramSvc) Decide(context.Context, string, models.ProgramStatus) (*models.Program, error) {
+	return &models.Program{}, nil
+}
+func (s *stubProgramSvc) Hide(ctx context.Context, id string) (*models.Program, error) {
+	if s.hide != nil {
+		return s.hide(ctx, id)
+	}
+	return &models.Program{}, nil
+}
+func (s *stubProgramSvc) Unhide(ctx context.Context, id string) (*models.Program, error) {
+	if s.unhide != nil {
+		return s.unhide(ctx, id)
+	}
 	return &models.Program{}, nil
 }
 func (s *stubProgramSvc) Delete(context.Context, string) error { return nil }
@@ -888,5 +902,66 @@ func TestProgramHandler_Create_MapsIndustry(t *testing.T) {
 	}
 	if captured.Program.Industry == nil || *captured.Program.Industry != "Cloud Native" {
 		t.Fatalf("industry = %v; want Cloud Native", captured.Program.Industry)
+	}
+}
+
+func TestProgramHandler_HideUnhide(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		unhide    bool
+		principal bool
+		err       error
+		want      int
+	}{
+		{name: "hide published", principal: true, want: http.StatusOK},
+		{name: "hide blocked by active applications", principal: true, err: fmt.Errorf("%w: program has 2 active application(s) and cannot be hidden", domain.ErrStateLocked), want: http.StatusConflict},
+		{name: "hide non-published", principal: true, err: domain.ErrInvalidStateTransition, want: http.StatusConflict},
+		{name: "hide unauthenticated", want: http.StatusUnauthorized},
+		{name: "unhide hidden", unhide: true, principal: true, want: http.StatusOK},
+		{name: "unhide archived", unhide: true, principal: true, err: domain.ErrInvalidStateTransition, want: http.StatusConflict},
+		{name: "unhide unauthenticated", unhide: true, want: http.StatusUnauthorized},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calledWith string
+			change := func(_ context.Context, id string) (*models.Program, error) {
+				calledWith = id
+				if tc.err != nil {
+					return nil, tc.err
+				}
+				return &models.Program{ID: id}, nil
+			}
+			svc := &stubProgramSvc{hide: change}
+			route, serve := "/v1/programs/p1/hide", handler.NewProgramHandler(svc).Hide
+			if tc.unhide {
+				svc = &stubProgramSvc{unhide: change}
+				route, serve = "/v1/programs/p1/unhide", handler.NewProgramHandler(svc).Unhide
+			}
+			r := httptest.NewRequest(http.MethodPost, route, nil)
+			if tc.principal {
+				r = requestWithPrincipal(r, "admin-1")
+			}
+			r = requestWithChiParam(r, "id", "p1")
+			w := httptest.NewRecorder()
+			serve(w, r)
+
+			if w.Code != tc.want {
+				t.Fatalf("got %d; want %d: %s", w.Code, tc.want, w.Body.String())
+			}
+			if !tc.principal {
+				if calledWith != "" {
+					t.Fatal("service must not be called without a principal")
+				}
+				return
+			}
+			if calledWith != "p1" {
+				t.Fatalf("service called with %q; want p1", calledWith)
+			}
+			if tc.want == http.StatusOK {
+				var got models.Program
+				if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got.ID != "p1" {
+					t.Fatalf("body = %s (%v); want the program", w.Body.String(), err)
+				}
+			}
+		})
 	}
 }
