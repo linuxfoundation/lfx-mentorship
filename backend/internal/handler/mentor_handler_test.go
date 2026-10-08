@@ -189,11 +189,12 @@ func TestMentorHandler_ListMine_ScopesToPrincipal(t *testing.T) {
 	if want := (models.MentoredProgramFilter{Limit: 5, Offset: 10}); gotFilter != want {
 		t.Errorf("filter = %+v; want %+v", gotFilter, want)
 	}
+	raw := w.Body.Bytes()
 	var body struct {
 		Data []models.MentoredProgram `json:"data"`
 		Meta models.PaginationMeta    `json:"meta"`
 	}
-	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+	if err := json.Unmarshal(raw, &body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	if len(body.Data) != 1 || body.Meta.Total != 1 {
@@ -204,8 +205,20 @@ func TestMentorHandler_ListMine_ScopesToPrincipal(t *testing.T) {
 		got.Stats != (models.MentoredProgramStats{Mentees: 3, Applicants: 12, TasksToReview: 2}) {
 		t.Errorf("row = %+v; want an open program with the service's stats", got)
 	}
-	if strings.Contains(w.Body.String(), `"term`) {
-		t.Errorf("body = %s; want no term fields", w.Body.String())
+	// Typed decoding ignores unknown fields, so check the row's keys directly.
+	var fields struct {
+		Data []map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatalf("decode fields: %v", err)
+	}
+	for _, removed := range []string{"term", "term_status"} {
+		if _, ok := fields.Data[0][removed]; ok {
+			t.Errorf("row has %q; want it removed: %s", removed, raw)
+		}
+	}
+	if _, ok := fields.Data[0]["status"]; !ok {
+		t.Errorf("row has no status: %s", raw)
 	}
 }
 
