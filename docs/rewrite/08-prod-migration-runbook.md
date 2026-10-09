@@ -92,6 +92,7 @@ kubectl -n mentorship-backend create configmap mentorship-etl-scripts \
   --from-file=backend/db/scripts/copy_legacy_objects.py \
   --from-file=backend/db/scripts/legacy_objects.py \
   --from-file=backend/db/scripts/verify_migration.py \
+  --from-file=backend/db/scripts/verify_objects.py \
   --from-file=backend/db/scripts/requirements.txt \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
@@ -241,7 +242,14 @@ python copy_legacy_objects.py 2>&1 | tee /work/copy.log
    - It samples up to 500 items from each legacy table and compares each one's fields with the imported row: identities, names, emails, LFIDs, statuses, parent links, dates and flags. It follows the importer's skip, deduplication and quarantine rules, so a row the import should have skipped counts as an error if it is present.
    - It then runs integrity queries the schema cannot enforce: denormalised term and status copies that disagree with their parents, a task that is both live and quarantined, and more than one live application per term and user. Parent links that Postgres enforces (task to application, application to term) are rechecked too.
    - It must end with `Verification passed: no mismatches`. Any `MISMATCH` line is a no-go until it is explained. The log prints `VERIFY_SEED`; rerun with it to reproduce the same sample.
-5. **Spot checks in the UI:**
+5. **Object reconciliation** ([03](./03-migration-plan.md) §S3 objects, step 5 (b) and (c)). The copy's manifest says what was copied, not that it is still there and intact. Run, in the same pod, before the legacy bucket is locked:
+   ```bash
+   python verify_objects.py 2>&1 | tee /work/verify-objects.log
+   ```
+   - Every file column that is not `NULL` must resolve in its bucket: task files by key, logos and avatars by their CDN URL. Foreign avatar and logo URLs are skipped.
+   - Each of those objects must have the same ETag as its legacy source. Quarantined objects are compared by size, since a large one is uploaded in parts and has a different kind of ETag.
+   - It must end with `Object verification passed: no mismatches`. Any `MISMATCH` line is a no-go until it is explained.
+6. **Spot checks in the UI:**
    - a program admin can open and edit their own programs;
    - a published program's logo loads from the CDN;
    - a migrated task submission downloads;
@@ -251,7 +259,7 @@ python copy_legacy_objects.py 2>&1 | tee /work/copy.log
 
 The API has no read-only mode (see [Gaps](#gaps)), so the decision is made **before** legacy users are sent to the new stack. Once the legacy hostname redirects, users write to Postgres only, and rollback is no longer clean ([03](./03-migration-plan.md) Phase 4 and "Rollback").
 
-1. **Go/no-go**, on the Phase 5 results. **Go** requires `verify_migration.py` to pass (Phase 5, step 4).
+1. **Go/no-go**, on the Phase 5 results. **Go** requires both `verify_migration.py` and `verify_objects.py` to pass (Phase 5, steps 4 and 5).
    - **No-go:** unfreeze legacy and stop. Legacy still holds every write. If the new site was left open, the imported data was visible on it and any writes made there are lost when the data is re-imported.
 2. **Lock the legacy uploads bucket:** turn on S3 Block Public Access for `jobspring-prod-uploads` (legacy account). This can be reversed and nothing is deleted.
 3. **Let email reach real users**, before anyone is sent to the new site. Until this step, every notification to an address not on `EMAIL_ALLOWED_RECIPIENTS` is dropped, not queued, so a real write made before it rolls out would lose its email for good.

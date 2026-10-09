@@ -1,6 +1,7 @@
 # Copyright The Linux Foundation and each contributor to LFX.
 # SPDX-License-Identifier: MIT
 
+import hashlib
 import importlib
 import io
 
@@ -42,7 +43,8 @@ class FakeS3:
     def head_object(self, Bucket, Key):
         if (Bucket, Key) not in self.objects:
             raise ClientError({"Error": {"Code": "404"}}, "HeadObject")
-        return {"ContentLength": len(self.objects[(Bucket, Key)]), "ContentType": "binary/octet-stream"}
+        data = self.objects[(Bucket, Key)]
+        return {"ContentLength": len(data), "ContentType": "binary/octet-stream", "ETag": f'"{hashlib.md5(data).hexdigest()}"'}
 
     def get_object(self, Bucket, Key):
         body = TrackingBody(self.objects[(Bucket, Key)], self.reads)

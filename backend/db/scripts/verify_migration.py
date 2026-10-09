@@ -4,8 +4,11 @@
 """Go/no-go check of an import against legacy DynamoDB.
 
 Samples rows from every legacy table and compares their fields with the rows the
-importer wrote, then runs integrity queries the schema cannot enforce. Exits 1 on
-any mismatch.
+importer wrote, checks that sampled rows the importer skips are absent, then runs
+integrity queries the schema cannot enforce. Exits 1 on any mismatch.
+
+The value mappings are restated here from the migration contract rather than
+imported, so a regression in the importer's own tables cannot pass unnoticed.
 
 Usage (same environment as migrate_dynamo_to_postgres.py):
     python verify_migration.py
@@ -30,6 +33,22 @@ SEED = os.environ.get("VERIFY_SEED")
 
 _APP_PRIORITY = {"graduated": 5, "accepted": 4, "hold": 3, "pending": 2, "declined": 1, "withdrawn": 0}
 _TASK_STATUSES = {"incomplete", "in_progress", "complete", "submitted"}
+_TASK_CATEGORIES = {"prerequisite", "non_prerequisite"}
+
+# Legacy value -> target value (03 §Migration-specific tasks). Unlisted values fall back as noted.
+_PROGRAM_STATUS = {  # else pending
+    "draft": "pending", "pending": "pending", "submitted": "submitted", "published": "published",
+    "rejected": "rejected", "archived": "archived", "hidden": "hidden",
+}
+_APPLICATION_STATUS = {  # else pending
+    "pending": "pending", "accepted": "accepted", "approved": "accepted", "active": "accepted",
+    "declined": "declined", "withdrawn": "withdrawn", "graduated": "graduated", "hold": "hold",
+}
+_MEMBER_TYPE = {"maintainer": "program_admin", "program_admin": "program_admin", "mentor": "mentor"}  # else skipped
+_MEMBER_STATUS = {  # else skipped
+    "invited": "invited", "requested": "requested", "pending": "pending", "active": "active",
+    "accepted": "active", "approved": "active", "declined": "declined", "withdrawn": "withdrawn",
+}
 
 # Each query lists rows that break an invariant; every one must return nothing.
 INTEGRITY_CHECKS = {
@@ -70,6 +89,18 @@ def _ms(value):
     return None if value is None else round(value.timestamp() * 1000)
 
 
+def _program_status(value):
+    return _PROGRAM_STATUS.get((value or "").lower(), "pending")
+
+
+def _application_status(value):
+    return _APPLICATION_STATUS.get((value or "pending").lower(), "pending")
+
+
+def _profile_type(value):
+    return "mentor" if (value or "").strip().lower() == "mentor" else "mentee"
+
+
 class Report:
     def __init__(self):
         self.sampled: dict = {}
@@ -103,6 +134,15 @@ def _fetch(cur, sql: str, params) -> dict | None:
     if row is None:
         return None
     return dict(zip([c.name for c in cur.description], row))
+
+
+def verify_skipped(cur, tables, ids, report, rng, size):
+    """Sampled ids the importer skips must be in none of the tables."""
+    for item_id in _sample(sorted(ids), rng, size):
+        for table in tables:
+            if _fetch(cur, f"SELECT 1 AS found FROM {table} WHERE id = %s", (item_id,)):
+                report.unexpected(table, item_id)
+    report.sampled[f"{tables[0]} (skipped)"] = min(len(ids), size)
 
 
 def _duplicated(values) -> set:
@@ -143,7 +183,7 @@ def verify_profiles(cur, profiles, report, rng, size):
     keeper: dict = {}
     for p in profiles:
         pid, uid = m._as_uuid(p.get("id")), m._as_uuid(p.get("userId"))
-        if p.get("recordKind") == "github-profile-reservation" or not pid or m._map_profile_type(p.get("type")) != "mentee":
+        if p.get("recordKind") == "github-profile-reservation" or not pid or _profile_type(p.get("type")) != "mentee":
             continue
         key = (m._parse_ts(p.get("createdAt")) or datetime.min.replace(tzinfo=timezone.utc), pid)
         if uid not in keeper or key > keeper[uid]:
@@ -151,7 +191,7 @@ def verify_profiles(cur, profiles, report, rng, size):
     candidates = [p for p in profiles if p.get("recordKind") != "github-profile-reservation" and m._as_uuid(p.get("id"))]
     for p in _sample(candidates, rng, size):
         pid, uid = m._as_uuid(p.get("id")), m._as_uuid(p.get("userId"))
-        profile_type = m._map_profile_type(p.get("type"))
+        profile_type = _profile_type(p.get("type"))
         row = _fetch(cur, "SELECT user_id::text, profile_type, first_name, last_name, email, introduction FROM user_profiles WHERE id = %s", (pid,))
         if profile_type == "mentee" and keeper.get(uid, (None, pid))[1] != pid:
             if row is not None:
@@ -181,7 +221,7 @@ def verify_programs(cur, projects, report, rng, size):
             continue
         report.compare("programs", pid, {
             "name": _text(p.get("name")),
-            "status": m._normalize_program_status(p.get("status")),
+            "status": _program_status(p.get("status")),
             "description": _text(p.get("description")),
             "website_url": _text(p.get("websiteUrl")),
             "repo_link": _text(p.get("repoLink")),
@@ -221,11 +261,11 @@ def _member_target(member) -> tuple | None:
     """The (program, user, type, status) the importer writes, or None when it skips the row."""
     raw_type = (member.get("memberType") or "").strip().lower()
     raw_status = (member.get("status") or "").strip().lower() or None
-    member_type = m._MEMBER_TYPE_MAP.get(raw_type)
+    member_type = _MEMBER_TYPE.get(raw_type)
     if member_type is None or (member_type == "mentor" and raw_status in {"pending", "declined", "rejected"}):
         return None
-    status = m._MEMBER_STATUS_MAP.get(raw_status, raw_status) if raw_status else None
-    if status not in m._VALID_MEMBER_STATUSES:
+    status = _MEMBER_STATUS.get(raw_status)
+    if status is None:
         return None
     return m._as_uuid(member.get("projectId")), m._as_uuid(member.get("userId")), member_type, status
 
@@ -233,12 +273,16 @@ def _member_target(member) -> tuple | None:
 def verify_members(cur, members, program_ids, report, rng, size):
     # The importer upserts on (program, user, type), so the last row for a key wins.
     final: dict = {}
+    skipped = set()
     for member in members:
-        if not (m._as_uuid(member.get("id")) and m._as_uuid(member.get("projectId")) and m._as_uuid(member.get("userId"))):
+        mid = m._as_uuid(member.get("id"))
+        if not mid:
             continue
-        target = _member_target(member)
+        target = _member_target(member) if m._as_uuid(member.get("projectId")) and m._as_uuid(member.get("userId")) else None
         if target and target[0] in program_ids:
             final[target[:3]] = (target[3], _text(member.get("email")))
+        else:
+            skipped.add(mid)
     for key in _sample(sorted(final), rng, size):
         row = _fetch(cur, """SELECT status, email FROM program_members
             WHERE program_id = %s AND user_id = %s AND member_type = %s""", key)
@@ -248,16 +292,21 @@ def verify_members(cur, members, program_ids, report, rng, size):
         status, email = final[key]
         report.compare("program_members", key, {"status": status, "email": email}, row)
     report.sampled["program_members"] = min(len(final), size)
+    # A row's id is the first legacy id written for its key, never a skipped one.
+    verify_skipped(cur, ("program_members",), skipped, report, rng, size)
 
 
 def verify_applications(cur, mentees, term_ids, report, rng, size) -> set:
     """Returns the (term, user) pairs the importer gave an application, for the task check."""
     best: dict = {}
+    skipped = set()
     for item in mentees:
         mid, term_id, uid = (m._as_uuid(item.get(k)) for k in ("id", "programTermId", "userId"))
         if not (mid and term_id and uid) or term_id not in term_ids:
+            if mid:
+                skipped.add(mid)
             continue
-        status = m._map_application_status(item.get("status") or "pending")
+        status = _application_status(item.get("status"))
         updated = m._parse_ts(item.get("updatedOn"))
         rank = (_APP_PRIORITY.get(status, -1), updated.timestamp() if updated else float("-inf"), mid)
         if (term_id, uid) not in best or rank > best[(term_id, uid)][0]:
@@ -281,6 +330,7 @@ def verify_applications(cur, mentees, term_ids, report, rng, size) -> set:
             "admin_notified": m._as_bool(item.get("adminNotified")),
         }, rows[0])
     report.sampled["applications"] = min(len(best), size)
+    verify_skipped(cur, ("applications",), skipped, report, rng, size)
     return set(best)
 
 
@@ -304,12 +354,14 @@ def verify_tasks(cur, tasks, term_ids, applied: set, report, rng, size):
             "program_term_id": term_id if term_id in term_ids else None,
             "name": _text(t.get("name")),
             "description": _text(t.get("description")),
-            "category": category if category in m._VALID_TASK_CATEGORIES else None,
+            "category": category if category in _TASK_CATEGORIES else None,
             "status": status if status in _TASK_STATUSES else "incomplete",
             "custom": m._as_bool(t.get("custom")),
             "created_on": m._parse_ts(t.get("createdOn")),
         }, row)
     report.sampled["tasks"] = min(len(candidates), size)
+    skipped = {tid for t in tasks if (tid := m._as_uuid(t.get("id"))) and not m._as_uuid(t.get("assigneeId"))}
+    verify_skipped(cur, ("tasks", "quarantined_tasks"), skipped, report, rng, size)
 
 
 def check_integrity(cur, report):
