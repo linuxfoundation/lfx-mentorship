@@ -35,6 +35,12 @@ Key notes
   lifecycle (pending → accepted → graduated|withdrawn).
 - attendance_type is not captured in DynamoDB; it is migrated as NULL.
 - DynamoDB member status "approved" maps to program_members.status "active".
+- jobspring never wrote userId on a program creator's maintainer row (or on
+  some mentor rows). A member row without userId is matched to its user at
+  import time: the one user with that email (case-insensitive); for maintainer
+  rows only, a shared email settled by the program's lfid (its creator); then
+  an explicit MEMBER_USER_OVERRIDES entry. No placeholder users are created;
+  rows that still have no user are logged as UNRESOLVED_MEMBER_USER and skipped.
 - DynamoDB mentee status "approved" (and "active") maps to applications.status
   "accepted" — applications.status has no "active" value.
 - DynamoDB user-profile type for mentees maps to Postgres profile_type "mentee".
@@ -64,23 +70,27 @@ Key notes
 
 Usage
 -----
-  export AWS_ACCESS_KEY_ID=...
-  export AWS_SECRET_ACCESS_KEY=...
-  export AWS_SESSION_TOKEN=...          # for STS / temporary credentials
-  export AWS_REGION=us-east-1
-    export DYNAMODB_TABLE_PREFIX=jobspring-dev  # defaults to jobspring-prod
+  # Legacy jobspring (DynamoDB + uploads bucket) is read through its own session.
+  # Its region never follows AWS_REGION. Its credentials come from LEGACY_AWS_*
+  # and only fall back to the default chain when none is set; inside a v2 pod
+  # that fallback is the pod's own IRSA role, so in-cluster runs must set them.
+  export LEGACY_AWS_REGION=us-east-1     # default
+  export LEGACY_AWS_PROFILE=...          # or LEGACY_AWS_ACCESS_KEY_ID / _SECRET_ACCESS_KEY / _SESSION_TOKEN
+  export DYNAMODB_TABLE_PREFIX=jobspring-dev  # defaults to jobspring-prod
 
   export PG_DSN="host=localhost port=5432 dbname=mentorship user=postgres password=..."
   export COPY_MANIFEST=legacy-object-manifest.json
   export LOGOS_CDN_URL_PREFIX=https://...
   export LOGOS_S3_BUCKET=... ATTACHMENTS_S3_BUCKET=...   # must match the manifest
   export NATS_URL=nats://...   # platform NATS, to verify project parents; unset leaves programs unmapped
+  export MEMBER_USER_OVERRIDES=overrides.csv   # optional: member_id,user_id for rows matching cannot settle
 
   pip install boto3 psycopg2-binary nats-py
   python3 backend/db/scripts/copy_legacy_objects.py
   python3 backend/db/scripts/migrate_dynamo_to_postgres.py
 """
 
+import csv
 import json
 import asyncio
 import logging
@@ -111,7 +121,9 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-REGION = os.environ.get("AWS_REGION", "us-east-1")
+# Legacy jobspring lives in another account and region than the v2 cluster, whose
+# pods have AWS_REGION injected; legacy reads must never follow it.
+LEGACY_REGION = os.environ.get("LEGACY_AWS_REGION", "us-east-1").strip()
 PG_DSN = os.environ.get(
     "PG_DSN",
     "host=localhost port=5432 dbname=mentorship user=postgres password=postgres",
@@ -125,6 +137,7 @@ LOGOS_CDN_URL_PREFIX = os.environ.get("LOGOS_CDN_URL_PREFIX", "")
 LOGOS_S3_BUCKET = os.environ.get("LOGOS_S3_BUCKET", "").strip()
 ATTACHMENTS_S3_BUCKET = os.environ.get("ATTACHMENTS_S3_BUCKET", "").strip()
 NATS_URL = os.environ.get("NATS_URL", "").strip()
+MEMBER_USER_OVERRIDES = os.environ.get("MEMBER_USER_OVERRIDES", "").strip()
 
 # Stable UUID namespace — must not change between runs to keep IDs deterministic.
 _UUID_NS = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
@@ -137,6 +150,27 @@ _deser = _TypeDeserializer()
 
 def _deserialize(item: dict) -> dict:
     return {k: _deser.deserialize(v) for k, v in item.items()}
+
+
+def legacy_session() -> boto3.Session:
+    """Session for the legacy account: LEGACY_AWS_PROFILE, else LEGACY_AWS_* keys, else the default chain.
+
+    Only the region is always isolated; the default-chain fallback is meant for
+    a laptop whose default profile is the legacy account.
+    """
+    profile = os.environ.get("LEGACY_AWS_PROFILE", "").strip()
+    if profile:
+        return boto3.Session(profile_name=profile, region_name=LEGACY_REGION)
+    key_id = os.environ.get("LEGACY_AWS_ACCESS_KEY_ID", "").strip()
+    if key_id:
+        return boto3.Session(
+            aws_access_key_id=key_id,
+            aws_secret_access_key=os.environ["LEGACY_AWS_SECRET_ACCESS_KEY"],
+            aws_session_token=os.environ.get("LEGACY_AWS_SESSION_TOKEN") or None,
+            region_name=LEGACY_REGION,
+        )
+    log.warning("No LEGACY_AWS_PROFILE or LEGACY_AWS_ACCESS_KEY_ID set: legacy reads use the default credential chain")
+    return boto3.Session(region_name=LEGACY_REGION)
 
 
 def scan_table(client, table_name: str) -> list:
@@ -892,6 +926,77 @@ _MEMBER_TYPE_MAP = {
 _VALID_MEMBER_STATUSES = {"invited", "requested", "pending", "active", "declined", "withdrawn"}
 # DynamoDB used "approved" for accepted mentors; Postgres stores that as "active".
 _MEMBER_STATUS_MAP = {"accepted": "active", "approved": "active"}
+
+
+def load_member_user_overrides(path: str) -> dict:
+    """Read a member_id,user_id CSV; an empty path means no overrides."""
+    if not path:
+        return {}
+    with open(path, newline="") as f:
+        return {
+            row["member_id"].strip(): row["user_id"].strip()
+            for row in csv.DictReader(f)
+            if (row.get("user_id") or "").strip()
+        }
+
+
+def _norm(value) -> str:
+    return str(value or "").strip().lower()
+
+
+def _match_member_user(member: dict, users_by_email: dict, program_lfids: dict) -> tuple[str, str | None]:
+    email = _norm(member.get("email"))
+    if not email:
+        return "no_email", None
+    candidates = users_by_email.get(email, [])
+    if len(candidates) == 1:
+        return "email_unique", candidates[0]["id"]
+    if not candidates:
+        return "no_user_for_email", None
+    # The program's lfid names its creator, and only the creator gets a legacy
+    # maintainer row, so this tie-break is meaningless for mentor rows.
+    if _norm(member.get("memberType")) == "maintainer":
+        lfid = program_lfids.get(member.get("projectId"), "")
+        by_lfid = [c for c in candidates if lfid and _norm(c.get("lfid")) == lfid]
+        if len(by_lfid) == 1:
+            return "email_and_program_lfid", by_lfid[0]["id"]
+    return "ambiguous", None
+
+
+def resolve_member_user_ids(members: list, users: list, projects: list, overrides: dict) -> list:
+    """Return members with a missing userId filled in where it can be matched.
+
+    Overrides apply only when automatic matching fails, so a stray entry can
+    never displace a unique match. The input rows are not modified.
+    """
+    user_ids = {u["id"] for u in users if u.get("id")}
+    users_by_email: dict = {}
+    for u in users:
+        if u.get("id") and _norm(u.get("email")):
+            users_by_email.setdefault(_norm(u["email"]), []).append(u)
+    program_lfids = {p["projectId"]: _norm(p.get("lfid")) for p in projects if p.get("projectId")}
+
+    resolved, outcomes = [], {}
+    for m in members:
+        if m.get("userId"):
+            resolved.append(m)
+            continue
+        result, user_id = _match_member_user(m, users_by_email, program_lfids)
+        override = overrides.get(m.get("id")) if user_id is None else None
+        if override:
+            result, user_id = ("override", override) if override in user_ids else ("override_unknown_user", None)
+        outcomes[result] = outcomes.get(result, 0) + 1
+        if user_id is None:
+            log.warning(
+                "UNRESOLVED_MEMBER_USER member_id=%s program_id=%s member_type=%s status=%s reason=%s",
+                m.get("id"), m.get("projectId"), m.get("memberType"), m.get("status"), result,
+            )
+            resolved.append(m)
+            continue
+        resolved.append({**m, "userId": user_id})
+    if outcomes:
+        log.info("Member rows without userId: %d (%s)", sum(outcomes.values()), ", ".join(f"{k}={v}" for k, v in sorted(outcomes.items())))
+    return resolved
 
 
 def migrate_program_members(
@@ -1697,8 +1802,8 @@ def seed_derived_state(cur) -> None:
 
 
 def main() -> None:
-    log.info("Connecting to DynamoDB (region=%s) ...", REGION)
-    dynamo = boto3.client("dynamodb", region_name=REGION)
+    log.info("Connecting to DynamoDB (region=%s) ...", LEGACY_REGION)
+    dynamo = legacy_session().client("dynamodb")
 
     log.info("Connecting to PostgreSQL: %s", _redact_dsn(PG_DSN))
     conn = psycopg2.connect(PG_DSN)
@@ -1719,6 +1824,9 @@ def main() -> None:
         members_raw      = scan_table(dynamo, f"{TABLE_PREFIX}-project-members")
         mentees_raw      = scan_table(dynamo, f"{TABLE_PREFIX}-program-term-mentees")
         tasks_raw        = scan_table(dynamo, f"{TABLE_PREFIX}-tasks")
+        members_raw      = resolve_member_user_ids(
+            members_raw, users_raw, projects_raw, load_member_user_overrides(MEMBER_USER_OVERRIDES)
+        )
 
         # ── 2. Migrate in FK dependency order ───────────────────────────────
         with conn:  # single transaction: commits on clean exit, rolls back on exception

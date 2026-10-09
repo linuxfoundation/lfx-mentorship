@@ -7,6 +7,8 @@
 # ─── Go build artefacts ──────────────────────────────────────────────────────
 backend/bin/
 backend/mentorship-api
+backend/.coverage/
+backend/coverage.out
 
 # ─── Tools & local state ─────────────────────────────────────────────────────
 megalinter-reports/

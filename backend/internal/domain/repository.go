@@ -61,7 +61,8 @@ type MentorRepository interface {
 	Summary(ctx context.Context) (*models.MentorSummary, error)
 	GetByUserID(ctx context.Context, userID string) (*models.MentorDetail, error)
 	// ListMentoredByUser returns the published programs userID is an active
-	// mentor of, each with its chosen term and that term's counts.
+	// mentor of, each with its open/completed status and the counts on its
+	// open terms.
 	ListMentoredByUser(ctx context.Context, userID string, filter models.MentoredProgramFilter) ([]*models.MentoredProgram, *models.PaginationMeta, error)
 }
 

@@ -277,9 +277,10 @@ const mentoredProgramsFrom = `
 	) mp`
 
 // ListMentoredByUser returns the published programs userID is an active mentor
-// of. Counts cover all the program's terms and match its management summary:
-// applicants are counted once per user per term, as a withdrawn application is
-// kept beside its reapplication.
+// of. Counts cover the program's open terms only, so a completed program counts
+// zero: applicants are counted once per user per term, as a withdrawn
+// application is kept beside its reapplication, and mentees match the mentees
+// of its management summary.
 func (r *MentorRepository) ListMentoredByUser(ctx context.Context, userID string, filter models.MentoredProgramFilter) ([]*models.MentoredProgram, *models.PaginationMeta, error) {
 	ctx, span := mentorTracer.Start(ctx, "db.mentors.ListMentoredByUser")
 	defer span.End()
@@ -306,7 +307,7 @@ func (r *MentorRepository) ListMentoredByUser(ctx context.Context, userID string
 			(SELECT COUNT(*) FROM tasks t
 				JOIN applications ta ON ta.id = t.application_id
 				JOIN program_terms tpt ON tpt.id = ta.program_term_id
-				WHERE tpt.program_id = page.id AND ta.role = 'mentee'
+				WHERE tpt.program_id = page.id AND tpt.status = 'open' AND ta.role = 'mentee'
 				  AND ta.status = 'accepted' AND t.status = 'submitted')
 		FROM (SELECT mp.*`+mentoredProgramsFrom+programListOrder("mp", "status")+` LIMIT $2 OFFSET $3) page
 		LEFT JOIN LATERAL (
@@ -314,7 +315,7 @@ func (r *MentorRepository) ListMentoredByUser(ctx context.Context, userID string
 				COUNT(DISTINCT (a.program_term_id, a.user_id)) AS applicants
 			FROM applications a
 			JOIN program_terms pt ON pt.id = a.program_term_id
-			WHERE pt.program_id = page.id AND a.role = 'mentee'
+			WHERE pt.program_id = page.id AND pt.status = 'open' AND a.role = 'mentee'
 		) apps ON TRUE`+programListOrder("page", "status"), userID, limit, offset)
 	if err != nil {
 		span.RecordError(err)

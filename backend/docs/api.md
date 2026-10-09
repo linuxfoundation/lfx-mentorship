@@ -796,6 +796,8 @@ Unfiltered directory totals for the header (“18 mentees across 7 programs”).
 
 Public mentee profile by **user ID**. Programs, skills, terms, and mentors are loaded in separate queries and returned in one response.
 
+Unlike the directory, the profile also resolves for applicants, so Program Admins and mentors can open it while reviewing an application: any user with a mentee application on a published program (non-deleted term), whatever its status. As in legacy, `status`, `program`, and `programs` still come only from `accepted` and `graduated` applications, so an applicant who was never accepted has no `status` or `program`, `programs: []`, and a `joined_at` of their first application.
+
 **Response** `200` → list item fields plus:
 ```json
 {
@@ -834,7 +836,7 @@ Public mentee profile by **user ID**. Programs, skills, terms, and mentors are l
 }
 ```
 
-**Errors** `400` when `{id}` is not a UUID. `404` when the user has no accepted or graduated mentee application on a published program.
+**Errors** `400` when `{id}` is not a UUID. `404` when the user has no mentee application on a published program in a non-deleted term.
 
 ---
 
@@ -1646,10 +1648,11 @@ are omitted when absent.
 [`admin_status`](#administeredprogram-object): `completed` once every term is
 closed (deleted terms are ignored), otherwise `open`.
 
-`stats` counts the whole program, across all its terms:
+`stats` counts the program's `open` terms only; closed and deleted terms are
+not counted, so a `completed` program has zero `stats`:
 
-- `applicants`: mentee applications, one per user per term (a withdrawn application kept beside its reapplication is not counted twice). Matches `applicants` in `GET /v1/programs/{id}/management-summary`.
-- `mentees`: mentee applications whose status is `accepted` or `graduated`
+- `applicants`: mentee applications, one per user per term (a withdrawn application kept beside its reapplication is not counted twice)
+- `mentees`: mentee applications whose status is `accepted` or `graduated`. Matches `mentees` in `GET /v1/programs/{id}/management-summary`.
 - `tasks_to_review`: `submitted` tasks of `accepted` mentees. A graduated mentee's leftover submission and a mentor-role application's tasks are not counted.
 
 #### `GET /v1/me/mentor-programs` 🔒

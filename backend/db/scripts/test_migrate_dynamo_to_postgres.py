@@ -214,3 +214,69 @@ def test_rerun_replaces_mentee_profile_when_keeper_changes(cursor):
     m.migrate_user_profiles(cursor, DUPLICATE_PROFILES, set(), _Files())
     cursor.execute("SELECT id::text, profile_type FROM user_profiles WHERE user_id = %s ORDER BY profile_type", (USER,))
     assert cursor.fetchall() == [(NEW_MENTEE, "mentee"), (MENTOR, "mentor")]
+
+
+MEMBER_USERS = [
+    {"id": "u-alice", "email": "Alice@Example.org", "lfid": "alice"},
+    {"id": "u-shared-1", "email": "shared@example.org", "lfid": "owner"},
+    {"id": "u-shared-2", "email": "shared@example.org", "lfid": "other"},
+]
+MEMBER_PROJECTS = [{"projectId": "p1", "lfid": "OWNER"}, {"projectId": "p2", "lfid": "nobody"}]
+
+
+def _member(mid, email=None, project="p1", member_type="maintainer", **extra):
+    return {"id": mid, "projectId": project, "memberType": member_type, "status": "accepted", "email": email, **extra}
+
+
+def _user_ids(members, overrides=None):
+    resolved = m.resolve_member_user_ids(members, MEMBER_USERS, MEMBER_PROJECTS, overrides or {})
+    return {r["id"]: r.get("userId") for r in resolved}
+
+
+def test_resolve_member_user_ids_matches_by_email_then_program_lfid():
+    got = _user_ids([
+        _member("m-email", "alice@example.ORG "),
+        _member("m-shared", "shared@example.org"),
+        _member("m-ambiguous", "shared@example.org", project="p2"),
+        # The program-lfid tie-break identifies the creator, so it never applies to mentors.
+        _member("m-mentor-shared", "shared@example.org", member_type="mentor"),
+        _member("m-unknown", "ghost@example.org"),
+        _member("m-noemail"),
+        _member("m-has-user", "alice@example.org", userId="u-existing"),
+    ])
+    assert got == {
+        "m-email": "u-alice",
+        "m-shared": "u-shared-1",
+        "m-ambiguous": None,
+        "m-mentor-shared": None,
+        "m-unknown": None,
+        "m-noemail": None,
+        "m-has-user": "u-existing",
+    }
+
+
+def test_resolve_member_user_ids_applies_overrides_only_when_matching_fails():
+    got = _user_ids(
+        [
+            _member("m-a", "ghost@example.org"),
+            _member("m-b", "ghost@example.org"),
+            _member("m-ambiguous", "shared@example.org", project="p2"),
+            # A stray override must not displace a unique email match.
+            _member("m-auto", "alice@example.org"),
+        ],
+        {"m-a": "u-alice", "m-b": "u-missing", "m-ambiguous": "u-shared-2", "m-auto": "u-shared-1"},
+    )
+    assert got == {"m-a": "u-alice", "m-b": None, "m-ambiguous": "u-shared-2", "m-auto": "u-alice"}
+
+
+def test_resolve_member_user_ids_does_not_mutate_input():
+    members = [_member("m", "alice@example.org")]
+    m.resolve_member_user_ids(members, MEMBER_USERS, MEMBER_PROJECTS, {})
+    assert "userId" not in members[0]
+
+
+def test_load_member_user_overrides(tmp_path):
+    path = tmp_path / "overrides.csv"
+    path.write_text("member_id,user_id\n m-a , u-alice \nm-b,\n")
+    assert m.load_member_user_overrides(str(path)) == {"m-a": "u-alice"}
+    assert m.load_member_user_overrides("") == {}

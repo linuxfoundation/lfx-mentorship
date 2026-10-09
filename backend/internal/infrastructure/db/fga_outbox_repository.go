@@ -179,25 +179,30 @@ func (r *FGAOutboxRepository) Claim(ctx context.Context, limit int) ([]domain.FG
 	return markers, nil
 }
 
-// Acknowledge deletes only the generation that was actually delivered.
+// Acknowledge deletes only the generation that was actually delivered, and releases a newer
+// one for a fresh attempt, in one statement.
 func (r *FGAOutboxRepository) Acknowledge(ctx context.Context, marker domain.FGAOutboxMarker) (bool, error) {
+	// FOR UPDATE re-reads the row after any lock wait, so both branches decide on the latest generation.
 	const query = `
-		WITH acknowledged AS (
-			DELETE FROM fga_outbox
+		WITH locked AS (
+			SELECT id, generation FROM fga_outbox
 			WHERE id = $1 AND state = 'in_flight' AND claimed_generation = $2
-			  AND generation = $2 AND claimed_at IS NOT DISTINCT FROM $3
-			RETURNING id
+			  AND claimed_at IS NOT DISTINCT FROM $3
+			FOR UPDATE
+		), acknowledged AS (
+			DELETE FROM fga_outbox o USING locked l
+			WHERE o.id = l.id AND l.generation = $2
+			RETURNING o.id
 		), requeued AS (
-			UPDATE fga_outbox
+			UPDATE fga_outbox o
 			SET state = 'pending', claimed_generation = NULL, claimed_at = NULL,
 			    next_attempt_at = NOW(), updated_on = NOW()
-			WHERE id = $1 AND state = 'in_flight' AND claimed_generation = $2
-			  AND generation > $2 AND claimed_at IS NOT DISTINCT FROM $3
-			RETURNING id
+			FROM locked l
+			WHERE o.id = l.id AND l.generation > $2
 		)
-		SELECT EXISTS (SELECT 1 FROM acknowledged), EXISTS (SELECT 1 FROM requeued)`
-	var acknowledged, requeued bool
-	if err := r.pool.QueryRow(ctx, query, marker.ID, marker.Generation, marker.ClaimedAt).Scan(&acknowledged, &requeued); err != nil {
+		SELECT EXISTS (SELECT 1 FROM acknowledged)`
+	var acknowledged bool
+	if err := r.pool.QueryRow(ctx, query, marker.ID, marker.Generation, marker.ClaimedAt).Scan(&acknowledged); err != nil {
 		return false, fmt.Errorf("acknowledge FGA outbox marker: %w", err)
 	}
 	return acknowledged, nil
