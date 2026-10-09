@@ -7,6 +7,7 @@ CMD         := ./cmd/mentorship-api
 IMAGE_NAME  := lfx-v2-mentorship-service
 IMAGE_TAG   ?= dev
 DOCKER_REG  ?= ghcr.io/linuxfoundation
+COVERAGE_DIR := .coverage
 
 # kind / local deploy
 KIND_CLUSTER     ?= mentorship-dev
@@ -16,7 +17,7 @@ CHART_DIR        ?= charts/lfx-mentorship-backend
 DEPLOYMENT_NAME  ?= $(RELEASE_NAME)-lfx-mentorship-backend
 DEPLOY_TAG       ?= dev-$(shell date +%Y%m%d%H%M%S)
 
-.PHONY: all clean deps build run test test-integration fmt lint license-check \
+.PHONY: all clean deps build run test test-integration test-e2e coverage fmt lint license-check \
         docker-build docker-run helm-install deploy-kind db-migrate
 
 all: build
@@ -46,6 +47,26 @@ test-integration:
 	@test -n "$(TEST_DATABASE_DSN)" || { echo "ERROR: TEST_DATABASE_DSN is required"; exit 1; }
 	env -u DB_HOST -u DB_PORT -u DB_USER -u DB_PASSWORD -u DB_NAME -u DB_SSLMODE DATABASE_DSN="$(TEST_DATABASE_DSN)" go run ./cmd/migrate
 	TEST_DATABASE_DSN="$(TEST_DATABASE_DSN)" go test -race -count=1 -tags=integration ./internal/infrastructure/db
+
+## test-e2e: apply migrations and run the API end to end against PostgreSQL, with
+##   NATS, S3, Project Service, auth-service, email and crowdfunding faked in-process
+##   Requires: TEST_DATABASE_DSN (the e2e suite truncates every table)
+test-e2e:
+	@test -n "$(TEST_DATABASE_DSN)" || { echo "ERROR: TEST_DATABASE_DSN is required"; exit 1; }
+	env -u DB_HOST -u DB_PORT -u DB_USER -u DB_PASSWORD -u DB_NAME -u DB_SSLMODE DATABASE_DSN="$(TEST_DATABASE_DSN)" go run ./cmd/migrate
+	TEST_DATABASE_DSN="$(TEST_DATABASE_DSN)" go test -race -count=1 -tags=e2e ./cmd/mentorship-api
+
+## coverage: run unit, integration and e2e tests and merge their coverage into coverage.out
+##   Requires: TEST_DATABASE_DSN
+coverage:
+	@test -n "$(TEST_DATABASE_DSN)" || { echo "ERROR: TEST_DATABASE_DSN is required"; exit 1; }
+	env -u DB_HOST -u DB_PORT -u DB_USER -u DB_PASSWORD -u DB_NAME -u DB_SSLMODE DATABASE_DSN="$(TEST_DATABASE_DSN)" go run ./cmd/migrate
+	rm -rf $(COVERAGE_DIR) && mkdir -p $(COVERAGE_DIR)/unit $(COVERAGE_DIR)/integration $(COVERAGE_DIR)/e2e
+	go test -count=1 -cover -coverpkg=./... ./... -args -test.gocoverdir=$(CURDIR)/$(COVERAGE_DIR)/unit
+	TEST_DATABASE_DSN="$(TEST_DATABASE_DSN)" go test -count=1 -tags=integration -cover -coverpkg=./... ./internal/infrastructure/db -args -test.gocoverdir=$(CURDIR)/$(COVERAGE_DIR)/integration
+	TEST_DATABASE_DSN="$(TEST_DATABASE_DSN)" go test -count=1 -tags=e2e -cover -coverpkg=./... ./cmd/mentorship-api -args -test.gocoverdir=$(CURDIR)/$(COVERAGE_DIR)/e2e
+	go tool covdata textfmt -i=$(COVERAGE_DIR)/unit,$(COVERAGE_DIR)/integration,$(COVERAGE_DIR)/e2e -o coverage.out
+	go tool cover -func=coverage.out | tail -1
 
 ## fmt: format all Go source files
 fmt:
