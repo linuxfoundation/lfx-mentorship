@@ -26,11 +26,13 @@ ORPHAN_TASK = "77777777-7777-4777-8777-777777777777"
 PENDING_MENTOR = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 UNKNOWN_TERM_APPLICATION = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 UNASSIGNED_TASK = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+LIN = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
 
 SOURCES = {
     "users": [
         {"id": ADMIN, "email": "shared@example.org", "lfid": "ada", "name": "Ada", "createdAt": "2024-01-02T03:04:05Z"},
         {"id": MENTEE, "email": "shared@example.org", "lfid": "grace", "givenName": "Grace"},
+        {"id": LIN, "email": "lin@example.org", "lfid": "lin"},
     ],
     "user-profiles": [
         {"id": "88888888-8888-4888-8888-888888888888", "userId": ADMIN, "type": "mentor", "firstName": "Ada", "introduction": "Hi"},
@@ -45,6 +47,7 @@ SOURCES = {
     "project-members": [
         {"id": "99999999-9999-4999-8999-999999999999", "projectId": PROGRAM, "userId": ADMIN, "memberType": "maintainer", "status": "accepted", "email": "ada@example.org"},
         {"id": PENDING_MENTOR, "projectId": PROGRAM, "userId": MENTEE, "memberType": "mentor", "status": "pending"},
+        {"id": "ffffffff-ffff-4fff-8fff-ffffffffffff", "projectId": PROGRAM, "memberType": "mentor", "status": "active", "email": " Lin@Example.org"},
     ],
     "program-term-mentees": [
         {"id": APPLICATION, "programTermId": TERM, "userId": MENTEE, "status": "approved", "tasksSubmitted": True, "startDateTime": "1767225600"},
@@ -87,7 +90,8 @@ def import_sources(cur):
     m.migrate_user_profiles(cur, SOURCES["user-profiles"], users, files)
     programs = m.migrate_programs(cur, SOURCES["projects"], users, files, {CNCF: (CNCF, "cncf", "CNCF")})
     terms = m.migrate_program_terms(cur, SOURCES["program-terms"], programs)
-    m.migrate_program_members(cur, SOURCES["project-members"], programs, users)
+    members = m.resolve_member_user_ids(SOURCES["project-members"], SOURCES["users"], SOURCES["projects"], {})
+    m.migrate_program_members(cur, members, programs, users)
     applications = m.migrate_mentees(cur, SOURCES["program-term-mentees"], terms, users)
     m.migrate_tasks(cur, SOURCES["tasks"], applications, terms, users, files)
 
@@ -135,8 +139,9 @@ def test_broken_invariant_is_reported(imported):
         ("_MEMBER_TYPE_MAP", {"maintainer": "mentor", "mentor": "mentor"}, "program_members"),
         ("_normalize_program_status", lambda status: "pending", "programs"),
         ("_map_profile_type", lambda kind: "mentee", "user_profiles"),
+        ("_match_member_user", lambda *args: ("email_unique", ADMIN), "program_members"),
     ],
-    ids=["application status", "member type", "program status", "profile type"],
+    ids=["application status", "member type", "program status", "profile type", "member user match"],
 )
 def test_importer_mapping_regression_is_reported(db, monkeypatch, name, broken, expected):
     monkeypatch.setattr(m, name, broken)
@@ -165,3 +170,8 @@ def test_duplicate_email_nulled_by_the_importer_is_not_a_mismatch(imported):
     imported.execute("SELECT email FROM users WHERE id = %s", (MENTEE,))
     assert imported.fetchone()[0] is None
     assert run(imported) == []
+
+
+def test_duplicate_email_lost_from_every_holder_is_reported(imported):
+    imported.execute("UPDATE users SET email = NULL WHERE id = %s", (ADMIN,))
+    assert "users email 'shared@example.org': 0 imported holders, expected exactly one" in run(imported)

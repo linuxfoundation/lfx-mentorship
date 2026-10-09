@@ -154,9 +154,9 @@ def _duplicated(values) -> set:
 
 
 def verify_users(cur, users, report, rng, size):
-    dup_emails = _duplicated(_text(u.get("email")) for u in users)
-    dup_lfids = _duplicated(_text(u.get("lfid")) for u in users)
     candidates = [u for u in users if m._as_uuid(u.get("id"))]
+    dup_emails = _duplicated(_text(u.get("email")) for u in candidates)
+    dup_lfids = _duplicated(_text(u.get("lfid")) for u in candidates)
     for u in _sample(candidates, rng, size):
         uid = m._as_uuid(u.get("id"))
         row = _fetch(cur, "SELECT email, lfid, name, given_name, family_name, created_on FROM users WHERE id = %s", (uid,))
@@ -177,6 +177,13 @@ def verify_users(cur, users, report, rng, size):
             expected["lfid"] = lfid
         report.compare("users", uid, expected, row)
     report.sampled["users"] = min(len(candidates), size)
+    # The per-row check lets a duplicate's value be NULL, so make sure one holder kept it.
+    for column, values in (("email", dup_emails), ("lfid", dup_lfids)):
+        for value in sorted(values):
+            cur.execute(f"SELECT count(*) FROM users WHERE {column} = %s", (value,))
+            holders = cur.fetchone()[0]
+            if holders != 1:
+                report.problems.append(f"users {column} {value!r}: {holders} imported holders, expected exactly one")
 
 
 def verify_profiles(cur, profiles, report, rng, size):
@@ -255,6 +262,38 @@ def verify_terms(cur, terms, program_ids, report, rng, size):
             "application_end_date": m._parse_epoch(t.get("applicationEndDate")),
         }, row)
     report.sampled["program_terms"] = min(len(candidates), size)
+
+
+def _lower(value) -> str:
+    return (value or "").strip().lower()
+
+
+def resolve_member_users(members, users, projects, overrides) -> list:
+    """Fills a member's missing userId by the matching rules, written apart from the importer's.
+
+    The one user with the member's email; for a program admin row with several, the one whose
+    lfid is the program's (its creator); otherwise the override, if it names a known user.
+    """
+    user_ids = {u.get("id") for u in users} - {None}
+    by_email: dict = {}
+    for u in users:
+        if u.get("id") and _lower(u.get("email")):
+            by_email.setdefault(_lower(u.get("email")), []).append(u)
+    creator = {p.get("projectId"): _lower(p.get("lfid")) for p in projects}
+    resolved = []
+    for member in members:
+        if member.get("userId"):
+            resolved.append(member)
+            continue
+        matches = by_email.get(_lower(member.get("email")), [])
+        lfid = creator.get(member.get("projectId"))
+        if len(matches) > 1 and _lower(member.get("memberType")) == "maintainer" and lfid:
+            matches = [u for u in matches if _lower(u.get("lfid")) == lfid]
+        user_id = matches[0]["id"] if len(matches) == 1 else None
+        if user_id is None and overrides.get(member.get("id")) in user_ids:
+            user_id = overrides[member["id"]]
+        resolved.append({**member, "userId": user_id} if user_id else member)
+    return resolved
 
 
 def _member_target(member) -> tuple | None:
@@ -372,7 +411,7 @@ def check_integrity(cur, report):
             report.problems.append(f"integrity: {count} {name}")
 
 
-def verify(cur, sources: dict, sample_size: int, rng: random.Random) -> Report:
+def verify(cur, sources: dict, sample_size: int, rng: random.Random, overrides: dict | None = None) -> Report:
     """Compare sampled legacy items with the imported rows; sources maps table name to scanned items."""
     report = Report()
     program_ids = {m._as_uuid(p.get("projectId")) for p in sources["projects"]} - {None}
@@ -385,7 +424,8 @@ def verify(cur, sources: dict, sample_size: int, rng: random.Random) -> Report:
     verify_profiles(cur, sources["user-profiles"], report, rng, sample_size)
     verify_programs(cur, sources["projects"], report, rng, sample_size)
     verify_terms(cur, sources["program-terms"], program_ids, report, rng, sample_size)
-    verify_members(cur, sources["project-members"], program_ids, report, rng, sample_size)
+    members = resolve_member_users(sources["project-members"], sources["users"], sources["projects"], overrides or {})
+    verify_members(cur, members, program_ids, report, rng, sample_size)
     applied = verify_applications(cur, sources["program-term-mentees"], term_ids, report, rng, sample_size)
     verify_tasks(cur, sources["tasks"], term_ids, applied, report, rng, sample_size)
     check_integrity(cur, report)
@@ -397,16 +437,14 @@ def main() -> None:
     dynamo = m.legacy_session().client("dynamodb")
     sources = {name: m.scan_table(dynamo, f"{m.TABLE_PREFIX}-{name}") for name in (
         "users", "user-profiles", "projects", "program-terms", "project-members", "program-term-mentees", "tasks")}
-    # The import linked members through the same resolution, so compare against its result.
-    sources["project-members"] = m.resolve_member_user_ids(
-        sources["project-members"], sources["users"], sources["projects"], m.load_member_user_overrides(m.MEMBER_USER_OVERRIDES))
+    overrides = m.load_member_user_overrides(m.MEMBER_USER_OVERRIDES)
 
     seed = SEED if SEED is not None else str(random.randrange(1 << 32))
     log.info("Sampling up to %d rows per table (VERIFY_SEED=%s)", SAMPLE_SIZE, seed)
     conn = psycopg2.connect(m.PG_DSN)
     try:
         with conn.cursor() as cur:
-            report = verify(cur, sources, SAMPLE_SIZE, random.Random(seed))
+            report = verify(cur, sources, SAMPLE_SIZE, random.Random(seed), overrides)
     finally:
         conn.rollback()
         conn.close()
