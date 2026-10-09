@@ -16,32 +16,31 @@ Step-by-step procedure for moving legacy jobspring data (DynamoDB + S3) into the
 | Logos CDN | `https://mentorship-logos-public.downloads.lfx.community` |
 | NATS | `nats://lfx-platform-nats.lfx.svc.cluster.local:4222` |
 | Legacy source | account `716487311010`, `us-east-1`: tables `jobspring-prod-*`, bucket `jobspring-prod-uploads` |
+| Legacy hostname | `mentorship.lfx.linuxfoundation.org` (Cloudflare) |
+| New hostname | `mentorship.linuxfoundation.org`, already served by the prod frontend and already resolving to the v2 cluster |
 
 ## Phase 0: preflight
 
 Every check must pass before anything runs.
 
 1. **The legacy-session fix is merged** ([lfx-mentorship#286](https://github.com/linuxfoundation/lfx-mentorship/pull/286)). Without it, the scripts in a pod scan DynamoDB in `us-west-2`, and the copy fails across accounts. [#285](https://github.com/linuxfoundation/lfx-mentorship/pull/285) (resolving missing member `userId`s) is already merged.
-2. **The prod backend is running the current image, with the schema migrated:**
+2. **The prod backend is running the current image:**
    ```bash
    kubectl -n mentorship-backend get deploy,pods
-   kubectl -n mentorship-backend logs job/$(kubectl -n mentorship-backend get jobs -o name | grep migrate | tail -1 | cut -d/ -f2) | tail -1
-   # expect: migrations applied: schema version N (dirty=false)
    ```
+   Don't look for the migrate Job's logs: Helm deletes the Job once it succeeds. The schema version is checked from the database in the Phase 2 setup check.
 3. **The secret has the keys the relays need.** This prints key names only, never values:
    ```bash
    kubectl -n mentorship-backend get secret lfx-mentorship-backend-secrets -o json | jq '.data | keys'
    # needs host, port, username, password, dbname, and INDEXER_SERVICE_TOKEN (without it the search-index relay idles)
    ```
-4. **The prod database is empty, or you know what's in it.** The importer updates rows that exist but never deletes rows removed from legacy since an earlier import. Don't import into prod twice weeks apart (see Phase 1).
-   ```sql
-   SELECT (SELECT count(*) FROM mentorship.programs) programs, (SELECT count(*) FROM mentorship.users) users;
-   ```
+4. **The prod database is empty, or you know what's in it.** The importer updates rows that exist but never deletes rows removed from legacy since an earlier import. Don't import into prod twice weeks apart (see Phase 1). The row counts are printed by the Phase 2 setup check.
 5. **Legacy credentials.** The operator can sign in to the legacy-account read-only role (`716487311010`). Use the longest session duration it allows. The file copy can take hours; if the credentials expire it stops, and is re-run.
 6. **Decisions agreed:**
    - About 350 member rows stay unlinked, mostly mentor invites nobody accepted. They are logged as `UNRESOLVED_MEMBER_USER`.
    - About 1,760 pending mentor rows are not imported (`UNMAPPED_MENTOR_MEMBER`, per [03](./03-migration-plan.md) §ii).
    - About 32,000 tasks have no matching application and go to the `quarantined_tasks` table (see [Gaps](#gaps)).
+   - **Whether the new site stays closed until go/no-go.** `mentorship.linuxfoundation.org` is already public, so the imported data is visible there as soon as the import finishes, and users can write to it before the decision. See [Phase 4](#phase-4-cutover-run-inside-the-freeze) step 1.
 
 ## Phase 1: rehearsal (days before cutover)
 
@@ -73,9 +72,12 @@ On the operator's laptop, after signing in to the legacy read-only role:
 ```bash
 aws configure export-credentials --profile <legacy-readonly-profile> --format env-no-export \
   | sed 's/^AWS_/LEGACY_AWS_/' > /tmp/legacy.env
-kubectl -n mentorship-backend create secret generic mentorship-etl-legacy --from-env-file=/tmp/legacy.env
+kubectl -n mentorship-backend create secret generic mentorship-etl-legacy --from-env-file=/tmp/legacy.env \
+  --dry-run=client -o yaml | kubectl apply -f -
 rm /tmp/legacy.env
 ```
+
+The same command refreshes expired credentials. A running pod keeps the values it started with, so recreate the pod afterwards (step 4).
 
 They are named `LEGACY_AWS_*` on purpose. Plain `AWS_*` keys would replace the pod's own identity, and the writes to the new buckets would fail. They are also required: without them the scripts fall back to the default credential chain, which in the pod is the v2 role, and log a warning saying so.
 
@@ -89,7 +91,8 @@ kubectl -n mentorship-backend create configmap mentorship-etl-scripts \
   --from-file=backend/db/scripts/migrate_dynamo_to_postgres.py \
   --from-file=backend/db/scripts/copy_legacy_objects.py \
   --from-file=backend/db/scripts/legacy_objects.py \
-  --from-file=backend/db/scripts/requirements.txt
+  --from-file=backend/db/scripts/requirements.txt \
+  --dry-run=client -o yaml | kubectl apply -f -
 ```
 
 ### 3. Create the pod
@@ -152,6 +155,7 @@ spec:
 ### 4. Check the setup
 
 ```bash
+kubectl -n mentorship-backend delete pod mentorship-etl --ignore-not-found --wait
 kubectl apply -f mentorship-etl.yaml
 kubectl -n mentorship-backend wait --for=condition=Ready pod/mentorship-etl --timeout=300s
 kubectl -n mentorship-backend exec -it mentorship-etl -- bash
@@ -167,10 +171,12 @@ print("legacy:", s.client("sts").get_caller_identity()["Account"], s.region_name
 print("v2:    ", boto3.client("sts").get_caller_identity()["Arn"])                            # .../lfx-mentorship-backend/...
 print("table: ", s.client("dynamodb").describe_table(TableName="jobspring-prod-project-members")["Table"]["TableStatus"])
 c = psycopg2.connect(""); cur = c.cursor(); cur.execute("show search_path"); print("pg:    ", cur.fetchone())
+cur.execute("SELECT version, dirty FROM public.schema_migrations"); print("schema:", cur.fetchone())   # (1, False)
+cur.execute("SELECT (SELECT count(*) FROM programs), (SELECT count(*) FROM users)"); print("rows:  ", cur.fetchone())
 EOF
 ```
 
-**Stop if any line is wrong, or if the output includes the warning that legacy reads use the default credential chain.**
+**Stop if any line is wrong, or if the output includes the warning that legacy reads use the default credential chain.** `schema` must be the highest version under `backend/db/migrations/` with `dirty` false. `rows` is `(0, 0)` unless you know why it isn't (Phase 0, check 4).
 
 ## Phase 3: copy the legacy files
 
@@ -180,18 +186,20 @@ python copy_legacy_objects.py 2>&1 | tee /work/copy.log
 
 - It ends with per-column counts (`copied`, `quarantined`, `missing`, `foreign`) and `Wrote N manifest entries`.
 - Every `QUARANTINED` or `MISSING` line is logged; keep the list for review.
-- If the legacy credentials expire partway: refresh the secret (Phase 2, step 1), recreate the pod, and re-run. Files already copied are skipped.
+- If the legacy credentials expire partway: refresh the secret (Phase 2, step 1), recreate the pod and re-run the setup check (Phase 2, step 4), then re-run the copy. The pod reads the secret only when it starts, and `/work` is lost with it, so expect the copy to start over; files already copied are skipped.
 
 ## Phase 4: cutover run (inside the freeze)
 
-1. **Freeze writes on legacy prod** (the content freeze in [03](./03-migration-plan.md) Phase 4). From here on, legacy is read-only.
-2. **Re-run the copy** (Phase 3). It copies only files added since the rehearsal, and it writes the manifest the import needs.
-3. **Import:**
+1. **If agreed in Phase 0, close the new site.** Merge an [lfx-v2-argocd](https://github.com/linuxfoundation/lfx-v2-argocd) change to `values/prod/lfx-mentorship-frontend.yaml` that turns off its ingress, and confirm `https://mentorship.linuxfoundation.org` no longer serves the app. Scaling with `kubectl` doesn't work: ArgoCD self-heal reverts it. This hides the site only; the backend API keeps its own route.
+2. **Freeze writes on legacy prod** (the content freeze in [03](./03-migration-plan.md) Phase 4). From here on, legacy is read-only.
+3. **Rebuild the runner.** The rehearsal pod is gone and its credentials have expired. Using the commit recorded in the rehearsal: refresh the secret (Phase 2, step 1), check out that commit and re-apply the ConfigMap (step 2), recreate the pod and run the setup check (steps 3 and 4).
+4. **Re-run the copy** (Phase 3). It copies only files added since the rehearsal, and it writes the manifest the import needs.
+5. **Import:**
    ```bash
    python migrate_dynamo_to_postgres.py 2>&1 | tee /work/import.log
    ```
    The import is all or nothing: if any part fails, nothing is saved. Fix the cause and re-run.
-4. **If needed, link specific members by hand.** Write a CSV with the header `member_id,user_id` to `/work/overrides.csv`, then re-run step 3 with `MEMBER_USER_OVERRIDES=/work/overrides.csv`. Overrides only apply where automatic matching failed.
+6. **If needed, link specific members by hand.** Write a CSV with the header `member_id,user_id` to `/work/overrides.csv`, then re-run step 5 with `MEMBER_USER_OVERRIDES=/work/overrides.csv`. Overrides only apply where automatic matching failed.
 
 ## Phase 5: verify (before go/no-go)
 
@@ -233,16 +241,16 @@ python copy_legacy_objects.py 2>&1 | tee /work/copy.log
 
 ## Phase 6: go/no-go and go-live
 
-The API has no read-only mode (see [Gaps](#gaps)), so the decision is made **before** the new stack gets public traffic. Once DNS points at it, users write to Postgres only, and rollback is no longer clean ([03](./03-migration-plan.md) Phase 4 and "Rollback").
+The API has no read-only mode (see [Gaps](#gaps)), so the decision is made **before** legacy users are sent to the new stack. Once the legacy hostname redirects, users write to Postgres only, and rollback is no longer clean ([03](./03-migration-plan.md) Phase 4 and "Rollback").
 
 1. **Go/no-go**, on the Phase 5 results.
-   - **No-go:** unfreeze legacy and stop. Nothing has been exposed, and legacy still holds every write.
+   - **No-go:** unfreeze legacy and stop. Legacy still holds every write. If the new site was left open, the imported data was visible on it and any writes made there are lost when the data is re-imported.
 2. **Lock the legacy uploads bucket:** turn on S3 Block Public Access for `jobspring-prod-uploads` (legacy account). This can be reversed and nothing is deleted.
-3. **Switch DNS:** point `mentorship.linuxfoundation.org` at the new frontend. From this moment writes are live on the new stack.
+3. **Send legacy users to the new site.** If it was closed in Phase 4, re-enable the frontend ingress first. Then, in Cloudflare, set a permanent redirect from `mentorship.lfx.linuxfoundation.org` to `https://mentorship.linuxfoundation.org`, keeping the path ([03](./03-migration-plan.md) OQ-3). The new hostname already points at the v2 cluster; it needs no DNS change. From this moment writes are live on the new stack.
 4. **Go-live:** in [lfx-v2-argocd](https://github.com/linuxfoundation/lfx-v2-argocd), remove `EMAIL_ALLOWED_RECIPIENTS` from `values/prod/lfx-mentorship-backend.yaml` so email reaches real users.
 5. **Rollback:**
    - **Before step 3** it is clean: lift the bucket block if it was applied, and unfreeze legacy.
-   - **After step 3** it means reverting DNS and losing any writes made on the new stack since, because no reverse sync exists. Past that point, fix forward.
+   - **After step 3** it means removing the redirect and losing any writes made on the new stack since, because no reverse sync exists. Past that point, fix forward.
 
 ## Phase 7: clean up
 
@@ -258,7 +266,7 @@ The manifest and logs contain user emails. Don't copy them out of the pod unless
 
 Not built yet; decide before cutover.
 
-1. **No read-only mode in the API.** [03](./03-migration-plan.md) Phase 4 assumes "writes rejected at the API" during verification, but the backend has nothing that does this. Before DNS points at the new stack nobody can reach it anyway; after the switch, writes are live immediately.
+1. **No read-only mode in the API.** [03](./03-migration-plan.md) Phase 4 assumes "writes rejected at the API" during verification, but the backend has nothing that does this. `mentorship.linuxfoundation.org` is already public, so the only way to keep users out during verification is to close the frontend (Phase 4, step 1), and even then the API stays reachable. After the legacy redirect, writes are live immediately.
 2. **No sweep for unused copied files** ([03](./03-migration-plan.md) §S3 objects, step 5a). Files copied in the rehearsal for rows later deleted or replaced stay in the new buckets. This is cleanup work, not a blocker.
 3. **No invitation-token backfill** ([03](./03-migration-plan.md), "Invitation tokens"). Invite links sent from legacy before the freeze won't work on the new stack. The documented fallback is to stop sending invites when the freeze starts.
 4. **About 32,000 quarantined tasks** (about 11%) have no matching application. They are kept in `quarantined_tasks`, not lost, but someone should decide whether that is acceptable for go-live.
