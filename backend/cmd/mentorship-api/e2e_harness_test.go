@@ -275,7 +275,6 @@ func awaitOutboxesDrained(t *testing.T) {
 
 // actor is a caller of the API. An actor with an empty token is anonymous.
 type actor struct {
-	t     *testing.T
 	token string
 	// ID is the local user ID, set once the actor is provisioned.
 	ID    string
@@ -322,14 +321,14 @@ func validClaims(lfid, email, scope string) tokenClaims {
 }
 
 // anonymous returns a caller with no token.
-func anonymous(t *testing.T) *actor {
-	return &actor{t: t}
+func anonymous() *actor {
+	return &actor{}
 }
 
 // unprovisioned returns a signed-in caller that has no local user yet.
 func unprovisioned(t *testing.T, lfid string, scopes ...string) *actor {
 	email := lfid + "@e2e.example.org"
-	return &actor{t: t, LFID: lfid, Email: email, token: mintToken(t, validClaims(lfid, email, strings.Join(append([]string{"access:me"}, scopes...), " ")))}
+	return &actor{LFID: lfid, Email: email, token: mintToken(t, validClaims(lfid, email, strings.Join(append([]string{"access:me"}, scopes...), " ")))}
 }
 
 // signIn provisions the local user through PUT /me, as Self Serve does on first visit.
@@ -339,12 +338,13 @@ func signIn(t *testing.T, lfid string, scopes ...string) *actor {
 	var user struct {
 		ID string `json:"id"`
 	}
-	a.mustJSON(http.MethodPut, "/me", map[string]any{"name": "User " + lfid, "given_name": "User", "family_name": lfid}, http.StatusOK, &user)
+	a.mustJSON(t, http.MethodPut, "/me", map[string]any{"name": "User " + lfid, "given_name": "User", "family_name": lfid}, http.StatusOK, &user)
 	a.ID = user.ID
 	return a
 }
 
 type response struct {
+	// t is the test that made the request, so assertions fail that test and not a parent.
 	t      *testing.T
 	Status int
 	Header http.Header
@@ -379,25 +379,25 @@ func (r *response) errorMessage() string {
 }
 
 // call sends a request with a JSON body (nil for none) to path under the API prefix.
-func (a *actor) call(method, path string, body any) *response {
-	a.t.Helper()
+func (a *actor) call(t *testing.T, method, path string, body any) *response {
+	t.Helper()
 	var reader io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
 		if err != nil {
-			a.t.Fatalf("marshal body: %v", err)
+			t.Fatalf("marshal body: %v", err)
 		}
 		reader = bytes.NewReader(data)
 	}
-	return a.send(method, path, reader, "application/json", nil)
+	return a.send(t, method, path, reader, "application/json", nil)
 }
 
 // send issues a raw request; headers are added after the default ones.
-func (a *actor) send(method, path string, body io.Reader, contentType string, headers map[string]string) *response {
-	a.t.Helper()
+func (a *actor) send(t *testing.T, method, path string, body io.Reader, contentType string, headers map[string]string) *response {
+	t.Helper()
 	req, err := http.NewRequest(method, e2e.baseURL+apiPrefix+path, body)
 	if err != nil {
-		a.t.Fatalf("new request: %v", err)
+		t.Fatalf("new request: %v", err)
 	}
 	if body != nil && contentType != "" {
 		req.Header.Set("Content-Type", contentType)
@@ -410,20 +410,20 @@ func (a *actor) send(method, path string, body io.Reader, contentType string, he
 	}
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
-		a.t.Fatalf("%s %s: %v", method, path, err)
+		t.Fatalf("%s %s: %v", method, path, err)
 	}
 	defer func() { _ = res.Body.Close() }()
 	data, err := io.ReadAll(res.Body)
 	if err != nil {
-		a.t.Fatalf("read body: %v", err)
+		t.Fatalf("read body: %v", err)
 	}
-	return &response{t: a.t, Status: res.StatusCode, Header: res.Header, Body: data}
+	return &response{t: t, Status: res.StatusCode, Header: res.Header, Body: data}
 }
 
 // mustJSON sends body, requires status, and decodes the response into out when out is non-nil.
-func (a *actor) mustJSON(method, path string, body any, status int, out any) *response {
-	a.t.Helper()
-	res := a.call(method, path, body).expect(status)
+func (a *actor) mustJSON(t *testing.T, method, path string, body any, status int, out any) *response {
+	t.Helper()
+	res := a.call(t, method, path, body).expect(status)
 	if out != nil {
 		res.decode(out)
 	}

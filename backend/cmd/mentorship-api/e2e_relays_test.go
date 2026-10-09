@@ -115,7 +115,7 @@ func TestE2ERelaysPublishAccessAndIndexChanges(t *testing.T) {
 	})
 
 	t.Run("deleting the program removes access and index entries", func(t *testing.T) {
-		admin.call(http.MethodDelete, "/programs/"+p.ID, nil).expect(http.StatusNoContent)
+		admin.call(t, http.MethodDelete, "/programs/"+p.ID, nil).expect(http.StatusNoContent)
 		awaitFGA(t, "lfx.fga-sync.delete_access", func(m fgaMessage) bool {
 			return m.ObjectType == "mentorship_program" && m.Data.UID == p.ID
 		})
@@ -133,11 +133,11 @@ func TestE2ERelayPublishesApproverRoster(t *testing.T) {
 	reset(t)
 	manager := signIn(t, "roster-manager", "manage:mentorship:approvers")
 	candidate := signIn(t, "roster-candidate")
-	manager.mustJSON(http.MethodPost, "/admin/approver-team/members", map[string]any{"user_id": candidate.ID}, http.StatusCreated, nil)
+	manager.mustJSON(t, http.MethodPost, "/admin/approver-team/members", map[string]any{"user_id": candidate.ID}, http.StatusCreated, nil)
 	awaitFGA(t, "lfx.fga-sync.member_put", func(m fgaMessage) bool {
 		return m.ObjectType == "mentorship_approver_team" && m.Data.Username == "roster-candidate"
 	})
-	manager.call(http.MethodDelete, "/admin/approver-team/members/"+candidate.ID, nil).expect(http.StatusNoContent)
+	manager.call(t, http.MethodDelete, "/admin/approver-team/members/"+candidate.ID, nil).expect(http.StatusNoContent)
 	awaitFGA(t, "lfx.fga-sync.member_remove", func(m fgaMessage) bool {
 		return m.ObjectType == "mentorship_approver_team" && m.Data.Username == "roster-candidate"
 	})

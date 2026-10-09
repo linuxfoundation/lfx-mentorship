@@ -8,6 +8,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -36,7 +37,7 @@ func menteeProfileBody(first string) map[string]any {
 func registerMentee(t *testing.T, a *actor) profile {
 	t.Helper()
 	var p profile
-	a.mustJSON(http.MethodPut, "/me/profiles/mentee", menteeProfileBody(a.LFID), http.StatusCreated, &p)
+	a.mustJSON(t, http.MethodPut, "/me/profiles/mentee", menteeProfileBody(a.LFID), http.StatusCreated, &p)
 	return p
 }
 
@@ -47,27 +48,27 @@ func TestE2EUserProfiles(t *testing.T) {
 	t.Run("mentee eligibility gates", func(t *testing.T) {
 		body := menteeProfileBody("ada")
 		body["age_eligible"] = false
-		ada.call(http.MethodPut, "/me/profiles/mentee", body).expect(http.StatusUnprocessableEntity)
+		ada.call(t, http.MethodPut, "/me/profiles/mentee", body).expect(http.StatusUnprocessableEntity)
 		body = menteeProfileBody("ada")
 		body["work_eligible"] = false
-		ada.call(http.MethodPut, "/me/profiles/mentee", body).expect(http.StatusUnprocessableEntity)
+		ada.call(t, http.MethodPut, "/me/profiles/mentee", body).expect(http.StatusUnprocessableEntity)
 	})
 
 	t.Run("body validation", func(t *testing.T) {
-		ada.call(http.MethodPut, "/me/profiles/owner", menteeProfileBody("ada")).expect(http.StatusBadRequest)
+		ada.call(t, http.MethodPut, "/me/profiles/owner", menteeProfileBody("ada")).expect(http.StatusBadRequest)
 		body := menteeProfileBody("ada")
 		body["skill_set"] = map[string]any{"skills": []any{"Go", ""}}
-		ada.call(http.MethodPut, "/me/profiles/mentee", body).expect(http.StatusBadRequest)
+		ada.call(t, http.MethodPut, "/me/profiles/mentee", body).expect(http.StatusBadRequest)
 		body["skill_set"] = []string{"Go"}
-		ada.call(http.MethodPut, "/me/profiles/mentee", body).expect(http.StatusBadRequest)
+		ada.call(t, http.MethodPut, "/me/profiles/mentee", body).expect(http.StatusBadRequest)
 		body["skill_set"] = map[string]any{"improvementSkills": "Go"}
-		ada.call(http.MethodPut, "/me/profiles/mentee", body).expect(http.StatusBadRequest)
+		ada.call(t, http.MethodPut, "/me/profiles/mentee", body).expect(http.StatusBadRequest)
 		body = menteeProfileBody("ada")
 		body["profile_links"] = []string{"x"}
-		ada.call(http.MethodPut, "/me/profiles/mentee", body).expect(http.StatusBadRequest)
-		ada.call(http.MethodPost, "/me/profiles", map[string]any{"first_name": "x"}).expect(http.StatusBadRequest)
-		ada.call(http.MethodPost, "/me/profiles", map[string]any{"profile_type": "owner"}).expect(http.StatusBadRequest)
-		anonymous(t).call(http.MethodPut, "/me/profiles/mentee", menteeProfileBody("ada")).expect(http.StatusUnauthorized)
+		ada.call(t, http.MethodPut, "/me/profiles/mentee", body).expect(http.StatusBadRequest)
+		ada.call(t, http.MethodPost, "/me/profiles", map[string]any{"first_name": "x"}).expect(http.StatusBadRequest)
+		ada.call(t, http.MethodPost, "/me/profiles", map[string]any{"profile_type": "owner"}).expect(http.StatusBadRequest)
+		anonymous().call(t, http.MethodPut, "/me/profiles/mentee", menteeProfileBody("ada")).expect(http.StatusUnauthorized)
 	})
 
 	created := registerMentee(t, ada)
@@ -81,7 +82,7 @@ func TestE2EUserProfiles(t *testing.T) {
 		// A legacy resume link is dropped rather than rejected.
 		body["profile_links"] = map[string]any{"github": "https://github.com/ada", "resumeLink": "https://legacy.example.org/cv.pdf"}
 		var replaced profile
-		ada.mustJSON(http.MethodPut, "/me/profiles/mentee", body, http.StatusOK, &replaced)
+		ada.mustJSON(t, http.MethodPut, "/me/profiles/mentee", body, http.StatusOK, &replaced)
 		if replaced.ID != created.ID || replaced.Introduction != "Updated intro" {
 			t.Fatalf("replaced: %+v", replaced)
 		}
@@ -94,11 +95,11 @@ func TestE2EUserProfiles(t *testing.T) {
 	t.Run("POST refuses a second mentee profile", func(t *testing.T) {
 		body := menteeProfileBody("ada")
 		body["profile_type"] = "mentee"
-		ada.call(http.MethodPost, "/me/profiles", body).expect(http.StatusUnprocessableEntity)
+		ada.call(t, http.MethodPost, "/me/profiles", body).expect(http.StatusUnprocessableEntity)
 	})
 
 	var mentor profile
-	ada.mustJSON(http.MethodPost, "/me/profiles", map[string]any{
+	ada.mustJSON(t, http.MethodPost, "/me/profiles", map[string]any{
 		"profile_type": "mentor", "first_name": "Ada", "user_id": "someone-else",
 		"skill_set": map[string]any{"skills": []string{"Go"}},
 	}, http.StatusCreated, &mentor)
@@ -113,55 +114,55 @@ func TestE2EUserProfiles(t *testing.T) {
 				Total int `json:"total"`
 			} `json:"meta"`
 		}
-		ada.mustJSON(http.MethodGet, "/me/profiles", nil, http.StatusOK, &list)
+		ada.mustJSON(t, http.MethodGet, "/me/profiles", nil, http.StatusOK, &list)
 		if list.Meta.Total != 2 {
 			t.Fatalf("list: %+v", list)
 		}
-		ada.mustJSON(http.MethodGet, "/me/profiles?profile_type=mentor", nil, http.StatusOK, &list)
+		ada.mustJSON(t, http.MethodGet, "/me/profiles?profile_type=mentor", nil, http.StatusOK, &list)
 		if len(list.Data) != 1 || list.Data[0].ID != mentor.ID {
 			t.Fatalf("filtered list: %+v", list)
 		}
-		ada.call(http.MethodGet, "/me/profiles?limit=x", nil).expect(http.StatusBadRequest)
+		ada.call(t, http.MethodGet, "/me/profiles?limit=x", nil).expect(http.StatusBadRequest)
 		var got profile
-		ada.mustJSON(http.MethodGet, "/me/profiles/mentee", nil, http.StatusOK, &got)
+		ada.mustJSON(t, http.MethodGet, "/me/profiles/mentee", nil, http.StatusOK, &got)
 		if got.ID != created.ID {
 			t.Fatalf("get by type: %+v", got)
 		}
-		signIn(t, "grace").call(http.MethodGet, "/me/profiles/mentee", nil).expect(http.StatusNotFound)
+		signIn(t, "grace").call(t, http.MethodGet, "/me/profiles/mentee", nil).expect(http.StatusNotFound)
 	})
 
 	t.Run("update by type and by ID", func(t *testing.T) {
 		var updated profile
-		ada.mustJSON(http.MethodPatch, "/me/profiles/mentor", map[string]any{"introduction": "Mentor intro"}, http.StatusOK, &updated)
+		ada.mustJSON(t, http.MethodPatch, "/me/profiles/mentor", map[string]any{"introduction": "Mentor intro"}, http.StatusOK, &updated)
 		if updated.Introduction != "Mentor intro" {
 			t.Fatalf("patch by type: %+v", updated)
 		}
-		ada.mustJSON(http.MethodPatch, "/me/profiles/by-id/"+mentor.ID, map[string]any{"first_name": "Augusta"}, http.StatusOK, &updated)
+		ada.mustJSON(t, http.MethodPatch, "/me/profiles/by-id/"+mentor.ID, map[string]any{"first_name": "Augusta"}, http.StatusOK, &updated)
 		if updated.FirstName != "Augusta" {
 			t.Fatalf("patch by id: %+v", updated)
 		}
-		ada.call(http.MethodPatch, "/me/profiles/mentor", map[string]any{"skill_set": map[string]any{"skills": []any{1}}}).expect(http.StatusBadRequest)
-		ada.call(http.MethodPatch, "/me/profiles/by-id/"+mentor.ID, map[string]any{"profile_links": "x"}).expect(http.StatusBadRequest)
-		ada.call(http.MethodPatch, "/me/profiles/by-id/"+mentor.ID, "{").expect(http.StatusBadRequest)
+		ada.call(t, http.MethodPatch, "/me/profiles/mentor", map[string]any{"skill_set": map[string]any{"skills": []any{1}}}).expect(http.StatusBadRequest)
+		ada.call(t, http.MethodPatch, "/me/profiles/by-id/"+mentor.ID, map[string]any{"profile_links": "x"}).expect(http.StatusBadRequest)
+		ada.send(t, http.MethodPatch, "/me/profiles/by-id/"+mentor.ID, strings.NewReader("{"), "application/json", nil).expect(http.StatusBadRequest)
 	})
 
 	t.Run("another user cannot touch the profile by ID", func(t *testing.T) {
 		grace := signIn(t, "grace")
-		grace.call(http.MethodPatch, "/me/profiles/by-id/"+mentor.ID, map[string]any{"first_name": "x"}).expect(http.StatusForbidden)
-		grace.call(http.MethodDelete, "/me/profiles/by-id/"+mentor.ID, nil).expect(http.StatusForbidden)
-		grace.call(http.MethodPatch, "/me/profiles/by-id/00000000-0000-4000-8000-000000000000", map[string]any{"first_name": "x"}).expect(http.StatusNotFound)
-		grace.call(http.MethodDelete, "/me/profiles/by-id/00000000-0000-4000-8000-000000000000", nil).expect(http.StatusNotFound)
-		grace.call(http.MethodPatch, "/me/profiles/mentor", map[string]any{"first_name": "x"}).expect(http.StatusNotFound)
+		grace.call(t, http.MethodPatch, "/me/profiles/by-id/"+mentor.ID, map[string]any{"first_name": "x"}).expect(http.StatusForbidden)
+		grace.call(t, http.MethodDelete, "/me/profiles/by-id/"+mentor.ID, nil).expect(http.StatusForbidden)
+		grace.call(t, http.MethodPatch, "/me/profiles/by-id/00000000-0000-4000-8000-000000000000", map[string]any{"first_name": "x"}).expect(http.StatusNotFound)
+		grace.call(t, http.MethodDelete, "/me/profiles/by-id/00000000-0000-4000-8000-000000000000", nil).expect(http.StatusNotFound)
+		grace.call(t, http.MethodPatch, "/me/profiles/mentor", map[string]any{"first_name": "x"}).expect(http.StatusNotFound)
 	})
 
 	t.Run("delete by ID and by type", func(t *testing.T) {
-		ada.call(http.MethodDelete, "/me/profiles/by-id/"+mentor.ID, nil).expect(http.StatusNoContent)
-		ada.call(http.MethodDelete, "/me/profiles/mentee", nil).expect(http.StatusNoContent)
-		ada.call(http.MethodDelete, "/me/profiles/mentee", nil).expect(http.StatusNotFound)
+		ada.call(t, http.MethodDelete, "/me/profiles/by-id/"+mentor.ID, nil).expect(http.StatusNoContent)
+		ada.call(t, http.MethodDelete, "/me/profiles/mentee", nil).expect(http.StatusNoContent)
+		ada.call(t, http.MethodDelete, "/me/profiles/mentee", nil).expect(http.StatusNotFound)
 		var list struct {
 			Data []profile `json:"data"`
 		}
-		ada.mustJSON(http.MethodGet, "/me/profiles", nil, http.StatusOK, &list)
+		ada.mustJSON(t, http.MethodGet, "/me/profiles", nil, http.StatusOK, &list)
 		if len(list.Data) != 0 {
 			t.Fatalf("profiles remain: %+v", list)
 		}

@@ -66,9 +66,9 @@ func inviteMentor(t *testing.T, p *program, mentor *actor) member {
 	t.Helper()
 	before := len(e2e.fakes.emailsTo(mentor.Email))
 	var m member
-	p.Admin.mustJSON(http.MethodPost, "/programs/"+p.ID+"/members", map[string]any{"lfid": mentor.LFID, "member_type": "mentor"}, http.StatusCreated, &m)
+	p.Admin.mustJSON(t, http.MethodPost, "/programs/"+p.ID+"/members", map[string]any{"lfid": mentor.LFID, "member_type": "mentor"}, http.StatusCreated, &m)
 	token := inviteToken(t, mentor.Email, before+1)
-	mentor.mustJSON(http.MethodPost, "/mentor-invites/"+url.PathEscape(token)+"/accept", nil, http.StatusOK, &m)
+	mentor.mustJSON(t, http.MethodPost, "/mentor-invites/"+url.PathEscape(token)+"/accept", nil, http.StatusOK, &m)
 	return m
 }
 
@@ -81,30 +81,30 @@ func TestE2EMentorInvites(t *testing.T) {
 	t.Run("invite an existing user and accept", func(t *testing.T) {
 		mentor := signIn(t, "mentor-one")
 		var invited member
-		admin.mustJSON(http.MethodPost, members, map[string]any{"lfid": "mentor-one", "member_type": "mentor"}, http.StatusCreated, &invited)
+		admin.mustJSON(t, http.MethodPost, members, map[string]any{"lfid": "mentor-one", "member_type": "mentor"}, http.StatusCreated, &invited)
 		if invited.Status != "invited" || invited.UserID != mentor.ID {
 			t.Fatalf("invited: %+v", invited)
 		}
-		admin.call(http.MethodPost, members, map[string]any{"user_id": mentor.ID, "member_type": "mentor"}).expect(http.StatusConflict)
+		admin.call(t, http.MethodPost, members, map[string]any{"user_id": mentor.ID, "member_type": "mentor"}).expect(http.StatusConflict)
 
 		token := inviteToken(t, mentor.Email, 1)
 		escaped := url.PathEscape(token)
 		someoneElse := signIn(t, "someone-else")
-		someoneElse.call(http.MethodPost, "/mentor-invites/"+escaped+"/accept", nil).expect(http.StatusForbidden)
-		someoneElse.call(http.MethodPost, "/mentor-invites/"+escaped+"/decline", nil).expect(http.StatusForbidden)
+		someoneElse.call(t, http.MethodPost, "/mentor-invites/"+escaped+"/accept", nil).expect(http.StatusForbidden)
+		someoneElse.call(t, http.MethodPost, "/mentor-invites/"+escaped+"/decline", nil).expect(http.StatusForbidden)
 
 		var accepted member
-		mentor.mustJSON(http.MethodPost, "/mentor-invites/"+escaped+"/accept", nil, http.StatusOK, &accepted)
+		mentor.mustJSON(t, http.MethodPost, "/mentor-invites/"+escaped+"/accept", nil, http.StatusOK, &accepted)
 		if accepted.Status != "active" {
 			t.Fatalf("accepted: %+v", accepted)
 		}
 		awaitEmail(t, admin.Email, "accepted your mentor invitation", 1)
-		mentor.call(http.MethodPost, "/mentor-invites/"+escaped+"/accept", nil).expect(http.StatusBadRequest)
+		mentor.call(t, http.MethodPost, "/mentor-invites/"+escaped+"/accept", nil).expect(http.StatusBadRequest)
 
 		var roster struct {
 			Data []member `json:"data"`
 		}
-		anonymous(t).mustJSON(http.MethodGet, members, nil, http.StatusOK, &roster)
+		anonymous().mustJSON(t, http.MethodGet, members, nil, http.StatusOK, &roster)
 		if len(roster.Data) != 1 || roster.Data[0].UserID != mentor.ID || roster.Data[0].Email != nil {
 			t.Fatalf("public roster: %+v", roster)
 		}
@@ -117,12 +117,12 @@ func TestE2EMentorInvites(t *testing.T) {
 				Status      string `json:"status"`
 			} `json:"data"`
 		}
-		mentor.mustJSON(http.MethodGet, "/me/program-memberships?member_type=mentor", nil, http.StatusOK, &mine)
+		mentor.mustJSON(t, http.MethodGet, "/me/program-memberships?member_type=mentor", nil, http.StatusOK, &mine)
 		if len(mine.Data) != 1 || mine.Data[0].ProgramName != "Invite Program" || mine.Data[0].Status != "active" {
 			t.Fatalf("my memberships: %+v", mine)
 		}
-		mentor.call(http.MethodGet, "/me/program-memberships?member_type=owner", nil).expect(http.StatusBadRequest)
-		admin.mustJSON(http.MethodGet, "/me/program-memberships?member_type=program_admin", nil, http.StatusOK, &mine)
+		mentor.call(t, http.MethodGet, "/me/program-memberships?member_type=owner", nil).expect(http.StatusBadRequest)
+		admin.mustJSON(t, http.MethodGet, "/me/program-memberships?member_type=program_admin", nil, http.StatusOK, &mine)
 		if len(mine.Data) != 1 || mine.Data[0].MemberType != "program_admin" {
 			t.Fatalf("admin memberships: %+v", mine)
 		}
@@ -132,7 +132,7 @@ func TestE2EMentorInvites(t *testing.T) {
 				ID string `json:"id"`
 			} `json:"data"`
 		}
-		mentor.mustJSON(http.MethodGet, "/me/mentor-programs", nil, http.StatusOK, &mentored)
+		mentor.mustJSON(t, http.MethodGet, "/me/mentor-programs", nil, http.StatusOK, &mentored)
 		if len(mentored.Data) != 1 || mentored.Data[0].ID != p.ID {
 			t.Fatalf("mentored programs: %+v", mentored)
 		}
@@ -141,7 +141,7 @@ func TestE2EMentorInvites(t *testing.T) {
 	t.Run("invite someone who never signed in, by LFID", func(t *testing.T) {
 		e2e.fakes.addAccount(fakeAccount{Username: "newcomer", Email: "newcomer@lf.example.org", Name: "New Comer"})
 		var invited member
-		admin.mustJSON(http.MethodPost, members, map[string]any{"lfid": "newcomer", "member_type": "mentor"}, http.StatusCreated, &invited)
+		admin.mustJSON(t, http.MethodPost, members, map[string]any{"lfid": "newcomer", "member_type": "mentor"}, http.StatusCreated, &invited)
 		token := inviteToken(t, "newcomer@lf.example.org", 1)
 
 		// Signing in later binds to the user the invite created.
@@ -149,25 +149,25 @@ func TestE2EMentorInvites(t *testing.T) {
 		if newcomer.ID != invited.UserID {
 			t.Fatalf("sign-in created a second user: %s vs %s", newcomer.ID, invited.UserID)
 		}
-		newcomer.call(http.MethodPost, "/mentor-invites/"+url.PathEscape(token)+"/decline", nil).expect(http.StatusNoContent)
+		newcomer.call(t, http.MethodPost, "/mentor-invites/"+url.PathEscape(token)+"/decline", nil).expect(http.StatusNoContent)
 		awaitEmail(t, admin.Email, "declined your mentor invitation", 1)
-		newcomer.call(http.MethodPost, "/mentor-invites/"+url.PathEscape(token)+"/decline", nil).expect(http.StatusBadRequest)
+		newcomer.call(t, http.MethodPost, "/mentor-invites/"+url.PathEscape(token)+"/decline", nil).expect(http.StatusBadRequest)
 	})
 
 	t.Run("invite by email", func(t *testing.T) {
 		e2e.fakes.addAccount(fakeAccount{Username: "by-email", Email: "by-email@lf.example.org", Name: "By Email"})
 		var invited member
-		admin.mustJSON(http.MethodPost, members, map[string]any{"email": "by-email@lf.example.org", "member_type": "mentor"}, http.StatusCreated, &invited)
+		admin.mustJSON(t, http.MethodPost, members, map[string]any{"email": "by-email@lf.example.org", "member_type": "mentor"}, http.StatusCreated, &invited)
 		if invited.Email == nil || *invited.Email != "by-email@lf.example.org" {
 			t.Fatalf("invited by email: %+v", invited)
 		}
 		inviteToken(t, "by-email@lf.example.org", 1)
 
 		t.Run("resend issues a new invite", func(t *testing.T) {
-			admin.call(http.MethodPost, members+"/"+invited.ID+"/resend-invite", nil).expect(http.StatusNoContent)
+			admin.call(t, http.MethodPost, members+"/"+invited.ID+"/resend-invite", nil).expect(http.StatusNoContent)
 			inviteToken(t, "by-email@lf.example.org", 2)
-			admin.call(http.MethodPost, members+"/00000000-0000-4000-8000-000000000000/resend-invite", nil).expect(http.StatusNotFound)
-			anonymous(t).call(http.MethodPost, members+"/"+invited.ID+"/resend-invite", nil).expect(http.StatusUnauthorized)
+			admin.call(t, http.MethodPost, members+"/00000000-0000-4000-8000-000000000000/resend-invite", nil).expect(http.StatusNotFound)
+			anonymous().call(t, http.MethodPost, members+"/"+invited.ID+"/resend-invite", nil).expect(http.StatusUnauthorized)
 		})
 	})
 
@@ -195,17 +195,17 @@ func TestE2EMentorInvites(t *testing.T) {
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
-				admin.call(http.MethodPost, tc.path, tc.body).expect(tc.status)
+				admin.call(t, http.MethodPost, tc.path, tc.body).expect(tc.status)
 			})
 		}
-		anonymous(t).call(http.MethodPost, members, map[string]any{"lfid": "admin", "member_type": "mentor"}).expect(http.StatusUnauthorized)
-		anonymous(t).call(http.MethodGet, "/programs/"+pending.ID+"/members", nil).expect(http.StatusNotFound)
+		anonymous().call(t, http.MethodPost, members, map[string]any{"lfid": "admin", "member_type": "mentor"}).expect(http.StatusUnauthorized)
+		anonymous().call(t, http.MethodGet, "/programs/"+pending.ID+"/members", nil).expect(http.StatusNotFound)
 	})
 
 	t.Run("bad invite tokens", func(t *testing.T) {
-		admin.call(http.MethodPost, "/mentor-invites/garbage/accept", nil).expect(http.StatusBadRequest)
-		admin.call(http.MethodPost, "/mentor-invites/garbage/decline", nil).expect(http.StatusBadRequest)
-		anonymous(t).call(http.MethodPost, "/mentor-invites/garbage/accept", nil).expect(http.StatusUnauthorized)
+		admin.call(t, http.MethodPost, "/mentor-invites/garbage/accept", nil).expect(http.StatusBadRequest)
+		admin.call(t, http.MethodPost, "/mentor-invites/garbage/decline", nil).expect(http.StatusBadRequest)
+		anonymous().call(t, http.MethodPost, "/mentor-invites/garbage/accept", nil).expect(http.StatusUnauthorized)
 	})
 }
 
@@ -217,39 +217,39 @@ func TestE2EProgramMemberManagement(t *testing.T) {
 	mentor := signIn(t, "mentor-two")
 
 	var m member
-	admin.mustJSON(http.MethodPost, members, map[string]any{"user_id": mentor.ID, "member_type": "mentor"}, http.StatusCreated, &m)
+	admin.mustJSON(t, http.MethodPost, members, map[string]any{"user_id": mentor.ID, "member_type": "mentor"}, http.StatusCreated, &m)
 
 	t.Run("status lifecycle", func(t *testing.T) {
 		for _, step := range []struct{ to, want string }{{"pending", "pending"}, {"active", "active"}, {"withdrawn", "withdrawn"}} {
-			admin.mustJSON(http.MethodPatch, members+"/"+m.ID, map[string]any{"status": step.to}, http.StatusOK, &m)
+			admin.mustJSON(t, http.MethodPatch, members+"/"+m.ID, map[string]any{"status": step.to}, http.StatusOK, &m)
 			if m.Status != step.want {
 				t.Fatalf("after %s: %+v", step.to, m)
 			}
 		}
-		admin.call(http.MethodPatch, members+"/"+m.ID, map[string]any{"status": "active"}).expect(http.StatusConflict)
-		admin.call(http.MethodPatch, members+"/"+m.ID, map[string]any{"status": "bogus"}).expect(http.StatusBadRequest)
-		admin.mustJSON(http.MethodPatch, members+"/"+m.ID, map[string]any{"email": "mentor-two@work.example.org"}, http.StatusOK, &m)
+		admin.call(t, http.MethodPatch, members+"/"+m.ID, map[string]any{"status": "active"}).expect(http.StatusConflict)
+		admin.call(t, http.MethodPatch, members+"/"+m.ID, map[string]any{"status": "bogus"}).expect(http.StatusBadRequest)
+		admin.mustJSON(t, http.MethodPatch, members+"/"+m.ID, map[string]any{"email": "mentor-two@work.example.org"}, http.StatusOK, &m)
 		if m.Email == nil || *m.Email != "mentor-two@work.example.org" {
 			t.Fatalf("email update: %+v", m)
 		}
-		admin.call(http.MethodPatch, members+"/00000000-0000-4000-8000-000000000000", map[string]any{"status": "active"}).expect(http.StatusNotFound)
+		admin.call(t, http.MethodPatch, members+"/00000000-0000-4000-8000-000000000000", map[string]any{"status": "active"}).expect(http.StatusNotFound)
 		other := publishProgram(t, admin, "Other Members Program")
-		admin.call(http.MethodPatch, "/programs/"+other.ID+"/members/"+m.ID, map[string]any{"status": "pending"}).expect(http.StatusNotFound)
-		admin.call(http.MethodDelete, "/programs/"+other.ID+"/members/"+m.ID, nil).expect(http.StatusNotFound)
-		admin.call(http.MethodPost, "/programs/"+other.ID+"/members/"+m.ID+"/resend-invite", nil).expect(http.StatusNotFound)
-		admin.call(http.MethodPost, members+"/"+m.ID+"/resend-invite", nil).expect(http.StatusConflict)
-		anonymous(t).call(http.MethodPatch, members+"/"+m.ID, map[string]any{"status": "active"}).expect(http.StatusUnauthorized)
+		admin.call(t, http.MethodPatch, "/programs/"+other.ID+"/members/"+m.ID, map[string]any{"status": "pending"}).expect(http.StatusNotFound)
+		admin.call(t, http.MethodDelete, "/programs/"+other.ID+"/members/"+m.ID, nil).expect(http.StatusNotFound)
+		admin.call(t, http.MethodPost, "/programs/"+other.ID+"/members/"+m.ID+"/resend-invite", nil).expect(http.StatusNotFound)
+		admin.call(t, http.MethodPost, members+"/"+m.ID+"/resend-invite", nil).expect(http.StatusConflict)
+		anonymous().call(t, http.MethodPatch, members+"/"+m.ID, map[string]any{"status": "active"}).expect(http.StatusUnauthorized)
 	})
 
 	t.Run("program admins are active on creation", func(t *testing.T) {
 		coAdmin := signIn(t, "co-admin")
 		var a member
-		admin.mustJSON(http.MethodPost, members, map[string]any{"user_id": coAdmin.ID, "member_type": "program_admin"}, http.StatusCreated, &a)
+		admin.mustJSON(t, http.MethodPost, members, map[string]any{"user_id": coAdmin.ID, "member_type": "program_admin"}, http.StatusCreated, &a)
 		if a.Status != "active" || a.MemberType != "program_admin" {
 			t.Fatalf("co-admin: %+v", a)
 		}
 		var mine programPage
-		coAdmin.mustJSON(http.MethodGet, "/me/programs", nil, http.StatusOK, &mine)
+		coAdmin.mustJSON(t, http.MethodGet, "/me/programs", nil, http.StatusOK, &mine)
 		if len(mine.Data) != 1 {
 			t.Fatalf("co-admin programs: %+v", mine)
 		}
@@ -263,23 +263,23 @@ func TestE2EProgramMemberManagement(t *testing.T) {
 				ProfileCreated bool   `json:"profile_created"`
 			} `json:"data"`
 		}
-		admin.mustJSON(http.MethodGet, "/programs/"+p.ID+"/member-management", nil, http.StatusOK, &rows)
+		admin.mustJSON(t, http.MethodGet, "/programs/"+p.ID+"/member-management", nil, http.StatusOK, &rows)
 		if len(rows.Data) != 1 || rows.Data[0].UserID != mentor.ID {
 			t.Fatalf("mentor management: %+v", rows)
 		}
-		admin.mustJSON(http.MethodGet, "/programs/"+p.ID+"/member-management?status=active", nil, http.StatusOK, &rows)
+		admin.mustJSON(t, http.MethodGet, "/programs/"+p.ID+"/member-management?status=active", nil, http.StatusOK, &rows)
 		if len(rows.Data) != 0 {
 			t.Fatalf("status filter: %+v", rows)
 		}
-		admin.mustJSON(http.MethodGet, "/programs/"+p.ID+"/member-management?search=mentor-two", nil, http.StatusOK, &rows)
-		admin.call(http.MethodGet, "/programs/"+p.ID+"/member-management?limit=x", nil).expect(http.StatusBadRequest)
-		anonymous(t).call(http.MethodGet, "/programs/"+p.ID+"/member-management", nil).expect(http.StatusUnauthorized)
+		admin.mustJSON(t, http.MethodGet, "/programs/"+p.ID+"/member-management?search=mentor-two", nil, http.StatusOK, &rows)
+		admin.call(t, http.MethodGet, "/programs/"+p.ID+"/member-management?limit=x", nil).expect(http.StatusBadRequest)
+		anonymous().call(t, http.MethodGet, "/programs/"+p.ID+"/member-management", nil).expect(http.StatusUnauthorized)
 	})
 
 	t.Run("delete", func(t *testing.T) {
-		admin.call(http.MethodDelete, members+"/"+m.ID, nil).expect(http.StatusNoContent)
-		admin.call(http.MethodDelete, members+"/"+m.ID, nil).expect(http.StatusNotFound)
-		anonymous(t).call(http.MethodDelete, members+"/"+m.ID, nil).expect(http.StatusUnauthorized)
+		admin.call(t, http.MethodDelete, members+"/"+m.ID, nil).expect(http.StatusNoContent)
+		admin.call(t, http.MethodDelete, members+"/"+m.ID, nil).expect(http.StatusNotFound)
+		anonymous().call(t, http.MethodDelete, members+"/"+m.ID, nil).expect(http.StatusUnauthorized)
 	})
 }
 
@@ -290,44 +290,44 @@ func TestE2EMentorRequests(t *testing.T) {
 	mentor := signIn(t, "volunteer")
 
 	var req member
-	mentor.mustJSON(http.MethodPost, "/me/program-memberships", map[string]any{"program_id": p.ID}, http.StatusCreated, &req)
+	mentor.mustJSON(t, http.MethodPost, "/me/program-memberships", map[string]any{"program_id": p.ID}, http.StatusCreated, &req)
 	if req.Status != "requested" || req.UserID != mentor.ID {
 		t.Fatalf("request: %+v", req)
 	}
-	mentor.call(http.MethodPost, "/me/program-memberships", map[string]any{"program_id": p.ID}).expect(http.StatusConflict)
+	mentor.call(t, http.MethodPost, "/me/program-memberships", map[string]any{"program_id": p.ID}).expect(http.StatusConflict)
 
 	t.Run("only the requester can withdraw", func(t *testing.T) {
-		signIn(t, "intruder").call(http.MethodPost, "/me/program-memberships/"+req.ID+"/withdraw", nil).expect(http.StatusNotFound)
-		mentor.call(http.MethodPost, "/me/program-memberships/not-a-uuid/withdraw", nil).expect(http.StatusNotFound)
+		signIn(t, "intruder").call(t, http.MethodPost, "/me/program-memberships/"+req.ID+"/withdraw", nil).expect(http.StatusNotFound)
+		mentor.call(t, http.MethodPost, "/me/program-memberships/not-a-uuid/withdraw", nil).expect(http.StatusNotFound)
 	})
 
-	mentor.call(http.MethodPost, "/me/program-memberships/"+req.ID+"/withdraw", nil).expect(http.StatusNoContent)
-	mentor.call(http.MethodPost, "/me/program-memberships/"+req.ID+"/withdraw", nil).expect(http.StatusConflict)
+	mentor.call(t, http.MethodPost, "/me/program-memberships/"+req.ID+"/withdraw", nil).expect(http.StatusNoContent)
+	mentor.call(t, http.MethodPost, "/me/program-memberships/"+req.ID+"/withdraw", nil).expect(http.StatusConflict)
 
 	// A withdrawn request is reopened in place.
 	var again member
-	mentor.mustJSON(http.MethodPost, "/me/program-memberships", map[string]any{"program_id": p.ID}, http.StatusCreated, &again)
+	mentor.mustJSON(t, http.MethodPost, "/me/program-memberships", map[string]any{"program_id": p.ID}, http.StatusCreated, &again)
 	if again.ID != req.ID || again.Status != "requested" {
 		t.Fatalf("re-request: %+v", again)
 	}
 
 	t.Run("declining a request tells the mentor", func(t *testing.T) {
-		admin.mustJSON(http.MethodPatch, "/programs/"+p.ID+"/members/"+req.ID, map[string]any{"status": "declined"}, http.StatusOK, nil)
+		admin.mustJSON(t, http.MethodPatch, "/programs/"+p.ID+"/members/"+req.ID, map[string]any{"status": "declined"}, http.StatusOK, nil)
 		awaitEmail(t, mentor.Email, "was declined", 1)
-		mentor.call(http.MethodPost, "/me/program-memberships", map[string]any{"program_id": p.ID}).expect(http.StatusConflict)
+		mentor.call(t, http.MethodPost, "/me/program-memberships", map[string]any{"program_id": p.ID}).expect(http.StatusConflict)
 	})
 
 	t.Run("request validation", func(t *testing.T) {
 		pending := createProgram(t, admin, "Pending Request Program")
-		mentor.call(http.MethodPost, "/me/program-memberships", map[string]any{"program_id": pending.ID}).expect(http.StatusBadRequest)
+		mentor.call(t, http.MethodPost, "/me/program-memberships", map[string]any{"program_id": pending.ID}).expect(http.StatusBadRequest)
 		submitted := createProgram(t, admin, "Submitted Request Program")
 		uploadLogo(t, admin, submitted.ID).expect(http.StatusCreated)
-		admin.mustJSON(http.MethodPost, "/programs/"+submitted.ID+"/submit", nil, http.StatusOK, nil)
-		mentor.call(http.MethodPost, "/me/program-memberships", map[string]any{"program_id": submitted.ID}).expect(http.StatusNotFound)
-		mentor.call(http.MethodPost, "/me/program-memberships", map[string]any{"program_id": "nope"}).expect(http.StatusBadRequest)
-		mentor.call(http.MethodPost, "/me/program-memberships", map[string]any{"program_id": "00000000-0000-4000-8000-000000000000"}).expect(http.StatusNotFound)
-		anonymous(t).call(http.MethodPost, "/me/program-memberships", map[string]any{"program_id": p.ID}).expect(http.StatusUnauthorized)
-		mentor.call(http.MethodGet, "/me/program-memberships?limit=x", nil).expect(http.StatusBadRequest)
+		admin.mustJSON(t, http.MethodPost, "/programs/"+submitted.ID+"/submit", nil, http.StatusOK, nil)
+		mentor.call(t, http.MethodPost, "/me/program-memberships", map[string]any{"program_id": submitted.ID}).expect(http.StatusNotFound)
+		mentor.call(t, http.MethodPost, "/me/program-memberships", map[string]any{"program_id": "nope"}).expect(http.StatusBadRequest)
+		mentor.call(t, http.MethodPost, "/me/program-memberships", map[string]any{"program_id": "00000000-0000-4000-8000-000000000000"}).expect(http.StatusNotFound)
+		anonymous().call(t, http.MethodPost, "/me/program-memberships", map[string]any{"program_id": p.ID}).expect(http.StatusUnauthorized)
+		mentor.call(t, http.MethodGet, "/me/program-memberships?limit=x", nil).expect(http.StatusBadRequest)
 	})
 }
 
@@ -354,29 +354,29 @@ func TestE2EMentorCandidates(t *testing.T) {
 	}
 
 	var got candidates
-	admin.mustJSON(http.MethodGet, path+"car", nil, http.StatusOK, &got)
+	admin.mustJSON(t, http.MethodGet, path+"car", nil, http.StatusOK, &got)
 	if !contains(lfids(got), "carla") {
 		t.Fatalf("local search: %+v", got)
 	}
-	admin.mustJSON(http.MethodGet, path+"dirk", nil, http.StatusOK, &got)
+	admin.mustJSON(t, http.MethodGet, path+"dirk", nil, http.StatusOK, &got)
 	if len(got.Data) != 1 || got.Data[0].LFID != "dirk" || got.Data[0].Name != "Dirk Directory" {
 		t.Fatalf("directory LFID search: %+v", got)
 	}
-	admin.mustJSON(http.MethodGet, path+url.QueryEscape("dirk@lf.example.org"), nil, http.StatusOK, &got)
+	admin.mustJSON(t, http.MethodGet, path+url.QueryEscape("dirk@lf.example.org"), nil, http.StatusOK, &got)
 	if len(got.Data) != 1 || got.Data[0].LFID != "dirk" {
 		t.Fatalf("email search: %+v", got)
 	}
-	admin.mustJSON(http.MethodGet, path+url.QueryEscape("missing@lf.example.org"), nil, http.StatusOK, &got)
+	admin.mustJSON(t, http.MethodGet, path+url.QueryEscape("missing@lf.example.org"), nil, http.StatusOK, &got)
 	if len(got.Data) != 0 {
 		t.Fatalf("unknown email: %+v", got)
 	}
-	admin.mustJSON(http.MethodGet, path+"zz-nobody", nil, http.StatusOK, &got)
+	admin.mustJSON(t, http.MethodGet, path+"zz-nobody", nil, http.StatusOK, &got)
 	if len(got.Data) != 0 {
 		t.Fatalf("unknown LFID: %+v", got)
 	}
-	admin.call(http.MethodGet, path+"x", nil).expect(http.StatusBadRequest)
+	admin.call(t, http.MethodGet, path+"x", nil).expect(http.StatusBadRequest)
 	pending := createProgram(t, admin, "Pending Candidates Program")
-	admin.call(http.MethodGet, "/programs/"+pending.ID+"/mentor-candidates?search=carla", nil).expect(http.StatusBadRequest)
-	admin.call(http.MethodGet, "/programs/00000000-0000-4000-8000-000000000000/mentor-candidates?search=carla", nil).expect(http.StatusNotFound)
-	anonymous(t).call(http.MethodGet, path+"carla", nil).expect(http.StatusUnauthorized)
+	admin.call(t, http.MethodGet, "/programs/"+pending.ID+"/mentor-candidates?search=carla", nil).expect(http.StatusBadRequest)
+	admin.call(t, http.MethodGet, "/programs/00000000-0000-4000-8000-000000000000/mentor-candidates?search=carla", nil).expect(http.StatusNotFound)
+	anonymous().call(t, http.MethodGet, path+"carla", nil).expect(http.StatusUnauthorized)
 }

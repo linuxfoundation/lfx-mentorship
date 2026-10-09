@@ -79,14 +79,14 @@ type program struct {
 func createProgram(t *testing.T, admin *actor, name string) *program {
 	t.Helper()
 	var p program
-	admin.mustJSON(http.MethodPost, "/programs", enrollmentBody(name, newProject(t, "proj-"+uuid.NewString()[:8])), http.StatusCreated, &p)
+	admin.mustJSON(t, http.MethodPost, "/programs", enrollmentBody(name, newProject(t, "proj-"+uuid.NewString()[:8])), http.StatusCreated, &p)
 	p.Admin = admin
 	var terms struct {
 		Data []struct {
 			ID string `json:"id"`
 		} `json:"data"`
 	}
-	admin.mustJSON(http.MethodGet, "/programs/"+p.ID+"/terms", nil, http.StatusOK, &terms)
+	admin.mustJSON(t, http.MethodGet, "/programs/"+p.ID+"/terms", nil, http.StatusOK, &terms)
 	if len(terms.Data) == 0 {
 		t.Fatalf("program %s has no terms", p.ID)
 	}
@@ -104,8 +104,8 @@ func publishProgram(t *testing.T, admin *actor, name string) *program {
 	t.Helper()
 	p := createProgram(t, admin, name)
 	uploadLogo(t, admin, p.ID).expect(http.StatusCreated)
-	admin.mustJSON(http.MethodPost, "/programs/"+p.ID+"/submit", nil, http.StatusOK, nil)
-	approver(t).mustJSON(http.MethodPost, "/programs/"+p.ID+"/decision", map[string]any{"status": "published"}, http.StatusOK, p)
+	admin.mustJSON(t, http.MethodPost, "/programs/"+p.ID+"/submit", nil, http.StatusOK, nil)
+	approver(t).mustJSON(t, http.MethodPost, "/programs/"+p.ID+"/decision", map[string]any{"status": "published"}, http.StatusOK, p)
 	return p
 }
 
@@ -123,5 +123,5 @@ func pngBytes(t *testing.T) []byte {
 
 func uploadLogo(t *testing.T, a *actor, programID string) *response {
 	t.Helper()
-	return a.send(http.MethodPost, "/programs/"+programID+"/logo-upload", bytes.NewReader(pngBytes(t)), "image/png", nil)
+	return a.send(t, http.MethodPost, "/programs/"+programID+"/logo-upload", bytes.NewReader(pngBytes(t)), "image/png", nil)
 }

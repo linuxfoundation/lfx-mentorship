@@ -64,7 +64,7 @@ func TestE2EProgramLifecycle(t *testing.T) {
 	body := enrollmentBody("Lifecycle Program", uid)
 	// Project Service is the source of the project metadata, not the caller.
 	body["projectSlug"], body["projectName"] = "spoofed", "Spoofed"
-	admin.mustJSON(http.MethodPost, "/programs", body, http.StatusCreated, &created)
+	admin.mustJSON(t, http.MethodPost, "/programs", body, http.StatusCreated, &created)
 	if created.Status != "pending" || created.Slug != "lifecycle-program" || created.ProjectUID != uid ||
 		created.ProjectSlug != "lifecycle" || created.ProjectName != "Lifecycle" || !strings.HasSuffix(created.ProjectLogo, "/lifecycle.png") {
 		t.Fatalf("created program: %+v", created)
@@ -73,31 +73,31 @@ func TestE2EProgramLifecycle(t *testing.T) {
 
 	t.Run("creator becomes an active program admin", func(t *testing.T) {
 		var mine programPage
-		admin.mustJSON(http.MethodGet, "/me/programs", nil, http.StatusOK, &mine)
+		admin.mustJSON(t, http.MethodGet, "/me/programs", nil, http.StatusOK, &mine)
 		if len(mine.Data) != 1 || mine.Data[0].ID != id || mine.Data[0].AdminStatus != "pending_review" {
 			t.Fatalf("my programs: %+v", mine)
 		}
 	})
 
 	t.Run("a pending program is readable but not listed", func(t *testing.T) {
-		anonymous(t).call(http.MethodGet, "/programs/"+id, nil).expect(http.StatusOK)
-		anonymous(t).call(http.MethodGet, "/programs/resolve/lifecycle-program", nil).expect(http.StatusNotFound)
+		anonymous().call(t, http.MethodGet, "/programs/"+id, nil).expect(http.StatusOK)
+		anonymous().call(t, http.MethodGet, "/programs/resolve/lifecycle-program", nil).expect(http.StatusNotFound)
 		var list programPage
-		anonymous(t).mustJSON(http.MethodGet, "/programs", nil, http.StatusOK, &list)
+		anonymous().mustJSON(t, http.MethodGet, "/programs", nil, http.StatusOK, &list)
 		if contains(list.ids(), id) {
 			t.Fatalf("pending program is listed publicly")
 		}
 	})
 
 	t.Run("submission requires a logo", func(t *testing.T) {
-		res := admin.call(http.MethodPost, "/programs/"+id+"/submit", nil).expect(http.StatusConflict)
+		res := admin.call(t, http.MethodPost, "/programs/"+id+"/submit", nil).expect(http.StatusConflict)
 		if !strings.Contains(res.errorMessage(), "logo is required") {
 			t.Fatalf("got %q", res.errorMessage())
 		}
 	})
 
 	t.Run("a pending program cannot be decided", func(t *testing.T) {
-		approver(t).call(http.MethodPost, "/programs/"+id+"/decision", map[string]any{"status": "published"}).expect(http.StatusConflict)
+		approver(t).call(t, http.MethodPost, "/programs/"+id+"/decision", map[string]any{"status": "published"}).expect(http.StatusConflict)
 	})
 
 	var logo struct {
@@ -110,42 +110,42 @@ func TestE2EProgramLifecycle(t *testing.T) {
 	}
 
 	var submitted program
-	admin.mustJSON(http.MethodPost, "/programs/"+id+"/submit", nil, http.StatusOK, &submitted)
+	admin.mustJSON(t, http.MethodPost, "/programs/"+id+"/submit", nil, http.StatusOK, &submitted)
 	if submitted.Status != "submitted" {
 		t.Fatalf("after submit: %q", submitted.Status)
 	}
 
 	t.Run("a submitted program is hidden from anonymous callers", func(t *testing.T) {
-		anonymous(t).call(http.MethodGet, "/programs/"+id, nil).expect(http.StatusNotFound)
-		anonymous(t).call(http.MethodGet, "/programs/"+id+"/catalog", nil).expect(http.StatusNotFound)
-		admin.call(http.MethodGet, "/programs/"+id, nil).expect(http.StatusOK)
+		anonymous().call(t, http.MethodGet, "/programs/"+id, nil).expect(http.StatusNotFound)
+		anonymous().call(t, http.MethodGet, "/programs/"+id+"/catalog", nil).expect(http.StatusNotFound)
+		admin.call(t, http.MethodGet, "/programs/"+id, nil).expect(http.StatusOK)
 	})
 
 	t.Run("decision validates its input", func(t *testing.T) {
-		approver(t).call(http.MethodPost, "/programs/"+id+"/decision", map[string]any{}).expect(http.StatusBadRequest)
-		approver(t).call(http.MethodPost, "/programs/"+id+"/decision", map[string]any{"status": "archived"}).expect(http.StatusBadRequest)
-		anonymous(t).call(http.MethodPost, "/programs/"+id+"/decision", map[string]any{"status": "published"}).expect(http.StatusUnauthorized)
+		approver(t).call(t, http.MethodPost, "/programs/"+id+"/decision", map[string]any{}).expect(http.StatusBadRequest)
+		approver(t).call(t, http.MethodPost, "/programs/"+id+"/decision", map[string]any{"status": "archived"}).expect(http.StatusBadRequest)
+		anonymous().call(t, http.MethodPost, "/programs/"+id+"/decision", map[string]any{"status": "published"}).expect(http.StatusUnauthorized)
 	})
 
 	var published program
-	approver(t).mustJSON(http.MethodPost, "/programs/"+id+"/decision", map[string]any{"status": "published"}, http.StatusOK, &published)
+	approver(t).mustJSON(t, http.MethodPost, "/programs/"+id+"/decision", map[string]any{"status": "published"}, http.StatusOK, &published)
 	if published.Status != "published" {
 		t.Fatalf("after decision: %q", published.Status)
 	}
-	approver(t).call(http.MethodPost, "/programs/"+id+"/decision", map[string]any{"status": "rejected"}).expect(http.StatusConflict)
+	approver(t).call(t, http.MethodPost, "/programs/"+id+"/decision", map[string]any{"status": "rejected"}).expect(http.StatusConflict)
 
 	t.Run("a published program is listed and resolvable", func(t *testing.T) {
 		var resolved struct {
 			ID string `json:"id"`
 		}
-		anonymous(t).mustJSON(http.MethodGet, "/programs/resolve/lifecycle-program", nil, http.StatusOK, &resolved)
+		anonymous().mustJSON(t, http.MethodGet, "/programs/resolve/lifecycle-program", nil, http.StatusOK, &resolved)
 		if resolved.ID != id {
 			t.Fatalf("resolve: %q", resolved.ID)
 		}
-		anonymous(t).mustJSON(http.MethodGet, "/programs/resolve/"+id, nil, http.StatusOK, &resolved)
-		anonymous(t).call(http.MethodGet, "/programs/lifecycle-program", nil).expect(http.StatusOK)
+		anonymous().mustJSON(t, http.MethodGet, "/programs/resolve/"+id, nil, http.StatusOK, &resolved)
+		anonymous().call(t, http.MethodGet, "/programs/lifecycle-program", nil).expect(http.StatusOK)
 		var list programPage
-		anonymous(t).mustJSON(http.MethodGet, "/programs?search=Lifecycle", nil, http.StatusOK, &list)
+		anonymous().mustJSON(t, http.MethodGet, "/programs?search=Lifecycle", nil, http.StatusOK, &list)
 		if !contains(list.ids(), id) || list.Meta.Total != 1 {
 			t.Fatalf("public list: %+v", list)
 		}
@@ -153,34 +153,34 @@ func TestE2EProgramLifecycle(t *testing.T) {
 
 	t.Run("hide and unhide", func(t *testing.T) {
 		var hidden program
-		admin.mustJSON(http.MethodPost, "/programs/"+id+"/hide", nil, http.StatusOK, &hidden)
+		admin.mustJSON(t, http.MethodPost, "/programs/"+id+"/hide", nil, http.StatusOK, &hidden)
 		if hidden.Status != "hidden" {
 			t.Fatalf("after hide: %q", hidden.Status)
 		}
-		anonymous(t).call(http.MethodGet, "/programs/"+id, nil).expect(http.StatusNotFound)
-		anonymous(t).call(http.MethodGet, "/programs/"+id+"/terms", nil).expect(http.StatusNotFound)
-		admin.call(http.MethodGet, "/programs/"+id, nil).expect(http.StatusOK)
-		admin.call(http.MethodPost, "/programs/"+id+"/hide", nil).expect(http.StatusConflict)
+		anonymous().call(t, http.MethodGet, "/programs/"+id, nil).expect(http.StatusNotFound)
+		anonymous().call(t, http.MethodGet, "/programs/"+id+"/terms", nil).expect(http.StatusNotFound)
+		admin.call(t, http.MethodGet, "/programs/"+id, nil).expect(http.StatusOK)
+		admin.call(t, http.MethodPost, "/programs/"+id+"/hide", nil).expect(http.StatusConflict)
 
 		var mine programPage
-		admin.mustJSON(http.MethodGet, "/me/programs?status=hidden", nil, http.StatusOK, &mine)
+		admin.mustJSON(t, http.MethodGet, "/me/programs?status=hidden", nil, http.StatusOK, &mine)
 		if len(mine.Data) != 1 {
 			t.Fatalf("hidden filter: %+v", mine)
 		}
 
 		var shown program
-		admin.mustJSON(http.MethodPost, "/programs/"+id+"/unhide", nil, http.StatusOK, &shown)
+		admin.mustJSON(t, http.MethodPost, "/programs/"+id+"/unhide", nil, http.StatusOK, &shown)
 		if shown.Status != "published" {
 			t.Fatalf("after unhide: %q", shown.Status)
 		}
-		admin.call(http.MethodPost, "/programs/"+id+"/unhide", nil).expect(http.StatusConflict)
-		anonymous(t).call(http.MethodPost, "/programs/"+id+"/hide", nil).expect(http.StatusUnauthorized)
+		admin.call(t, http.MethodPost, "/programs/"+id+"/unhide", nil).expect(http.StatusConflict)
+		anonymous().call(t, http.MethodPost, "/programs/"+id+"/hide", nil).expect(http.StatusUnauthorized)
 	})
 
 	t.Run("delete removes the program", func(t *testing.T) {
-		admin.call(http.MethodDelete, "/programs/"+id, nil).expect(http.StatusNoContent)
-		admin.call(http.MethodGet, "/programs/"+id, nil).expect(http.StatusNotFound)
-		admin.call(http.MethodDelete, "/programs/"+id, nil).expect(http.StatusNotFound)
+		admin.call(t, http.MethodDelete, "/programs/"+id, nil).expect(http.StatusNoContent)
+		admin.call(t, http.MethodGet, "/programs/"+id, nil).expect(http.StatusNotFound)
+		admin.call(t, http.MethodDelete, "/programs/"+id, nil).expect(http.StatusNotFound)
 		if n := dbCount(t, "SELECT count(*) FROM object_deletions WHERE bucket = 'logos'"); n == 0 {
 			t.Fatalf("logo was not queued for deletion")
 		}
@@ -192,33 +192,33 @@ func TestE2EProgramRejectionAndResubmission(t *testing.T) {
 	admin := signIn(t, "admin")
 	p := createProgram(t, admin, "Rejected Program")
 	uploadLogo(t, admin, p.ID).expect(http.StatusCreated)
-	admin.mustJSON(http.MethodPost, "/programs/"+p.ID+"/submit", nil, http.StatusOK, nil)
+	admin.mustJSON(t, http.MethodPost, "/programs/"+p.ID+"/submit", nil, http.StatusOK, nil)
 
 	var rejected program
-	approver(t).mustJSON(http.MethodPost, "/programs/"+p.ID+"/decision", map[string]any{"status": "rejected"}, http.StatusOK, &rejected)
+	approver(t).mustJSON(t, http.MethodPost, "/programs/"+p.ID+"/decision", map[string]any{"status": "rejected"}, http.StatusOK, &rejected)
 	if rejected.Status != "rejected" {
 		t.Fatalf("after reject: %q", rejected.Status)
 	}
 	var mine programPage
-	admin.mustJSON(http.MethodGet, "/me/programs?status=rejected", nil, http.StatusOK, &mine)
+	admin.mustJSON(t, http.MethodGet, "/me/programs?status=rejected", nil, http.StatusOK, &mine)
 	if len(mine.Data) != 1 || mine.Data[0].AdminStatus != "rejected" {
 		t.Fatalf("rejected filter: %+v", mine)
 	}
 
 	// A rejected program goes straight back to submitted.
 	var resubmitted program
-	admin.mustJSON(http.MethodPost, "/programs/"+p.ID+"/submit", nil, http.StatusOK, &resubmitted)
+	admin.mustJSON(t, http.MethodPost, "/programs/"+p.ID+"/submit", nil, http.StatusOK, &resubmitted)
 	if resubmitted.Status != "submitted" {
 		t.Fatalf("after resubmit: %q", resubmitted.Status)
 	}
-	admin.call(http.MethodPost, "/programs/"+p.ID+"/hide", nil).expect(http.StatusConflict)
+	admin.call(t, http.MethodPost, "/programs/"+p.ID+"/hide", nil).expect(http.StatusConflict)
 }
 
 func TestE2EProgramCreateValidation(t *testing.T) {
 	reset(t)
 	admin := signIn(t, "admin")
 	uid := newProject(t, "validation")
-	admin.mustJSON(http.MethodPost, "/programs", enrollmentBody("Taken Name", uid), http.StatusCreated, nil)
+	admin.mustJSON(t, http.MethodPost, "/programs", enrollmentBody("Taken Name", uid), http.StatusCreated, nil)
 
 	cases := []struct {
 		name   string
@@ -263,30 +263,30 @@ func TestE2EProgramCreateValidation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			body := enrollmentBody("Validation "+string(rune('A'+i)), uid)
 			tc.mutate(body)
-			admin.call(http.MethodPost, "/programs", body).expect(tc.status)
+			admin.call(t, http.MethodPost, "/programs", body).expect(tc.status)
 		})
 	}
 
 	t.Run("anonymous caller cannot create", func(t *testing.T) {
-		anonymous(t).call(http.MethodPost, "/programs", enrollmentBody("Anon", uid)).expect(http.StatusUnauthorized)
+		anonymous().call(t, http.MethodPost, "/programs", enrollmentBody("Anon", uid)).expect(http.StatusUnauthorized)
 	})
 	t.Run("malformed JSON", func(t *testing.T) {
-		admin.send(http.MethodPost, "/programs", strings.NewReader("{"), "application/json", nil).expect(http.StatusBadRequest)
+		admin.send(t, http.MethodPost, "/programs", strings.NewReader("{"), "application/json", nil).expect(http.StatusBadRequest)
 	})
 	t.Run("name availability", func(t *testing.T) {
 		var avail struct {
 			Available bool `json:"available"`
 		}
-		admin.mustJSON(http.MethodGet, "/programs/name-availability?name="+url.QueryEscape("taken name"), nil, http.StatusOK, &avail)
+		admin.mustJSON(t, http.MethodGet, "/programs/name-availability?name="+url.QueryEscape("taken name"), nil, http.StatusOK, &avail)
 		if avail.Available {
 			t.Fatalf("taken name reported available")
 		}
-		admin.mustJSON(http.MethodGet, "/programs/name-availability?name=Fresh", nil, http.StatusOK, &avail)
+		admin.mustJSON(t, http.MethodGet, "/programs/name-availability?name=Fresh", nil, http.StatusOK, &avail)
 		if !avail.Available {
 			t.Fatalf("fresh name reported taken")
 		}
-		admin.call(http.MethodGet, "/programs/name-availability?name=", nil).expect(http.StatusBadRequest)
-		anonymous(t).call(http.MethodGet, "/programs/name-availability?name=Fresh", nil).expect(http.StatusUnauthorized)
+		admin.call(t, http.MethodGet, "/programs/name-availability?name=", nil).expect(http.StatusBadRequest)
+		anonymous().call(t, http.MethodGet, "/programs/name-availability?name=Fresh", nil).expect(http.StatusUnauthorized)
 	})
 }
 
@@ -302,24 +302,24 @@ func TestE2EProgramUpdate(t *testing.T) {
 			IsPaid      bool   `json:"is_paid"`
 			Industry    string `json:"industry"`
 		}
-		admin.mustJSON(http.MethodPatch, path, map[string]any{"description": "New description", "is_paid": true, "industry": "Cloud"}, http.StatusOK, &updated)
+		admin.mustJSON(t, http.MethodPatch, path, map[string]any{"description": "New description", "is_paid": true, "industry": "Cloud"}, http.StatusOK, &updated)
 		if updated.Description != "New description" || !updated.IsPaid || updated.Industry != "Cloud" {
 			t.Fatalf("updated: %+v", updated)
 		}
 	})
 
 	t.Run("skills are replaced as a set", func(t *testing.T) {
-		admin.mustJSON(http.MethodPatch, path, map[string]any{"skills": []string{"Rust", "rust", " Go "}}, http.StatusOK, nil)
+		admin.mustJSON(t, http.MethodPatch, path, map[string]any{"skills": []string{"Rust", "rust", " Go "}}, http.StatusOK, nil)
 		var skills struct {
 			Data []struct {
 				Skill string `json:"skill"`
 			} `json:"data"`
 		}
-		anonymous(t).mustJSON(http.MethodGet, path+"/skills", nil, http.StatusOK, &skills)
+		anonymous().mustJSON(t, http.MethodGet, path+"/skills", nil, http.StatusOK, &skills)
 		if len(skills.Data) != 2 {
 			t.Fatalf("skills: %+v", skills)
 		}
-		admin.call(http.MethodPatch, path, map[string]any{"skills": []string{" "}}).expect(http.StatusBadRequest)
+		admin.call(t, http.MethodPatch, path, map[string]any{"skills": []string{" "}}).expect(http.StatusBadRequest)
 	})
 
 	t.Run("open terms are replaced as a set", func(t *testing.T) {
@@ -327,21 +327,21 @@ func TestE2EProgramUpdate(t *testing.T) {
 			{"id": p.TermID, "name": "Spring renamed", "start_date_time": at(20), "end_date_time": at(120), "application_start_date": at(-1), "application_end_date": at(10)},
 			{"name": "Autumn", "start_date_time": at(200), "end_date_time": at(300), "application_start_date": at(150), "application_end_date": at(180)},
 		}
-		admin.mustJSON(http.MethodPatch, path, map[string]any{"terms": terms}, http.StatusOK, nil)
+		admin.mustJSON(t, http.MethodPatch, path, map[string]any{"terms": terms}, http.StatusOK, nil)
 		var list struct {
 			Data []struct {
 				Name string `json:"name"`
 			} `json:"data"`
 		}
-		anonymous(t).mustJSON(http.MethodGet, path+"/terms?status=open", nil, http.StatusOK, &list)
+		anonymous().mustJSON(t, http.MethodGet, path+"/terms?status=open", nil, http.StatusOK, &list)
 		if len(list.Data) != 2 {
 			t.Fatalf("open terms: %+v", list)
 		}
 		bad := []map[string]any{{"id": "not-a-uuid", "name": "x", "start_date_time": at(20), "end_date_time": at(120), "application_start_date": at(-1), "application_end_date": at(10)}}
-		admin.call(http.MethodPatch, path, map[string]any{"terms": bad}).expect(http.StatusBadRequest)
-		admin.call(http.MethodPatch, path, map[string]any{"terms": []any{}}).expect(http.StatusBadRequest)
+		admin.call(t, http.MethodPatch, path, map[string]any{"terms": bad}).expect(http.StatusBadRequest)
+		admin.call(t, http.MethodPatch, path, map[string]any{"terms": []any{}}).expect(http.StatusBadRequest)
 		dup := []map[string]any{terms[0], terms[0]}
-		admin.call(http.MethodPatch, path, map[string]any{"terms": dup}).expect(http.StatusBadRequest)
+		admin.call(t, http.MethodPatch, path, map[string]any{"terms": dup}).expect(http.StatusBadRequest)
 	})
 
 	t.Run("moving to another project takes Project Service metadata", func(t *testing.T) {
@@ -350,23 +350,23 @@ func TestE2EProgramUpdate(t *testing.T) {
 			ProjectUID  string `json:"project_uid"`
 			ProjectSlug string `json:"project_slug"`
 		}
-		admin.mustJSON(http.MethodPatch, path, map[string]any{"project_uid": other, "project_slug": "ignored"}, http.StatusOK, &moved)
+		admin.mustJSON(t, http.MethodPatch, path, map[string]any{"project_uid": other, "project_slug": "ignored"}, http.StatusOK, &moved)
 		if moved.ProjectUID != other || moved.ProjectSlug != "otherproj" {
 			t.Fatalf("moved: %+v", moved)
 		}
-		admin.call(http.MethodPatch, path, map[string]any{"project_slug": "no-uid"}).expect(http.StatusBadRequest)
-		admin.call(http.MethodPatch, path, map[string]any{"project_uid": "nope"}).expect(http.StatusBadRequest)
+		admin.call(t, http.MethodPatch, path, map[string]any{"project_slug": "no-uid"}).expect(http.StatusBadRequest)
+		admin.call(t, http.MethodPatch, path, map[string]any{"project_uid": "nope"}).expect(http.StatusBadRequest)
 	})
 
 	t.Run("reserved and lifecycle fields are refused", func(t *testing.T) {
-		admin.call(http.MethodPatch, path, map[string]any{"status": "published"}).expect(http.StatusBadRequest)
-		admin.call(http.MethodPatch, path, map[string]any{"logo_url": "https://evil.example.org/x.png"}).expect(http.StatusBadRequest)
-		admin.call(http.MethodPatch, path, map[string]any{"program_term_status": "bogus"}).expect(http.StatusBadRequest)
+		admin.call(t, http.MethodPatch, path, map[string]any{"status": "published"}).expect(http.StatusBadRequest)
+		admin.call(t, http.MethodPatch, path, map[string]any{"logo_url": "https://evil.example.org/x.png"}).expect(http.StatusBadRequest)
+		admin.call(t, http.MethodPatch, path, map[string]any{"program_term_status": "bogus"}).expect(http.StatusBadRequest)
 	})
 
 	t.Run("unknown program", func(t *testing.T) {
-		admin.call(http.MethodPatch, "/programs/00000000-0000-4000-8000-000000000000", map[string]any{"description": "x"}).expect(http.StatusNotFound)
-		anonymous(t).call(http.MethodPatch, path, map[string]any{"description": "x"}).expect(http.StatusUnauthorized)
+		admin.call(t, http.MethodPatch, "/programs/00000000-0000-4000-8000-000000000000", map[string]any{"description": "x"}).expect(http.StatusNotFound)
+		anonymous().call(t, http.MethodPatch, path, map[string]any{"description": "x"}).expect(http.StatusUnauthorized)
 	})
 
 	t.Run("skills sub-resource", func(t *testing.T) {
@@ -374,10 +374,10 @@ func TestE2EProgramUpdate(t *testing.T) {
 			ID    string `json:"id"`
 			Skill string `json:"skill"`
 		}
-		admin.mustJSON(http.MethodPost, path+"/skills", map[string]any{"skill": "Python"}, http.StatusCreated, &skill)
-		admin.call(http.MethodPost, path+"/skills", map[string]any{"skill": " "}).expect(http.StatusBadRequest)
-		admin.call(http.MethodDelete, path+"/skills/"+skill.ID, nil).expect(http.StatusNoContent)
-		anonymous(t).call(http.MethodDelete, path+"/skills/"+skill.ID, nil).expect(http.StatusUnauthorized)
+		admin.mustJSON(t, http.MethodPost, path+"/skills", map[string]any{"skill": "Python"}, http.StatusCreated, &skill)
+		admin.call(t, http.MethodPost, path+"/skills", map[string]any{"skill": " "}).expect(http.StatusBadRequest)
+		admin.call(t, http.MethodDelete, path+"/skills/"+skill.ID, nil).expect(http.StatusNoContent)
+		anonymous().call(t, http.MethodDelete, path+"/skills/"+skill.ID, nil).expect(http.StatusUnauthorized)
 	})
 }
 
@@ -389,7 +389,7 @@ func TestE2EProgramReadModels(t *testing.T) {
 
 	t.Run("catalog lists published programs with skills and labelled terms", func(t *testing.T) {
 		var page programPage
-		anonymous(t).mustJSON(http.MethodGet, "/programs/catalog", nil, http.StatusOK, &page)
+		anonymous().mustJSON(t, http.MethodGet, "/programs/catalog", nil, http.StatusOK, &page)
 		if len(page.Data) != 1 || page.Data[0].ID != p.ID || len(page.Data[0].Skills) != 2 || len(page.Data[0].Terms) != 1 {
 			t.Fatalf("catalog: %+v", page)
 		}
@@ -398,18 +398,18 @@ func TestE2EProgramReadModels(t *testing.T) {
 		}
 		for _, q := range []string{"skill=Go", "skill=all", "status=acceptance", "sort_by=name_desc", "sortBy=updated_newest", "search=Catalog", "status=bogus&sort_by=bogus"} {
 			var filtered programPage
-			anonymous(t).mustJSON(http.MethodGet, "/programs/catalog?"+q, nil, http.StatusOK, &filtered)
+			anonymous().mustJSON(t, http.MethodGet, "/programs/catalog?"+q, nil, http.StatusOK, &filtered)
 			if len(filtered.Data) != 1 {
 				t.Fatalf("catalog?%s: %+v", q, filtered)
 			}
 		}
 		var none programPage
-		anonymous(t).mustJSON(http.MethodGet, "/programs/catalog?skill=COBOL", nil, http.StatusOK, &none)
+		anonymous().mustJSON(t, http.MethodGet, "/programs/catalog?skill=COBOL", nil, http.StatusOK, &none)
 		if len(none.Data) != 0 {
 			t.Fatalf("skill filter matched: %+v", none)
 		}
-		anonymous(t).call(http.MethodGet, "/programs/catalog?limit=x", nil).expect(http.StatusBadRequest)
-		anonymous(t).call(http.MethodGet, "/programs?offset=x", nil).expect(http.StatusBadRequest)
+		anonymous().call(t, http.MethodGet, "/programs/catalog?limit=x", nil).expect(http.StatusBadRequest)
+		anonymous().call(t, http.MethodGet, "/programs?offset=x", nil).expect(http.StatusBadRequest)
 	})
 
 	t.Run("catalog item, header and mentees", func(t *testing.T) {
@@ -417,12 +417,12 @@ func TestE2EProgramReadModels(t *testing.T) {
 			ID      string `json:"id"`
 			Mentors []any  `json:"mentors"`
 		}
-		anonymous(t).mustJSON(http.MethodGet, "/programs/"+p.Slug+"/catalog", nil, http.StatusOK, &item)
+		anonymous().mustJSON(t, http.MethodGet, "/programs/"+p.Slug+"/catalog", nil, http.StatusOK, &item)
 		if item.ID != p.ID || item.Mentors == nil {
 			t.Fatalf("catalog item: %+v", item)
 		}
-		anonymous(t).call(http.MethodGet, "/programs/"+pending.ID+"/catalog", nil).expect(http.StatusOK)
-		anonymous(t).call(http.MethodGet, "/programs/00000000-0000-4000-8000-000000000000/catalog", nil).expect(http.StatusNotFound)
+		anonymous().call(t, http.MethodGet, "/programs/"+pending.ID+"/catalog", nil).expect(http.StatusOK)
+		anonymous().call(t, http.MethodGet, "/programs/00000000-0000-4000-8000-000000000000/catalog", nil).expect(http.StatusNotFound)
 
 		var header struct {
 			Program struct {
@@ -432,15 +432,15 @@ func TestE2EProgramReadModels(t *testing.T) {
 				ID string `json:"id"`
 			} `json:"active_term"`
 		}
-		anonymous(t).mustJSON(http.MethodGet, "/programs/"+p.ID+"/header", nil, http.StatusOK, &header)
+		anonymous().mustJSON(t, http.MethodGet, "/programs/"+p.ID+"/header", nil, http.StatusOK, &header)
 		if header.Program.ID != p.ID {
 			t.Fatalf("header: %+v", header)
 		}
 		var mentees struct {
 			Data []any `json:"data"`
 		}
-		anonymous(t).mustJSON(http.MethodGet, "/programs/"+p.ID+"/mentees", nil, http.StatusOK, &mentees)
-		anonymous(t).call(http.MethodGet, "/programs/no-such-slug/mentees", nil).expect(http.StatusNotFound)
+		anonymous().mustJSON(t, http.MethodGet, "/programs/"+p.ID+"/mentees", nil, http.StatusOK, &mentees)
+		anonymous().call(t, http.MethodGet, "/programs/no-such-slug/mentees", nil).expect(http.StatusNotFound)
 	})
 
 	t.Run("management summary and enrollment template", func(t *testing.T) {
@@ -449,13 +449,13 @@ func TestE2EProgramReadModels(t *testing.T) {
 			Mentors     int  `json:"mentors"`
 			Terms       int  `json:"terms"`
 		}
-		admin.mustJSON(http.MethodGet, "/programs/"+p.ID+"/management-summary", nil, http.StatusOK, &summary)
+		admin.mustJSON(t, http.MethodGet, "/programs/"+p.ID+"/management-summary", nil, http.StatusOK, &summary)
 		if !summary.HasOpenTerm || summary.Terms != 1 {
 			t.Fatalf("summary: %+v", summary)
 		}
-		admin.mustJSON(http.MethodGet, "/programs/"+pending.ID+"/management-summary", nil, http.StatusOK, &summary)
-		admin.call(http.MethodGet, "/programs/00000000-0000-4000-8000-000000000000/management-summary", nil).expect(http.StatusNotFound)
-		anonymous(t).call(http.MethodGet, "/programs/"+p.ID+"/management-summary", nil).expect(http.StatusUnauthorized)
+		admin.mustJSON(t, http.MethodGet, "/programs/"+pending.ID+"/management-summary", nil, http.StatusOK, &summary)
+		admin.call(t, http.MethodGet, "/programs/00000000-0000-4000-8000-000000000000/management-summary", nil).expect(http.StatusNotFound)
+		anonymous().call(t, http.MethodGet, "/programs/"+p.ID+"/management-summary", nil).expect(http.StatusUnauthorized)
 
 		var template struct {
 			Program struct {
@@ -467,7 +467,7 @@ func TestE2EProgramReadModels(t *testing.T) {
 				SubmitFile *string `json:"submitFile"`
 			} `json:"prerequisites"`
 		}
-		admin.mustJSON(http.MethodGet, "/programs/"+p.ID+"/enroll-template", nil, http.StatusOK, &template)
+		admin.mustJSON(t, http.MethodGet, "/programs/"+p.ID+"/enroll-template", nil, http.StatusOK, &template)
 		// Only the required prerequisite becomes a task template.
 		if template.Program.ID != p.ID || len(template.Skills) != 2 || len(template.Prerequisites) != 1 || template.Prerequisites[0].SubmitFile == nil {
 			t.Fatalf("template: %+v", template)
@@ -477,15 +477,15 @@ func TestE2EProgramReadModels(t *testing.T) {
 	t.Run("my programs filters", func(t *testing.T) {
 		for status, want := range map[string]int{"": 2, "open": 1, "pending_review": 1, "completed": 0} {
 			var mine programPage
-			admin.mustJSON(http.MethodGet, "/me/programs?status="+status, nil, http.StatusOK, &mine)
+			admin.mustJSON(t, http.MethodGet, "/me/programs?status="+status, nil, http.StatusOK, &mine)
 			if len(mine.Data) != want {
 				t.Fatalf("status=%q: got %d programs; want %d", status, len(mine.Data), want)
 			}
 		}
-		admin.call(http.MethodGet, "/me/programs?status=bogus", nil).expect(http.StatusBadRequest)
+		admin.call(t, http.MethodGet, "/me/programs?status=bogus", nil).expect(http.StatusBadRequest)
 		other := signIn(t, "other")
 		var mine programPage
-		other.mustJSON(http.MethodGet, "/me/programs", nil, http.StatusOK, &mine)
+		other.mustJSON(t, http.MethodGet, "/me/programs", nil, http.StatusOK, &mine)
 		if len(mine.Data) != 0 {
 			t.Fatalf("non-admin sees programs: %+v", mine)
 		}
