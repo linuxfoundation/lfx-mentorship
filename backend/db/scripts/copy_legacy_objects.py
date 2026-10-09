@@ -43,6 +43,7 @@ import io
 import logging
 import os
 import sys
+from contextlib import closing
 from urllib.parse import unquote
 
 import boto3
@@ -110,10 +111,13 @@ class Copier:
 
         cap = lo.MAX_BYTES[file_class]
         if head["ContentLength"] > cap:
-            return self._quarantine(file_class, key, self._body(key), f"{head['ContentLength']} bytes exceeds the {file_class} cap")
-        data = self._body(key).read(cap + 1)
+            with closing(self._body(key)) as body:
+                return self._quarantine(file_class, key, body, f"{head['ContentLength']} bytes exceeds the {file_class} cap")
+        with closing(self._body(key)) as body:
+            data = body.read(cap + 1)
         if len(data) > cap:  # replaced by a larger object since the HEAD
-            return self._quarantine(file_class, key, self._body(key), f"more than {cap} bytes exceeds the {file_class} cap")
+            with closing(self._body(key)) as body:
+                return self._quarantine(file_class, key, body, f"more than {cap} bytes exceeds the {file_class} cap")
         content_type = lo.identify(file_class, data)
         if content_type is None:
             reason = f"bytes are not an allowed {file_class} type (stored as {head.get('ContentType')})"

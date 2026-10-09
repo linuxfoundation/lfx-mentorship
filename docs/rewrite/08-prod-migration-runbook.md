@@ -91,6 +91,7 @@ kubectl -n mentorship-backend create configmap mentorship-etl-scripts \
   --from-file=backend/db/scripts/migrate_dynamo_to_postgres.py \
   --from-file=backend/db/scripts/copy_legacy_objects.py \
   --from-file=backend/db/scripts/legacy_objects.py \
+  --from-file=backend/db/scripts/verify_migration.py \
   --from-file=backend/db/scripts/requirements.txt \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
@@ -233,7 +234,14 @@ python copy_legacy_objects.py 2>&1 | tee /work/copy.log
    - FGA rows should drain to nothing, with no `dead_letter`.
    - Index rows should become `sent`, with no `dead_letter`.
    - Dead letters are repaired with `backend/cmd/outbox-repair`.
-4. **Spot checks in the UI:**
+4. **Field-level reconciliation and integrity.** Row counts can hide a shifted or mis-transformed field ([03](./03-migration-plan.md) Phase 4 requires field-level checks). Run, in the runner pod with the same environment as the import:
+   ```bash
+   VERIFY_SAMPLE_SIZE=500 python verify_migration.py 2>&1 | tee /work/verify.log
+   ```
+   - It samples up to 500 items from each legacy table and compares each one's fields with the imported row: identities, names, emails, LFIDs, statuses, parent links, dates and flags. It follows the importer's skip, deduplication and quarantine rules, so a row the import should have skipped counts as an error if it is present.
+   - It then runs integrity queries the schema cannot enforce: denormalised term and status copies that disagree with their parents, a task that is both live and quarantined, and more than one live application per term and user. Parent links that Postgres enforces (task to application, application to term) are rechecked too.
+   - It must end with `Verification passed: no mismatches`. Any `MISMATCH` line is a no-go until it is explained. The log prints `VERIFY_SEED`; rerun with it to reproduce the same sample.
+5. **Spot checks in the UI:**
    - a program admin can open and edit their own programs;
    - a published program's logo loads from the CDN;
    - a migrated task submission downloads;
@@ -243,14 +251,17 @@ python copy_legacy_objects.py 2>&1 | tee /work/copy.log
 
 The API has no read-only mode (see [Gaps](#gaps)), so the decision is made **before** legacy users are sent to the new stack. Once the legacy hostname redirects, users write to Postgres only, and rollback is no longer clean ([03](./03-migration-plan.md) Phase 4 and "Rollback").
 
-1. **Go/no-go**, on the Phase 5 results.
+1. **Go/no-go**, on the Phase 5 results. **Go** requires `verify_migration.py` to pass (Phase 5, step 4).
    - **No-go:** unfreeze legacy and stop. Legacy still holds every write. If the new site was left open, the imported data was visible on it and any writes made there are lost when the data is re-imported.
 2. **Lock the legacy uploads bucket:** turn on S3 Block Public Access for `jobspring-prod-uploads` (legacy account). This can be reversed and nothing is deleted.
-3. **Send legacy users to the new site.** If it was closed in Phase 4, re-enable the frontend ingress first. Then, in Cloudflare, set a permanent redirect from `mentorship.lfx.linuxfoundation.org` to `https://mentorship.linuxfoundation.org`, keeping the path ([03](./03-migration-plan.md) OQ-3). The new hostname already points at the v2 cluster; it needs no DNS change. From this moment writes are live on the new stack.
-4. **Go-live:** in [lfx-v2-argocd](https://github.com/linuxfoundation/lfx-v2-argocd), remove `EMAIL_ALLOWED_RECIPIENTS` from `values/prod/lfx-mentorship-backend.yaml` so email reaches real users.
+3. **Let email reach real users**, before anyone is sent to the new site. Until this step, every notification to an address not on `EMAIL_ALLOWED_RECIPIENTS` is dropped, not queued, so a real write made before it rolls out would lose its email for good.
+   - In [lfx-v2-argocd](https://github.com/linuxfoundation/lfx-v2-argocd), remove `EMAIL_ALLOWED_RECIPIENTS` from `values/prod/lfx-mentorship-backend.yaml` and merge.
+   - Wait for the rollout: `kubectl -n mentorship-backend rollout status deploy/lfx-mentorship-backend`.
+   - Confirm no running pod logs `email restricted to EMAIL_ALLOWED_RECIPIENTS` at startup.
+4. **Send legacy users to the new site.** If it was closed in Phase 4, re-enable the frontend ingress first. Then, in Cloudflare, set a permanent redirect from `mentorship.lfx.linuxfoundation.org` to `https://mentorship.linuxfoundation.org`, keeping the path ([03](./03-migration-plan.md) OQ-3). The new hostname already points at the v2 cluster; it needs no DNS change. From this moment writes are live on the new stack.
 5. **Rollback:**
-   - **Before step 3** it is clean: lift the bucket block if it was applied, and unfreeze legacy.
-   - **After step 3** it means removing the redirect and losing any writes made on the new stack since, because no reverse sync exists. Past that point, fix forward.
+   - **Before step 4** it is clean: restore the allowlist if step 3 ran, lift the bucket block if it was applied, and unfreeze legacy.
+   - **After step 4** it means removing the redirect and losing any writes made on the new stack since, because no reverse sync exists. Past that point, fix forward.
 
 ## Phase 7: clean up
 

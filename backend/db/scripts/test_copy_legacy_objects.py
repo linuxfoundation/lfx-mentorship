@@ -37,6 +37,7 @@ class FakeS3:
         self.objects = dict(objects or {})
         self.puts = []
         self.reads = []
+        self.bodies = []
 
     def head_object(self, Bucket, Key):
         if (Bucket, Key) not in self.objects:
@@ -44,7 +45,9 @@ class FakeS3:
         return {"ContentLength": len(self.objects[(Bucket, Key)]), "ContentType": "binary/octet-stream"}
 
     def get_object(self, Bucket, Key):
-        return {"Body": TrackingBody(self.objects[(Bucket, Key)], self.reads)}
+        body = TrackingBody(self.objects[(Bucket, Key)], self.reads)
+        self.bodies.append(body)
+        return {"Body": body}
 
     def put_object(self, Bucket, Key, Body, ContentType, CacheControl):
         self.objects[(Bucket, Key)] = Body
@@ -91,6 +94,7 @@ def test_oversized_object_is_streamed_never_read_whole():
     assert cp.resolve(lo.LOGO, "a.png")["status"] == lo.QUARANTINED
     assert source.reads and max(source.reads) <= CHUNK
     assert dest.objects[("attachments", "quarantine/logos/a.png")] == OVERSIZED
+    assert all(body.closed for body in source.bodies)
 
 
 def test_object_that_grew_after_the_head_is_read_at_most_one_byte_past_the_cap():
@@ -99,6 +103,7 @@ def test_object_that_grew_after_the_head_is_read_at_most_one_byte_past_the_cap()
     assert cp.resolve(lo.LOGO, "a.png")["status"] == lo.QUARANTINED
     assert max(source.reads) == lo.MAX_BYTES[lo.LOGO] + 1
     assert dest.objects[("attachments", "quarantine/logos/a.png")] == OVERSIZED
+    assert len(source.bodies) == 2 and all(body.closed for body in source.bodies)
 
 
 def test_already_copied_object_is_not_read_or_written_again():
