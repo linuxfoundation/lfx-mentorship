@@ -60,13 +60,38 @@ jobs:
 
       - name: Run tests
         working-directory: backend
-        run: go test -race -count=1 ./...
+        run: |
+          mkdir -p "$RUNNER_TEMP/coverage/unit"
+          go test -race -count=1 -cover -coverpkg=./... ./... -args -test.gocoverdir="$RUNNER_TEMP/coverage/unit"
 
       - name: Run integration tests
         working-directory: backend
         env:
           TEST_DATABASE_DSN: postgres://mentorship:mentorship@localhost:5432/mentorship?sslmode=disable
-        run: go test -race -count=1 -tags=integration ./internal/infrastructure/db
+        run: |
+          mkdir -p "$RUNNER_TEMP/coverage/integration"
+          go test -race -count=1 -tags=integration -cover -coverpkg=./... ./internal/infrastructure/db -args -test.gocoverdir="$RUNNER_TEMP/coverage/integration"
+
+      - name: Run end-to-end tests
+        working-directory: backend
+        env:
+          TEST_DATABASE_DSN: postgres://mentorship:mentorship@localhost:5432/mentorship?sslmode=disable
+        run: |
+          mkdir -p "$RUNNER_TEMP/coverage/e2e"
+          go test -race -count=1 -tags=e2e -cover -coverpkg=./... ./cmd/mentorship-api -args -test.gocoverdir="$RUNNER_TEMP/coverage/e2e"
+
+      - name: Coverage report
+        working-directory: backend
+        run: |
+          dirs="$RUNNER_TEMP/coverage/unit,$RUNNER_TEMP/coverage/integration,$RUNNER_TEMP/coverage/e2e"
+          go tool covdata textfmt -i="$dirs" -o "$RUNNER_TEMP/coverage.out"
+          {
+            echo "### Backend coverage (unit + integration + e2e)"
+            echo '```'
+            go tool covdata percent -i="$dirs" | sed 's#github.com/linuxfoundation/lfx-v2-mentorship-service/##' | sort
+            go tool cover -func="$RUNNER_TEMP/coverage.out" | tail -1
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Run migration script tests
         working-directory: backend/db/scripts
