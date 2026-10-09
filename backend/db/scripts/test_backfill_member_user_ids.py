@@ -169,6 +169,37 @@ def test_crash_before_outcome_line_still_rolls_back_the_committed_write(tmp_path
     assert "userId" not in table.items["m"]
 
 
+@pytest.mark.parametrize(
+    "torn_tail",
+    [
+        "m,p1,maintainer,accepted,alice@example.org,email_unique,u-alice,ye",  # torn inside `applied`
+        "m,p1,maintainer,accepted,alice@example.org,email_unique,u-alice,skipped_changed",  # `candidates` missing
+        "m,p1,maintainer,accepted,alice@example.org,email_unique,u-ali",  # torn inside `user_id`
+        'm,p1,maintainer,accepted,"alice@exa',  # torn inside a quoted field
+    ],
+)
+def test_torn_final_line_never_masks_a_durable_attempt(tmp_path, torn_tail):
+    members = [member("m", "alice@example.org")]
+    table = FakeTable(members)
+    real_update = table.update_item
+
+    def write_then_die(**kwargs):
+        real_update(**kwargs)
+        raise KeyboardInterrupt
+
+    table.update_item = write_then_die
+    report = tmp_path / "report.csv"
+    with pytest.raises(KeyboardInterrupt):
+        b.apply(table, b.plan(members, USERS, PROJECTS, {}), str(report))
+    with open(report, "a", newline="") as f:
+        f.write(torn_tail)  # the outcome line was cut off by the crash, no trailing newline
+
+    assert b.journal_state(str(report))["m"]["applied"] == "attempted"
+    table.update_item = real_update
+    assert b.rollback(table, str(report)) == {"removed": 1}
+    assert "userId" not in table.items["m"]
+
+
 def test_reports_are_private_and_never_overwritten(tmp_path):
     rows = b.plan([member("m", "alice@example.org")], USERS, PROJECTS, {})
     table = FakeTable([member("m", "alice@example.org")])

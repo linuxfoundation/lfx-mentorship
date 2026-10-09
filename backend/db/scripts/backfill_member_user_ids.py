@@ -166,13 +166,40 @@ def apply(table, rows: list[dict], report_path: str) -> None:
             os.fsync(f.fileno())
 
 
-def rollback(table, report_path: str) -> Counter:
+APPLIED_STATES = {"", "attempted", "yes", "skipped_changed"}
+
+
+def journal_state(report_path: str) -> dict[str, dict]:
+    """Return the last well-formed journal line per member.
+
+    A crash mid-write can leave a torn final line; it is ignored unless every
+    field is present, `applied` is a known state and `user_id` matches the
+    member's durable attempt, so it can never mask an `attempted` line.
+    """
+    state: dict[str, dict] = {}
+    attempted: dict[str, str] = {}
     with open(report_path, newline="") as f:
-        final = {row["member_id"]: row for row in csv.DictReader(f)}  # last line per member wins
+        reader = csv.DictReader(f)
+        try:
+            for row in reader:
+                if None in row or any(row.get(k) is None for k in REPORT_FIELDS) or row["applied"] not in APPLIED_STATES:
+                    continue
+                mid = row["member_id"]
+                if mid in attempted and row["user_id"] != attempted[mid]:
+                    continue
+                if row["applied"] == "attempted":
+                    attempted[mid] = row["user_id"]
+                state[mid] = row
+        except csv.Error:
+            pass  # a torn quoted field at EOF; everything before it is intact
+    return state
+
+
+def rollback(table, report_path: str) -> Counter:
     counts: Counter = Counter()
-    for row in final.values():
+    for row in journal_state(report_path).values():
         # `attempted` means the run died mid-write; the conditional REMOVE makes trying it safe.
-        if row.get("applied") not in {"yes", "attempted"}:
+        if row["applied"] not in {"yes", "attempted"}:
             continue
         try:
             table.update_item(
