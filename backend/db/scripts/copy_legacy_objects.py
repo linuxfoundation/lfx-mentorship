@@ -27,7 +27,7 @@ ETL (migrate_dynamo_to_postgres.py) rewrites the file columns from.
 Usage
 -----
   export AWS_REGION=us-west-2                   # destination buckets; v2 credentials from the default chain
-  export LEGACY_AWS_PROFILE=...                 # legacy reads: see migrate_dynamo_to_postgres.py
+  export LEGACY_AWS_PROFILE=...                 # or LEGACY_AWS_* keys; required in a v2 pod, see migrate_dynamo_to_postgres.py
   export LEGACY_UPLOADS_REGION=us-east-1        # defaults to LEGACY_AWS_REGION
   export DYNAMODB_TABLE_PREFIX=jobspring-prod   # also names the legacy bucket
   export LEGACY_UPLOADS_BUCKET=jobspring-prod-uploads   # optional override
@@ -39,6 +39,7 @@ The legacy credentials need read access to the legacy bucket and the DynamoDB
 tables; the default credentials need write access to both destination buckets.
 """
 
+import io
 import logging
 import os
 import sys
@@ -107,21 +108,31 @@ class Copier:
         else:
             return {"status": lo.MISSING, "reason": "not in the legacy bucket"}
 
-        reason = None
-        content_type = None
-        data = self.source.get_object(Bucket=self.legacy_bucket, Key=key)["Body"].read()
-        if len(data) > lo.MAX_BYTES[file_class]:
-            reason = f"{len(data)} bytes exceeds the {file_class} cap"
-        else:
-            content_type = lo.identify(file_class, data)
-            if content_type is None:
-                reason = f"bytes are not an allowed {file_class} type (stored as {head.get('ContentType')})"
+        cap = lo.MAX_BYTES[file_class]
+        if head["ContentLength"] > cap:
+            return self._quarantine(file_class, key, self._body(key), f"{head['ContentLength']} bytes exceeds the {file_class} cap")
+        data = self._body(key).read(cap + 1)
+        if len(data) > cap:  # replaced by a larger object since the HEAD
+            return self._quarantine(file_class, key, self._body(key), f"more than {cap} bytes exceeds the {file_class} cap")
+        content_type = lo.identify(file_class, data)
+        if content_type is None:
+            reason = f"bytes are not an allowed {file_class} type (stored as {head.get('ContentType')})"
+            return self._quarantine(file_class, key, io.BytesIO(data), reason)
+        self._put(self.buckets[file_class], key, data, content_type, lo.CACHE_CONTROL[file_class])
+        return {"status": lo.COPIED, "key": key}
 
-        if reason is None:
-            self._put(self.buckets[file_class], key, data, content_type, lo.CACHE_CONTROL[file_class])
-            return {"status": lo.COPIED, "key": key}
+    def _body(self, key: str):
+        return self.source.get_object(Bucket=self.legacy_bucket, Key=key)["Body"]
+
+    def _quarantine(self, file_class: str, key: str, body, reason: str) -> dict:
         quarantine_key = lo.QUARANTINE_PREFIX[file_class] + key
-        self._put(self.attachments, quarantine_key, data, "application/octet-stream", lo.CACHE_CONTROL[lo.SUBMISSION])
+        # A managed upload streams in parts, so an object of any size never sits in memory.
+        self.dest.upload_fileobj(
+            body,
+            self.attachments,
+            quarantine_key,
+            ExtraArgs={"ContentType": "application/octet-stream", "CacheControl": lo.CACHE_CONTROL[lo.SUBMISSION]},
+        )
         return {"status": lo.QUARANTINED, "key": quarantine_key, "reason": reason}
 
 

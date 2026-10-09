@@ -58,6 +58,14 @@ Do Phase 2 (runner pod) and Phase 3 (copy), then delete the pod. The import has 
 
 The backend image has no Python, so use a throwaway pod with the backend's ServiceAccount. Its IAM role can write to the new buckets.
 
+What runs next to the credentials is fixed in advance, and identical for the rehearsal and the cutover:
+
+- the base image is pinned by digest;
+- the scripts come from one recorded commit of `main`;
+- the dependencies are the hash-locked wheels in `backend/db/scripts/requirements.txt`.
+
+The dependencies install in an init container that never receives the legacy credentials, and as wheels only, so no package build code runs. The pod's IRSA token is injected into every container, including that one.
+
 ### 1. Put the legacy credentials in a temporary secret
 
 On the operator's laptop, after signing in to the legacy read-only role:
@@ -69,9 +77,22 @@ kubectl -n mentorship-backend create secret generic mentorship-etl-legacy --from
 rm /tmp/legacy.env
 ```
 
-They are named `LEGACY_AWS_*` on purpose. Plain `AWS_*` keys would replace the pod's own identity, and the writes to the new buckets would fail.
+They are named `LEGACY_AWS_*` on purpose. Plain `AWS_*` keys would replace the pod's own identity, and the writes to the new buckets would fail. They are also required: without them the scripts fall back to the default credential chain, which in the pod is the v2 role, and log a warning saying so.
 
-### 2. Create the pod
+### 2. Load the reviewed scripts
+
+From a clean checkout of `main` that includes #286. Record the commit, and use the same one for the rehearsal and the cutover:
+
+```bash
+git rev-parse HEAD   # note this in the cutover log
+kubectl -n mentorship-backend create configmap mentorship-etl-scripts \
+  --from-file=backend/db/scripts/migrate_dynamo_to_postgres.py \
+  --from-file=backend/db/scripts/copy_legacy_objects.py \
+  --from-file=backend/db/scripts/legacy_objects.py \
+  --from-file=backend/db/scripts/requirements.txt
+```
+
+### 3. Create the pod
 
 ```yaml
 # mentorship-etl.yaml
@@ -85,17 +106,27 @@ spec:
   automountServiceAccountToken: true
   restartPolicy: Never
   securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
+  initContainers:
+    # No legacy credentials here: installs only the hash-locked wheels.
+    - name: deps
+      image: python:3.12-slim@sha256:05cda9777409a9c3ffddd94a4c476b79f0769a0b4857f0c7ed9226b6800b0d6f
+      command: ["sh", "-c", "python -m venv /work/venv && /work/venv/bin/pip install --no-cache-dir --no-deps --require-hashes --only-binary=:all: -r /scripts/requirements.txt"]
+      env: [{name: HOME, value: /work}]
+      securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+      volumeMounts: [{name: work, mountPath: /work}, {name: scripts, mountPath: /scripts, readOnly: true}]
   containers:
     - name: etl
-      image: python:3.12-slim
+      image: python:3.12-slim@sha256:05cda9777409a9c3ffddd94a4c476b79f0769a0b4857f0c7ed9226b6800b0d6f
       command: ["sleep", "infinity"]
-      workingDir: /work
+      workingDir: /scripts
       securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
       resources: {requests: {cpu: "1", memory: 2Gi}, limits: {memory: 6Gi}}
       envFrom:
         - secretRef: {name: mentorship-etl-legacy}
       env:
         - {name: HOME, value: /work}
+        - {name: PATH, value: "/work/venv/bin:/usr/local/bin:/usr/bin:/bin"}
+        - {name: PYTHONDONTWRITEBYTECODE, value: "1"}
         - {name: PG_DSN, value: ""}          # empty on purpose: connection comes from the PG* vars below
         - {name: PGHOST, valueFrom: {secretKeyRef: {name: lfx-mentorship-backend-secrets, key: host}}}
         - {name: PGPORT, valueFrom: {secretKeyRef: {name: lfx-mentorship-backend-secrets, key: port}}}
@@ -110,28 +141,25 @@ spec:
         - {name: LOGOS_CDN_URL_PREFIX, value: https://mentorship-logos-public.downloads.lfx.community}
         - {name: NATS_URL, value: nats://lfx-platform-nats.lfx.svc.cluster.local:4222}
         - {name: COPY_MANIFEST, value: /work/legacy-object-manifest.json}
-      volumeMounts: [{name: work, mountPath: /work}]
-  volumes: [{name: work, emptyDir: {}}]
+      volumeMounts: [{name: work, mountPath: /work}, {name: scripts, mountPath: /scripts, readOnly: true}]
+  volumes:
+    - {name: work, emptyDir: {}}
+    - {name: scripts, configMap: {name: mentorship-etl-scripts}}
 ```
 
 `PG_DSN` must be present and empty: if it is missing, the importer connects to localhost instead.
 
-### 3. Install the scripts and check the setup
-
-From a checkout of `main` that includes #286:
+### 4. Check the setup
 
 ```bash
 kubectl apply -f mentorship-etl.yaml
-kubectl -n mentorship-backend wait --for=condition=Ready pod/mentorship-etl --timeout=120s
-kubectl -n mentorship-backend cp backend/db/scripts mentorship-etl:/work/scripts
+kubectl -n mentorship-backend wait --for=condition=Ready pod/mentorship-etl --timeout=300s
 kubectl -n mentorship-backend exec -it mentorship-etl -- bash
 ```
 
-Inside the pod:
+Inside the pod (working directory `/scripts`):
 
 ```bash
-python -m venv /work/venv && . /work/venv/bin/activate && pip install -q boto3 psycopg2-binary nats-py
-cd /work/scripts
 python - <<'EOF'
 import boto3, psycopg2, migrate_dynamo_to_postgres as m
 s = m.legacy_session()
@@ -142,7 +170,7 @@ c = psycopg2.connect(""); cur = c.cursor(); cur.execute("show search_path"); pri
 EOF
 ```
 
-**Stop if any line is wrong.**
+**Stop if any line is wrong, or if the output includes the warning that legacy reads use the default credential chain.**
 
 ## Phase 3: copy the legacy files
 
@@ -205,20 +233,23 @@ python copy_legacy_objects.py 2>&1 | tee /work/copy.log
 
 ## Phase 6: go/no-go and go-live
 
-1. **Lock the legacy uploads bucket:** turn on S3 Block Public Access for `jobspring-prod-uploads` (legacy account). This can be reversed and nothing is deleted.
-2. **Switch DNS:** point `mentorship.linuxfoundation.org` at the new frontend.
-3. **Go/no-go.**
+The API has no read-only mode (see [Gaps](#gaps)), so the decision is made **before** the new stack gets public traffic. Once DNS points at it, users write to Postgres only, and rollback is no longer clean ([03](./03-migration-plan.md) Phase 4 and "Rollback").
+
+1. **Go/no-go**, on the Phase 5 results.
+   - **No-go:** unfreeze legacy and stop. Nothing has been exposed, and legacy still holds every write.
+2. **Lock the legacy uploads bucket:** turn on S3 Block Public Access for `jobspring-prod-uploads` (legacy account). This can be reversed and nothing is deleted.
+3. **Switch DNS:** point `mentorship.linuxfoundation.org` at the new frontend. From this moment writes are live on the new stack.
 4. **Go-live:** in [lfx-v2-argocd](https://github.com/linuxfoundation/lfx-v2-argocd), remove `EMAIL_ALLOWED_RECIPIENTS` from `values/prod/lfx-mentorship-backend.yaml` so email reaches real users.
-5. **Rollback:** until new data has been written on the new stack, rollback is clean:
-   - revert DNS;
-   - lift the bucket block;
-   - unfreeze legacy.
+5. **Rollback:**
+   - **Before step 3** it is clean: lift the bucket block if it was applied, and unfreeze legacy.
+   - **After step 3** it means reverting DNS and losing any writes made on the new stack since, because no reverse sync exists. Past that point, fix forward.
 
 ## Phase 7: clean up
 
 ```bash
 kubectl -n mentorship-backend delete pod mentorship-etl
 kubectl -n mentorship-backend delete secret mentorship-etl-legacy
+kubectl -n mentorship-backend delete configmap mentorship-etl-scripts
 ```
 
 The manifest and logs contain user emails. Don't copy them out of the pod unless needed, and delete any copies afterwards.

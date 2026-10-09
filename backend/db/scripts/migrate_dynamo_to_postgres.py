@@ -70,11 +70,12 @@ Key notes
 
 Usage
 -----
-  # Legacy jobspring (DynamoDB + uploads bucket) is read through its own session,
-  # so it never follows an AWS_REGION or IRSA identity injected into a v2 pod.
+  # Legacy jobspring (DynamoDB + uploads bucket) is read through its own session.
+  # Its region never follows AWS_REGION. Its credentials come from LEGACY_AWS_*
+  # and only fall back to the default chain when none is set; inside a v2 pod
+  # that fallback is the pod's own IRSA role, so in-cluster runs must set them.
   export LEGACY_AWS_REGION=us-east-1     # default
-  export LEGACY_AWS_PROFILE=...          # or LEGACY_AWS_ACCESS_KEY_ID / _SECRET_ACCESS_KEY / _SESSION_TOKEN;
-                                         # unset falls back to the default credential chain
+  export LEGACY_AWS_PROFILE=...          # or LEGACY_AWS_ACCESS_KEY_ID / _SECRET_ACCESS_KEY / _SESSION_TOKEN
   export DYNAMODB_TABLE_PREFIX=jobspring-dev  # defaults to jobspring-prod
 
   export PG_DSN="host=localhost port=5432 dbname=mentorship user=postgres password=..."
@@ -152,7 +153,11 @@ def _deserialize(item: dict) -> dict:
 
 
 def legacy_session() -> boto3.Session:
-    """Session for the legacy account: LEGACY_AWS_PROFILE, else LEGACY_AWS_* keys, else the default chain."""
+    """Session for the legacy account: LEGACY_AWS_PROFILE, else LEGACY_AWS_* keys, else the default chain.
+
+    Only the region is always isolated; the default-chain fallback is meant for
+    a laptop whose default profile is the legacy account.
+    """
     profile = os.environ.get("LEGACY_AWS_PROFILE", "").strip()
     if profile:
         return boto3.Session(profile_name=profile, region_name=LEGACY_REGION)
@@ -164,6 +169,7 @@ def legacy_session() -> boto3.Session:
             aws_session_token=os.environ.get("LEGACY_AWS_SESSION_TOKEN") or None,
             region_name=LEGACY_REGION,
         )
+    log.warning("No LEGACY_AWS_PROFILE or LEGACY_AWS_ACCESS_KEY_ID set: legacy reads use the default credential chain")
     return boto3.Session(region_name=LEGACY_REGION)
 
 
