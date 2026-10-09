@@ -24,14 +24,15 @@ Related: [08 runbook](./08-prod-migration-runbook.md) holds the commands; this p
 - [ ] Legacy links tested on prod with the legacy path on the new host, including every program link in the [CNCF term docs](https://github.com/cncf/mentoring/tree/main/programs/lfx-mentorship) (Eng)
 - [ ] CNCF `/lfx-url` bot accepts the new URL shape: PR to `cncf/mentoring` accepting both shapes (Eng, CNCF review)
 - [ ] Legacy API consumers known before it is switched off: CNCF automation, and legacy Crowdfunding (`LFF`), which calls `/users/external/{lfid}` (Eng)
-- [ ] Freeze mechanics ready, with a date and a contact on the day, all reversible: a "not available" notice page on `mentorship.lfx.linuxfoundation.org` and the host redirect to `mentorship.linuxfoundation.org` with the path kept (DevOps, the site is behind Cloudflare); a block on `api.mentorship.lfx.linuxfoundation.org` for anything calling it directly (legacy AWS account, it is API Gateway behind CloudFront, owner TBD)
+- [ ] Maintenance switch ready and tried on dev, as Crowdfunding did ([lfx-crowdfunding-upgrade#48](https://github.com/linuxfoundation/lfx-crowdfunding-upgrade/pull/48)): a `maintenanceMode` flag in `lfx-mentorship-upgrade` that shows a "being upgraded" page, and the same flag in `jobspring` that answers 503 on the API (except `/health`) and pauses the cron jobs (Eng)
+- [ ] Host redirect `mentorship.lfx.linuxfoundation.org` → `mentorship.linuxfoundation.org`, path kept, with a contact on the day (DevOps, Cloudflare)
 - [ ] Email: `lfx-mentorship-sent@` group exists and the copy-every-email feature is built; `EMAIL_HR_INBOX` stays `menteedocs@` (DevOps, Eng)
 - [ ] Release tagged and pinned in [lfx-v2-argocd](https://github.com/linuxfoundation/lfx-v2-argocd) (Eng)
 - [ ] Program admins and mentees told two weeks ahead: Intercom banner on the legacy site, Slack where they are (CNCF `#mentoring`, LF Slack), email to program admins; say that legacy invitation links sent in the last week stop working after the switch (Product, Support)
 
 ## Release day
 
-1. **Freeze legacy:** announce "downtime starts" on Slack and the banner, then DevOps puts up the notice page and blocks the legacy API.
+1. **Freeze legacy:** announce "downtime starts" on Slack and the banner, then deploy `lfx-mentorship-upgrade` and `jobspring` with the maintenance flag on.
 2. **Wipe test data:** `TRUNCATE` every table in the `mentorship` schema, outboxes included. Leave `public.schema_migrations` alone.
 3. **Copy, import, verify:** runbook Phases 2–5. Both verifiers must pass.
 4. **Re-add program approvers** through `POST /admin/approver-team/members`; the import does not restore them.
@@ -41,7 +42,7 @@ Related: [08 runbook](./08-prod-migration-runbook.md) holds the commands; this p
 8. **Self Serve to everyone:** turn `mentorship-enabled` on for all users.
 9. **Redirect the legacy host** (DevOps), re-run the legacy-link test, then announce "we're live" with the new URL.
 
-**Rollback:** clean until step 9 (DevOps removes the notice page and the API block, restore the allowlist and flag, lift the bucket block). After step 9, fix forward.
+**Rollback:** clean until step 9 (redeploy both legacy repos with the maintenance flag off, restore the allowlist and the LaunchDarkly flag, lift the bucket block). After step 9, fix forward.
 
 ## After release
 
