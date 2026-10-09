@@ -8,7 +8,8 @@ Jobspring creates a program creator's maintainer row (and some mentor rows) with
 only email and name. This script links each such row to its real user:
 
 1. the one user whose email matches the row's email (case-insensitive);
-2. if several users share that email, the one whose lfid is the program's lfid;
+2. for maintainer rows only, if several users share that email, the one whose
+   lfid is the program's lfid (the program's lfid names its creator);
 3. otherwise an explicit --overrides entry; anything else is left untouched.
 
 Dry-run by default. --apply writes only `userId`, guarded by
@@ -76,10 +77,13 @@ def resolve(
         return "email_unique", candidates[0]["id"], candidates
     if not candidates:
         return "no_user_for_email", "", []
-    lfid = program_lfids.get(member.get("projectId", ""), "")
-    by_lfid = [c for c in candidates if lfid and _norm(c.get("lfid")) == lfid]
-    if len(by_lfid) == 1:
-        return "email_and_program_lfid", by_lfid[0]["id"], candidates
+    # The program's lfid names its creator, and only the creator gets a legacy
+    # maintainer row — so the tie-break is meaningless for mentor rows.
+    if _norm(member.get("memberType")) == "maintainer":
+        lfid = program_lfids.get(member.get("projectId", ""), "")
+        by_lfid = [c for c in candidates if lfid and _norm(c.get("lfid")) == lfid]
+        if len(by_lfid) == 1:
+            return "email_and_program_lfid", by_lfid[0]["id"], candidates
     return "ambiguous", "", candidates
 
 

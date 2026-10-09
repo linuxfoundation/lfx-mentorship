@@ -16,8 +16,8 @@ USERS = [
 PROJECTS = [{"projectId": "p1", "lfid": "OWNER"}, {"projectId": "p2", "lfid": "nobody"}]
 
 
-def member(mid, email=None, project="p1", **extra):
-    return {"id": mid, "projectId": project, "memberType": "maintainer", "status": "accepted", "email": email, **extra}
+def member(mid, email=None, project="p1", member_type="maintainer", **extra):
+    return {"id": mid, "projectId": project, "memberType": member_type, "status": "accepted", "email": email, **extra}
 
 
 def by_id(rows):
@@ -29,6 +29,8 @@ def test_plan_resolves_and_classifies():
         member("m-email", "alice@example.ORG "),
         member("m-shared", "shared@example.org"),
         member("m-ambiguous", "shared@example.org", project="p2"),
+        # The program-lfid tie-break identifies the creator, so it never applies to mentors.
+        member("m-mentor-shared", "shared@example.org", member_type="mentor"),
         member("m-unknown", "ghost@example.org"),
         member("m-noemail"),
         member("m-has-user", "alice@example.org", userId="u-existing"),
@@ -39,6 +41,7 @@ def test_plan_resolves_and_classifies():
     assert (rows["m-email"]["result"], rows["m-email"]["user_id"]) == ("email_unique", "u-alice")
     assert (rows["m-shared"]["result"], rows["m-shared"]["user_id"]) == ("email_and_program_lfid", "u-shared-1")
     assert (rows["m-ambiguous"]["result"], rows["m-ambiguous"]["user_id"]) == ("ambiguous", "")
+    assert (rows["m-mentor-shared"]["result"], rows["m-mentor-shared"]["user_id"]) == ("ambiguous", "")
     assert rows["m-unknown"]["result"] == "no_user_for_email"
     assert rows["m-noemail"]["result"] == "no_email"
 
