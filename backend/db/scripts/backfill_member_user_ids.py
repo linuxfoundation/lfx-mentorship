@@ -14,9 +14,11 @@ only email and name. This script links each such row to its real user:
 
 Dry-run by default. --apply writes only `userId`, guarded by
 attribute_not_exists(userId), so re-runs and concurrent app writes are safe.
---rollback removes exactly the userIds a previous --apply report recorded.
-Reports contain emails: they are created 0600 and never overwritten, so each
-run needs a new --report path (reports/ is gitignored).
+The apply report is an append-only journal (an `attempted` line fsynced before
+each write, an outcome line after; the last line per member wins), so
+--rollback can undo every committed write even after a crash. Reports contain
+emails: they are created 0600 and never overwritten, so each run needs a new
+--report path (reports/ is gitignored).
 """
 
 from __future__ import annotations
@@ -130,11 +132,23 @@ def plan(members: Iterable[dict], users: Iterable[dict], projects: Iterable[dict
 
 
 def apply(table, rows: list[dict], report_path: str) -> None:
-    write_report(report_path, rows, create=True)
-    try:
+    """Apply resolved rows, journaling to the report so a crash loses nothing.
+
+    Each write gets an `attempted` line fsynced *before* the update and an
+    outcome line after; the last line per member wins. Rollback can undo a
+    dangling attempt because its REMOVE is conditional on the planned value.
+    """
+    with _open_new(report_path) as f:
+        writer = csv.DictWriter(f, fieldnames=REPORT_FIELDS)
+        writer.writeheader()
         for row in rows:
             if row["result"] not in RESOLVED:
+                writer.writerow(row)
                 continue
+            row["applied"] = "attempted"
+            writer.writerow(row)
+            f.flush()
+            os.fsync(f.fileno())
             try:
                 table.update_item(
                     Key={"id": row["member_id"]},
@@ -147,36 +161,41 @@ def apply(table, rows: list[dict], report_path: str) -> None:
                 if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
                     raise
                 row["applied"] = "skipped_changed"
-    finally:
-        # A partial failure must still record every committed write so --rollback can undo it.
-        write_report(report_path, rows)
+            writer.writerow(row)
+            f.flush()
+            os.fsync(f.fileno())
 
 
 def rollback(table, report_path: str) -> Counter:
-    counts: Counter = Counter()
     with open(report_path, newline="") as f:
-        for row in csv.DictReader(f):
-            if row.get("applied") != "yes":
-                continue
-            try:
-                table.update_item(
-                    Key={"id": row["member_id"]},
-                    UpdateExpression="REMOVE userId",
-                    ConditionExpression="userId = :u",
-                    ExpressionAttributeValues={":u": row["user_id"]},
-                )
-                counts["removed"] += 1
-            except ClientError as e:
-                if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
-                    raise
-                counts["skipped_changed"] += 1
+        final = {row["member_id"]: row for row in csv.DictReader(f)}  # last line per member wins
+    counts: Counter = Counter()
+    for row in final.values():
+        # `attempted` means the run died mid-write; the conditional REMOVE makes trying it safe.
+        if row.get("applied") not in {"yes", "attempted"}:
+            continue
+        try:
+            table.update_item(
+                Key={"id": row["member_id"]},
+                UpdateExpression="REMOVE userId",
+                ConditionExpression="userId = :u",
+                ExpressionAttributeValues={":u": row["user_id"]},
+            )
+            counts["removed"] += 1
+        except ClientError as e:
+            if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                raise
+            counts["skipped_changed"] += 1
     return counts
 
 
-def write_report(path: str, rows: list[dict], create: bool = False) -> None:
-    # create=True refuses an existing path so an earlier run's rollback manifest is never lost.
-    flags = os.O_WRONLY | os.O_CREAT | (os.O_EXCL if create else os.O_TRUNC)
-    with os.fdopen(os.open(path, flags, 0o600), "w", newline="") as f:
+def _open_new(path: str):
+    # O_EXCL refuses an existing path so an earlier run's rollback manifest is never lost.
+    return os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", newline="")
+
+
+def write_report(path: str, rows: list[dict]) -> None:
+    with _open_new(path) as f:
         writer = csv.DictWriter(f, fieldnames=REPORT_FIELDS)
         writer.writeheader()
         writer.writerows(rows)
@@ -210,7 +229,7 @@ def main() -> int:
     if args.apply:
         apply(members_table, rows, args.report)
     else:
-        write_report(args.report, rows, create=True)
+        write_report(args.report, rows)
 
     print(f"scanned members={len(members)} users={len(users)} projects={len(projects)}")
     print(f"members without userId: {len(rows)}")

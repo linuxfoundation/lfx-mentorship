@@ -24,6 +24,11 @@ def by_id(rows):
     return {r["member_id"]: r for r in rows}
 
 
+def journal_final(path):
+    with open(path, newline="") as f:
+        return {r["member_id"]: r["applied"] for r in csv.DictReader(f)}
+
+
 def test_plan_resolves_and_classifies():
     members = [
         member("m-email", "alice@example.ORG "),
@@ -135,11 +140,33 @@ def test_partial_apply_failure_keeps_committed_writes_rollbackable(tmp_path):
     with pytest.raises(ClientError):
         b.apply(table, b.plan(members, USERS, PROJECTS, {}), str(report))
 
-    with open(report, newline="") as f:
-        assert {r["member_id"]: r["applied"] for r in csv.DictReader(f)} == {"m-first": "yes", "m-second": ""}
+    # m-second's attempt is journaled but the write never happened; rollback's
+    # conditional REMOVE skips it and still undoes m-first.
+    assert journal_final(report) == {"m-first": "yes", "m-second": "attempted"}
+    table.update_item = real_update
+    assert b.rollback(table, str(report)) == {"removed": 1, "skipped_changed": 1}
+    assert "userId" not in table.items["m-first"]
+
+
+def test_crash_before_outcome_line_still_rolls_back_the_committed_write(tmp_path):
+    members = [member("m", "alice@example.org")]
+    table = FakeTable(members)
+    real_update = table.update_item
+
+    def write_then_die(**kwargs):
+        real_update(**kwargs)
+        raise KeyboardInterrupt  # simulates the process dying after DynamoDB committed
+
+    table.update_item = write_then_die
+    report = tmp_path / "report.csv"
+    with pytest.raises(KeyboardInterrupt):
+        b.apply(table, b.plan(members, USERS, PROJECTS, {}), str(report))
+
+    assert journal_final(report) == {"m": "attempted"}
+    assert table.items["m"]["userId"] == "u-alice"
     table.update_item = real_update
     assert b.rollback(table, str(report)) == {"removed": 1}
-    assert "userId" not in table.items["m-first"]
+    assert "userId" not in table.items["m"]
 
 
 def test_reports_are_private_and_never_overwritten(tmp_path):
@@ -152,6 +179,5 @@ def test_reports_are_private_and_never_overwritten(tmp_path):
     with pytest.raises(FileExistsError):
         b.apply(table, [], str(report))
     with pytest.raises(FileExistsError):
-        b.write_report(str(report), [], create=True)
-    with open(report, newline="") as f:
-        assert [r["applied"] for r in csv.DictReader(f)] == ["yes"]
+        b.write_report(str(report), [])
+    assert journal_final(report) == {"m": "yes"}
