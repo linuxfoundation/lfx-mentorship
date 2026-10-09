@@ -18,21 +18,25 @@ ETL (migrate_dynamo_to_postgres.py) rewrites the file columns from.
 - Logos go to the public bucket, submissions to the private one. The upload
   routes' allowlist and size caps are applied to the bytes; an object that
   fails is copied to a quarantine/ prefix in the private bucket instead.
+- The legacy tables and bucket sit in another AWS account than the new buckets,
+  so the bytes are read with the legacy session and written with the default
+  (v2) identity; no cross-account grant is needed.
 - Idempotent: a value whose destination (or quarantine) object already exists
   is not copied again. The manifest is rewritten on every run.
 
 Usage
 -----
-  export AWS_REGION=us-west-2                   # destination buckets
-  export LEGACY_UPLOADS_REGION=us-east-1        # defaults to AWS_REGION
+  export AWS_REGION=us-west-2                   # destination buckets; v2 credentials from the default chain
+  export LEGACY_AWS_PROFILE=...                 # legacy reads: see migrate_dynamo_to_postgres.py
+  export LEGACY_UPLOADS_REGION=us-east-1        # defaults to LEGACY_AWS_REGION
   export DYNAMODB_TABLE_PREFIX=jobspring-prod   # also names the legacy bucket
   export LEGACY_UPLOADS_BUCKET=jobspring-prod-uploads   # optional override
   export LOGOS_S3_BUCKET=... ATTACHMENTS_S3_BUCKET=...
   export COPY_MANIFEST=legacy-object-manifest.json
   python3 backend/db/scripts/copy_legacy_objects.py
 
-The credentials need read access to the legacy bucket and the DynamoDB tables,
-and write access to both destination buckets.
+The legacy credentials need read access to the legacy bucket and the DynamoDB
+tables; the default credentials need write access to both destination buckets.
 """
 
 import logging
@@ -44,11 +48,12 @@ import boto3
 from botocore.exceptions import ClientError
 
 import legacy_objects as lo
-from migrate_dynamo_to_postgres import COPY_MANIFEST, LEGACY_BUCKET, REGION, TABLE_PREFIX, scan_table
+from migrate_dynamo_to_postgres import COPY_MANIFEST, LEGACY_BUCKET, LEGACY_REGION, TABLE_PREFIX, legacy_session, scan_table
 
 log = logging.getLogger(__name__)
 
-SOURCE_REGION = os.environ.get("LEGACY_UPLOADS_REGION", REGION)
+DEST_REGION = os.environ.get("AWS_REGION", "us-west-2")
+SOURCE_REGION = os.environ.get("LEGACY_UPLOADS_REGION", LEGACY_REGION)
 
 
 def _required_env(name: str) -> str:
@@ -87,15 +92,8 @@ class Copier:
             return {"status": lo.QUARANTINED, "key": quarantine_key}
         return None
 
-    def _copy(self, bucket: str, key: str, source_key: str, content_type: str, cache_control: str) -> None:
-        self.dest.copy_object(
-            Bucket=bucket,
-            Key=key,
-            CopySource={"Bucket": self.legacy_bucket, "Key": source_key},
-            MetadataDirective="REPLACE",
-            ContentType=content_type,
-            CacheControl=cache_control,
-        )
+    def _put(self, bucket: str, key: str, data: bytes, content_type: str, cache_control: str) -> None:
+        self.dest.put_object(Bucket=bucket, Key=key, Body=data, ContentType=content_type, CacheControl=cache_control)
 
     def resolve(self, file_class: str, raw: str) -> dict:
         # The decoded key is a fallback only for a raw key absent from both sides.
@@ -111,27 +109,28 @@ class Copier:
 
         reason = None
         content_type = None
-        if head["ContentLength"] > lo.MAX_BYTES[file_class]:
-            reason = f"{head['ContentLength']} bytes exceeds the {file_class} cap"
+        data = self.source.get_object(Bucket=self.legacy_bucket, Key=key)["Body"].read()
+        if len(data) > lo.MAX_BYTES[file_class]:
+            reason = f"{len(data)} bytes exceeds the {file_class} cap"
         else:
-            data = self.source.get_object(Bucket=self.legacy_bucket, Key=key)["Body"].read()
             content_type = lo.identify(file_class, data)
             if content_type is None:
                 reason = f"bytes are not an allowed {file_class} type (stored as {head.get('ContentType')})"
 
         if reason is None:
-            self._copy(self.buckets[file_class], key, key, content_type, lo.CACHE_CONTROL[file_class])
+            self._put(self.buckets[file_class], key, data, content_type, lo.CACHE_CONTROL[file_class])
             return {"status": lo.COPIED, "key": key}
         quarantine_key = lo.QUARANTINE_PREFIX[file_class] + key
-        self._copy(self.attachments, quarantine_key, key, "application/octet-stream", lo.CACHE_CONTROL[lo.SUBMISSION])
+        self._put(self.attachments, quarantine_key, data, "application/octet-stream", lo.CACHE_CONTROL[lo.SUBMISSION])
         return {"status": lo.QUARANTINED, "key": quarantine_key, "reason": reason}
 
 
 def main() -> None:
     buckets = {lo.LOGO: _required_env("LOGOS_S3_BUCKET"), lo.SUBMISSION: _required_env("ATTACHMENTS_S3_BUCKET")}
     prefix = lo.legacy_url_prefix(LEGACY_BUCKET)
-    dynamo = boto3.client("dynamodb", region_name=REGION)
-    copier = Copier(boto3.client("s3", region_name=SOURCE_REGION), boto3.client("s3", region_name=REGION), LEGACY_BUCKET, buckets)
+    legacy = legacy_session()
+    dynamo = legacy.client("dynamodb")
+    copier = Copier(legacy.client("s3", region_name=SOURCE_REGION), boto3.client("s3", region_name=DEST_REGION), LEGACY_BUCKET, buckets)
 
     entries: dict = {}
     counts: dict = {}
