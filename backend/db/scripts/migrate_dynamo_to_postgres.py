@@ -70,11 +70,13 @@ Key notes
 
 Usage
 -----
-  export AWS_ACCESS_KEY_ID=...
-  export AWS_SECRET_ACCESS_KEY=...
-  export AWS_SESSION_TOKEN=...          # for STS / temporary credentials
-  export AWS_REGION=us-east-1
-    export DYNAMODB_TABLE_PREFIX=jobspring-dev  # defaults to jobspring-prod
+  # Legacy jobspring (DynamoDB + uploads bucket) is read through its own session.
+  # Its region never follows AWS_REGION. Its credentials come from LEGACY_AWS_*
+  # and only fall back to the default chain when none is set; inside a v2 pod
+  # that fallback is the pod's own IRSA role, so in-cluster runs must set them.
+  export LEGACY_AWS_REGION=us-east-1     # default
+  export LEGACY_AWS_PROFILE=...          # or LEGACY_AWS_ACCESS_KEY_ID / _SECRET_ACCESS_KEY / _SESSION_TOKEN
+  export DYNAMODB_TABLE_PREFIX=jobspring-dev  # defaults to jobspring-prod
 
   export PG_DSN="host=localhost port=5432 dbname=mentorship user=postgres password=..."
   export COPY_MANIFEST=legacy-object-manifest.json
@@ -119,7 +121,9 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-REGION = os.environ.get("AWS_REGION", "us-east-1")
+# Legacy jobspring lives in another account and region than the v2 cluster, whose
+# pods have AWS_REGION injected; legacy reads must never follow it.
+LEGACY_REGION = os.environ.get("LEGACY_AWS_REGION", "us-east-1").strip()
 PG_DSN = os.environ.get(
     "PG_DSN",
     "host=localhost port=5432 dbname=mentorship user=postgres password=postgres",
@@ -146,6 +150,27 @@ _deser = _TypeDeserializer()
 
 def _deserialize(item: dict) -> dict:
     return {k: _deser.deserialize(v) for k, v in item.items()}
+
+
+def legacy_session() -> boto3.Session:
+    """Session for the legacy account: LEGACY_AWS_PROFILE, else LEGACY_AWS_* keys, else the default chain.
+
+    Only the region is always isolated; the default-chain fallback is meant for
+    a laptop whose default profile is the legacy account.
+    """
+    profile = os.environ.get("LEGACY_AWS_PROFILE", "").strip()
+    if profile:
+        return boto3.Session(profile_name=profile, region_name=LEGACY_REGION)
+    key_id = os.environ.get("LEGACY_AWS_ACCESS_KEY_ID", "").strip()
+    if key_id:
+        return boto3.Session(
+            aws_access_key_id=key_id,
+            aws_secret_access_key=os.environ["LEGACY_AWS_SECRET_ACCESS_KEY"],
+            aws_session_token=os.environ.get("LEGACY_AWS_SESSION_TOKEN") or None,
+            region_name=LEGACY_REGION,
+        )
+    log.warning("No LEGACY_AWS_PROFILE or LEGACY_AWS_ACCESS_KEY_ID set: legacy reads use the default credential chain")
+    return boto3.Session(region_name=LEGACY_REGION)
 
 
 def scan_table(client, table_name: str) -> list:
@@ -1777,8 +1802,8 @@ def seed_derived_state(cur) -> None:
 
 
 def main() -> None:
-    log.info("Connecting to DynamoDB (region=%s) ...", REGION)
-    dynamo = boto3.client("dynamodb", region_name=REGION)
+    log.info("Connecting to DynamoDB (region=%s) ...", LEGACY_REGION)
+    dynamo = legacy_session().client("dynamodb")
 
     log.info("Connecting to PostgreSQL: %s", _redact_dsn(PG_DSN))
     conn = psycopg2.connect(PG_DSN)
