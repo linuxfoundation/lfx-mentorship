@@ -6,11 +6,13 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"expvar"
 	"fmt"
 	"log/slog"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 )
@@ -131,52 +133,42 @@ func (r *IndexOutboxRepository) Claim(ctx context.Context, limit int) ([]domain.
 }
 
 func (r *IndexOutboxRepository) MarkSent(ctx context.Context, record domain.IndexOutboxRecord) (bool, error) {
+	// A single UPDATE re-checks a row changed by a concurrent enqueue, so a newer generation is requeued.
 	const query = `
-		WITH acknowledged AS (
-			UPDATE index_outbox
-			SET state = 'sent', sent_on = NOW()
-			WHERE id = $1 AND state = 'in_flight' AND generation = $2
-			  AND claimed_generation = $2 AND claimed_at IS NOT DISTINCT FROM $3
-			RETURNING id
-		), requeued AS (
-			UPDATE index_outbox
-			SET state = 'pending', claimed_generation = NULL, claimed_at = NULL, sent_on = NULL
-			WHERE id = $1 AND state = 'in_flight' AND claimed_generation = $2
-			  AND generation > $2 AND claimed_at IS NOT DISTINCT FROM $3
-			RETURNING id
-		)
-		SELECT EXISTS (SELECT 1 FROM acknowledged), EXISTS (SELECT 1 FROM requeued)`
-	var acknowledged, requeued bool
-	if err := r.pool.QueryRow(ctx, query, record.ID, record.Generation, record.ClaimedAt).Scan(&acknowledged, &requeued); err != nil {
+		UPDATE index_outbox
+		SET state = CASE WHEN generation = $2 THEN 'sent' ELSE 'pending' END,
+		    sent_on = CASE WHEN generation = $2 THEN NOW() END,
+		    claimed_generation = CASE WHEN generation = $2 THEN claimed_generation END,
+		    claimed_at = CASE WHEN generation = $2 THEN claimed_at END
+		WHERE id = $1 AND state = 'in_flight' AND claimed_generation = $2
+		  AND generation >= $2 AND claimed_at IS NOT DISTINCT FROM $3`
+	command, err := r.pool.Exec(ctx, query, record.ID, record.Generation, record.ClaimedAt)
+	if err != nil {
 		return false, err
 	}
-	return acknowledged || requeued, nil
+	return command.RowsAffected() == 1, nil
 }
 func (r *IndexOutboxRepository) MarkRetry(ctx context.Context, record domain.IndexOutboxRecord) (bool, bool, error) {
+	// A newer generation is a fresh change, so it is requeued with no attempts rather than retried.
 	const query = `
-		WITH retried AS (
-			UPDATE index_outbox
-			SET state = CASE WHEN attempts >= $4 THEN 'dead_letter' ELSE 'pending' END,
-			    next_attempt_at = $5,
-			    claimed_generation = NULL, claimed_at = NULL
-			WHERE id = $1 AND state = 'in_flight' AND generation = $2
-			  AND claimed_generation = $2 AND claimed_at IS NOT DISTINCT FROM $3
-			RETURNING state
-		), requeued AS (
-			UPDATE index_outbox
-			SET state = 'pending', attempts = 0, next_attempt_at = NOW(),
-			    claimed_generation = NULL, claimed_at = NULL, sent_on = NULL
-			WHERE id = $1 AND state = 'in_flight' AND generation > $2
-			  AND claimed_generation = $2 AND claimed_at IS NOT DISTINCT FROM $3
-			RETURNING state
-		)
-		SELECT (SELECT state FROM retried UNION ALL SELECT state FROM requeued LIMIT 1)`
-	var state *string
+		UPDATE index_outbox
+		SET state = CASE WHEN generation = $2 AND attempts >= $4 THEN 'dead_letter' ELSE 'pending' END,
+		    next_attempt_at = CASE WHEN generation = $2 THEN $5::timestamptz ELSE NOW() END,
+		    attempts = CASE WHEN generation = $2 THEN attempts ELSE 0 END,
+		    sent_on = CASE WHEN generation = $2 THEN sent_on END,
+		    claimed_generation = NULL, claimed_at = NULL
+		WHERE id = $1 AND state = 'in_flight' AND claimed_generation = $2
+		  AND generation >= $2 AND claimed_at IS NOT DISTINCT FROM $3
+		RETURNING state`
+	var state string
 	err := r.pool.QueryRow(ctx, query, record.ID, record.Generation, record.ClaimedAt, r.maxAttempts, r.clock().Add(r.retryDelay)).Scan(&state)
-	if err != nil || state == nil {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, false, nil
+	}
+	if err != nil {
 		return false, false, err
 	}
-	return true, *state == "dead_letter", nil
+	return true, state == "dead_letter", nil
 }
 
 // RequeueDeadLetter returns one retained record to the normal relay path.

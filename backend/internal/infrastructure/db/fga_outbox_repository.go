@@ -179,28 +179,29 @@ func (r *FGAOutboxRepository) Claim(ctx context.Context, limit int) ([]domain.FG
 	return markers, nil
 }
 
-// Acknowledge deletes only the generation that was actually delivered.
+// Acknowledge deletes only the generation that was actually delivered, and releases a newer
+// one for a fresh attempt. Separate statements let the requeue see an enqueue that committed
+// while the delete waited on the row lock.
 func (r *FGAOutboxRepository) Acknowledge(ctx context.Context, marker domain.FGAOutboxMarker) (bool, error) {
-	const query = `
-		WITH acknowledged AS (
-			DELETE FROM fga_outbox
-			WHERE id = $1 AND state = 'in_flight' AND claimed_generation = $2
-			  AND generation = $2 AND claimed_at IS NOT DISTINCT FROM $3
-			RETURNING id
-		), requeued AS (
-			UPDATE fga_outbox
-			SET state = 'pending', claimed_generation = NULL, claimed_at = NULL,
-			    next_attempt_at = NOW(), updated_on = NOW()
-			WHERE id = $1 AND state = 'in_flight' AND claimed_generation = $2
-			  AND generation > $2 AND claimed_at IS NOT DISTINCT FROM $3
-			RETURNING id
-		)
-		SELECT EXISTS (SELECT 1 FROM acknowledged), EXISTS (SELECT 1 FROM requeued)`
-	var acknowledged, requeued bool
-	if err := r.pool.QueryRow(ctx, query, marker.ID, marker.Generation, marker.ClaimedAt).Scan(&acknowledged, &requeued); err != nil {
+	deleted, err := r.pool.Exec(ctx, `
+		DELETE FROM fga_outbox
+		WHERE id = $1 AND state = 'in_flight' AND claimed_generation = $2
+		  AND generation = $2 AND claimed_at IS NOT DISTINCT FROM $3`, marker.ID, marker.Generation, marker.ClaimedAt)
+	if err != nil {
 		return false, fmt.Errorf("acknowledge FGA outbox marker: %w", err)
 	}
-	return acknowledged, nil
+	if deleted.RowsAffected() == 1 {
+		return true, nil
+	}
+	if _, err := r.pool.Exec(ctx, `
+		UPDATE fga_outbox
+		SET state = 'pending', claimed_generation = NULL, claimed_at = NULL,
+		    next_attempt_at = NOW(), updated_on = NOW()
+		WHERE id = $1 AND state = 'in_flight' AND claimed_generation = $2
+		  AND generation > $2 AND claimed_at IS NOT DISTINCT FROM $3`, marker.ID, marker.Generation, marker.ClaimedAt); err != nil {
+		return false, fmt.Errorf("requeue newer FGA outbox generation: %w", err)
+	}
+	return false, nil
 }
 
 // Retry returns a claimed marker to pending without overwriting a newer generation.
