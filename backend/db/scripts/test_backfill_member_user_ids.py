@@ -212,3 +212,16 @@ def test_reports_are_private_and_never_overwritten(tmp_path):
     with pytest.raises(FileExistsError):
         b.write_report(str(report), [])
     assert journal_final(report) == {"m": "yes"}
+
+
+def test_report_directory_is_synced_before_the_first_write(tmp_path, monkeypatch):
+    events = []
+    monkeypatch.setattr(b, "fsync_dir", lambda path: events.append(("fsync_dir", path)))
+    table = FakeTable([member("m", "alice@example.org")])
+    real_update = table.update_item
+    table.update_item = lambda **kw: (events.append(("update", kw["Key"]["id"])), real_update(**kw))
+    report = tmp_path / "report.csv"
+
+    b.apply(table, b.plan([member("m", "alice@example.org")], USERS, PROJECTS, {}), str(report))
+
+    assert events == [("fsync_dir", str(tmp_path)), ("update", "m")]

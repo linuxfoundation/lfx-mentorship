@@ -141,6 +141,10 @@ def apply(table, rows: list[dict], report_path: str) -> None:
     with _open_new(report_path) as f:
         writer = csv.DictWriter(f, fieldnames=REPORT_FIELDS)
         writer.writeheader()
+        f.flush()
+        os.fsync(f.fileno())
+        # fsync on the file alone does not persist its new directory entry.
+        fsync_dir(os.path.dirname(os.path.abspath(report_path)))
         for row in rows:
             if row["result"] not in RESOLVED:
                 writer.writerow(row)
@@ -219,6 +223,14 @@ def rollback(table, report_path: str) -> Counter:
 def _open_new(path: str):
     # O_EXCL refuses an existing path so an earlier run's rollback manifest is never lost.
     return os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", newline="")
+
+
+def fsync_dir(path: str) -> None:
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def write_report(path: str, rows: list[dict]) -> None:
