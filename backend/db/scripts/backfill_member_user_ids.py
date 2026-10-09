@@ -42,7 +42,8 @@ def _norm(value: Any) -> str:
 
 def scan(table) -> list[dict]:
     rows: list[dict] = []
-    kwargs: dict = {}
+    # Strongly consistent, so rows committed just before a cutover run are seen.
+    kwargs: dict = {"ConsistentRead": True}
     while True:
         page = table.scan(**kwargs)
         rows.extend(page.get("Items", []))
@@ -66,9 +67,20 @@ def resolve(
     overrides: dict[str, str],
 ) -> tuple[str, str, list[dict]]:
     """Return (result, user_id, candidates) for a member row without userId."""
+    result, user_id, candidates = _resolve_automatically(member, users_by_email, program_lfids)
+    if user_id:
+        return result, user_id, candidates
     override = overrides.get(member["id"])
     if override:
-        return ("override", override, []) if override in user_ids else ("override_unknown_user", "", [])
+        return ("override", override, candidates) if override in user_ids else ("override_unknown_user", "", candidates)
+    return result, "", candidates
+
+
+def _resolve_automatically(
+    member: dict,
+    users_by_email: dict[str, list[dict]],
+    program_lfids: dict[str, str],
+) -> tuple[str, str, list[dict]]:
     email = _norm(member.get("email"))
     if not email:
         return "no_email", "", []

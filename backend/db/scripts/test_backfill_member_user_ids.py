@@ -46,11 +46,22 @@ def test_plan_resolves_and_classifies():
     assert rows["m-noemail"]["result"] == "no_email"
 
 
-def test_overrides_win_and_must_name_a_real_user():
-    members = [member("m-a", "ghost@example.org"), member("m-b", "ghost@example.org")]
-    rows = by_id(b.plan(members, USERS, PROJECTS, {"m-a": "u-alice", "m-b": "u-missing"}))
+def test_overrides_apply_only_when_automatic_matching_fails():
+    members = [
+        member("m-a", "ghost@example.org"),
+        member("m-b", "ghost@example.org"),
+        member("m-noemail"),
+        member("m-ambiguous", "shared@example.org", project="p2"),
+        # An accidental override must not displace a unique email match.
+        member("m-auto", "alice@example.org"),
+    ]
+    overrides = {"m-a": "u-alice", "m-b": "u-missing", "m-noemail": "u-alice", "m-ambiguous": "u-shared-2", "m-auto": "u-shared-1"}
+    rows = by_id(b.plan(members, USERS, PROJECTS, overrides))
     assert (rows["m-a"]["result"], rows["m-a"]["user_id"]) == ("override", "u-alice")
     assert (rows["m-b"]["result"], rows["m-b"]["user_id"]) == ("override_unknown_user", "")
+    assert (rows["m-noemail"]["result"], rows["m-noemail"]["user_id"]) == ("override", "u-alice")
+    assert (rows["m-ambiguous"]["result"], rows["m-ambiguous"]["user_id"]) == ("override", "u-shared-2")
+    assert (rows["m-auto"]["result"], rows["m-auto"]["user_id"]) == ("email_unique", "u-alice")
 
 
 class FakeTable:
