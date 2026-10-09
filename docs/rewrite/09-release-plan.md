@@ -24,7 +24,7 @@ Related: [08 runbook](./08-prod-migration-runbook.md) holds the commands; this p
 - [ ] Legacy links tested on prod with the legacy path on the new host, including every program link in the [CNCF term docs](https://github.com/cncf/mentoring/tree/main/programs/lfx-mentorship) (Eng)
 - [ ] CNCF `/lfx-url` bot accepts the new URL shape: PR to `cncf/mentoring` accepting both shapes (Eng, CNCF review)
 - [ ] Legacy API consumers known before it is switched off: CNCF automation, and legacy Crowdfunding (`LFF`), which calls `/users/external/{lfid}` (Eng)
-- [ ] Maintenance switch ready and tried on dev, as Crowdfunding did ([lfx-crowdfunding-upgrade#48](https://github.com/linuxfoundation/lfx-crowdfunding-upgrade/pull/48)): a `maintenanceMode` flag in `lfx-mentorship-upgrade` that shows a "being upgraded" page ([#200](https://github.com/linuxfoundation/lfx-mentorship-upgrade/pull/200)), and the same flag in `jobspring` that answers 503 on the API (except `/health`) and pauses the cron jobs ([#2281](https://github.com/linuxfoundation/jobspring/pull/2281)) (Eng)
+- [ ] Maintenance switch ready and tried on dev, as Crowdfunding did ([lfx-crowdfunding-upgrade#48](https://github.com/linuxfoundation/lfx-crowdfunding-upgrade/pull/48)): a `maintenanceMode` flag in `lfx-mentorship-upgrade` that shows a "being upgraded" page ([#200](https://github.com/linuxfoundation/lfx-mentorship-upgrade/pull/200)), and the same flag in `jobspring` that answers 503 on the API (except `/health`) and pauses the cron jobs and the SQS consumer ([#2281](https://github.com/linuxfoundation/jobspring/pull/2281)) (Eng)
 - [ ] Host redirect `mentorship.lfx.linuxfoundation.org` → `mentorship.linuxfoundation.org`, path kept, with a contact on the day (DevOps, Cloudflare)
 - [ ] Email: `lfx-mentorship-sent@` group exists and the copy-every-email feature is built; `EMAIL_HR_INBOX` stays `menteedocs@` (DevOps, Eng)
 - [ ] Release tagged and pinned in [lfx-v2-argocd](https://github.com/linuxfoundation/lfx-v2-argocd) (Eng)
@@ -32,7 +32,7 @@ Related: [08 runbook](./08-prod-migration-runbook.md) holds the commands; this p
 
 ## Release day
 
-1. **Freeze legacy:** announce "downtime starts" on Slack and the banner, then deploy `lfx-mentorship-upgrade` and `jobspring` with the maintenance flag on.
+1. **Freeze legacy:** announce "downtime starts" on Slack and the banner, then deploy `lfx-mentorship-upgrade` and `jobspring` with the maintenance flag on (`jobspring`: also `sqsConsumerEnabled: false`). Wait 15 minutes, the cron timeout, so API requests and cron jobs already running finish before the import reads DynamoDB.
 2. **Wipe test data:** `TRUNCATE` every table in the `mentorship` schema, outboxes included. Leave `public.schema_migrations` alone.
 3. **Copy, import, verify:** runbook Phases 2–5. Both verifiers must pass.
 4. **Re-add program approvers** through `POST /admin/approver-team/members`; the import does not restore them.
