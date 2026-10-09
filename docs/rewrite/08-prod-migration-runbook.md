@@ -115,6 +115,7 @@ kubectl -n mentorship-backend create configmap mentorship-etl-scripts \
   --from-file=backend/db/scripts/legacy_objects.py \
   --from-file=backend/db/scripts/verify_migration.py \
   --from-file=backend/db/scripts/verify_objects.py \
+  --from-file=backend/db/scripts/retract_dropped.py \
   --from-file=backend/db/scripts/requirements.txt \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
@@ -218,7 +219,11 @@ python copy_legacy_objects.py 2>&1 | tee /work/copy.log
 2. **Freeze writes on legacy prod** (the content freeze in [03](./03-migration-plan.md) Phase 4). From here on, legacy is read-only.
 3. **Rebuild the runner.** The test-import pod is gone and its credentials have expired. Using the commit recorded in the test import: refresh the secret (Phase 2, step 1), check out that commit and re-apply the ConfigMap (step 2), recreate the pod and run the setup check (steps 3 and 4).
 4. **Re-run the copy** (Phase 3). It copies only files added since the test import, and it writes the manifest the import needs.
-5. **Empty the tables.** This drops the test import and anything written on the new site since. It truncates every table in the `mentorship` schema, the outboxes included, and leaves `public.schema_migrations` alone:
+5. **Empty the tables.** This drops the test import and anything written on the new site since. First record what was published, so whatever doesn't come back can be retracted in step 9 (run steps 5 to 9 in the same pod: `/work` is lost with it):
+   ```bash
+   python retract_dropped.py snapshot /work/published.json
+   ```
+   Then truncate every table in the `mentorship` schema, the outboxes included, leaving `public.schema_migrations` alone:
    ```bash
    python - <<'EOF'
    import psycopg2
@@ -229,14 +234,18 @@ python copy_legacy_objects.py 2>&1 | tee /work/copy.log
    cur.execute("SELECT version, dirty FROM public.schema_migrations"); print("schema:", cur.fetchone())
    EOF
    ```
-   OpenFGA tuples and search documents of rows that don't come back (test data, anything deleted in legacy since) stay behind. That is harmless: Self Serve reads its lists from the API, not the index.
 6. **Import:**
    ```bash
    python migrate_dynamo_to_postgres.py 2>&1 | tee /work/import.log
    ```
    The import is all or nothing: if any part fails, nothing is saved. Fix the cause and re-run.
 7. **If needed, link specific members by hand.** Write a CSV with the header `member_id,user_id` to `/work/overrides.csv`, then re-run step 6 with `MEMBER_USER_OVERRIDES=/work/overrides.csv`. Overrides only apply where automatic matching failed.
-8. **Re-add the approvers.** Step 5 also emptied `mentorship_approver_team_members`, which only the admin API fills and the import never recreates. Add the same people as during the test import (Phase 1, step 5), each with `POST /mentorship/v1/admin/approver-team/members` and `{"user_id": "..."}`. Until then nobody can approve new programs, and their old team tuples linger in OpenFGA.
+8. **Re-add the approvers.** Step 5 also emptied `mentorship_approver_team_members`, which only the admin API fills and the import never recreates. Add the same people as during the test import (Phase 1, step 5), each with `POST /mentorship/v1/admin/approver-team/members` and `{"user_id": "..."}`. Until then nobody can approve new programs.
+9. **Retract what didn't come back.** The truncate does not reach OpenFGA or the search index, so a program, application or task from step 5's snapshot that the import didn't bring back (test data, anything deleted in legacy since) would stay searchable to whoever its old tuples authorize, and an approver not re-added would keep approving. This queues `delete_access` and an index `deleted` for each of those rows, and a membership removal for each approver missing now:
+   ```bash
+   python retract_dropped.py retract /work/published.json
+   ```
+   The relays send them on; Phase 5, step 3 checks that the outboxes drain.
 
 ## Phase 5: verify (before go/no-go)
 
@@ -294,7 +303,7 @@ python copy_legacy_objects.py 2>&1 | tee /work/copy.log
 
 The API has no read-only mode (see [Gaps](#gaps)), so the decision is made **before** legacy users are sent to the new stack. Once the legacy hostname redirects, users write to Postgres only, and rollback is no longer clean ([03](./03-migration-plan.md) Phase 4 and "Rollback").
 
-1. **Go/no-go**, on the Phase 5 results. **Go** requires both `verify_migration.py` and `verify_objects.py` to pass (Phase 5, steps 4 and 5), and the approvers to be back (Phase 4, step 8).
+1. **Go/no-go**, on the Phase 5 results. **Go** requires both `verify_migration.py` and `verify_objects.py` to pass (Phase 5, steps 4 and 5), and the approvers to be back (Phase 4, step 8) and the dropped rows retracted (step 9).
    - **No-go:** unfreeze legacy and stop. Legacy still holds every write. If the new site was left open, the imported data was visible on it, and any writes made there are lost: the next attempt starts again at Phase 4, which empties the tables.
 2. **Lock the legacy uploads bucket:** turn on S3 Block Public Access for `jobspring-prod-uploads` (legacy account). This can be reversed and nothing is deleted.
 3. **Let email reach real users**, before anyone is sent to the new site. Until this step, every notification to an address not on `EMAIL_ALLOWED_RECIPIENTS` is dropped, not queued, so a real write made before it rolls out would lose its email for good.
