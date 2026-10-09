@@ -34,7 +34,7 @@ Every check must pass before anything runs.
    kubectl -n mentorship-backend get secret lfx-mentorship-backend-secrets -o json | jq '.data | keys'
    # needs host, port, username, password, dbname, and INDEXER_SERVICE_TOKEN (without it the search-index relay idles)
    ```
-4. **The prod database is empty, or you know what's in it.** The importer updates rows that exist but never deletes rows removed from legacy since an earlier import. Don't import into prod twice weeks apart (see Phase 1). The row counts are printed by the Phase 2 setup check.
+4. **You know what's in the prod database.** The importer updates rows that exist but never deletes rows removed from legacy since an earlier import, so the final run starts from emptied tables (Phase 4, step 5). The row counts are printed by the Phase 2 setup check.
 5. **Legacy credentials.** The operator can sign in to the legacy-account read-only role (`716487311010`). Use the longest session duration it allows. The file copy can take hours; if the credentials expire it stops, and is re-run.
 6. **Decisions agreed:**
    - About 350 member rows stay unlinked, mostly mentor invites nobody accepted. They are logged as `UNRESOLVED_MEMBER_USER`.
@@ -42,22 +42,44 @@ Every check must pass before anything runs.
    - About 32,000 tasks have no matching application and go to the `quarantined_tasks` table (see [Gaps](#gaps)).
    - **Whether the new site stays closed until go/no-go.** `mentorship.linuxfoundation.org` is already public, so the imported data is visible there as soon as the import finishes, and users can write to it before the decision. See [Phase 4](#phase-4-cutover-run-inside-the-freeze) step 1.
 
-## Phase 1: rehearsal (days before cutover)
+## Phase 1: test import into prod (days before cutover)
 
-Copy the files only. Copied files are reused by later runs, so the slow bulk copy happens outside the freeze.
+A full run in-cluster, with NATS, against prod. It does the slow bulk file copy outside the freeze, and gives real data to test the new site and the legacy links on. Everything it writes to the database is dropped before the final run (Phase 4, step 5); the copied files stay, since the copy skips objects that already exist.
 
-Don't run the import against prod in the rehearsal:
+The import queues about 330,000 permission (OpenFGA) and 330,000 search-index updates through fga-sync. Run it off-hours, and give the platform team a heads-up first.
 
-- the import never deletes rows, so anything removed from legacy before cutover would stay;
-- it pushes every program into prod permissions (OpenFGA) and search.
-
-Do Phase 2 (runner pod) and Phase 3 (copy), then delete the pod. The import has already been tested end to end on prod data against a local Postgres; the results are under Phase 5.
+1. Do Phase 2 (runner pod), Phase 3 (copy), Phase 4 step 6 (import) and Phase 5 (verify).
+2. **Record the timings:** the copy, the import (from `import.log`; the smoke import took about 16 minutes, 14 of them scanning DynamoDB) and how long both outboxes take to drain (Phase 5, step 3). The final run is reserved from these.
+3. **Count the duplicate users.** The import keeps a shared email or LFID on one user and clears it on the others, and a user left without one cannot use Mentorship. This lists how many there are, and how many of them hold memberships, applications or tasks; a handful are fixed by hand:
+   ```bash
+   python - <<'EOF'
+   import collections, psycopg2, migrate_dynamo_to_postgres as m
+   users = m.scan_table(m.legacy_session().client("dynamodb"), f"{m.TABLE_PREFIX}-users")
+   cur = psycopg2.connect("").cursor()
+   for column, field in (("email", "email"), ("lfid", "lfid")):
+       holders = collections.defaultdict(list)
+       for u in users:
+           if (value := (u.get(field) or "").strip()) and (uid := m._as_uuid(u.get("id"))):
+               holders[value].append(uid)
+       shared = [uid for ids in holders.values() if len(ids) > 1 for uid in ids]
+       cur.execute(f"""SELECT count(*),
+           count(*) FILTER (WHERE EXISTS (SELECT 1 FROM program_members WHERE user_id = u.id)
+                             OR EXISTS (SELECT 1 FROM applications WHERE user_id = u.id)
+                             OR EXISTS (SELECT 1 FROM tasks WHERE assignee_id = u.id))
+           FROM users u WHERE u.id = ANY(%s::uuid[]) AND u.{column} IS NULL""", (shared,))
+       cleared, with_data = cur.fetchone()
+       print(f"{column}: {sum(len(i) > 1 for i in holders.values())} shared values; cleared on {cleared} users, {with_data} of them with data")
+   EOF
+   ```
+4. **Test the legacy links** on the new site with real ids, once the frontend release with the path mapping (Phase 6, step 4) is out: for example `https://mentorship.linuxfoundation.org/project/{id}` from a CNCF page must land on that program.
+5. **Note the approvers.** Whoever is added to the approver team while testing (`POST /mentorship/v1/admin/approver-team/members`) must be added again after the final import (Phase 4, step 8). Keep the list: `GET /mentorship/v1/admin/approver-team/members`.
+6. Delete the runner pod (Phase 7).
 
 ## Phase 2: start the runner pod
 
 The backend image has no Python, so use a throwaway pod with the backend's ServiceAccount. Its IAM role can write to the new buckets.
 
-What runs next to the credentials is fixed in advance, and identical for the rehearsal and the cutover:
+What runs next to the credentials is fixed in advance, and identical for the test import and the cutover:
 
 - the base image is pinned by digest;
 - the scripts come from one recorded commit of `main`;
@@ -83,7 +105,7 @@ They are named `LEGACY_AWS_*` on purpose. Plain `AWS_*` keys would replace the p
 
 ### 2. Load the reviewed scripts
 
-From a clean checkout of `main` that includes #286. Record the commit, and use the same one for the rehearsal and the cutover:
+From a clean checkout of `main` that includes #286. Record the commit, and use the same one for the test import and the cutover:
 
 ```bash
 git rev-parse HEAD   # note this in the cutover log
@@ -194,14 +216,27 @@ python copy_legacy_objects.py 2>&1 | tee /work/copy.log
 
 1. **If agreed in Phase 0, close the new site.** Merge an [lfx-v2-argocd](https://github.com/linuxfoundation/lfx-v2-argocd) change to `values/prod/lfx-mentorship-frontend.yaml` that turns off its ingress, and confirm `https://mentorship.linuxfoundation.org` no longer serves the app. Scaling with `kubectl` doesn't work: ArgoCD self-heal reverts it. This hides the site only; the backend API keeps its own route.
 2. **Freeze writes on legacy prod** (the content freeze in [03](./03-migration-plan.md) Phase 4). From here on, legacy is read-only.
-3. **Rebuild the runner.** The rehearsal pod is gone and its credentials have expired. Using the commit recorded in the rehearsal: refresh the secret (Phase 2, step 1), check out that commit and re-apply the ConfigMap (step 2), recreate the pod and run the setup check (steps 3 and 4).
-4. **Re-run the copy** (Phase 3). It copies only files added since the rehearsal, and it writes the manifest the import needs.
-5. **Import:**
+3. **Rebuild the runner.** The test-import pod is gone and its credentials have expired. Using the commit recorded in the test import: refresh the secret (Phase 2, step 1), check out that commit and re-apply the ConfigMap (step 2), recreate the pod and run the setup check (steps 3 and 4).
+4. **Re-run the copy** (Phase 3). It copies only files added since the test import, and it writes the manifest the import needs.
+5. **Empty the tables.** This drops the test import and anything written on the new site since. It truncates every table in the `mentorship` schema, the outboxes included, and leaves `public.schema_migrations` alone:
+   ```bash
+   python - <<'EOF'
+   import psycopg2
+   c = psycopg2.connect(""); cur = c.cursor()
+   cur.execute("SELECT string_agg(format('%I.%I', schemaname, tablename), ', ') FROM pg_tables WHERE schemaname = 'mentorship'")
+   tables = cur.fetchone()[0]; print("truncating:", tables)
+   cur.execute(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"); c.commit()
+   cur.execute("SELECT version, dirty FROM public.schema_migrations"); print("schema:", cur.fetchone())
+   EOF
+   ```
+   OpenFGA tuples and search documents of rows that don't come back (test data, anything deleted in legacy since) stay behind. That is harmless: Self Serve reads its lists from the API, not the index.
+6. **Import:**
    ```bash
    python migrate_dynamo_to_postgres.py 2>&1 | tee /work/import.log
    ```
    The import is all or nothing: if any part fails, nothing is saved. Fix the cause and re-run.
-6. **If needed, link specific members by hand.** Write a CSV with the header `member_id,user_id` to `/work/overrides.csv`, then re-run step 5 with `MEMBER_USER_OVERRIDES=/work/overrides.csv`. Overrides only apply where automatic matching failed.
+7. **If needed, link specific members by hand.** Write a CSV with the header `member_id,user_id` to `/work/overrides.csv`, then re-run step 6 with `MEMBER_USER_OVERRIDES=/work/overrides.csv`. Overrides only apply where automatic matching failed.
+8. **Re-add the approvers.** Step 5 also emptied `mentorship_approver_team_members`, which only the admin API fills and the import never recreates. Add the same people as during the test import (Phase 1, step 5), each with `POST /mentorship/v1/admin/approver-team/members` and `{"user_id": "..."}`. Until then nobody can approve new programs, and their old team tuples linger in OpenFGA.
 
 ## Phase 5: verify (before go/no-go)
 
@@ -259,14 +294,22 @@ python copy_legacy_objects.py 2>&1 | tee /work/copy.log
 
 The API has no read-only mode (see [Gaps](#gaps)), so the decision is made **before** legacy users are sent to the new stack. Once the legacy hostname redirects, users write to Postgres only, and rollback is no longer clean ([03](./03-migration-plan.md) Phase 4 and "Rollback").
 
-1. **Go/no-go**, on the Phase 5 results. **Go** requires both `verify_migration.py` and `verify_objects.py` to pass (Phase 5, steps 4 and 5).
-   - **No-go:** unfreeze legacy and stop. Legacy still holds every write. If the new site was left open, the imported data was visible on it and any writes made there are lost when the data is re-imported.
+1. **Go/no-go**, on the Phase 5 results. **Go** requires both `verify_migration.py` and `verify_objects.py` to pass (Phase 5, steps 4 and 5), and the approvers to be back (Phase 4, step 8).
+   - **No-go:** unfreeze legacy and stop. Legacy still holds every write. If the new site was left open, the imported data was visible on it, and any writes made there are lost: the next attempt starts again at Phase 4, which empties the tables.
 2. **Lock the legacy uploads bucket:** turn on S3 Block Public Access for `jobspring-prod-uploads` (legacy account). This can be reversed and nothing is deleted.
 3. **Let email reach real users**, before anyone is sent to the new site. Until this step, every notification to an address not on `EMAIL_ALLOWED_RECIPIENTS` is dropped, not queued, so a real write made before it rolls out would lose its email for good.
    - In [lfx-v2-argocd](https://github.com/linuxfoundation/lfx-v2-argocd), remove `EMAIL_ALLOWED_RECIPIENTS` from `values/prod/lfx-mentorship-backend.yaml` and merge.
    - Wait for the rollout: `kubectl -n mentorship-backend rollout status deploy/lfx-mentorship-backend`.
    - Confirm no running pod logs `email restricted to EMAIL_ALLOWED_RECIPIENTS` at startup.
-4. **Send legacy users to the new site.** If it was closed in Phase 4, re-enable the frontend ingress first. Then, in Cloudflare, set a permanent redirect from `mentorship.lfx.linuxfoundation.org` to `https://mentorship.linuxfoundation.org`, keeping the path ([03](./03-migration-plan.md) OQ-3). The new hostname already points at the v2 cluster; it needs no DNS change. From this moment writes are live on the new stack.
+4. **Send legacy users to the new site.** If it was closed in Phase 4, re-enable the frontend ingress first. Then, in Cloudflare, set a permanent redirect from `mentorship.lfx.linuxfoundation.org` to `https://mentorship.linuxfoundation.org`, keeping the path and query ([03](./03-migration-plan.md) OQ-3). IT owns the Cloudflare change; line it up with them ahead of release day. The new hostname already points at the v2 cluster; it needs no DNS change. From this moment writes are live on the new stack.
+
+   Cloudflare only swaps the host. The frontend maps the legacy paths (`frontend/server/middleware/legacy-redirects.ts`, tested on prod in Phase 1, step 4), with a 301 on `GET` and `HEAD`:
+   - `/project/{id}[/...]` → `/programs/{id}`, query kept;
+   - `/mentee/{id}[,{projectId}]` → `/mentees/{id}`, query kept;
+   - `/mentor/{id}` → `/mentors/{id}`, query kept;
+   - `/project/applied`, `/mentee/applications`, `/mentee/tasks`, `/participate/**`, `/profile/**`, `/email/**` → `/`, query dropped.
+
+   Ids match on both sides: program UUIDs are kept, and both sites key mentees and mentors by user id. Project sites and docs (CNCF alone has dozens) link to `/project/{id}`, so this mapping must be live before the redirect.
 5. **Rollback:**
    - **Before step 4** it is clean: restore the allowlist if step 3 ran, lift the bucket block if it was applied, and unfreeze legacy.
    - **After step 4** it means removing the redirect and losing any writes made on the new stack since, because no reverse sync exists. Past that point, fix forward.
@@ -286,6 +329,6 @@ The manifest and logs contain user emails. Don't copy them out of the pod unless
 Not built yet; decide before cutover.
 
 1. **No read-only mode in the API.** [03](./03-migration-plan.md) Phase 4 assumes "writes rejected at the API" during verification, but the backend has nothing that does this. `mentorship.linuxfoundation.org` is already public, so the only way to keep users out during verification is to close the frontend (Phase 4, step 1), and even then the API stays reachable. After the legacy redirect, writes are live immediately.
-2. **No sweep for unused copied files** ([03](./03-migration-plan.md) §S3 objects, step 5a). Files copied in the rehearsal for rows later deleted or replaced stay in the new buckets. This is cleanup work, not a blocker.
+2. **No sweep for unused copied files** ([03](./03-migration-plan.md) §S3 objects, step 5a). Files copied in the test import for rows later deleted or replaced stay in the new buckets. This is cleanup work, not a blocker.
 3. **No invitation-token backfill** ([03](./03-migration-plan.md), "Invitation tokens"). Invite links sent from legacy before the freeze won't work on the new stack. The documented fallback is to stop sending invites when the freeze starts.
 4. **About 32,000 quarantined tasks** (about 11%) have no matching application. They are kept in `quarantined_tasks`, not lost, but someone should decide whether that is acceptable for go-live.

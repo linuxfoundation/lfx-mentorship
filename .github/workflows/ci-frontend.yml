@@ -23,9 +23,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # No test runner is wired up in frontend/package.json yet, so this job lints,
-  # checks formatting, and builds — the checks that exist today. Add a test step
-  # here once a runner is configured.
   check:
     name: Lint & Build
     runs-on: ubuntu-latest
@@ -58,6 +55,10 @@ jobs:
       - name: Check formatting
         working-directory: frontend
         run: pnpm format:check
+
+      - name: Test
+        working-directory: frontend
+        run: pnpm test
 
       - name: Build
         working-directory: frontend
