@@ -172,7 +172,7 @@ func TestE2EFunding(t *testing.T) {
 		if len(txns.Individual) != 2 || len(txns.Organization) != 3 {
 			t.Fatalf("transactions: %+v", txns)
 		}
-		anon.mustJSON(t, http.MethodGet, "/programs/"+p.Slug+"/transactions?limit=0", nil, http.StatusOK, &txns)
+		anon.mustJSON(t, http.MethodGet, "/programs/"+p.ID+"/transactions?limit=0", nil, http.StatusOK, &txns)
 		anon.call(t, http.MethodGet, "/programs/"+p.ID+"/transactions?limit=x", nil).expect(http.StatusBadRequest)
 	})
 

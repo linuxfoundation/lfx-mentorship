@@ -143,7 +143,7 @@ func TestE2EProgramLifecycle(t *testing.T) {
 			t.Fatalf("resolve: %q", resolved.ID)
 		}
 		anonymous().mustJSON(t, http.MethodGet, "/programs/resolve/"+id, nil, http.StatusOK, &resolved)
-		anonymous().call(t, http.MethodGet, "/programs/lifecycle-program", nil).expect(http.StatusOK)
+		anonymous().call(t, http.MethodGet, "/programs/"+id, nil).expect(http.StatusOK)
 		var list programPage
 		anonymous().mustJSON(t, http.MethodGet, "/programs?search=Lifecycle", nil, http.StatusOK, &list)
 		if !contains(list.ids(), id) || list.Meta.Total != 1 {
@@ -417,7 +417,7 @@ func TestE2EProgramReadModels(t *testing.T) {
 			ID      string `json:"id"`
 			Mentors []any  `json:"mentors"`
 		}
-		anonymous().mustJSON(t, http.MethodGet, "/programs/"+p.Slug+"/catalog", nil, http.StatusOK, &item)
+		anonymous().mustJSON(t, http.MethodGet, "/programs/"+p.ID+"/catalog", nil, http.StatusOK, &item)
 		if item.ID != p.ID || item.Mentors == nil {
 			t.Fatalf("catalog item: %+v", item)
 		}
@@ -440,7 +440,7 @@ func TestE2EProgramReadModels(t *testing.T) {
 			Data []any `json:"data"`
 		}
 		anonymous().mustJSON(t, http.MethodGet, "/programs/"+p.ID+"/mentees", nil, http.StatusOK, &mentees)
-		anonymous().call(t, http.MethodGet, "/programs/no-such-slug/mentees", nil).expect(http.StatusNotFound)
+		anonymous().call(t, http.MethodGet, "/programs/00000000-0000-4000-8000-000000000000/mentees", nil).expect(http.StatusNotFound)
 	})
 
 	t.Run("management summary and enrollment template", func(t *testing.T) {

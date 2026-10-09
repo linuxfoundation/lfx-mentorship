@@ -79,7 +79,6 @@ func TestE2EProgramTerms(t *testing.T) {
 		if got.ID != created.ID || got.DiscoveryLabel == "" {
 			t.Fatalf("get: %+v", got)
 		}
-		anonymous().mustJSON(t, http.MethodGet, "/programs/"+p.Slug+"/terms/"+created.ID, nil, http.StatusOK, &got)
 		other := publishProgram(t, admin, "Other Terms Program")
 		anonymous().call(t, http.MethodGet, "/programs/"+other.ID+"/terms/"+created.ID, nil).expect(http.StatusNotFound)
 		admin.call(t, http.MethodPatch, "/programs/"+other.ID+"/terms/"+created.ID, map[string]any{"name": "x"}).expect(http.StatusNotFound)
