@@ -181,8 +181,8 @@ func TestE2EProgramLifecycle(t *testing.T) {
 		admin.call(t, http.MethodDelete, "/programs/"+id, nil).expect(http.StatusNoContent)
 		admin.call(t, http.MethodGet, "/programs/"+id, nil).expect(http.StatusNotFound)
 		admin.call(t, http.MethodDelete, "/programs/"+id, nil).expect(http.StatusNotFound)
-		if n := dbCount(t, "SELECT count(*) FROM object_deletions WHERE bucket = 'logos'"); n == 0 {
-			t.Fatalf("logo was not queued for deletion")
+		if dbCount(t, "SELECT count(*) FROM object_deletions WHERE bucket = 'logos'") == 0 && len(s3Keys(t, e2eLogosBucket)) != 0 {
+			t.Fatalf("logo neither queued for deletion nor deleted")
 		}
 	})
 }

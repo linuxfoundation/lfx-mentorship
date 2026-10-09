@@ -134,6 +134,7 @@ func TestE2EMenteeJourney(t *testing.T) {
 			t.Fatalf("tasks-submitted email lacks the term: %s", msg.Text)
 		}
 		// Only active program admins are told; mentors are not.
+		awaitEmailsSent(t)
 		if n := len(e2e.fakes.emailsTo(mentor.Email)); n != 1 {
 			t.Fatalf("mentor got %d emails; want only the invite", n)
 		}
@@ -381,6 +382,7 @@ func TestE2EMentorApplication(t *testing.T) {
 		return m.ObjectType == "mentorship_program" && m.Data.UID == p.ID && m.Data.Username == "mentor-applicant"
 	})
 	// Accepting a mentor sends no mentee welcome.
+	awaitEmailsSent(t)
 	if n := len(e2e.fakes.emailsTo(volunteer.Email)); n != 0 {
 		t.Fatalf("mentor applicant got %d emails", n)
 	}

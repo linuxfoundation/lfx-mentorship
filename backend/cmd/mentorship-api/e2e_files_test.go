@@ -86,8 +86,10 @@ func TestE2EProgramLogoFiles(t *testing.T) {
 
 	t.Run("replacing queues the old object for deletion", func(t *testing.T) {
 		uploadLogo(t, admin, p.ID).expect(http.StatusCreated)
-		if n := dbCount(t, "SELECT count(*) FROM object_deletions WHERE bucket = 'logos' AND state = 'pending' AND next_attempt_at <= NOW() + interval '1 minute'"); n != 1 {
-			t.Fatalf("%d deletions due; want the replaced logo", n)
+		// The relay may already have deleted it, leaving only the new logo.
+		due := dbCount(t, "SELECT count(*) FROM object_deletions WHERE bucket = 'logos' AND next_attempt_at <= NOW() + interval '1 minute'")
+		if due != 1 && len(s3Keys(t, e2eLogosBucket)) != 1 {
+			t.Fatalf("%d deletions due and the old logo is still stored; want the replaced logo queued or deleted", due)
 		}
 		// The deletion relay polls every objectDeletionRelayInterval.
 		eventually(t, objectDeletionRelayInterval+5*time.Second, "the replaced logo to be deleted from the bucket", func() bool {
@@ -176,8 +178,9 @@ func TestE2ETaskFiles(t *testing.T) {
 	t.Run("deleting the program queues its task files", func(t *testing.T) {
 		uploadTaskFile(t, mentee, prereq.ID, "again.pdf", pdfBytes()).expect(http.StatusCreated)
 		admin.call(t, http.MethodDelete, "/programs/"+p.ID, nil).expect(http.StatusNoContent)
-		if n := dbCount(t, "SELECT count(*) FROM object_deletions WHERE bucket = 'attachments' AND next_attempt_at <= NOW() + interval '1 minute'"); n == 0 {
-			t.Fatalf("task file not queued for deletion")
+		due := dbCount(t, "SELECT count(*) FROM object_deletions WHERE bucket = 'attachments' AND next_attempt_at <= NOW() + interval '1 minute'")
+		if due == 0 && len(s3Keys(t, e2eFilesBucket)) != 0 {
+			t.Fatalf("task file neither queued for deletion nor deleted")
 		}
 	})
 }
