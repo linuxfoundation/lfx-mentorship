@@ -9,25 +9,29 @@ Related: [08 runbook](./08-prod-migration-runbook.md) holds the commands; this p
 ## Approach
 
 1. **Test on prod data now.** Import legacy prod data into the new prod and test there while legacy keeps serving users. Email reaches only `EMAIL_ALLOWED_RECIPIENTS`, and Self Serve shows Mentorship only to testers (LaunchDarkly `mentorship-enabled`).
-2. **Release with a few hours of downtime.** Close legacy, wipe the test data, run a fresh full import, verify, then send everyone to the new site.
+2. **Release with a few hours of downtime.** Close legacy, wipe the test data, run a fresh full import, verify, then send everyone to the new site. The import itself took about 16 minutes on the smoke run; the window is the file copy, verification and the outbox drain on top.
 
 ## Before release
 
 - [ ] Runbook 08 updated: Phase 1 and the no-go step describe the test import and the `TRUNCATE` (Eng)
 - [ ] Test import into prod, in-cluster, off-hours, platform team warned: about 330k FGA and 330k index messages (Eng)
 - [ ] Import and outbox-drain time measured; it sets the downtime window (Eng)
-- [ ] Legacy-link forwarding in the frontend, as in [lfx-crowdfunding#358](https://github.com/linuxfoundation/lfx-crowdfunding/pull/358): `/project/{id}[/…]` → `/programs/{id}`, `/mentee/{id}[,{projectId}]` → `/mentees/{id}`, `/mentor/{id}` → `/mentors/{id}`, other legacy pages → `/` (Eng)
+- [ ] Duplicate legacy identities resolved: the importer nulls the second user sharing an email or LFID, and that user then cannot sign in to Mentorship; get the counts from the test import, then merge at import or fix by hand (Eng)
+- [ ] Data exceptions from the test import reviewed: programs with no LF project or no admin, pending mentor rows, quarantined tasks (Product, Eng)
+- [ ] Operator with prod `kubectl` access to `mentorship-backend` confirmed for the runner pod (Eng, CloudOps)
+- [ ] Datadog monitors for API errors and outbox dead letters (Eng)
+- [ ] Legacy-link forwarding in the frontend, as in [lfx-crowdfunding#358](https://github.com/linuxfoundation/lfx-crowdfunding/pull/358): `/project/{id}[/…]` → `/programs/{id}`, `/mentee/{id}[,{projectId}]` → `/mentees/{id}`, `/mentor/{id}` → `/mentors/{id}`, other legacy pages → `/` ([#290](https://github.com/linuxfoundation/lfx-mentorship/pull/290), Eng)
 - [ ] Legacy links tested on prod with the legacy path on the new host, including every program link in the [CNCF term docs](https://github.com/cncf/mentoring/tree/main/programs/lfx-mentorship) (Eng)
 - [ ] CNCF `/lfx-url` bot accepts the new URL shape: PR to `cncf/mentoring` accepting both shapes (Eng, CNCF review)
 - [ ] Legacy API consumers known before it is switched off: CNCF automation, and legacy Crowdfunding (`LFF`), which calls `/users/external/{lfid}` (Eng)
-- [ ] Host redirect prepared: `mentorship.lfx.linuxfoundation.org` → `mentorship.linuxfoundation.org`, path kept (owner TBD: DNS is in Cloudflare)
-- [ ] Email: `lfx-mentorship-sent@` group exists and `EMAIL_HR_INBOX` points at it; copy-every-email feature built (DevOps, Eng)
+- [ ] Freeze mechanics ready, with a date and a contact on the day, all reversible: a "not available" notice page on `mentorship.lfx.linuxfoundation.org` and the host redirect to `mentorship.linuxfoundation.org` with the path kept (DevOps, the site is behind Cloudflare); a block on `api.mentorship.lfx.linuxfoundation.org` for anything calling it directly (legacy AWS account, it is API Gateway behind CloudFront, owner TBD)
+- [ ] Email: `lfx-mentorship-sent@` group exists and the copy-every-email feature is built; `EMAIL_HR_INBOX` stays `menteedocs@` (DevOps, Eng)
 - [ ] Release tagged and pinned in [lfx-v2-argocd](https://github.com/linuxfoundation/lfx-v2-argocd) (Eng)
-- [ ] Downtime announced: legacy notice text, CNCF and other program admins (Product)
+- [ ] Program admins and mentees told two weeks ahead: Intercom banner on the legacy site, Slack where they are (CNCF `#mentoring`, LF Slack), email to program admins; say that legacy invitation links sent in the last week stop working after the switch (Product, Support)
 
 ## Release day
 
-1. **Freeze legacy:** notice page on the legacy site, legacy API writes off.
+1. **Freeze legacy:** announce "downtime starts" on Slack and the banner, then DevOps puts up the notice page and blocks the legacy API.
 2. **Wipe test data:** `TRUNCATE` every table in the `mentorship` schema, outboxes included. Leave `public.schema_migrations` alone.
 3. **Copy, import, verify:** runbook Phases 2–5. Both verifiers must pass.
 4. **Re-add program approvers** through `POST /admin/approver-team/members`; the import does not restore them.
@@ -35,12 +39,13 @@ Related: [08 runbook](./08-prod-migration-runbook.md) holds the commands; this p
 6. **Lock the legacy uploads bucket:** runbook Phase 6, step 2.
 7. **Email to everyone:** remove `EMAIL_ALLOWED_RECIPIENTS` and wait for the rollout, runbook Phase 6, step 3.
 8. **Self Serve to everyone:** turn `mentorship-enabled` on for all users.
-9. **Redirect the legacy host**, then re-run the legacy-link test.
+9. **Redirect the legacy host** (DevOps), re-run the legacy-link test, then announce "we're live" with the new URL.
 
-**Rollback:** clean until step 9 (unfreeze legacy, restore the allowlist and flag, lift the bucket block). After step 9, fix forward.
+**Rollback:** clean until step 9 (DevOps removes the notice page and the API block, restore the allowlist and flag, lift the bucket block). After step 9, fix forward.
 
 ## After release
 
 - [ ] Snowflake reads Postgres: Fivetran connector and dbt models ([lfx-self-serve#1532](https://github.com/linuxfoundation/lfx-self-serve/issues/1532), [#1537](https://github.com/linuxfoundation/lfx-self-serve/issues/1537)), within 2–3 days; check Crowdfunding's sync creates no duplicate initiatives
+- [ ] Links we control point at the new host: LFX header, Crowdfunding footer and tools menu; they redirect until then
 - [ ] Legacy decommission per [03](./03-migration-plan.md) Phase 5
 - [ ] Follow up with CNCF on automating program creation
