@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import io
 import os
 import sys
 import uuid
@@ -188,26 +189,31 @@ class TargetMismatchError(Exception):
 def journal_state(report_path: str) -> dict[str, dict]:
     """Return the last well-formed journal line per member.
 
-    A crash mid-write can leave a torn final line; it is ignored unless every
-    field is present, `applied` is a known state and `user_id` matches the
-    member's durable attempt, so it can never mask an `attempted` line.
+    A crash mid-append leaves a final line without its terminator; that line is
+    dropped. Any later line for a member must also carry the exact rollback
+    identity (user_id, run_id, target) of its durable `attempted` line, so no
+    partial record can mask an attempt or poison the target check.
     """
-    state: dict[str, dict] = {}
-    attempted: dict[str, str] = {}
     with open(report_path, newline="") as f:
-        reader = csv.DictReader(f)
-        try:
-            for row in reader:
-                if None in row or any(row.get(k) is None for k in REPORT_FIELDS) or row["applied"] not in APPLIED_STATES:
-                    continue
-                mid = row["member_id"]
-                if mid in attempted and row["user_id"] != attempted[mid]:
-                    continue
-                if row["applied"] == "attempted":
-                    attempted[mid] = row["user_id"]
-                state[mid] = row
-        except csv.Error:
-            pass  # a torn quoted field at EOF; everything before it is intact
+        text = f.read()
+    if not text.endswith("\n"):
+        text = text[: text.rfind("\n") + 1]  # every complete record ends with a newline
+    state: dict[str, dict] = {}
+    attempted: dict[str, tuple[str, str, str]] = {}
+    reader = csv.DictReader(io.StringIO(text, newline=""))
+    try:
+        for row in reader:
+            if None in row or any(row.get(k) is None for k in REPORT_FIELDS) or row["applied"] not in APPLIED_STATES:
+                continue
+            mid = row["member_id"]
+            identity = (row["user_id"], row["run_id"], row["target"])
+            if mid in attempted and identity != attempted[mid]:
+                continue
+            if row["applied"] == "attempted":
+                attempted[mid] = identity
+            state[mid] = row
+    except csv.Error:
+        pass  # malformed quoting; everything before it is intact
     return state
 
 

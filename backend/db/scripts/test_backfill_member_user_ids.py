@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 import csv
+import io
 
 import pytest
 from botocore.exceptions import ClientError
@@ -277,3 +278,59 @@ def test_rollback_refuses_a_journal_for_another_target(tmp_path, other_target):
     with pytest.raises(b.TargetMismatchError):
         b.rollback(table, str(report), other_target)
     assert calls == []
+
+
+def _crash_after_commit(tmp_path, members):
+    table = FakeTable(members)
+    real_update = table.update_item
+
+    def write_then_die(**kwargs):
+        real_update(**kwargs)
+        raise KeyboardInterrupt
+
+    table.update_item = write_then_die
+    report = tmp_path / "report.csv"
+    with pytest.raises(KeyboardInterrupt):
+        b.apply(table, b.plan(members, USERS, PROJECTS, {}), str(report), TARGET)
+    table.update_item = real_update
+    with open(report, newline="") as f:
+        attempt = [r for r in csv.DictReader(f) if r["applied"] == "attempted"][-1]
+    return table, report, attempt
+
+
+def _csv_line(row, terminated=True):
+    buf = io.StringIO()
+    csv.DictWriter(buf, fieldnames=b.REPORT_FIELDS).writerow(row)
+    line = buf.getvalue()
+    return line if terminated else line.rstrip("\r\n")
+
+
+def test_tear_inside_the_final_target_field_neither_masks_nor_blocks_rollback(tmp_path):
+    table, report, attempt = _crash_after_commit(tmp_path, [member("m", "alice@example.org")])
+    torn = _csv_line({**attempt, "applied": "yes"}, terminated=False)[:-5]  # cut inside `target`
+    with open(report, "a", newline="") as f:
+        f.write(torn)
+
+    assert b.journal_state(str(report))["m"]["target"] == TARGET
+    assert b.rollback(table, str(report), TARGET) == {"removed": 1}
+    assert "userId" not in table.items["m"]
+
+
+def test_torn_line_for_an_unresolved_row_does_not_poison_the_target_check(tmp_path):
+    members = [member("m", "alice@example.org"), member("m-ghost", "ghost@example.org")]
+    table, report, attempt = _crash_after_commit(tmp_path, members)
+    torn = _csv_line({**attempt, "member_id": "m-ghost", "result": "no_user_for_email", "user_id": "", "applied": ""}, terminated=False)[:-5]
+    with open(report, "a", newline="") as f:
+        f.write(torn)
+
+    assert b.rollback(table, str(report), TARGET) == {"removed": 1}
+
+
+@pytest.mark.parametrize("field", ["user_id", "run_id", "target"])
+def test_later_line_must_match_the_attempts_full_identity(tmp_path, field):
+    table, report, attempt = _crash_after_commit(tmp_path, [member("m", "alice@example.org")])
+    with open(report, "a", newline="") as f:
+        f.write(_csv_line({**attempt, "applied": "skipped_changed", field: attempt[field] + "-x"}))
+
+    assert b.journal_state(str(report))["m"]["applied"] == "attempted"
+    assert b.rollback(table, str(report), TARGET) == {"removed": 1}
