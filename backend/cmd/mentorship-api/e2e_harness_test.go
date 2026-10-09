@@ -24,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
+	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/email"
 	natsserver "github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
@@ -54,6 +55,7 @@ type environment struct {
 	js      jetstream.JetStream
 	fakes   *fakes
 	s3      gofakes3.Backend
+	email   *email.Notifier
 }
 
 func TestMain(m *testing.M) {
@@ -192,7 +194,7 @@ func startEnvironment(ctx context.Context, dsn string) (*environment, func(), er
 	api := httptest.NewServer(srv.router)
 	closers = append(closers, api.Close)
 
-	return &environment{baseURL: api.URL, pool: srv.pool, key: key, js: js, fakes: fk, s3: s3Backend}, cleanup, nil
+	return &environment{baseURL: api.URL, pool: srv.pool, key: key, js: js, fakes: fk, s3: s3Backend, email: srv.emailNotifier}, cleanup, nil
 }
 
 // reset empties every table and every fake, so each test starts from a blank platform.
@@ -225,7 +227,20 @@ func reset(t *testing.T) {
 		}
 	}
 	e2e.fakes.reset()
-	t.Cleanup(func() { awaitOutboxesDrained(t) })
+	t.Cleanup(func() {
+		awaitEmailsSent(t)
+		awaitOutboxesDrained(t)
+	})
+}
+
+// awaitEmailsSent waits for the notifier's background sends, so none outlives the test that triggered it.
+func awaitEmailsSent(t *testing.T) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := e2e.email.Wait(ctx); err != nil {
+		t.Fatalf("email notifications still in flight: %v", err)
+	}
 }
 
 // awaitOutboxesDrained waits for the relays to publish every outbox row the test wrote,
