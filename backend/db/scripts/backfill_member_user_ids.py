@@ -12,13 +12,16 @@ only email and name. This script links each such row to its real user:
    lfid is the program's lfid (the program's lfid names its creator);
 3. otherwise an explicit --overrides entry; anything else is left untouched.
 
-Dry-run by default. --apply writes only `userId`, guarded by
+Dry-run by default. --apply writes `userId` plus a `userIdBackfillRun` marker
+(this run's id) in one conditional update guarded by
 attribute_not_exists(userId), so re-runs and concurrent app writes are safe.
 The apply report is an append-only journal (an `attempted` line fsynced before
-each write, an outcome line after; the last line per member wins), so
---rollback can undo every committed write even after a crash. Reports contain
-emails: they are created 0600 and never overwritten, so each run needs a new
---report path (reports/ is gitignored).
+each write, an outcome line after; the last line per member wins) that records
+the run id and the fully qualified target (account:region:table). --rollback
+refuses a journal for any other target and removes a value only while it still
+carries this run's marker, so it can never undo another writer's update.
+Reports contain emails: they are created 0600 and never overwritten, so each
+run needs a new --report path (reports/ is gitignored).
 """
 
 from __future__ import annotations
@@ -27,15 +30,18 @@ import argparse
 import csv
 import os
 import sys
+import uuid
 from collections import Counter, defaultdict
 from typing import Any, Iterable
 
 import boto3
 from botocore.exceptions import ClientError
 
-REPORT_FIELDS = ["member_id", "project_id", "member_type", "status", "email", "result", "user_id", "applied", "candidates"]
+REPORT_FIELDS = ["member_id", "project_id", "member_type", "status", "email", "result", "user_id", "applied", "candidates", "run_id", "target"]
 
 RESOLVED = {"email_unique", "email_and_program_lfid", "override"}
+
+RUN_MARKER = "userIdBackfillRun"
 
 
 def _norm(value: Any) -> str:
@@ -131,13 +137,14 @@ def plan(members: Iterable[dict], users: Iterable[dict], projects: Iterable[dict
     return rows
 
 
-def apply(table, rows: list[dict], report_path: str) -> None:
+def apply(table, rows: list[dict], report_path: str, target: str) -> None:
     """Apply resolved rows, journaling to the report so a crash loses nothing.
 
     Each write gets an `attempted` line fsynced *before* the update and an
-    outcome line after; the last line per member wins. Rollback can undo a
-    dangling attempt because its REMOVE is conditional on the planned value.
+    outcome line after; the last line per member wins. Every write also stamps
+    this run's id, which is what lets rollback prove ownership.
     """
+    run_id = str(uuid.uuid4())
     with _open_new(report_path) as f:
         writer = csv.DictWriter(f, fieldnames=REPORT_FIELDS)
         writer.writeheader()
@@ -146,6 +153,7 @@ def apply(table, rows: list[dict], report_path: str) -> None:
         # fsync on the file alone does not persist its new directory entry.
         fsync_dir(os.path.dirname(os.path.abspath(report_path)))
         for row in rows:
+            row["run_id"], row["target"] = run_id, target
             if row["result"] not in RESOLVED:
                 writer.writerow(row)
                 continue
@@ -156,9 +164,9 @@ def apply(table, rows: list[dict], report_path: str) -> None:
             try:
                 table.update_item(
                     Key={"id": row["member_id"]},
-                    UpdateExpression="SET userId = :u",
+                    UpdateExpression=f"SET userId = :u, {RUN_MARKER} = :r",
                     ConditionExpression="attribute_exists(id) AND attribute_not_exists(userId)",
-                    ExpressionAttributeValues={":u": row["user_id"]},
+                    ExpressionAttributeValues={":u": row["user_id"], ":r": run_id},
                 )
                 row["applied"] = "yes"
             except ClientError as e:
@@ -171,6 +179,10 @@ def apply(table, rows: list[dict], report_path: str) -> None:
 
 
 APPLIED_STATES = {"", "attempted", "yes", "skipped_changed"}
+
+
+class TargetMismatchError(Exception):
+    pass
 
 
 def journal_state(report_path: str) -> dict[str, dict]:
@@ -199,18 +211,23 @@ def journal_state(report_path: str) -> dict[str, dict]:
     return state
 
 
-def rollback(table, report_path: str) -> Counter:
+def rollback(table, report_path: str, target: str) -> Counter:
+    state = journal_state(report_path)
+    targets = {row["target"] for row in state.values()}
+    run_ids = {row["run_id"] for row in state.values()}
+    if targets - {target} or len(run_ids) > 1:
+        raise TargetMismatchError(f"journal is for {sorted(targets)} (runs {sorted(run_ids)}), not {target}; refusing to roll back")
     counts: Counter = Counter()
-    for row in journal_state(report_path).values():
-        # `attempted` means the run died mid-write; the conditional REMOVE makes trying it safe.
+    for row in state.values():
+        # `attempted` means the run died mid-write; the run-marker condition makes trying it safe.
         if row["applied"] not in {"yes", "attempted"}:
             continue
         try:
             table.update_item(
                 Key={"id": row["member_id"]},
-                UpdateExpression="REMOVE userId",
-                ConditionExpression="userId = :u",
-                ExpressionAttributeValues={":u": row["user_id"]},
+                UpdateExpression=f"REMOVE userId, {RUN_MARKER}",
+                ConditionExpression=f"userId = :u AND {RUN_MARKER} = :r",
+                ExpressionAttributeValues={":u": row["user_id"], ":r": row["run_id"]},
             )
             counts["removed"] += 1
         except ClientError as e:
@@ -253,9 +270,14 @@ def main() -> int:
 
     dynamo = boto3.resource("dynamodb", region_name=args.region)
     members_table = dynamo.Table(f"{args.table_prefix}-project-members")
+    account = boto3.client("sts", region_name=args.region).get_caller_identity()["Account"]
+    target = f"{account}:{args.region}:{members_table.name}"
 
     if args.rollback:
-        print(f"rollback: {dict(rollback(members_table, args.report))}")
+        try:
+            print(f"rollback: {dict(rollback(members_table, args.report, target))}")
+        except TargetMismatchError as e:
+            parser.error(str(e))
         return 0
     if os.path.exists(args.report):
         parser.error(f"--report {args.report} already exists; use a new path so earlier reports stay intact")
@@ -266,11 +288,12 @@ def main() -> int:
     projects = scan(dynamo.Table(f"{args.table_prefix}-projects"))
     rows = plan(members, users, projects, load_overrides(args.overrides))
     if args.apply:
-        apply(members_table, rows, args.report)
+        apply(members_table, rows, args.report, target)
     else:
         write_report(args.report, rows)
 
     print(f"scanned members={len(members)} users={len(users)} projects={len(projects)}")
+    print(f"target: {target}")
     print(f"members without userId: {len(rows)}")
     for (member_type, result), n in sorted(Counter((r["member_type"], r["result"]) for r in rows).items()):
         print(f"  {member_type:<12} {result:<24} {n}")

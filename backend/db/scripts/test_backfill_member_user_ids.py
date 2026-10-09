@@ -14,6 +14,7 @@ USERS = [
     {"id": "u-shared-2", "email": "shared@example.org", "lfid": "other"},
 ]
 PROJECTS = [{"projectId": "p1", "lfid": "OWNER"}, {"projectId": "p2", "lfid": "nobody"}]
+TARGET = "111111111111:us-east-1:jobspring-prod-project-members"
 
 
 def member(mid, email=None, project="p1", member_type="maintainer", **extra):
@@ -75,15 +76,15 @@ class FakeTable:
 
     def update_item(self, Key, UpdateExpression, ConditionExpression, ExpressionAttributeValues):
         item = self.items.get(Key["id"])
-        value = ExpressionAttributeValues[":u"]
+        value, run = ExpressionAttributeValues[":u"], ExpressionAttributeValues[":r"]
         if UpdateExpression.startswith("SET"):
             if item is None or item.get("userId"):
                 raise ClientError({"Error": {"Code": "ConditionalCheckFailedException"}}, "UpdateItem")
-            item["userId"] = value
+            item["userId"], item[b.RUN_MARKER] = value, run
         else:
-            if item is None or item.get("userId") != value:
+            if item is None or item.get("userId") != value or item.get(b.RUN_MARKER) != run:
                 raise ClientError({"Error": {"Code": "ConditionalCheckFailedException"}}, "UpdateItem")
-            del item["userId"]
+            del item["userId"], item[b.RUN_MARKER]
 
 
 def test_apply_writes_only_resolved_rows_and_respects_concurrent_writes(tmp_path):
@@ -93,7 +94,7 @@ def test_apply_writes_only_resolved_rows_and_respects_concurrent_writes(tmp_path
     table.items["m-race"]["userId"] = "u-set-meanwhile"
     report = tmp_path / "report.csv"
 
-    b.apply(table, rows, str(report))
+    b.apply(table, rows, str(report), TARGET)
 
     applied = {r["member_id"]: r["applied"] for r in rows}
     assert applied == {"m-email": "yes", "m-race": "skipped_changed", "m-unknown": ""}
@@ -101,7 +102,7 @@ def test_apply_writes_only_resolved_rows_and_respects_concurrent_writes(tmp_path
     assert table.items["m-race"]["userId"] == "u-set-meanwhile"
     assert "userId" not in table.items["m-unknown"]
 
-    assert b.rollback(table, str(report)) == {"removed": 1}
+    assert b.rollback(table, str(report), TARGET) == {"removed": 1}
     assert "userId" not in table.items["m-email"]
     assert table.items["m-race"]["userId"] == "u-set-meanwhile"
 
@@ -121,7 +122,7 @@ def test_apply_surfaces_unexpected_errors(code, tmp_path):
             raise ClientError({"Error": {"Code": code}}, "UpdateItem")
 
     with pytest.raises(ClientError):
-        b.apply(Failing(), b.plan([member("m", "alice@example.org")], USERS, PROJECTS, {}), str(tmp_path / "r.csv"))
+        b.apply(Failing(), b.plan([member("m", "alice@example.org")], USERS, PROJECTS, {}), str(tmp_path / "r.csv"), TARGET)
 
 
 def test_partial_apply_failure_keeps_committed_writes_rollbackable(tmp_path):
@@ -138,13 +139,13 @@ def test_partial_apply_failure_keeps_committed_writes_rollbackable(tmp_path):
     report = tmp_path / "report.csv"
 
     with pytest.raises(ClientError):
-        b.apply(table, b.plan(members, USERS, PROJECTS, {}), str(report))
+        b.apply(table, b.plan(members, USERS, PROJECTS, {}), str(report), TARGET)
 
     # m-second's attempt is journaled but the write never happened; rollback's
     # conditional REMOVE skips it and still undoes m-first.
     assert journal_final(report) == {"m-first": "yes", "m-second": "attempted"}
     table.update_item = real_update
-    assert b.rollback(table, str(report)) == {"removed": 1, "skipped_changed": 1}
+    assert b.rollback(table, str(report), TARGET) == {"removed": 1, "skipped_changed": 1}
     assert "userId" not in table.items["m-first"]
 
 
@@ -160,12 +161,12 @@ def test_crash_before_outcome_line_still_rolls_back_the_committed_write(tmp_path
     table.update_item = write_then_die
     report = tmp_path / "report.csv"
     with pytest.raises(KeyboardInterrupt):
-        b.apply(table, b.plan(members, USERS, PROJECTS, {}), str(report))
+        b.apply(table, b.plan(members, USERS, PROJECTS, {}), str(report), TARGET)
 
     assert journal_final(report) == {"m": "attempted"}
     assert table.items["m"]["userId"] == "u-alice"
     table.update_item = real_update
-    assert b.rollback(table, str(report)) == {"removed": 1}
+    assert b.rollback(table, str(report), TARGET) == {"removed": 1}
     assert "userId" not in table.items["m"]
 
 
@@ -190,13 +191,13 @@ def test_torn_final_line_never_masks_a_durable_attempt(tmp_path, torn_tail):
     table.update_item = write_then_die
     report = tmp_path / "report.csv"
     with pytest.raises(KeyboardInterrupt):
-        b.apply(table, b.plan(members, USERS, PROJECTS, {}), str(report))
+        b.apply(table, b.plan(members, USERS, PROJECTS, {}), str(report), TARGET)
     with open(report, "a", newline="") as f:
         f.write(torn_tail)  # the outcome line was cut off by the crash, no trailing newline
 
     assert b.journal_state(str(report))["m"]["applied"] == "attempted"
     table.update_item = real_update
-    assert b.rollback(table, str(report)) == {"removed": 1}
+    assert b.rollback(table, str(report), TARGET) == {"removed": 1}
     assert "userId" not in table.items["m"]
 
 
@@ -204,11 +205,11 @@ def test_reports_are_private_and_never_overwritten(tmp_path):
     rows = b.plan([member("m", "alice@example.org")], USERS, PROJECTS, {})
     table = FakeTable([member("m", "alice@example.org")])
     report = tmp_path / "apply.csv"
-    b.apply(table, rows, str(report))
+    b.apply(table, rows, str(report), TARGET)
     assert report.stat().st_mode & 0o777 == 0o600
 
     with pytest.raises(FileExistsError):
-        b.apply(table, [], str(report))
+        b.apply(table, [], str(report), TARGET)
     with pytest.raises(FileExistsError):
         b.write_report(str(report), [])
     assert journal_final(report) == {"m": "yes"}
@@ -222,6 +223,57 @@ def test_report_directory_is_synced_before_the_first_write(tmp_path, monkeypatch
     table.update_item = lambda **kw: (events.append(("update", kw["Key"]["id"])), real_update(**kw))
     report = tmp_path / "report.csv"
 
-    b.apply(table, b.plan([member("m", "alice@example.org")], USERS, PROJECTS, {}), str(report))
+    b.apply(table, b.plan([member("m", "alice@example.org")], USERS, PROJECTS, {}), str(report), TARGET)
 
     assert events == [("fsync_dir", str(tmp_path)), ("update", "m")]
+
+
+def test_apply_stamps_the_run_marker_with_the_value(tmp_path):
+    table = FakeTable([member("m", "alice@example.org")])
+    report = tmp_path / "report.csv"
+    b.apply(table, b.plan([member("m", "alice@example.org")], USERS, PROJECTS, {}), str(report), TARGET)
+
+    with open(report, newline="") as f:
+        lines = list(csv.DictReader(f))
+    assert {line["target"] for line in lines} == {TARGET}
+    assert table.items["m"][b.RUN_MARKER] == lines[0]["run_id"]
+
+
+def test_rollback_never_removes_another_writers_identical_value(tmp_path):
+    members = [member("m", "alice@example.org")]
+    table = FakeTable(members)
+
+    def die_before_writing(**_):
+        raise KeyboardInterrupt  # journaled `attempted`, but this run's write never happened
+
+    table.update_item, real_update = die_before_writing, table.update_item
+    report = tmp_path / "report.csv"
+    with pytest.raises(KeyboardInterrupt):
+        b.apply(table, b.plan(members, USERS, PROJECTS, {}), str(report), TARGET)
+    # Another writer then sets the very value this run had planned, without our marker.
+    table.items["m"]["userId"] = "u-alice"
+    table.update_item = real_update
+
+    assert b.rollback(table, str(report), TARGET) == {"skipped_changed": 1}
+    assert table.items["m"]["userId"] == "u-alice"
+
+
+@pytest.mark.parametrize(
+    "other_target",
+    [
+        "222222222222:us-east-1:jobspring-prod-project-members",  # wrong account/profile
+        "111111111111:us-west-2:jobspring-prod-project-members",  # wrong region
+        "111111111111:us-east-1:jobspring-dev-project-members",  # wrong --table-prefix
+    ],
+)
+def test_rollback_refuses_a_journal_for_another_target(tmp_path, other_target):
+    members = [member("m", "alice@example.org")]
+    table = FakeTable(members)
+    report = tmp_path / "report.csv"
+    b.apply(table, b.plan(members, USERS, PROJECTS, {}), str(report), TARGET)
+
+    calls = []
+    table.update_item = lambda **kw: calls.append(kw)
+    with pytest.raises(b.TargetMismatchError):
+        b.rollback(table, str(report), other_target)
+    assert calls == []
