@@ -34,7 +34,7 @@ Every check must pass before anything runs.
    kubectl -n mentorship-backend get secret lfx-mentorship-backend-secrets -o json | jq '.data | keys'
    # needs host, port, username, password, dbname, and INDEXER_SERVICE_TOKEN (without it the search-index relay idles)
    ```
-4. **You know what's in the prod database.** The importer updates rows that exist but never deletes rows removed from legacy since an earlier import, so the final run starts from emptied tables (Phase 4, step 6). The row counts are printed by the Phase 2 setup check.
+4. **You know what's in the prod database.** The importer updates rows that exist but never deletes rows removed from legacy since an earlier import, so the final run starts from emptied tables (Phase 4, step 5). The row counts are printed by the Phase 2 setup check.
 5. **Legacy credentials.** The operator can sign in to the legacy-account read-only role (`716487311010`). Use the longest session duration it allows. The file copy can take hours; if the credentials expire it stops, and is re-run.
 6. **Decisions agreed:**
    - About 350 member rows stay unlinked, mostly mentor invites nobody accepted. They are logged as `UNRESOLVED_MEMBER_USER`.
@@ -44,13 +44,13 @@ Every check must pass before anything runs.
 
 ## Phase 1: test import into prod (days before cutover)
 
-A full run in-cluster, with NATS, against prod. It does the slow bulk file copy outside the freeze, and gives real data to test the new site and the legacy links on. Everything it writes to the database is dropped before the final run (Phase 4, step 6); the copied files stay, since the copy skips objects that already exist.
+A full run in-cluster, with NATS, against prod. It does the slow bulk file copy outside the freeze, and gives real data to test the new site and the legacy links on. Everything it writes to the database is dropped before the final run (Phase 4, step 5); the copied files stay, since the copy skips objects that already exist.
 
 The import queues about 330,000 permission (OpenFGA) and 330,000 search-index updates through fga-sync. Run it off-hours, and give the platform team a heads-up first.
 
-1. Do Phase 2 (runner pod), Phase 3 (copy), Phase 4 step 7 (import) and Phase 5 (verify).
+1. Do Phase 2 (runner pod), Phase 3 (copy), Phase 4 step 6 (import) and Phase 5 (verify).
 2. **Record the timings:** the copy, the import (from `import.log`; the smoke import took about 16 minutes, 14 of them scanning DynamoDB) and how long both outboxes take to drain (Phase 5, step 3). The final run is reserved from these.
-3. **Count the duplicate users.** The import keeps a shared email or LFID on one user and clears it on the others, and a user left without one cannot use Mentorship. This lists how many there are, and how many of them hold memberships, applications or tasks; a handful are fixed by hand:
+3. **Count the duplicate users.** The import keeps a shared email or LFID on one user and clears it on the others, and a user left without one cannot use Mentorship. This lists how many there are, and how many of them hold memberships, applications or tasks:
    ```bash
    python - <<'EOF'
    import collections, psycopg2, migrate_dynamo_to_postgres as m
@@ -71,9 +71,9 @@ The import queues about 330,000 permission (OpenFGA) and 330,000 search-index up
        print(f"{column}: {sum(len(i) > 1 for i in holders.values())} shared values; cleared on {cleared} users, {with_data} of them with data")
    EOF
    ```
-   Make each fix as SQL in a `user-fixes.sql` file kept on the operator's machine, never committed (it holds emails), and apply it from there. The final import resets these users, so Phase 4, step 10 applies the same file again.
+   If none of the cleared users hold data, there is nothing to do. Otherwise write the fixes as SQL in a `user-fixes.sql` file kept on the operator's machine, never committed (it holds emails); the final import applies it (Phase 4, step 6). A cleared email only needs the email fixed. A cleared LFID must be fixed through that file, not by hand afterwards: the import skips the tuples of a user without an LFID, and of a whole program when such a user is an active program admin or mentor.
 4. **Test the legacy links** on the new site with real ids, once the frontend release with the path mapping (Phase 6, step 4) is out: for example `https://mentorship.linuxfoundation.org/project/{id}` from a CNCF page must land on that program.
-5. **Note the approvers.** Whoever is added to the approver team while testing (`POST /mentorship/v1/admin/approver-team/members`) must be added again after the final import (Phase 4, step 12). Keep the list: `GET /mentorship/v1/admin/approver-team/members`.
+5. **Note the approvers.** Whoever is added to the approver team while testing (`POST /mentorship/v1/admin/approver-team/members`) must be added again after the final import (Phase 4, step 8). Keep the list: `GET /mentorship/v1/admin/approver-team/members`.
 6. Delete the runner pod (Phase 7).
 
 ## Phase 2: start the runner pod
@@ -116,7 +116,6 @@ kubectl -n mentorship-backend create configmap mentorship-etl-scripts \
   --from-file=backend/db/scripts/legacy_objects.py \
   --from-file=backend/db/scripts/verify_migration.py \
   --from-file=backend/db/scripts/verify_objects.py \
-  --from-file=backend/db/scripts/retract_dropped.py \
   --from-file=backend/db/scripts/requirements.txt \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
@@ -220,12 +219,7 @@ python copy_legacy_objects.py 2>&1 | tee /work/copy.log
 2. **Freeze writes on legacy prod** (the content freeze in [03](./03-migration-plan.md) Phase 4). From here on, legacy is read-only.
 3. **Rebuild the runner.** The test-import pod is gone and its credentials have expired. Using the commit recorded in the test import: refresh the secret (Phase 2, step 1), check out that commit and re-apply the ConfigMap (step 2), recreate the pod and run the setup check (steps 3 and 4).
 4. **Re-run the copy** (Phase 3). It copies only files added since the test import, and it writes the manifest the import needs.
-5. **Stop the backend.** Nothing may write to the database or the outboxes from the snapshot in step 6 until step 10 is done: a write committed in between could publish a row that the truncate then removes from the database but not from OpenFGA or the index, and that the snapshot never saw. Closing the frontend is not enough, since the API keeps its own route. In [lfx-v2-argocd](https://github.com/linuxfoundation/lfx-v2-argocd) `values/prod/lfx-mentorship-backend.yaml`, set `autoscaling.enabled: false`, `replicaCount: 0` and `fundingStatsSyncCronJob.enabled: false`, merge, and wait until `kubectl -n mentorship-backend get pods -l app.kubernetes.io/name=lfx-mentorship-backend` lists none. The relays stop with the pods; the outboxes keep what is queued until step 11.
-6. **Empty the tables.** This drops the test import and anything written on the new site since. First record what was published, so whatever doesn't come back can be retracted in step 9 (run steps 6 to 10 in the same pod: `/work` is lost with it):
-   ```bash
-   python retract_dropped.py snapshot /work/published.json
-   ```
-   Then truncate every table in the `mentorship` schema, the outboxes included, leaving `public.schema_migrations` alone:
+5. **Empty the tables.** This drops the test import and anything written on the new site since. It truncates every table in the `mentorship` schema, the outboxes included, and leaves `public.schema_migrations` alone:
    ```bash
    python - <<'EOF'
    import psycopg2
@@ -236,28 +230,16 @@ python copy_legacy_objects.py 2>&1 | tee /work/copy.log
    cur.execute("SELECT version, dirty FROM public.schema_migrations"); print("schema:", cur.fetchone())
    EOF
    ```
-7. **Import:**
+   OpenFGA tuples and search documents of rows that don't come back (test data, anything deleted in legacy since) stay behind. Nobody sees them: Self Serve reads its lists from the API, not the index.
+6. **Import:**
    ```bash
    python migrate_dynamo_to_postgres.py 2>&1 | tee /work/import.log
    ```
    The import is all or nothing: if any part fails, nothing is saved. Fix the cause and re-run.
-8. **If needed, link specific members by hand.** Write a CSV with the header `member_id,user_id` to `/work/overrides.csv`, then re-run step 7 with `MEMBER_USER_OVERRIDES=/work/overrides.csv`. Overrides only apply where automatic matching failed.
-9. **Retract what didn't come back.** The truncate does not reach OpenFGA or the search index, so a program, application or task from step 6's snapshot that the import didn't bring back (test data, anything deleted in legacy since) would stay searchable to whoever its old tuples authorize. This queues `delete_access` and an index `deleted` for each of those rows, and a membership removal for each approver in the snapshot (step 12 adds them back):
-   ```bash
-   python retract_dropped.py retract /work/published.json
-   ```
-10. **Re-apply the duplicate-user fixes** from Phase 1, step 3. The truncate and import reset every user's email and LFID to the legacy values, so a fix made only in Postgres is gone. Copy the fixes file in (`kubectl cp user-fixes.sql mentorship-backend/mentorship-etl:/work/`), apply it, and queue the derived state again so the fixed users' permissions are published. The import's queue has not been sent while the backend is stopped, so this updates the queued entries rather than adding messages:
-   ```bash
-   python - <<'EOF'
-   import psycopg2, migrate_dynamo_to_postgres as m
-   c = psycopg2.connect(""); cur = c.cursor()
-   cur.execute(open("/work/user-fixes.sql").read())
-   m.seed_derived_state(cur); c.commit()
-   EOF
-   ```
-   Then re-run the Phase 1, step 3 count: `with data` must be back to what was accepted there.
-11. **Start the backend.** Revert the step 5 change in lfx-v2-argocd and wait for `kubectl -n mentorship-backend rollout status deploy/lfx-mentorship-backend`. The relays then send everything steps 7 to 10 queued; Phase 5, step 3 checks that the outboxes drain.
-12. **Re-add the approvers.** Step 6 also emptied `mentorship_approver_team_members`, which only the admin API fills and the import never recreates. Add the same people as during the test import (Phase 1, step 5), each with `POST /mentorship/v1/admin/approver-team/members` and `{"user_id": "..."}`. This supersedes step 9's removal for them. Until then nobody can approve new programs.
+
+   If Phase 1, step 3 left duplicate users to fix, copy the fixes in first (`kubectl cp user-fixes.sql mentorship-backend/mentorship-etl:/work/`) and run the import with `USER_FIXES=/work/user-fixes.sql`. The import applies them inside its transaction, before it queues the permissions, so the fixed users get their tuples.
+7. **If needed, link specific members by hand.** Write a CSV with the header `member_id,user_id` to `/work/overrides.csv`, then re-run step 6 with `MEMBER_USER_OVERRIDES=/work/overrides.csv`. Overrides only apply where automatic matching failed.
+8. **Re-add the approvers.** Step 5 also emptied `mentorship_approver_team_members`, which only the admin API fills and the import never recreates. Add the same people as during the test import (Phase 1, step 5), each with `POST /mentorship/v1/admin/approver-team/members` and `{"user_id": "..."}`. Until then nobody can approve new programs.
 
 ## Phase 5: verify (before go/no-go)
 
@@ -315,7 +297,7 @@ python copy_legacy_objects.py 2>&1 | tee /work/copy.log
 
 The API has no read-only mode (see [Gaps](#gaps)), so the decision is made **before** legacy users are sent to the new stack. Once the legacy hostname redirects, users write to Postgres only, and rollback is no longer clean ([03](./03-migration-plan.md) Phase 4 and "Rollback").
 
-1. **Go/no-go**, on the Phase 5 results. **Go** requires both `verify_migration.py` and `verify_objects.py` to pass (Phase 5, steps 4 and 5), and the approvers to be back (Phase 4, step 12) and the dropped rows retracted (step 9).
+1. **Go/no-go**, on the Phase 5 results. **Go** requires both `verify_migration.py` and `verify_objects.py` to pass (Phase 5, steps 4 and 5), and the approvers to be back (Phase 4, step 8).
    - **No-go:** unfreeze legacy and stop. Legacy still holds every write. If the new site was left open, the imported data was visible on it, and any writes made there are lost: the next attempt starts again at Phase 4, which empties the tables.
 2. **Lock the legacy uploads bucket:** turn on S3 Block Public Access for `jobspring-prod-uploads` (legacy account). This can be reversed and nothing is deleted.
 3. **Let email reach real users**, before anyone is sent to the new site. Until this step, every notification to an address not on `EMAIL_ALLOWED_RECIPIENTS` is dropped, not queued, so a real write made before it rolls out would lose its email for good.

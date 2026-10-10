@@ -84,6 +84,7 @@ Usage
   export LOGOS_S3_BUCKET=... ATTACHMENTS_S3_BUCKET=...   # must match the manifest
   export NATS_URL=nats://...   # platform NATS, to verify project parents; unset leaves programs unmapped
   export MEMBER_USER_OVERRIDES=overrides.csv   # optional: member_id,user_id for rows matching cannot settle
+  export USER_FIXES=user-fixes.sql   # optional: SQL fixing users whose duplicate email or LFID was cleared
 
   pip install boto3 psycopg2-binary nats-py
   python3 backend/db/scripts/copy_legacy_objects.py
@@ -138,6 +139,7 @@ LOGOS_S3_BUCKET = os.environ.get("LOGOS_S3_BUCKET", "").strip()
 ATTACHMENTS_S3_BUCKET = os.environ.get("ATTACHMENTS_S3_BUCKET", "").strip()
 NATS_URL = os.environ.get("NATS_URL", "").strip()
 MEMBER_USER_OVERRIDES = os.environ.get("MEMBER_USER_OVERRIDES", "").strip()
+USER_FIXES = os.environ.get("USER_FIXES", "").strip()
 
 # Stable UUID namespace — must not change between runs to keep IDs deterministic.
 _UUID_NS = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
@@ -1455,6 +1457,18 @@ def migrate_tasks(
     )
 
 
+def apply_user_fixes(cur, path: str) -> None:
+    """Run the operator's SQL for users whose duplicate email or LFID the import cleared; an empty path means none.
+
+    It runs before seed_derived_state, which skips users without an LFID, so a fixed user gets their tuples.
+    """
+    if not path:
+        return
+    with open(path, encoding="utf-8") as f:
+        cur.execute(f.read())
+    log.info("Applied user fixes from %s", path)
+
+
 def seed_derived_state(cur) -> None:
     """Queue current-state FGA and index snapshots through the normal relays."""
     log.info("Queuing derived-state seeds ...")
@@ -1839,6 +1853,7 @@ def main() -> None:
                 application_index = migrate_mentees(cur, mentees_raw, known_term_ids, known_user_ids)
                 reconcile_term_scoped_members(cur, term_scoped_members)
                 migrate_tasks(cur, tasks_raw, application_index, known_term_ids, known_user_ids, files)
+                apply_user_fixes(cur, USER_FIXES)
                 seed_derived_state(cur)
 
         files.report()
