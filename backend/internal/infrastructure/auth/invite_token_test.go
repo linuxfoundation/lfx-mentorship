@@ -61,7 +61,7 @@ func TestValidateInviteToken_EmptySecret(t *testing.T) {
 // needs no secret to compute. This is the case the empty-secret guard exists to
 // prevent, so it is asserted directly rather than only through the round trip.
 func TestValidateInviteToken_EmptySecretRejectsForgedToken(t *testing.T) {
-	forged, err := forgeToken(t, "prog-1", "user-1", time.Now().Add(time.Hour))
+	forged, err := signToken(t, "", "prog-1", "user-1", time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatalf("forge token: %v", err)
 	}
@@ -70,9 +70,9 @@ func TestValidateInviteToken_EmptySecretRejectsForgedToken(t *testing.T) {
 	}
 }
 
-// forgeToken builds a token signed with an empty HMAC key, exactly as an
-// attacker could without knowing any secret.
-func forgeToken(t *testing.T, programID, userID string, expires time.Time) (string, error) {
+// signToken builds a token carrying an exp claim, as tokens issued before expiry
+// was dropped do. An empty secret is what an attacker could sign with.
+func signToken(t *testing.T, secret, programID, userID string, expires time.Time) (string, error) {
 	t.Helper()
 	payload, err := json.Marshal(map[string]any{
 		"program_id": programID,
@@ -83,7 +83,7 @@ func forgeToken(t *testing.T, programID, userID string, expires time.Time) (stri
 		return "", err
 	}
 	encoded := base64.RawURLEncoding.EncodeToString(payload)
-	mac := hmac.New(sha256.New, []byte(""))
+	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte(encoded))
 	return encoded + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
 }
@@ -109,19 +109,21 @@ func TestValidateInviteToken_Malformed(t *testing.T) {
 	}
 }
 
-func TestValidateInviteToken_Expired(t *testing.T) {
-	// Build a token whose expiry is 1 second in the past.
-	// We sign it manually with the public helpers.
-	token, err := auth.GenerateInviteToken("prog-1", "user-1", testSecret)
+func TestValidateInviteToken_OldLinkWithPastExpiryStaysValid(t *testing.T) {
+	token, err := signToken(t, testSecret, "prog-1", "user-1", time.Now().Add(-30*24*time.Hour))
 	if err != nil {
-		t.Fatalf("GenerateInviteToken: %v", err)
+		t.Fatalf("sign token: %v", err)
 	}
-	// Tokens are valid for 7 days; we can't directly set the time, so we just
-	// verify that a well-formed token created now is valid (covers the fast path),
-	// and document that expiry is enforced via the claims.ExpiresAt check.
-	_, _, err = auth.ValidateInviteToken(token, testSecret)
-	if err != nil {
-		t.Errorf("fresh token should be valid, got %v", err)
+	gotProgram, gotUser, err := auth.ValidateInviteToken(token, testSecret)
+	if err != nil || gotProgram != "prog-1" || gotUser != "user-1" {
+		t.Errorf("got %q %q %v; want prog-1 user-1 and no error", gotProgram, gotUser, err)
 	}
-	_ = time.Now() // anchor the import
+}
+
+func TestGenerateInviteToken_SameInviteSameToken(t *testing.T) {
+	first, _ := auth.GenerateInviteToken("prog-1", "user-1", testSecret)
+	second, _ := auth.GenerateInviteToken("prog-1", "user-1", testSecret)
+	if first != second {
+		t.Error("re-inviting the same person must not invalidate the link they already have")
+	}
 }

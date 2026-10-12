@@ -120,8 +120,8 @@ MEMBER_ID=<id from response>
 ### 3b. Mentor accepts via token link
 
 ```bash
-# In real flow the token is in the invite email; here we simulate with a test token
-curl -s -X POST $BASE/mentor-invites/<jwt-token>/accept
+# In real flow the token is in the invite email; the caller must be the invited user
+curl -s -X POST $BASE/mentor-invites/<invite-token>/accept $AUTH
 # Expected: 200, "status":"active"
 
 # Verify

@@ -25,7 +25,6 @@ type stubProgramMemberSvc struct {
 	requestMentor  func(context.Context, string, string) (*models.ProgramMember, error)
 	withdrawMine   func(context.Context, string, string) error
 	delete         func(context.Context, string, string, string) error
-	resendInvite   func(context.Context, string, string, string) error
 	search         func(context.Context, string, string) ([]*models.MentorCandidate, error)
 }
 
@@ -69,12 +68,7 @@ func (s *stubProgramMemberSvc) Delete(ctx context.Context, programID, id, actorI
 	}
 	return nil
 }
-func (s *stubProgramMemberSvc) ResendInvite(ctx context.Context, programID, id, actorID string) error {
-	if s.resendInvite != nil {
-		return s.resendInvite(ctx, programID, id, actorID)
-	}
-	return nil
-}
+
 func (s *stubProgramMemberSvc) ListMine(ctx context.Context, userID string, f models.ProgramMemberFilter) ([]*models.ProgramMembership, *models.PaginationMeta, error) {
 	if s.listMine != nil {
 		return s.listMine(ctx, userID, f)
@@ -309,33 +303,6 @@ func TestProgramMemberHandler_Delete_RejectsMemberFromDifferentProgram(t *testin
 
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("got %d; want 404", w.Code)
-	}
-}
-
-func TestProgramMemberHandler_ResendInvite(t *testing.T) {
-	for name, tc := range map[string]struct {
-		err  error
-		want int
-	}{
-		"sent":        {nil, http.StatusNoContent},
-		"not invited": {domain.ErrInvalidStateTransition, http.StatusConflict},
-	} {
-		var got [3]string
-		h := handler.NewProgramMemberHandler(&stubProgramMemberSvc{
-			resendInvite: func(_ context.Context, programID, id, actorID string) error {
-				got = [3]string{programID, id, actorID}
-				return tc.err
-			},
-		}, &stubProgramSvc{})
-		r := httptest.NewRequest(http.MethodPost, "/v1/programs/p1/members/m1/resend-invite", nil)
-		r = requestWithPrincipal(r, "admin-1")
-		r = requestWithChiParam(r, "id", "p1")
-		r = requestWithChiParam(r, "memberId", "m1")
-		w := httptest.NewRecorder()
-		h.ResendInvite(w, r)
-		if w.Code != tc.want || got != [3]string{"p1", "m1", "admin-1"} {
-			t.Errorf("%s: got %d %v; want %d [p1 m1 admin-1]", name, w.Code, got, tc.want)
-		}
 	}
 }
 

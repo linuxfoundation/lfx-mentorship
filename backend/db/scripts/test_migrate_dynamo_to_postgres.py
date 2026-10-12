@@ -280,3 +280,25 @@ def test_load_member_user_overrides(tmp_path):
     path.write_text("member_id,user_id\n m-a , u-alice \nm-b,\n")
     assert m.load_member_user_overrides(str(path)) == {"m-a": "u-alice"}
     assert m.load_member_user_overrides("") == {}
+
+
+def test_user_fix_restores_an_lfid_before_the_tuples_are_seeded(cursor, tmp_path):
+    from test_verify_migration import APPLICATION, MENTEE, import_sources
+
+    cursor.execute("""TRUNCATE users, user_profiles, programs, program_terms, program_members, applications,
+        tasks, quarantined_tasks, fga_outbox, index_outbox RESTART IDENTITY CASCADE""")
+    import_sources(cursor)
+    cursor.execute("UPDATE users SET lfid = NULL WHERE id = %s", (MENTEE,))
+    cursor.execute("DELETE FROM fga_outbox")
+    fixes = tmp_path / "user-fixes.sql"
+    fixes.write_text(f"UPDATE users SET lfid = 'grace' WHERE id = '{MENTEE}';\n")
+
+    m.apply_user_fixes(cursor, "")
+    m.seed_derived_state(cursor)
+    cursor.execute("SELECT object_uid FROM fga_outbox WHERE object_type = 'mentorship_application'")
+    assert cursor.fetchall() == []
+
+    m.apply_user_fixes(cursor, str(fixes))
+    m.seed_derived_state(cursor)
+    cursor.execute("SELECT object_uid FROM fga_outbox WHERE object_type = 'mentorship_application'")
+    assert cursor.fetchall() == [(APPLICATION,)]

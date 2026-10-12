@@ -94,11 +94,10 @@ Per [04 §decision 7](./04-authorization-model.md), `user` has no relations of i
 | `DELETE /v1/programs/{uid}` | required | `mentorship_program:{uid}` | `writer` | Emit `delete_access` for the program **and** every application and task beneath it, or their tuples are orphaned |
 | `POST /v1/programs/{uid}/skills` | required | `mentorship_program:{uid}` | `writer` | — |
 | `DELETE /v1/programs/{uid}/skills/{skillId}` | required | `mentorship_program:{uid}` | `writer` | Parent-child invariant (rule 2) — already enforced via `AND program_id = $2` |
-| `POST /v1/programs/{uid}/members` | required | `mentorship_program:{uid}` | `writer` | Emits `member_put` on accept, not here — a pending invitation has no tuple ([04 §decision 4](./04-authorization-model.md)) |
+| `POST /v1/programs/{uid}/members` | required | `mentorship_program:{uid}` | `writer` | Emits `member_put` on accept, not here — a pending invitation has no tuple ([04 §decision 4](./04-authorization-model.md)). Inviting a mentor whose row is `invited`, `declined` or `withdrawn` resets it to `invited` and re-sends `mentor_invited`; no tuple change |
 | `GET /v1/programs/{uid}/mentor-candidates` | required | `mentorship_program:{uid}` | `writer` | Invite typeahead. Exact email or LFID lookups reach auth-service over NATS, so only callers who can invite may search |
 | `PATCH /v1/programs/{uid}/members/{memberId}` | required | `mentorship_program:{uid}` | `writer` | Parent-child invariant (rule 2) — already enforced |
 | `DELETE /v1/programs/{uid}/members/{memberId}` | required | `mentorship_program:{uid}` | `writer` | As above. Emit `member_remove` **naming the relation** (`mentor` or `writer`) |
-| `POST /v1/programs/{uid}/members/{memberId}/resend-invite` | required | `mentorship_program:{uid}` | `writer` | Only an `invited` mentor on a `published` program; signs a fresh token and re-sends `mentor_invited`. No tuple change |
 
 ## Term routes
 

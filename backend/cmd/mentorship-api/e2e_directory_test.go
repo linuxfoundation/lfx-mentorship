@@ -6,6 +6,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"testing"
@@ -264,4 +265,86 @@ func TestE2EMachinePrincipals(t *testing.T) {
 	bot.call(t, http.MethodGet, "/me/mentor-programs", nil).expect(http.StatusUnauthorized)
 	bot.call(t, http.MethodGet, "/programs/"+p.ID+"/management-summary", nil).expect(http.StatusOK)
 	bot.call(t, http.MethodGet, "/programs/"+p.ID, nil).expect(http.StatusOK)
+}
+
+// A migrated user keeps their legacy photo in users.avatar_url, while a picture
+// saved on a mentorship page lands in the role profile's logo_url, which must win;
+// with no profile logo (NULL or empty) the legacy photo must still show.
+func TestE2EProfilePicture(t *testing.T) {
+	const mentorAvatar, menteeAvatar = "https://legacy.example.org/mentor.png", "https://legacy.example.org/mentee.png"
+	const mentorLogo, menteeLogo = "https://cdn.example.org/mentor.png", "https://cdn.example.org/mentee.png"
+	logo := func(s string) *string { return &s }
+	for _, tc := range []struct {
+		name                   string
+		mentorLogo, menteeLogo *string // nil stores NULL
+		mentorWant, mentorNot  string
+		menteeWant, menteeNot  string
+	}{
+		{"profile logo wins", logo(mentorLogo), logo(menteeLogo), mentorLogo, mentorAvatar, menteeLogo, menteeAvatar},
+		{"legacy avatar when the profile has none", logo(""), nil, mentorAvatar, mentorLogo, menteeAvatar, menteeLogo},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reset(t)
+			mentor, mentee := directoryFixture(t)
+			for _, p := range []struct {
+				id, profileType, avatar string
+				logo                    *string
+			}{{mentor.ID, "mentor", mentorAvatar, tc.mentorLogo}, {mentee.ID, "mentee", menteeAvatar, tc.menteeLogo}} {
+				if _, err := e2e.pool.Exec(context.Background(), `UPDATE users SET avatar_url = $2 WHERE id = $1`, p.id, p.avatar); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := e2e.pool.Exec(context.Background(), `UPDATE user_profiles SET logo_url = $3 WHERE user_id = $1 AND profile_type = $2`, p.id, p.profileType, p.logo); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var mine struct {
+				Data []struct {
+					ID string `json:"id"`
+				} `json:"data"`
+			}
+			mentor.mustJSON(t, http.MethodGet, "/me/mentor-programs", nil, http.StatusOK, &mine)
+			if len(mine.Data) != 1 {
+				t.Fatalf("mentor programs: %+v", mine)
+			}
+			programID := mine.Data[0].ID
+			admin := signIn(t, "admin")
+
+			check := func(path string, body []byte, showsMentor, showsMentee bool) {
+				t.Helper()
+				for _, c := range []struct {
+					shown     bool
+					want, not string
+				}{{showsMentor, tc.mentorWant, tc.mentorNot}, {showsMentee, tc.menteeWant, tc.menteeNot}} {
+					if c.shown && !strings.Contains(string(body), c.want) {
+						t.Errorf("%s does not show %s: %s", path, c.want, body)
+					}
+					if strings.Contains(string(body), c.not) {
+						t.Errorf("%s shows %s: %s", path, c.not, body)
+					}
+				}
+			}
+			for _, r := range []struct {
+				caller                   *actor
+				path                     string
+				showsMentor, showsMentee bool
+			}{
+				{anonymous(), "/mentors", true, false},
+				{anonymous(), "/mentors/" + mentor.ID, true, true},
+				{anonymous(), "/mentees", false, true},
+				{anonymous(), "/mentees/" + mentee.ID, true, true},
+				{anonymous(), "/programs/catalog", true, false},
+				{anonymous(), "/programs/" + programID + "/mentees", false, true},
+				{admin, "/programs/" + programID + "/applications", false, true},
+				{admin, "/programs/" + programID + "/member-management", true, false},
+			} {
+				check(r.path, r.caller.call(t, http.MethodGet, r.path, nil).expect(http.StatusOK).Body, r.showsMentor, r.showsMentee)
+			}
+
+			// The platform summary only previews graduated mentees.
+			if _, err := e2e.pool.Exec(context.Background(), `UPDATE applications SET status = 'graduated' WHERE user_id = $1`, mentee.ID); err != nil {
+				t.Fatal(err)
+			}
+			check("/summary", anonymous().call(t, http.MethodGet, "/summary", nil).expect(http.StatusOK).Body, false, true)
+		})
+	}
 }

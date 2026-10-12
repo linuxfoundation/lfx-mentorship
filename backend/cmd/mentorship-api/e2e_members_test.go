@@ -85,9 +85,13 @@ func TestE2EMentorInvites(t *testing.T) {
 		if invited.Status != "invited" || invited.UserID != mentor.ID {
 			t.Fatalf("invited: %+v", invited)
 		}
-		admin.call(t, http.MethodPost, members, map[string]any{"user_id": mentor.ID, "member_type": "mentor"}).expect(http.StatusConflict)
+		var again member
+		admin.mustJSON(t, http.MethodPost, members, map[string]any{"user_id": mentor.ID, "member_type": "mentor"}, http.StatusCreated, &again)
+		if again.ID != invited.ID || again.Status != "invited" {
+			t.Fatalf("inviting again must reuse the row: %+v vs %+v", again, invited)
+		}
 
-		token := inviteToken(t, mentor.Email, 1)
+		token := inviteToken(t, mentor.Email, 2)
 		escaped := url.PathEscape(token)
 		someoneElse := signIn(t, "someone-else")
 		someoneElse.call(t, http.MethodPost, "/mentor-invites/"+escaped+"/accept", nil).expect(http.StatusForbidden)
@@ -100,6 +104,7 @@ func TestE2EMentorInvites(t *testing.T) {
 		}
 		awaitEmail(t, admin.Email, "accepted your mentor invitation", 1)
 		mentor.call(t, http.MethodPost, "/mentor-invites/"+escaped+"/accept", nil).expect(http.StatusBadRequest)
+		admin.call(t, http.MethodPost, members, map[string]any{"user_id": mentor.ID, "member_type": "mentor"}).expect(http.StatusConflict)
 
 		var roster struct {
 			Data []member `json:"data"`
@@ -152,6 +157,16 @@ func TestE2EMentorInvites(t *testing.T) {
 		newcomer.call(t, http.MethodPost, "/mentor-invites/"+url.PathEscape(token)+"/decline", nil).expect(http.StatusNoContent)
 		awaitEmail(t, admin.Email, "declined your mentor invitation", 1)
 		newcomer.call(t, http.MethodPost, "/mentor-invites/"+url.PathEscape(token)+"/decline", nil).expect(http.StatusBadRequest)
+
+		// A declined mentor can be invited again, and the link they already have works.
+		before := len(e2e.fakes.emailsTo(newcomer.Email))
+		var again member
+		admin.mustJSON(t, http.MethodPost, members, map[string]any{"lfid": "newcomer", "member_type": "mentor"}, http.StatusCreated, &again)
+		if again.ID != invited.ID || again.Status != "invited" {
+			t.Fatalf("re-invite after decline: %+v", again)
+		}
+		inviteToken(t, newcomer.Email, before+1)
+		newcomer.call(t, http.MethodPost, "/mentor-invites/"+url.PathEscape(token)+"/accept", nil).expect(http.StatusOK)
 	})
 
 	t.Run("invite by email", func(t *testing.T) {
@@ -162,13 +177,6 @@ func TestE2EMentorInvites(t *testing.T) {
 			t.Fatalf("invited by email: %+v", invited)
 		}
 		inviteToken(t, "by-email@lf.example.org", 1)
-
-		t.Run("resend issues a new invite", func(t *testing.T) {
-			admin.call(t, http.MethodPost, members+"/"+invited.ID+"/resend-invite", nil).expect(http.StatusNoContent)
-			inviteToken(t, "by-email@lf.example.org", 2)
-			admin.call(t, http.MethodPost, members+"/00000000-0000-4000-8000-000000000000/resend-invite", nil).expect(http.StatusNotFound)
-			anonymous().call(t, http.MethodPost, members+"/"+invited.ID+"/resend-invite", nil).expect(http.StatusUnauthorized)
-		})
 	})
 
 	t.Run("invite validation", func(t *testing.T) {
@@ -236,8 +244,6 @@ func TestE2EProgramMemberManagement(t *testing.T) {
 		other := publishProgram(t, admin, "Other Members Program")
 		admin.call(t, http.MethodPatch, "/programs/"+other.ID+"/members/"+m.ID, map[string]any{"status": "pending"}).expect(http.StatusNotFound)
 		admin.call(t, http.MethodDelete, "/programs/"+other.ID+"/members/"+m.ID, nil).expect(http.StatusNotFound)
-		admin.call(t, http.MethodPost, "/programs/"+other.ID+"/members/"+m.ID+"/resend-invite", nil).expect(http.StatusNotFound)
-		admin.call(t, http.MethodPost, members+"/"+m.ID+"/resend-invite", nil).expect(http.StatusConflict)
 		anonymous().call(t, http.MethodPatch, members+"/"+m.ID, map[string]any{"status": "active"}).expect(http.StatusUnauthorized)
 	})
 
