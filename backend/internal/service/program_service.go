@@ -644,7 +644,7 @@ func normalizeTaskTemplates(raw, current json.RawMessage) (json.RawMessage, erro
 			return nil, fmt.Errorf("decode current task templates: %w", err)
 		}
 	}
-	customByName := make(map[string]bool, len(existing))
+	customByName := make(map[string]templateFlag, len(existing))
 	for _, template := range existing {
 		customByName[strings.ToLower(strings.TrimSpace(template.Name))] = template.Custom
 	}
@@ -656,7 +656,7 @@ func normalizeTaskTemplates(raw, current json.RawMessage) (json.RawMessage, erro
 		}
 		template := taskTemplate{Name: name, Custom: customByName[strings.ToLower(name)]}
 		if in.Custom != nil {
-			template.Custom = *in.Custom
+			template.Custom = templateFlag(*in.Custom)
 		}
 		if in.Description != nil && strings.TrimSpace(*in.Description) != "" {
 			description := strings.TrimSpace(*in.Description)

@@ -732,6 +732,28 @@ func TestProgramService_Update_NormalizesTaskTemplates(t *testing.T) {
 	}
 }
 
+func TestProgramService_Update_KeepsLegacyStringCustom(t *testing.T) {
+	var captured models.ProgramUpdateInput
+	repo := &stubProgRepo{
+		getByID: func(context.Context, string) (*models.Program, error) {
+			// Imported before the migration normalized templates, so custom is a string.
+			return &models.Program{ID: "prog-1", TaskTemplates: json.RawMessage(`[{"name":"Essay","custom":"true"},{"name":"Resume","custom":"false"}]`)}, nil
+		},
+		update: func(_ context.Context, _ string, input models.ProgramUpdateInput) (*models.Program, error) {
+			captured = input
+			return &models.Program{ID: "prog-1"}, nil
+		},
+	}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	if _, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{TaskTemplates: json.RawMessage(`[{"name":"Essay"},{"name":"Resume"}]`)}); err != nil {
+		t.Fatal(err)
+	}
+	want := `[{"name":"Essay","description":null,"submitFile":null,"dueDate":null,"custom":true},{"name":"Resume","description":null,"submitFile":null,"dueDate":null,"custom":false}]`
+	if string(captured.TaskTemplates) != want {
+		t.Fatalf("task templates = %s; want %s", captured.TaskTemplates, want)
+	}
+}
+
 func TestProgramService_Update_EmptyTaskTemplatesClear(t *testing.T) {
 	var captured models.ProgramUpdateInput
 	repo := &stubProgRepo{

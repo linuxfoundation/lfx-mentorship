@@ -656,6 +656,35 @@ func TestApplicationService_Create_WithdrawnReapply_ClonesPrerequisiteTasks(t *t
 	}
 }
 
+func TestApplicationService_Create_ClonesOldFormatTaskTemplates(t *testing.T) {
+	termRepo := &stubTermRepo{getByID: func(_ context.Context, _ string) (*models.ProgramTerm, error) {
+		term := openTerm(time.Now())
+		term.ProgramID = "program-1"
+		return term, nil
+	}}
+	repo := &stubAppRepo{
+		findByTermAndUser: func(_ context.Context, _, _ string, _ models.ApplicationRole) (*models.Application, error) {
+			return &models.Application{ID: "old", Status: models.ApplicationStatusWithdrawn}, nil
+		},
+	}
+	var cloned []models.TaskCreateInput
+	repo.reapplyWithTasks = func(_ context.Context, _ string, _ string, _ models.ApplicationCreateInput, tasks []models.TaskCreateInput) (*models.Application, error) {
+		cloned = tasks
+		return &models.Application{ID: "new", ProgramTermID: "term-1", UserID: "u1", Status: models.ApplicationStatusPending, Role: models.ApplicationRoleMentee}, nil
+	}
+	// Imported before the migration normalized templates: string custom flags and blank values.
+	progRepo := &stubProgRepo{getByID: func(_ context.Context, _ string) (*models.Program, error) {
+		return &models.Program{TaskTemplates: json.RawMessage(`[{"name":"Essay","submitFile":"","dueDate":"","custom":"true"},{"name":"Resume","custom":"false"},{"name":"Bio","custom":"undefined"}]`)}, nil
+	}}
+	svc := newApplicationSvc(repo, &stubTaskRepo{}, termRepo, progRepo)
+	if _, err := svc.Create(context.Background(), "term-1", models.ApplicationCreateInput{UserID: "u1", Role: models.ApplicationRoleMentee}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if len(cloned) != 3 || cloned[0].SubmitFile != nil || cloned[0].DueDate != nil || !cloned[0].Custom || cloned[1].Custom || cloned[2].Custom {
+		t.Fatalf("cloned tasks = %+v; want blank values cleared and only \"true\" custom", cloned)
+	}
+}
+
 func TestApplicationService_Update_ValidTransition(t *testing.T) {
 	var expected *models.ApplicationStatus
 	repo := &stubAppRepo{

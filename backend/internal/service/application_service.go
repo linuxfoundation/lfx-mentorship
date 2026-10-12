@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -32,11 +33,37 @@ type ApplicationService struct {
 
 // taskTemplate mirrors the shape stored in programs.task_templates JSONB.
 type taskTemplate struct {
-	Name        string  `json:"name"`
-	Description *string `json:"description"`
-	SubmitFile  *string `json:"submitFile"`
-	DueDate     *string `json:"dueDate"`
-	Custom      bool    `json:"custom"`
+	Name        string       `json:"name"`
+	Description *string      `json:"description"`
+	SubmitFile  *string      `json:"submitFile"`
+	DueDate     *string      `json:"dueDate"`
+	Custom      templateFlag `json:"custom"`
+}
+
+// templateFlag is a task template's custom flag. Templates imported before the migration
+// normalized them store it as the legacy string "true", "false" or "undefined"; only "true" is set.
+type templateFlag bool
+
+func (f *templateFlag) UnmarshalJSON(data []byte) error {
+	var value bool
+	if err := json.Unmarshal(data, &value); err == nil {
+		*f = templateFlag(value)
+		return nil
+	}
+	var legacy string
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		return err
+	}
+	*f = templateFlag(strings.EqualFold(strings.TrimSpace(legacy), "true"))
+	return nil
+}
+
+// nonBlank returns value, or nil when it is unset or blank, as old-format templates store "".
+func nonBlank(value *string) *string {
+	if value == nil || strings.TrimSpace(*value) == "" {
+		return nil
+	}
+	return value
 }
 
 // NewApplicationService returns an ApplicationService.
@@ -299,9 +326,9 @@ func (s *ApplicationService) prerequisiteTasks(ctx context.Context, programTermI
 			AssigneeID:    input.UserID,
 			Name:          &name,
 			Description:   tmpl.Description,
-			SubmitFile:    tmpl.SubmitFile,
-			DueDate:       tmpl.DueDate,
-			Custom:        tmpl.Custom,
+			SubmitFile:    nonBlank(tmpl.SubmitFile),
+			DueDate:       nonBlank(tmpl.DueDate),
+			Custom:        bool(tmpl.Custom),
 			Category:      &category,
 			Status:        models.TaskStatusIncomplete,
 			CreatedBy:     &createdBy,
