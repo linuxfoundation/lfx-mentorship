@@ -103,30 +103,30 @@ Same field also present in items returned by `GET /v1/programs/{id}/terms`.
 
 ## Mentor Invitation Token Endpoints
 
-Two public, token-authenticated endpoints for email link redemption.
+Two token endpoints for email link redemption; each also needs the invited user's JWT.
 
 ### Accept invitation
 
 ```
-POST /v1/mentor-invites/{token}/accept   [public]
+POST /v1/mentor-invites/{token}/accept   [token + JWT]
 ```
 
-- Validates JWT `token` (issued at invite time, 7-day TTL, contains `program_id` + `user_id`)
+- Validates the signed `token` (issued at invite time, no expiry, contains `program_id` + `user_id`); the caller must be signed in as that user
 - Sets `program_members.status = active` for the matching record
 - Notifies the program program_admin (in-process hook)
 
 **Responses**:
 - `200 OK` — `{ "status": "active", "program_id": "..." }`
-- `410 Gone` — token expired or already redeemed
-- `404 Not Found` — no matching `program_members` record
+- `400 Bad Request` — invalid token, or no pending invite (already answered or revoked)
+- `403 Forbidden` — the token belongs to another user
 
 ### Decline invitation
 
 ```
-POST /v1/mentor-invites/{token}/decline  [public]
+POST /v1/mentor-invites/{token}/decline  [token + JWT]
 ```
 
-- Validates JWT token
+- Validates the signed token; the caller must be signed in as the invited user
 - Sets `program_members.status = declined`
 - Notifies the program admin (in-process hook)
 

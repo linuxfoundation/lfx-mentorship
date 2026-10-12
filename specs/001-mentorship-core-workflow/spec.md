@@ -166,7 +166,8 @@ the program_admin can manage the program's visibility and terms throughout its l
   `open`. [NEEDS CLARIFICATION: confirm deleted terms are excluded from open-term
   count and application eligibility]
 - What happens when an invited mentor's token has expired before they respond? →
-  Not specified. [NEEDS CLARIFICATION: token expiry / re-invitation flow undefined]
+  Invite tokens do not expire. A Program Admin resends or re-opens an invite by
+  inviting the same person again (research.md C-5).
 - What happens when a mentee holds a concurrent application on a different program
   and that program is later hidden or archived? → Not specified.
   [NEEDS CLARIFICATION]
