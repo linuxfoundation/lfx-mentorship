@@ -333,5 +333,5 @@ Not built yet; decide before cutover.
 
 1. **No read-only mode in the API.** [03](./03-migration-plan.md) Phase 4 assumes "writes rejected at the API" during verification, but the backend has nothing that does this. `mentorship.linuxfoundation.org` is already public, so the only way to keep users out during verification is to close the frontend (Phase 4, step 1), and even then the API stays reachable. After the legacy redirect, writes are live immediately.
 2. **No sweep for unused copied files** ([03](./03-migration-plan.md) §S3 objects, step 5a). Files copied in the test import for rows later deleted or replaced stay in the new buckets. This is cleanup work, not a blocker.
-3. **No invitation-token backfill** ([03](./03-migration-plan.md), "Invitation tokens"). Invite links sent from legacy before the freeze won't work on the new stack. The documented fallback is to stop sending invites when the freeze starts.
+3. **Legacy invite links are not carried over** ([03](./03-migration-plan.md), "Invitation tokens"). Invite links sent from legacy before the freeze won't work on the new stack; a Program Admin invites the mentor again from Self Serve after go-live.
 4. **About 32,000 quarantined tasks** (about 11%) have no matching application. They are kept in `quarantined_tasks`, not lost, but someone should decide whether that is acceptable for go-live.

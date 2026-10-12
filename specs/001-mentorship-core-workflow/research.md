@@ -74,20 +74,24 @@ accepting an application.
 
 ### C-5 — Invitation token expiry
 
-**Decision**: Manual re-invitation. Invitation tokens are time-limited (7-day TTL) and
-stored in the `program_members` row's invite metadata (not a separate table — the original
-`invitation_tokens` table was removed). If a token expires:
+**Decision**: Invitation tokens do not expire, and a Program Admin re-invites by
+inviting the same person again. The token is an HMAC-signed `{program_id, user_id}`
+embedded in the email link; nothing is stored (the original `invitation_tokens`
+table was removed).
 
-- The `program_members.status` remains `invited`.
-- The accept/decline token links return 410 Gone.
-- The program_admin must remove the `program_members` record and re-invite.
+- An invite stays open until the mentor accepts or declines it, or a Program Admin
+  revokes it (`PATCH` the member to `declined`).
+- `POST /v1/programs/{id}/members` for a mentor whose row is `invited`, `declined`
+  or `withdrawn` sets it back to `invited` and sends the invite email again. That
+  covers a lost email, a revoked invite and a declined one; there is no separate
+  resend route.
 
-**Implementation**: Token expiry is encoded in the signed JWT embedded in the email link.
-The acceptance endpoint validates the JWT and rejects expired tokens with 410. No
-background job required.
+**Rationale**: Accept and decline require the invited user to be signed in and the
+row to still be `invited`, so an old link cannot be used by anyone else or after
+the invite is answered or revoked. An expiry added little beyond the need to resend.
 
-**Alternative considered**: Automatic re-send on expiry — rejected because it adds
-background scheduler complexity with little benefit; manual re-invite is the v1 behavior.
+**Alternative considered**: A 7-day expiry with a resend route, or with the admin
+deleting the row and inviting again — rejected as more steps for the same outcome.
 
 ---
 
@@ -138,12 +142,12 @@ The `discoveryLabel` field on a `ProgramTerm` response is computed server-side f
 `status`, `application_start_date`, `application_end_date`, and the current time. It is
 never persisted. The computation lives in a helper in the `program_term` model package.
 
-### AD-4 — Invitation tokens are signed JWTs in email links
+### AD-4 — Invitation tokens are signed tokens in email links
 
-The tokenised accept/decline link embeds a short-lived JWT (signed with the service's JWT
-secret, 7-day TTL) carrying `{ program_id, user_id, action: "mentor-invite" }`. The
-`/mentor-invites/{token}/accept` and `/mentor-invites/{token}/decline` endpoints are
-**public** (no auth required) because the token itself is the credential.
+The accept/decline link embeds a token signed with `MENTOR_INVITE_SECRET` (HMAC-SHA256,
+no expiry) carrying `{ program_id, user_id }`. The
+`/mentor-invites/{token}/accept` and `/mentor-invites/{token}/decline` endpoints
+also require the invited user's JWT, so the token alone is not a credential.
 
 ### AD-5 — `tasks_submitted` is maintained by the task service
 

@@ -86,60 +86,6 @@ func TestProgramMemberService_Create_LFIDErrors(t *testing.T) {
 	}
 }
 
-func TestProgramMemberService_ResendInvite(t *testing.T) {
-	invited, active := models.ProgramMemberStatusInvited, models.ProgramMemberStatusActive
-	for name, tc := range map[string]struct {
-		member  models.ProgramMember
-		want    error
-		invites int
-	}{
-		"invited mentor":  {models.ProgramMember{ProgramID: "prog-1", UserID: "mentor-1", MemberType: models.MemberTypeMentor, Status: &invited}, nil, 1},
-		"active mentor":   {models.ProgramMember{ProgramID: "prog-1", UserID: "mentor-1", MemberType: models.MemberTypeMentor, Status: &active}, domain.ErrInvalidStateTransition, 0},
-		"program admin":   {models.ProgramMember{ProgramID: "prog-1", UserID: "admin-2", MemberType: models.MemberTypeProgramAdmin, Status: &invited}, domain.ErrInvalidStateTransition, 0},
-		"another program": {models.ProgramMember{ProgramID: "prog-2", UserID: "mentor-1", MemberType: models.MemberTypeMentor, Status: &invited}, domain.ErrProgramMemberNotFound, 0},
-	} {
-		member := tc.member
-		memberRepo := &stubMemberRepo{
-			getByID: func(context.Context, string) (*models.ProgramMember, error) { return &member, nil },
-		}
-		n := &stubNotifier{}
-		err := newMemberSvc(memberRepo, publishedProgRepo(), n).ResendInvite(context.Background(), "prog-1", "member-1", "admin-1")
-		if tc.want == nil && err != nil || tc.want != nil && !errors.Is(err, tc.want) || n.mentorInvitedCalls != tc.invites {
-			t.Errorf("%s: err = %v, invites = %d; want %v, %d", name, err, n.mentorInvitedCalls, tc.want, tc.invites)
-		}
-	}
-}
-
-func TestProgramMemberService_ResendInvite_RequiresPublishedProgram(t *testing.T) {
-	invited := models.ProgramMemberStatusInvited
-	memberRepo := &stubMemberRepo{
-		getByID: func(context.Context, string) (*models.ProgramMember, error) {
-			return &models.ProgramMember{ProgramID: "prog-1", UserID: "mentor-1", MemberType: models.MemberTypeMentor, Status: &invited}, nil
-		},
-	}
-	progRepo := &stubProgRepo{getByID: func(_ context.Context, id string) (*models.Program, error) {
-		return &models.Program{ID: id, Status: models.ProgramStatusArchived}, nil
-	}}
-	n := &stubNotifier{}
-	err := newMemberSvc(memberRepo, progRepo, n).ResendInvite(context.Background(), "prog-1", "member-1", "admin-1")
-	if !errors.Is(err, domain.ErrInvalidStateTransition) || n.mentorInvitedCalls != 0 {
-		t.Errorf("err = %v, invites = %d; want ErrInvalidStateTransition and none", err, n.mentorInvitedCalls)
-	}
-}
-
-func TestProgramMemberService_ResendInvite_RequiresProgramAdmin(t *testing.T) {
-	memberRepo := &stubMemberRepo{
-		findByProgramUser: func(context.Context, string, string) (*models.ProgramMember, error) {
-			return nil, domain.ErrProgramMemberNotFound
-		},
-	}
-	n := &stubNotifier{}
-	err := newMemberSvc(memberRepo, &stubProgRepo{}, n).ResendInvite(context.Background(), "prog-1", "member-1", "someone")
-	if !errors.Is(err, domain.ErrForbidden) || n.mentorInvitedCalls != 0 {
-		t.Fatalf("err = %v, invites = %d; want ErrForbidden and none", err, n.mentorInvitedCalls)
-	}
-}
-
 // ── Create ────────────────────────────────────────────────────────────────────
 
 func TestProgramMemberService_Create_NonPublishedProgram(t *testing.T) {
@@ -236,6 +182,42 @@ func TestProgramMemberService_Create_Mentor_SetsInvitedStatus(t *testing.T) {
 	}
 	if n.mentorInvitedCalls != 1 {
 		t.Errorf("NotifyMentorInvited called %d times; want 1", n.mentorInvitedCalls)
+	}
+}
+
+func TestProgramMemberService_Create_ReinvitesExistingMentor(t *testing.T) {
+	for _, status := range []models.ProgramMemberStatus{"invited", "declined", "withdrawn", "active", "requested", "pending"} {
+		reinvitable := status == "invited" || status == "declined" || status == "withdrawn"
+		var updatedTo models.ProgramMemberStatus
+		var guard []models.ProgramMemberStatus
+		memberRepo := &stubMemberRepo{
+			findByUserAndType: func(context.Context, string, string, models.MemberType) (*models.ProgramMember, error) {
+				return &models.ProgramMember{ID: "member-1", Status: &status}, nil
+			},
+			updateIfStatus: func(_ context.Context, id string, from []models.ProgramMemberStatus, in models.ProgramMemberUpdateInput) (*models.ProgramMember, error) {
+				updatedTo, guard = *in.Status, from
+				return &models.ProgramMember{ID: id, Status: in.Status}, nil
+			},
+			create: func(context.Context, string, models.ProgramMemberCreateInput) (*models.ProgramMember, error) {
+				t.Fatalf("%s: an existing mentor row must not be inserted again", status)
+				return nil, nil
+			},
+		}
+		n := &stubNotifier{}
+		m, err := newMemberSvc(memberRepo, publishedProgRepo(), n).Create(context.Background(), "prog-1", models.ProgramMemberCreateInput{UserID: "mentor-1", MemberType: "mentor"})
+		if reinvitable {
+			if err != nil || m.ID != "member-1" || updatedTo != "invited" || n.mentorInvitedCalls != 1 {
+				t.Errorf("%s: err = %v, row = %v, status = %q, invites = %d; want the row back to invited and one email", status, err, m, updatedTo, n.mentorInvitedCalls)
+			}
+			// A concurrent answer between the read and the write must fail the update, not be overwritten.
+			if len(guard) != 1 || guard[0] != status {
+				t.Errorf("%s: update guarded by %v; want only the observed status", status, guard)
+			}
+			continue
+		}
+		if !errors.Is(err, domain.ErrConflict) || updatedTo != "" || n.mentorInvitedCalls != 0 {
+			t.Errorf("%s: err = %v, status = %q, invites = %d; want ErrConflict and nothing changed", status, err, updatedTo, n.mentorInvitedCalls)
+		}
 	}
 }
 

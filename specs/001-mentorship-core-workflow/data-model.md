@@ -225,5 +225,4 @@ any state ──admin/mentor──► incomplete  (reset)
 | `ErrApplicationNotFound` | 404 | Application ID does not exist |
 | `ErrMemberNotFound` | 404 | Member ID does not exist |
 | `ErrTaskNotFound` | 404 | Task ID does not exist |
-| `ErrInviteExpired` | 410 | Mentor invitation token expired or invalid |
 | `ErrForbidden` | 403 | Caller is not permitted for this action |
