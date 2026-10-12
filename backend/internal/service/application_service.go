@@ -58,9 +58,19 @@ func (f *templateFlag) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// nonBlank returns value, or nil when it is unset or blank, as old-format templates store "".
-func nonBlank(value *string) *string {
-	if value == nil || strings.TrimSpace(*value) == "" {
+// cloneSubmitFile keeps a template's submitFile only when it is "required". Templates saved before
+// the migration and update normalized them may hold "" or another value, cloned as no upload.
+func cloneSubmitFile(value *string) *string {
+	if value == nil || *value != taskSubmitFileRequired {
+		return nil
+	}
+	return value
+}
+
+// cloneDueDate keeps a template's due date only when it is a YYYY-MM-DD date, as
+// tasks_due_date_check requires; anything else is cloned as no due date, as the migration does.
+func cloneDueDate(value *string) *string {
+	if value == nil || validateDueDate(value) != nil {
 		return nil
 	}
 	return value
@@ -326,8 +336,8 @@ func (s *ApplicationService) prerequisiteTasks(ctx context.Context, programTermI
 			AssigneeID:    input.UserID,
 			Name:          &name,
 			Description:   tmpl.Description,
-			SubmitFile:    nonBlank(tmpl.SubmitFile),
-			DueDate:       nonBlank(tmpl.DueDate),
+			SubmitFile:    cloneSubmitFile(tmpl.SubmitFile),
+			DueDate:       cloneDueDate(tmpl.DueDate),
 			Custom:        bool(tmpl.Custom),
 			Category:      &category,
 			Status:        models.TaskStatusIncomplete,

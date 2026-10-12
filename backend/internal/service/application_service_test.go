@@ -672,16 +672,32 @@ func TestApplicationService_Create_ClonesOldFormatTaskTemplates(t *testing.T) {
 		cloned = tasks
 		return &models.Application{ID: "new", ProgramTermID: "term-1", UserID: "u1", Status: models.ApplicationStatusPending, Role: models.ApplicationRoleMentee}, nil
 	}
-	// Imported before the migration normalized templates: string custom flags and blank values.
+	// Saved before the migration and update normalized templates: string custom flags, and
+	// blank or invalid submitFile and dueDate values.
 	progRepo := &stubProgRepo{getByID: func(_ context.Context, _ string) (*models.Program, error) {
-		return &models.Program{TaskTemplates: json.RawMessage(`[{"name":"Essay","submitFile":"","dueDate":"","custom":"true"},{"name":"Resume","custom":"false"},{"name":"Bio","custom":"undefined"}]`)}, nil
+		return &models.Program{TaskTemplates: json.RawMessage(`[
+			{"name":"Essay","submitFile":"","dueDate":"","custom":"true"},
+			{"name":"Resume","submitFile":"yes","dueDate":"soon","custom":"false"},
+			{"name":"Bio","submitFile":"required","dueDate":"2026-05-01","custom":"undefined"}
+		]`)}, nil
 	}}
 	svc := newApplicationSvc(repo, &stubTaskRepo{}, termRepo, progRepo)
 	if _, err := svc.Create(context.Background(), "term-1", models.ApplicationCreateInput{UserID: "u1", Role: models.ApplicationRoleMentee}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if len(cloned) != 3 || cloned[0].SubmitFile != nil || cloned[0].DueDate != nil || !cloned[0].Custom || cloned[1].Custom || cloned[2].Custom {
-		t.Fatalf("cloned tasks = %+v; want blank values cleared and only \"true\" custom", cloned)
+	if len(cloned) != 3 {
+		t.Fatalf("cloned %d tasks; want 3", len(cloned))
+	}
+	for i, task := range cloned[:2] {
+		if task.SubmitFile != nil || task.DueDate != nil {
+			t.Fatalf("task %d submit_file %v, due_date %v; want blank and invalid values cleared", i, task.SubmitFile, task.DueDate)
+		}
+	}
+	if cloned[2].SubmitFile == nil || *cloned[2].SubmitFile != "required" || cloned[2].DueDate == nil || *cloned[2].DueDate != "2026-05-01" {
+		t.Fatalf("task 2 submit_file %v, due_date %v; want valid values kept", cloned[2].SubmitFile, cloned[2].DueDate)
+	}
+	if !cloned[0].Custom || cloned[1].Custom || cloned[2].Custom {
+		t.Fatalf("custom = %v, %v, %v; want only the \"true\" template custom", cloned[0].Custom, cloned[1].Custom, cloned[2].Custom)
 	}
 }
 
