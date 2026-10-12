@@ -189,12 +189,13 @@ func TestProgramMemberService_Create_ReinvitesExistingMentor(t *testing.T) {
 	for _, status := range []models.ProgramMemberStatus{"invited", "declined", "withdrawn", "active", "requested", "pending"} {
 		reinvitable := status == "invited" || status == "declined" || status == "withdrawn"
 		var updatedTo models.ProgramMemberStatus
+		var guard []models.ProgramMemberStatus
 		memberRepo := &stubMemberRepo{
 			findByUserAndType: func(context.Context, string, string, models.MemberType) (*models.ProgramMember, error) {
 				return &models.ProgramMember{ID: "member-1", Status: &status}, nil
 			},
-			updateIfStatus: func(_ context.Context, id string, _ []models.ProgramMemberStatus, in models.ProgramMemberUpdateInput) (*models.ProgramMember, error) {
-				updatedTo = *in.Status
+			updateIfStatus: func(_ context.Context, id string, from []models.ProgramMemberStatus, in models.ProgramMemberUpdateInput) (*models.ProgramMember, error) {
+				updatedTo, guard = *in.Status, from
 				return &models.ProgramMember{ID: id, Status: in.Status}, nil
 			},
 			create: func(context.Context, string, models.ProgramMemberCreateInput) (*models.ProgramMember, error) {
@@ -207,6 +208,10 @@ func TestProgramMemberService_Create_ReinvitesExistingMentor(t *testing.T) {
 		if reinvitable {
 			if err != nil || m.ID != "member-1" || updatedTo != "invited" || n.mentorInvitedCalls != 1 {
 				t.Errorf("%s: err = %v, row = %v, status = %q, invites = %d; want the row back to invited and one email", status, err, m, updatedTo, n.mentorInvitedCalls)
+			}
+			// A concurrent answer between the read and the write must fail the update, not be overwritten.
+			if len(guard) != 1 || guard[0] != status {
+				t.Errorf("%s: update guarded by %v; want only the observed status", status, guard)
 			}
 			continue
 		}

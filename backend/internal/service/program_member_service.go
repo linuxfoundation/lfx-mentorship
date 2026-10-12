@@ -244,7 +244,7 @@ func (s *ProgramMemberService) reinvite(ctx context.Context, programID, userID s
 		return nil, fmt.Errorf("%w: user is already a mentor or has asked to join this program", domain.ErrConflict)
 	}
 	invited := models.ProgramMemberStatusInvited
-	m, err := s.repo.UpdateIfStatus(ctx, existing.ID, reinvitableStatuses, models.ProgramMemberUpdateInput{Status: &invited})
+	m, err := s.repo.UpdateIfStatus(ctx, existing.ID, []models.ProgramMemberStatus{*existing.Status}, models.ProgramMemberUpdateInput{Status: &invited})
 	if err != nil {
 		return nil, fmt.Errorf("re-invite mentor: %w", err)
 	}

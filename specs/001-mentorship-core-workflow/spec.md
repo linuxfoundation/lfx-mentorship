@@ -391,6 +391,6 @@ the program_admin can manage the program's visibility and terms throughout its l
 | 2 | Edge Cases | Should reviewer actions be blocked on programs not in `submitted` status, and if so, how should that be surfaced? |
 | 3 | Edge Cases | Does an application in `hold` also block hiding a program, alongside `pending`, `accepted`, and `graduated`? |
 | 4 | Edge Cases | Are `deleted` terms excluded from both the 4-open-term cap and mentee application eligibility? |
-| 5 | Mentor Invitation | What happens when an invitation token expires before the mentor responds — is re-invitation automatic or manual? |
+| 5 | Mentor Invitation | ~~What happens when an invitation token expires before the mentor responds — is re-invitation automatic or manual?~~ Answered: tokens do not expire; a Program Admin re-invites by inviting the same person again (research.md C-5). |
 | 6 | Mentee Application | What happens to a mentee's other concurrent applications if one of their programs is later hidden or archived? |
 | 7 | Bulk Operations | Does bulk decline apply uniformly to all `pending` applications in a term regardless of `tasks_submitted` state? |
