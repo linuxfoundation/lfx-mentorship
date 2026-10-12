@@ -1103,6 +1103,15 @@ term close and reopen routes. Omit `terms` to leave them unchanged. The
 `<Program>` response does not include terms; read them from
 [`GET /v1/programs/{id}/terms`](#get-v1programsidterms-).
 
+`task_templates` replaces the program's prerequisite templates, the list each new
+mentee application clones into `prerequisite` tasks. Each entry is
+`{name, description, submitFile, dueDate, custom}`: `name` is required and trimmed,
+`submitFile` is `"required"` or blank, and `dueDate` is a `YYYY-MM-DD` date or blank.
+Blank values are stored as `null`. An entry that leaves out `custom` keeps the flag of
+the current template with the same name (ignoring case), or `false` for a new one.
+Tasks already cloned for existing applications are not changed. Omit
+`task_templates` to leave them unchanged.
+
 **Response** `200` → `<Program>`  
 **Errors** `400` (including an `id` that is not an open term of the program, or a
 `project_uid` with no Project Service project), `404`, `409` (removing an open term

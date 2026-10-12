@@ -7,6 +7,7 @@ Run from backend/db/scripts: python -m pytest. The upsert tests need a migrated
 database in MIGRATION_TEST_PG_DSN and are skipped without one.
 """
 
+import json
 import os
 import sys
 import types
@@ -111,6 +112,46 @@ class _Files:
 )
 def test_program_status_maps_legacy_values(legacy, expected):
     assert m._normalize_program_status(legacy) == expected
+
+
+@pytest.mark.parametrize(
+    "legacy, expected",
+    [("2026-05-01", "2026-05-01"), ("2026-5-1", "2026-05-01"), (" 2026-05-01 ", "2026-05-01"), ("05/01/2026", None), ("2026-02-30", None), ("", None), (None, None)],
+)
+def test_due_date_keeps_only_iso_dates(legacy, expected):
+    assert m._due_date(legacy) == expected
+
+
+def test_task_templates_reduce_to_prerequisite_shape():
+    legacy = [
+        {"id": "x", "name": " Resume ", "description": "Upload it", "category": "prerequisite", "submitFile": "required", "dueDate": "2026-05-01", "status": "incomplete", "custom": "true"},
+        {"name": "Cover Letter", "description": "Why this program", "category": "prerequisite", "submitFile": "", "custom": "false"},
+        {"name": "Code of Conduct", "description": "", "category": "prerequisite", "submitFile": "", "dueDate": "soon"},
+        {"name": "Weekly report", "description": "Mentor task", "category": "non_prerequisite", "submitFile": "required"},
+        {"name": "Demo", "description": "Mentor task", "category": "nonPrerequisite"},
+        {"name": "  ", "description": "Blank name", "category": "prerequisite"},
+        {"description": "No name", "category": "prerequisite"},
+        {"name": "Uncategorised", "submitFile": "yes"},
+    ]
+    assert json.loads(m._task_templates(legacy)) == [
+        {"name": "Resume", "description": "Upload it", "submitFile": "required", "dueDate": "2026-05-01", "custom": True},
+        {"name": "Cover Letter", "description": "Why this program", "submitFile": "required", "dueDate": None, "custom": False},
+        {"name": "Code of Conduct", "description": None, "submitFile": None, "dueDate": None, "custom": False},
+        {"name": "Uncategorised", "description": None, "submitFile": None, "dueDate": None, "custom": False},
+    ]
+
+
+@pytest.mark.parametrize("legacy", [None, [], {}, [{"name": "Weekly report", "category": "non_prerequisite"}], [{"name": "Demo", "category": "nonPrerequisite"}], [{"name": " ", "category": "prerequisite"}]])
+def test_task_templates_without_prerequisites_are_null(legacy):
+    assert m._task_templates(legacy) is None
+
+
+@pytest.mark.parametrize(
+    "legacy, expected",
+    [("prerequisite", "prerequisite"), ("non_prerequisite", "non_prerequisite"), ("nonPrerequisite", "non_prerequisite"), (" nonPrerequisite ", "non_prerequisite"), ("other", None), ("", None), (None, None)],
+)
+def test_task_category_maps_legacy_spellings(legacy, expected):
+    assert m._task_category(legacy) == expected
 
 
 def program_rows(monkeypatch, projects, resolved):

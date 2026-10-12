@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -32,10 +33,47 @@ type ApplicationService struct {
 
 // taskTemplate mirrors the shape stored in programs.task_templates JSONB.
 type taskTemplate struct {
-	Name        string  `json:"name"`
-	Description *string `json:"description"`
-	SubmitFile  *string `json:"submitFile"`
-	DueDate     *string `json:"dueDate"`
+	Name        string       `json:"name"`
+	Description *string      `json:"description"`
+	SubmitFile  *string      `json:"submitFile"`
+	DueDate     *string      `json:"dueDate"`
+	Custom      templateFlag `json:"custom"`
+}
+
+// templateFlag is a task template's custom flag. Templates imported before the migration
+// normalized them store it as the legacy string "true", "false" or "undefined"; only "true" is set.
+type templateFlag bool
+
+func (f *templateFlag) UnmarshalJSON(data []byte) error {
+	var value bool
+	if err := json.Unmarshal(data, &value); err == nil {
+		*f = templateFlag(value)
+		return nil
+	}
+	var legacy string
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		return err
+	}
+	*f = templateFlag(strings.EqualFold(strings.TrimSpace(legacy), "true"))
+	return nil
+}
+
+// cloneSubmitFile keeps a template's submitFile only when it is "required". Templates saved before
+// the migration and update normalized them may hold "" or another value, cloned as no upload.
+func cloneSubmitFile(value *string) *string {
+	if value == nil || *value != taskSubmitFileRequired {
+		return nil
+	}
+	return value
+}
+
+// cloneDueDate keeps a template's due date only when it is a YYYY-MM-DD date, as
+// tasks_due_date_check requires; anything else is cloned as no due date, as the migration does.
+func cloneDueDate(value *string) *string {
+	if value == nil || validateDueDate(value) != nil {
+		return nil
+	}
+	return value
 }
 
 // NewApplicationService returns an ApplicationService.
@@ -288,6 +326,10 @@ func (s *ApplicationService) prerequisiteTasks(ctx context.Context, programTermI
 	}
 	tasks := make([]models.TaskCreateInput, 0, len(templates))
 	for _, tmpl := range templates {
+		// Program update requires a name; one saved before it did would clone a blank task.
+		if strings.TrimSpace(tmpl.Name) == "" {
+			continue
+		}
 		category := models.TaskCategoryPrerequisite
 		termID := programTermID
 		createdBy := input.UserID
@@ -298,7 +340,9 @@ func (s *ApplicationService) prerequisiteTasks(ctx context.Context, programTermI
 			AssigneeID:    input.UserID,
 			Name:          &name,
 			Description:   tmpl.Description,
-			SubmitFile:    tmpl.SubmitFile,
+			SubmitFile:    cloneSubmitFile(tmpl.SubmitFile),
+			DueDate:       cloneDueDate(tmpl.DueDate),
+			Custom:        bool(tmpl.Custom),
 			Category:      &category,
 			Status:        models.TaskStatusIncomplete,
 			CreatedBy:     &createdBy,

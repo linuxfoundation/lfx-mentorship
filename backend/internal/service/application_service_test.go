@@ -635,10 +635,13 @@ func TestApplicationService_Create_WithdrawnReapply_ClonesPrerequisiteTasks(t *t
 		if len(tasks) != 1 || tasks[0].Category == nil || *tasks[0].Category != models.TaskCategoryPrerequisite || tasks[0].Status != models.TaskStatusIncomplete {
 			t.Fatalf("task payload = %+v; want one incomplete prerequisite", tasks)
 		}
+		if tasks[0].SubmitFile == nil || *tasks[0].SubmitFile != "required" || tasks[0].DueDate == nil || *tasks[0].DueDate != "2026-05-01" || !tasks[0].Custom {
+			t.Fatalf("task submit_file %v, due_date %v, custom %v; want the template's required, 2026-05-01 and true", tasks[0].SubmitFile, tasks[0].DueDate, tasks[0].Custom)
+		}
 		return &models.Application{ID: "new", ProgramTermID: "term-1", UserID: "u1", Status: models.ApplicationStatusPending, Role: models.ApplicationRoleMentee}, nil
 	}
 	progRepo := &stubProgRepo{getByID: func(_ context.Context, _ string) (*models.Program, error) {
-		return &models.Program{TaskTemplates: json.RawMessage(`[{"name":"Code of Conduct","description":"Read it"}]`)}, nil
+		return &models.Program{TaskTemplates: json.RawMessage(`[{"name":"Code of Conduct","description":"Read it","submitFile":"required","dueDate":"2026-05-01","custom":true}]`)}, nil
 	}}
 	svc := newApplicationSvc(repo, &stubTaskRepo{}, termRepo, progRepo)
 	_, err := svc.Create(context.Background(), "term-1", models.ApplicationCreateInput{
@@ -650,6 +653,52 @@ func TestApplicationService_Create_WithdrawnReapply_ClonesPrerequisiteTasks(t *t
 	}
 	if taskCount != 1 {
 		t.Fatalf("cloned task count = %d; want 1", taskCount)
+	}
+}
+
+func TestApplicationService_Create_ClonesOldFormatTaskTemplates(t *testing.T) {
+	termRepo := &stubTermRepo{getByID: func(_ context.Context, _ string) (*models.ProgramTerm, error) {
+		term := openTerm(time.Now())
+		term.ProgramID = "program-1"
+		return term, nil
+	}}
+	repo := &stubAppRepo{
+		findByTermAndUser: func(_ context.Context, _, _ string, _ models.ApplicationRole) (*models.Application, error) {
+			return &models.Application{ID: "old", Status: models.ApplicationStatusWithdrawn}, nil
+		},
+	}
+	var cloned []models.TaskCreateInput
+	repo.reapplyWithTasks = func(_ context.Context, _ string, _ string, _ models.ApplicationCreateInput, tasks []models.TaskCreateInput) (*models.Application, error) {
+		cloned = tasks
+		return &models.Application{ID: "new", ProgramTermID: "term-1", UserID: "u1", Status: models.ApplicationStatusPending, Role: models.ApplicationRoleMentee}, nil
+	}
+	// Saved before the migration and update normalized templates: string custom flags, a blank name,
+	// and blank or invalid submitFile and dueDate values.
+	progRepo := &stubProgRepo{getByID: func(_ context.Context, _ string) (*models.Program, error) {
+		return &models.Program{TaskTemplates: json.RawMessage(`[
+			{"name":"Essay","submitFile":"","dueDate":"","custom":"true"},
+			{"name":"  ","submitFile":"required","custom":"true"},
+			{"name":"Resume","submitFile":"yes","dueDate":"soon","custom":"false"},
+			{"name":"Bio","submitFile":"required","dueDate":"2026-05-01","custom":"undefined"}
+		]`)}, nil
+	}}
+	svc := newApplicationSvc(repo, &stubTaskRepo{}, termRepo, progRepo)
+	if _, err := svc.Create(context.Background(), "term-1", models.ApplicationCreateInput{UserID: "u1", Role: models.ApplicationRoleMentee}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if len(cloned) != 3 {
+		t.Fatalf("cloned %d tasks; want 3", len(cloned))
+	}
+	for i, task := range cloned[:2] {
+		if task.SubmitFile != nil || task.DueDate != nil {
+			t.Fatalf("task %d submit_file %v, due_date %v; want blank and invalid values cleared", i, task.SubmitFile, task.DueDate)
+		}
+	}
+	if cloned[2].SubmitFile == nil || *cloned[2].SubmitFile != "required" || cloned[2].DueDate == nil || *cloned[2].DueDate != "2026-05-01" {
+		t.Fatalf("task 2 submit_file %v, due_date %v; want valid values kept", cloned[2].SubmitFile, cloned[2].DueDate)
+	}
+	if !cloned[0].Custom || cloned[1].Custom || cloned[2].Custom {
+		t.Fatalf("custom = %v, %v, %v; want only the \"true\" template custom", cloned[0].Custom, cloned[1].Custom, cloned[2].Custom)
 	}
 }
 
