@@ -361,6 +361,17 @@ def _due_date(value) -> str | None:
         return None
 
 
+_PREREQUISITE = "prerequisite"
+_NON_PREREQUISITE = "non_prerequisite"
+# Legacy jobspring wrote "nonPrerequisite"; only the dev-data repair rewrote it to snake case.
+_TASK_CATEGORIES = {_PREREQUISITE: _PREREQUISITE, _NON_PREREQUISITE: _NON_PREREQUISITE, "nonPrerequisite": _NON_PREREQUISITE}
+
+
+def _task_category(value) -> str | None:
+    """Map a legacy task category to tasks.category, or None if it is not one."""
+    return _TASK_CATEGORIES.get(str(value or "").strip())
+
+
 def _task_templates(templates) -> str | None:
     """Reduce legacy taskTemplates to the shape the API clones into prerequisite tasks.
 
@@ -380,7 +391,7 @@ def _task_templates(templates) -> str | None:
             "custom": _as_bool(t.get("custom")),
         }
         for t in templates
-        if isinstance(t, dict) and str(t.get("category") or "").strip() != "non_prerequisite"
+        if isinstance(t, dict) and _task_category(t.get("category")) != _NON_PREREQUISITE
     ]
     return _to_jsonb(reduced) if reduced else None
 
@@ -1312,9 +1323,6 @@ def reconcile_term_scoped_members(cur, term_scoped_members: list) -> None:
 # ---------------------------------------------------------------------------
 
 
-_VALID_TASK_CATEGORIES = {"prerequisite", "non_prerequisite"}
-
-
 def migrate_tasks(
     cur,
     tasks: list,
@@ -1365,8 +1373,7 @@ def migrate_tasks(
 
         due_date = _due_date(t.get("dueDate"))
 
-        raw_category = (t.get("category") or "").strip() or None
-        category = raw_category if raw_category in _VALID_TASK_CATEGORIES else None
+        category = _task_category(t.get("category"))
 
         row = (
             tid,

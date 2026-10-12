@@ -732,9 +732,30 @@ func TestProgramService_Update_NormalizesTaskTemplates(t *testing.T) {
 	}
 }
 
+func TestProgramService_Update_EmptyTaskTemplatesClear(t *testing.T) {
+	var captured models.ProgramUpdateInput
+	repo := &stubProgRepo{
+		getByID: func(context.Context, string) (*models.Program, error) {
+			return &models.Program{ID: "prog-1", TaskTemplates: json.RawMessage(`[{"name":"Resume"}]`)}, nil
+		},
+		update: func(_ context.Context, _ string, input models.ProgramUpdateInput) (*models.Program, error) {
+			captured = input
+			return &models.Program{ID: "prog-1"}, nil
+		},
+	}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	if _, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{TaskTemplates: json.RawMessage(`[]`)}); err != nil {
+		t.Fatal(err)
+	}
+	if string(captured.TaskTemplates) != "[]" {
+		t.Fatalf("task templates = %s; want []", captured.TaskTemplates)
+	}
+}
+
 func TestProgramService_Update_RejectsInvalidTaskTemplates(t *testing.T) {
 	cases := map[string]string{
 		"not an array":   `{"name":"Resume"}`,
+		"null":           `null`,
 		"blank name":     `[{"name":" "}]`,
 		"unknown submit": `[{"name":"Resume","submitFile":"yes"}]`,
 		"bad due date":   `[{"name":"Resume","dueDate":"05/01/2026"}]`,

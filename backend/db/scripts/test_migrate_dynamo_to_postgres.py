@@ -128,6 +128,7 @@ def test_task_templates_reduce_to_prerequisite_shape():
         {"name": "Cover Letter", "description": "Why this program", "category": "prerequisite", "submitFile": "", "custom": "false"},
         {"name": "Code of Conduct", "description": "", "category": "prerequisite", "submitFile": "", "dueDate": "soon"},
         {"name": "Weekly report", "description": "Mentor task", "category": "non_prerequisite", "submitFile": "required"},
+        {"name": "Demo", "description": "Mentor task", "category": "nonPrerequisite"},
         {"name": "Uncategorised", "submitFile": "yes"},
     ]
     assert json.loads(m._task_templates(legacy)) == [
@@ -138,9 +139,17 @@ def test_task_templates_reduce_to_prerequisite_shape():
     ]
 
 
-@pytest.mark.parametrize("legacy", [None, [], {}, [{"name": "Weekly report", "category": "non_prerequisite"}]])
+@pytest.mark.parametrize("legacy", [None, [], {}, [{"name": "Weekly report", "category": "non_prerequisite"}], [{"name": "Demo", "category": "nonPrerequisite"}]])
 def test_task_templates_without_prerequisites_are_null(legacy):
     assert m._task_templates(legacy) is None
+
+
+@pytest.mark.parametrize(
+    "legacy, expected",
+    [("prerequisite", "prerequisite"), ("non_prerequisite", "non_prerequisite"), ("nonPrerequisite", "non_prerequisite"), (" nonPrerequisite ", "non_prerequisite"), ("other", None), ("", None), (None, None)],
+)
+def test_task_category_maps_legacy_spellings(legacy, expected):
+    assert m._task_category(legacy) == expected
 
 
 def program_rows(monkeypatch, projects, resolved):

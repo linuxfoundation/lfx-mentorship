@@ -634,7 +634,8 @@ func normalizeTaskTemplates(raw, current json.RawMessage) (json.RawMessage, erro
 		DueDate     *string `json:"dueDate"`
 		Custom      *bool   `json:"custom"`
 	}
-	if err := json.Unmarshal(raw, &incoming); err != nil {
+	// JSON null decodes to a nil slice; reject it so only an explicit [] clears the templates.
+	if err := json.Unmarshal(raw, &incoming); err != nil || incoming == nil {
 		return nil, fmt.Errorf("%w: task_templates must be an array of templates", domain.ErrInvalidInput)
 	}
 	var existing []taskTemplate
