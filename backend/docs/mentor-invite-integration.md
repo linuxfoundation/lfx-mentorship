@@ -76,25 +76,24 @@ Never send both `user_id` and `lfid`.
 |---|---|---|
 | `400` | Bad input (short search, malformed email), or the program isn't published yet | Inline validation message |
 | `401` / `403` | Not signed in, or not a Program Admin of this program | Hide the action for non-admins; otherwise show a generic error |
-| `409` | The person already has a mentor row on this program, in any status | Find their row in the Mentors tab list and act on its status (see below) |
+| `409` | The person is already an active mentor, has asked to join (`requested`), or is `pending` | See below |
 | `422` | No LF account for that LFID or email, or another Mentorship user already holds the account's primary email | Show the message from the response body |
 | `503` | Account lookup is temporarily unavailable | *"Couldn't look up accounts right now. Try again."* Keep the dialog open |
 
-`program_members` is unique per program, person and role, so a `409` covers
-every earlier mentor row, not only active ones:
+Inviting someone whose mentor row is `invited`, `declined` (including a revoked
+invite) or `withdrawn` is not an error: the backend sets the row back to
+`invited`, returns it with `201` and sends the invite email again. That is also
+how an admin resends an invite. A `409` covers the rest:
 
-- `invited`: point to **Resend invite**.
 - `active`: *"This person is already a mentor on the program."*
 - `requested`: point the admin to approving the request.
-- `declined` (including a revoked invite) or `withdrawn`: the admin removes the
-  row with `DELETE /programs/{id}/members/{memberId}`, then invites again.
+- `pending`: find their row in the Mentors tab list and act on its status.
 
 ## 5. After a successful invite
 
-- Refresh the Mentors tab list. The new row appears as `invited`.
-- Resend and revoke reuse the existing actions:
-  - `POST /programs/{id}/members/{memberId}/resend-invite`
-  - `PATCH` the member status to `declined`
+- Refresh the Mentors tab list. The row appears as `invited`.
+- To resend an invite, invite the same person again (section 3).
+- To revoke one, `PATCH` the member status to `declined`.
 - The invite landing page from
   [linuxfoundation/lfx-self-serve#3171](https://github.com/linuxfoundation/lfx-self-serve/issues/3171)
   needs no change. The invitee accepts after signing in, and their first

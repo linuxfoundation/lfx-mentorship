@@ -352,7 +352,6 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			r.Post("/programs/{id}/members", programMemberH.Create)
 			r.Patch("/programs/{id}/members/{memberId}", programMemberH.Update)
 			r.Delete("/programs/{id}/members/{memberId}", programMemberH.Delete)
-			r.Post("/programs/{id}/members/{memberId}/resend-invite", programMemberH.ResendInvite)
 
 			// Program terms
 			r.Post("/programs/{id}/terms", programTermH.Create)

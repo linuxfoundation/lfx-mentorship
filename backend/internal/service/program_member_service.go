@@ -19,6 +19,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/auth"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -136,8 +137,8 @@ func (s *ProgramMemberService) ListMentorManagement(ctx context.Context, program
 
 // Create validates input and adds a member to a program.
 // When member_type is "mentor" and no status is given, the member is created
-// with status "invited"; only an invited mentor is sent a time-limited invite
-// token via the notifier.
+// with status "invited" and sent an invite token via the notifier. Inviting a
+// mentor whose invite is open, declined or withdrawn reuses their row.
 func (s *ProgramMemberService) Create(ctx context.Context, programID string, input models.ProgramMemberCreateInput) (*models.ProgramMember, error) {
 	ctx, span := programMemberSvcTracer.Start(ctx, "ProgramMemberService.Create")
 	defer span.End()
@@ -200,6 +201,13 @@ func (s *ProgramMemberService) Create(ctx context.Context, programID string, inp
 		input.UserID = user.ID
 	}
 
+	invite := input.MemberType == models.MemberTypeMentor && *input.Status == models.ProgramMemberStatusInvited
+	if invite {
+		if m, err := s.reinvite(ctx, programID, input.UserID); m != nil || err != nil {
+			return m, err
+		}
+	}
+
 	input.ID = uuid.New().String()
 	m, err := s.repo.Create(ctx, programID, input)
 	if err != nil {
@@ -207,19 +215,54 @@ func (s *ProgramMemberService) Create(ctx context.Context, programID string, inp
 		return nil, fmt.Errorf("create program member: %w", err)
 	}
 
-	// Only an invited mentor gets an invite email; a mentor created as
-	// requested asked to join and must not be invited back.
-	if input.MemberType == models.MemberTypeMentor && *input.Status == models.ProgramMemberStatusInvited && s.inviteSecret != "" {
-		token, tokenErr := auth.GenerateInviteToken(programID, input.UserID, s.inviteSecret)
-		if tokenErr != nil {
-			span.RecordError(tokenErr)
-			// Non-fatal: log but don't fail the create.
-		} else {
-			s.notifier.NotifyMentorInvited(ctx, programID, input.UserID, token)
-		}
+	// A mentor created as requested asked to join and must not be invited back.
+	if invite {
+		s.sendInvite(ctx, programID, input.UserID)
 	}
 
 	return m, nil
+}
+
+// reinvitableStatuses are the mentor statuses an admin can invite again.
+var reinvitableStatuses = []models.ProgramMemberStatus{
+	models.ProgramMemberStatusInvited,
+	models.ProgramMemberStatusDeclined,
+	models.ProgramMemberStatusWithdrawn,
+}
+
+// reinvite sets the user's existing mentor row back to invited and emails the
+// invite again; it returns nil, nil when the user has no mentor row yet.
+func (s *ProgramMemberService) reinvite(ctx context.Context, programID, userID string) (*models.ProgramMember, error) {
+	existing, err := s.repo.FindByProgramUserAndType(ctx, programID, userID, models.MemberTypeMentor)
+	if errors.Is(err, domain.ErrProgramMemberNotFound) || (err == nil && existing == nil) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("lookup mentor for invite: %w", err)
+	}
+	if existing.Status == nil || !slices.Contains(reinvitableStatuses, *existing.Status) {
+		return nil, fmt.Errorf("%w: user is already a mentor or has asked to join this program", domain.ErrConflict)
+	}
+	invited := models.ProgramMemberStatusInvited
+	m, err := s.repo.UpdateIfStatus(ctx, existing.ID, reinvitableStatuses, models.ProgramMemberUpdateInput{Status: &invited})
+	if err != nil {
+		return nil, fmt.Errorf("re-invite mentor: %w", err)
+	}
+	s.sendInvite(ctx, programID, userID)
+	return m, nil
+}
+
+// sendInvite emails the mentor an invite link; a signing failure is not fatal to the caller.
+func (s *ProgramMemberService) sendInvite(ctx context.Context, programID, userID string) {
+	if s.inviteSecret == "" {
+		return
+	}
+	token, err := auth.GenerateInviteToken(programID, userID, s.inviteSecret)
+	if err != nil {
+		trace.SpanFromContext(ctx).RecordError(err)
+		return
+	}
+	s.notifier.NotifyMentorInvited(ctx, programID, userID, token)
 }
 
 func (s *ProgramMemberService) userByEmail(ctx context.Context, email string) (*models.User, error) {
@@ -696,49 +739,5 @@ func (s *ProgramMemberService) Delete(ctx context.Context, programID, id, actorI
 		span.RecordError(err)
 		return fmt.Errorf("delete program member: %w", err)
 	}
-	return nil
-}
-
-// ResendInvite signs a fresh invite token for an invited mentor and emails it again.
-func (s *ProgramMemberService) ResendInvite(ctx context.Context, programID, id, actorID string) error {
-	ctx, span := programMemberSvcTracer.Start(ctx, "ProgramMemberService.ResendInvite")
-	defer span.End()
-	span.SetAttributes(attribute.String("program.id", programID), attribute.String("member.id", id), attribute.String("actor.id", actorID))
-
-	if err := s.assertActiveProgramAdmin(ctx, programID, actorID); err != nil {
-		span.RecordError(err)
-		return err
-	}
-	if s.inviteSecret == "" {
-		return fmt.Errorf("%w: mentor invites are not configured", domain.ErrUpstreamUnavailable)
-	}
-
-	member, err := s.repo.GetByID(ctx, id)
-	if err != nil {
-		span.RecordError(err)
-		return fmt.Errorf("get member for resend: %w", err)
-	}
-	if member.ProgramID != programID {
-		return domain.ErrProgramMemberNotFound
-	}
-	if member.MemberType != models.MemberTypeMentor || member.Status == nil || *member.Status != models.ProgramMemberStatusInvited {
-		return fmt.Errorf("%w: only an invited mentor can be sent the invite again", domain.ErrInvalidStateTransition)
-	}
-	// FR-018 / FR-023: invites are only for a published program.
-	prog, err := s.programRepo.GetByID(ctx, programID)
-	if err != nil {
-		span.RecordError(err)
-		return fmt.Errorf("get program for resend: %w", err)
-	}
-	if prog.Status != models.ProgramStatusPublished {
-		return fmt.Errorf("%w: program must be published to resend an invite", domain.ErrInvalidStateTransition)
-	}
-
-	token, err := auth.GenerateInviteToken(programID, member.UserID, s.inviteSecret)
-	if err != nil {
-		span.RecordError(err)
-		return fmt.Errorf("generate invite token: %w", err)
-	}
-	s.notifier.NotifyMentorInvited(ctx, programID, member.UserID, token)
 	return nil
 }

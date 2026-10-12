@@ -1464,6 +1464,10 @@ Add a member to a program.
 **Invitation flow** (`member_type = "mentor"`, no status supplied):
 - Record is created with `status = "invited"`.
 - A signed invite token is generated and dispatched via `NotifyMentorInvited`.
+- If the user already has a mentor row on the program that is `invited`,
+  `declined` or `withdrawn`, that row is set back to `invited` and the invite
+  email is sent again; no new row is created. This is how an invite is resent,
+  and how a declined or revoked mentor is invited again.
 
 **Self-request flow** (`member_type = "mentor"`, `status = "requested"` explicitly supplied):
 - Record is created with `status = "requested"`.
@@ -1494,8 +1498,8 @@ primary email filled in from auth-service. Otherwise a user is created from
 auth-service (LFID, name, avatar and primary email), the invite email goes to
 that primary email, and their first sign-in updates that same row.
 
-**Response** `201` → `<ProgramMember>`  
-**Errors** `400`, `404` (program not found), `409` (the user already has a row of this `member_type` on the program, in any status), `422` (no LF account has that `lfid` or `email`, or another Mentorship user already holds the account's primary email), `503` (auth-service is unreachable when it is needed)
+**Response** `201` → `<ProgramMember>` (the existing row when a mentor is invited again)  
+**Errors** `400`, `404` (program not found), `409` (the user already has a row of this `member_type` on the program that cannot be invited again: any program admin row, or a mentor row that is `active`, `requested` or `pending`), `422` (no LF account has that `lfid` or `email`, or another Mentorship user already holds the account's primary email), `503` (auth-service is unreachable when it is needed)
 
 ---
 
@@ -1552,18 +1556,6 @@ but keep the record, `PATCH` the status to `withdrawn` instead.
 
 **Response** `204`  
 **Errors** `403`, `404`
-
----
-
-#### `POST /v1/programs/{id}/members/{memberId}/resend-invite` 🔒
-
-Signs a fresh 7-day invite token for an `invited` mentor and sends the
-`mentor_invited` email again. Earlier tokens stay valid until they expire. No
-request body.
-
-**Response** `204`  
-**Errors** `403` (not a Program Admin), `404`, `409` (the member is not an
-`invited` mentor, or the program is not `published`), `503` (invites are not configured)
 
 ---
 
@@ -1771,7 +1763,7 @@ These endpoints are called by the LFX Self Serve page that the invite email link
 
 ### Token Format
 
-`base64url(JSON {program_id, user_id, exp}) + "." + base64url(HMAC-SHA256 signature)`, valid for 7 days. The signing secret is set via the `MENTOR_INVITE_SECRET` environment variable. Tokens are not stored, so one stays usable until it expires or the member row leaves `invited`.
+`base64url(JSON {program_id, user_id}) + "." + base64url(HMAC-SHA256 signature)`. The signing secret is set via the `MENTOR_INVITE_SECRET` environment variable. Tokens do not expire and are not stored: one works until its member row leaves `invited`, and a row invited again makes the same link work again. Only the invited user, signed in, can use it. Rotating the secret invalidates every outstanding link. Links issued while tokens carried an `exp` claim still verify; the claim is ignored.
 
 ---
 
@@ -1782,7 +1774,7 @@ Accept a mentor invitation. No request body.
 **Effect**: Sets the matching `program_members` record's `status` from `invited` to `active`, and emails the program's active Program Admins (`NotifyAdminMentorAccepted`).
 
 **Response** `200` → `<ProgramMember>`  
-**Errors** `400` (invalid or expired token, or no pending invite — including one already answered), `401` (no JWT), `403` (the token belongs to another user), `409` (the row changed concurrently)
+**Errors** `400` (invalid token, or no pending invite — including one already answered), `401` (no JWT), `403` (the token belongs to another user), `409` (the row changed concurrently)
 
 ---
 
