@@ -372,6 +372,30 @@ def _task_category(value) -> str | None:
     return _TASK_CATEGORIES.get(str(value or "").strip())
 
 
+# Legacy jobspring wrote "inProgress" and "completed"; only the dev-data repair rewrote them.
+_TASK_STATUSES = {
+    "incomplete": "incomplete",
+    "inprogress": "in_progress",
+    "in_progress": "in_progress",
+    "submitted": "submitted",
+    "completed": "complete",
+    "complete": "complete",
+}
+
+
+def _task_status(value) -> str:
+    """Map a legacy task status to tasks.status; anything else (e.g. "pending") is incomplete."""
+    return _TASK_STATUSES.get(str(value or "").strip().lower(), "incomplete")
+
+
+_SUBMIT_FILE_REQUIRED = "required"
+
+
+def _submit_file(value) -> str | None:
+    """Map a legacy submitFile to the tasks.submit_file flag: "required", or None for "" and "no-required"."""
+    return _SUBMIT_FILE_REQUIRED if str(value or "").strip() == _SUBMIT_FILE_REQUIRED else None
+
+
 def _task_templates(templates) -> str | None:
     """Reduce legacy taskTemplates to the shape the API clones into prerequisite tasks.
 
@@ -386,7 +410,7 @@ def _task_templates(templates) -> str | None:
         {
             "name": str(t.get("name") or "").strip(),
             "description": str(t.get("description") or "").strip() or None,
-            "submitFile": "required" if str(t.get("submitFile") or "").strip() == "required" or str(t.get("custom")).lower() == "false" else None,
+            "submitFile": _SUBMIT_FILE_REQUIRED if str(t.get("custom")).lower() == "false" else _submit_file(t.get("submitFile")),
             "dueDate": _due_date(t.get("dueDate")),
             "custom": _as_bool(t.get("custom")),
         }
@@ -1369,9 +1393,7 @@ def migrate_tasks(
         # term_id FK must exist
         resolved_term_id = term_id if term_id in known_term_ids else None
 
-        dynamo_status = (t.get("status") or "incomplete").lower()
-        valid_statuses = {"incomplete", "in_progress", "complete", "submitted"}
-        status = dynamo_status if dynamo_status in valid_statuses else "incomplete"
+        status = _task_status(t.get("status"))
 
         due_date = _due_date(t.get("dueDate"))
 
@@ -1390,7 +1412,7 @@ def migrate_tasks(
             (t.get("applicationStatus") or "").strip() or None,
             _map_program_term_status(known_term_ids.get(resolved_term_id), t.get("programTermStatus")),
             _as_bool(t.get("custom")),
-            (t.get("submitFile") or "").strip() or None,
+            _submit_file(t.get("submitFile")),
             files.rewrite("tasks.file", lo.SUBMISSION, t.get("file")),
             due_date,
             (t.get("createdBy") or "").strip() or None,
