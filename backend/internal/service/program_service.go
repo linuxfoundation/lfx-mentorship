@@ -27,6 +27,9 @@ var programSvcTracer = otel.Tracer("programs-service")
 
 const maxEnrollmentTerms = 4
 
+// taskSubmitFileRequired is the task template submitFile value for a task that needs an upload.
+const taskSubmitFileRequired = "required"
+
 type enrollmentPrerequisite struct {
 	Name        string  `json:"name"`
 	Description *string `json:"description"`
@@ -351,7 +354,7 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 			}
 			var submitFile *string
 			if prerequisite.RequireFile {
-				value := "required"
+				value := taskSubmitFileRequired
 				submitFile = &value
 			}
 			templates = append(templates, taskTemplate{Name: prerequisite.Name, Description: prerequisite.Description, SubmitFile: submitFile, DueDate: prerequisite.DueDate})
@@ -511,6 +514,16 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 			return nil, err
 		}
 	}
+	if len(input.TaskTemplates) > 0 {
+		current, err := s.repo.GetByID(ctx, id)
+		if err != nil {
+			span.RecordError(err)
+			return nil, fmt.Errorf("get program for update: %w", err)
+		}
+		if input.TaskTemplates, err = normalizeTaskTemplates(input.TaskTemplates, current.TaskTemplates); err != nil {
+			return nil, err
+		}
+	}
 	if input.ProjectUID != nil || input.ProjectSlug != nil || input.ProjectName != nil || input.ProjectLogoURL != nil {
 		if input.ProjectUID == nil || strings.TrimSpace(*input.ProjectUID) == "" {
 			return nil, fmt.Errorf("%w: project_uid is required when changing the project", domain.ErrInvalidInput)
@@ -607,6 +620,62 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 		return nil, fmt.Errorf("update program: %w", err)
 	}
 	return p, nil
+}
+
+// normalizeTaskTemplates validates a program update's task templates and returns them in the
+// shape applications clone: a blank submitFile or dueDate is cleared, and submitFile may only be
+// "required". A template that leaves custom out keeps the flag of the current template with the
+// same name (ignoring case), so an edit that does not send it keeps the migrated value.
+func normalizeTaskTemplates(raw, current json.RawMessage) (json.RawMessage, error) {
+	var incoming []struct {
+		Name        string  `json:"name"`
+		Description *string `json:"description"`
+		SubmitFile  *string `json:"submitFile"`
+		DueDate     *string `json:"dueDate"`
+		Custom      *bool   `json:"custom"`
+	}
+	if err := json.Unmarshal(raw, &incoming); err != nil {
+		return nil, fmt.Errorf("%w: task_templates must be an array of templates", domain.ErrInvalidInput)
+	}
+	var existing []taskTemplate
+	if len(current) > 0 {
+		if err := json.Unmarshal(current, &existing); err != nil {
+			return nil, fmt.Errorf("decode current task templates: %w", err)
+		}
+	}
+	customByName := make(map[string]bool, len(existing))
+	for _, template := range existing {
+		customByName[strings.ToLower(strings.TrimSpace(template.Name))] = template.Custom
+	}
+	templates := make([]taskTemplate, 0, len(incoming))
+	for _, in := range incoming {
+		name := strings.TrimSpace(in.Name)
+		if name == "" {
+			return nil, fmt.Errorf("%w: task template name is required", domain.ErrInvalidInput)
+		}
+		template := taskTemplate{Name: name, Custom: customByName[strings.ToLower(name)]}
+		if in.Custom != nil {
+			template.Custom = *in.Custom
+		}
+		if in.Description != nil && strings.TrimSpace(*in.Description) != "" {
+			description := strings.TrimSpace(*in.Description)
+			template.Description = &description
+		}
+		if in.SubmitFile != nil && *in.SubmitFile != "" {
+			if *in.SubmitFile != taskSubmitFileRequired {
+				return nil, fmt.Errorf("%w: task template submitFile must be %q or empty", domain.ErrInvalidInput, taskSubmitFileRequired)
+			}
+			template.SubmitFile = in.SubmitFile
+		}
+		if in.DueDate != nil && *in.DueDate != "" {
+			if err := validateDueDate(in.DueDate); err != nil {
+				return nil, err
+			}
+			template.DueDate = in.DueDate
+		}
+		templates = append(templates, template)
+	}
+	return json.Marshal(templates)
 }
 
 // validateOpenTerms checks a program update's open-term set and trims term names

@@ -350,6 +350,41 @@ def _to_jsonb(value) -> str | None:
     return json.dumps(value, default=_default).replace("\\u0000", "")
 
 
+def _due_date(value) -> str | None:
+    """Return a YYYY-MM-DD due date (the tasks_due_date_check format), or None if it does not parse."""
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw, "%Y-%m-%d").date().isoformat()
+    except ValueError:
+        return None
+
+
+def _task_templates(templates) -> str | None:
+    """Reduce legacy taskTemplates to the shape the API clones into prerequisite tasks.
+
+    Legacy stored whole Task objects, with submitFile "" for no upload, and also appended
+    mentors' non-prerequisite tasks; programs.task_templates holds only prerequisites as
+    {name, description, submitFile: "required" | null, dueDate, custom}. The built-in templates
+    (custom "false": Resume, Cover Letter, ...) always required a file in legacy.
+    """
+    if not isinstance(templates, list):
+        return None
+    reduced = [
+        {
+            "name": str(t.get("name") or "").strip(),
+            "description": str(t.get("description") or "").strip() or None,
+            "submitFile": "required" if str(t.get("submitFile") or "").strip() == "required" or str(t.get("custom")).lower() == "false" else None,
+            "dueDate": _due_date(t.get("dueDate")),
+            "custom": _as_bool(t.get("custom")),
+        }
+        for t in templates
+        if isinstance(t, dict) and str(t.get("category") or "").strip() != "non_prerequisite"
+    ]
+    return _to_jsonb(reduced) if reduced else None
+
+
 def _parse_ts(s) -> datetime | None:
     """Parse a DynamoDB timestamp string → tz-aware datetime, or None."""
     if not s:
@@ -730,7 +765,7 @@ def migrate_programs(cur, projects: list, known_user_ids: set, files: lo.LegacyF
                 _as_int(p.get("discoverSortRank")),
                 amount,
                 _to_jsonb(p.get("menteeNeeds")),  # Legacy apprenticeNeeds fallback is retained only for cutover imports.
-                _to_jsonb(p.get("taskTemplates")),
+                _task_templates(p.get("taskTemplates")),
                 _parse_ts(p.get("createdOn")),
                 _parse_ts(p.get("updatedOn")),
             )
@@ -1328,13 +1363,7 @@ def migrate_tasks(
         valid_statuses = {"incomplete", "in_progress", "complete", "submitted"}
         status = dynamo_status if dynamo_status in valid_statuses else "incomplete"
 
-        due_date_raw = (t.get("dueDate") or "").strip() or None
-        due_date = None
-        if due_date_raw:
-            try:
-                due_date = datetime.strptime(due_date_raw, "%Y-%m-%d").date()
-            except ValueError:
-                pass
+        due_date = _due_date(t.get("dueDate"))
 
         raw_category = (t.get("category") or "").strip() or None
         category = raw_category if raw_category in _VALID_TASK_CATEGORIES else None

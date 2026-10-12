@@ -36,6 +36,7 @@ type taskTemplate struct {
 	Description *string `json:"description"`
 	SubmitFile  *string `json:"submitFile"`
 	DueDate     *string `json:"dueDate"`
+	Custom      bool    `json:"custom"`
 }
 
 // NewApplicationService returns an ApplicationService.
@@ -299,6 +300,8 @@ func (s *ApplicationService) prerequisiteTasks(ctx context.Context, programTermI
 			Name:          &name,
 			Description:   tmpl.Description,
 			SubmitFile:    tmpl.SubmitFile,
+			DueDate:       tmpl.DueDate,
+			Custom:        tmpl.Custom,
 			Category:      &category,
 			Status:        models.TaskStatusIncomplete,
 			CreatedBy:     &createdBy,

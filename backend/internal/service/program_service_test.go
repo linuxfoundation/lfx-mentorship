@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -686,6 +687,73 @@ func TestProgramService_Update_OmittedSkillsLeftUnchanged(t *testing.T) {
 	}
 	if captured.Skills != nil {
 		t.Fatalf("skills=%v; want nil", captured.Skills)
+	}
+}
+
+func TestProgramService_Update_NormalizesTaskTemplates(t *testing.T) {
+	var captured models.ProgramUpdateInput
+	repo := &stubProgRepo{
+		getByID: func(context.Context, string) (*models.Program, error) {
+			return &models.Program{ID: "prog-1", TaskTemplates: json.RawMessage(`[{"name":"Resume","custom":false},{"name":"Essay","custom":true}]`)}, nil
+		},
+		update: func(_ context.Context, _ string, input models.ProgramUpdateInput) (*models.Program, error) {
+			captured = input
+			return &models.Program{ID: "prog-1"}, nil
+		},
+	}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	templates := json.RawMessage(`[
+		{"name":" resume ","description":" Upload it ","submitFile":"required","dueDate":"2026-05-01"},
+		{"name":"Essay","description":"","submitFile":"","dueDate":""},
+		{"name":"New task","description":"Do it","submitFile":null,"dueDate":null,"custom":true}
+	]`)
+	if _, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{TaskTemplates: templates}); err != nil {
+		t.Fatal(err)
+	}
+	type template struct {
+		Name        string  `json:"name"`
+		Description *string `json:"description"`
+		SubmitFile  *string `json:"submitFile"`
+		DueDate     *string `json:"dueDate"`
+		Custom      bool    `json:"custom"`
+	}
+	var got []template
+	if err := json.Unmarshal(captured.TaskTemplates, &got); err != nil {
+		t.Fatal(err)
+	}
+	description, required, dueDate, doIt := "Upload it", "required", "2026-05-01", "Do it"
+	want := []template{
+		{Name: "resume", Description: &description, SubmitFile: &required, DueDate: &dueDate, Custom: false},
+		{Name: "Essay", Custom: true},
+		{Name: "New task", Description: &doIt, Custom: true},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("task templates = %s; want blank values cleared and custom kept by name", captured.TaskTemplates)
+	}
+}
+
+func TestProgramService_Update_RejectsInvalidTaskTemplates(t *testing.T) {
+	cases := map[string]string{
+		"not an array":   `{"name":"Resume"}`,
+		"blank name":     `[{"name":" "}]`,
+		"unknown submit": `[{"name":"Resume","submitFile":"yes"}]`,
+		"bad due date":   `[{"name":"Resume","dueDate":"05/01/2026"}]`,
+	}
+	for name, templates := range cases {
+		t.Run(name, func(t *testing.T) {
+			repo := &stubProgRepo{
+				getByID: func(context.Context, string) (*models.Program, error) { return &models.Program{ID: "prog-1"}, nil },
+				update: func(context.Context, string, models.ProgramUpdateInput) (*models.Program, error) {
+					t.Fatal("repository must not be called for invalid task templates")
+					return nil, nil
+				},
+			}
+			svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+			_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{TaskTemplates: json.RawMessage(templates)})
+			if !errors.Is(err, domain.ErrInvalidInput) {
+				t.Fatalf("expected ErrInvalidInput, got %v", err)
+			}
+		})
 	}
 }
 

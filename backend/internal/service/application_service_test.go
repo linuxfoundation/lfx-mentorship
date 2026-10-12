@@ -635,10 +635,13 @@ func TestApplicationService_Create_WithdrawnReapply_ClonesPrerequisiteTasks(t *t
 		if len(tasks) != 1 || tasks[0].Category == nil || *tasks[0].Category != models.TaskCategoryPrerequisite || tasks[0].Status != models.TaskStatusIncomplete {
 			t.Fatalf("task payload = %+v; want one incomplete prerequisite", tasks)
 		}
+		if tasks[0].SubmitFile == nil || *tasks[0].SubmitFile != "required" || tasks[0].DueDate == nil || *tasks[0].DueDate != "2026-05-01" || !tasks[0].Custom {
+			t.Fatalf("task submit_file %v, due_date %v, custom %v; want the template's required, 2026-05-01 and true", tasks[0].SubmitFile, tasks[0].DueDate, tasks[0].Custom)
+		}
 		return &models.Application{ID: "new", ProgramTermID: "term-1", UserID: "u1", Status: models.ApplicationStatusPending, Role: models.ApplicationRoleMentee}, nil
 	}
 	progRepo := &stubProgRepo{getByID: func(_ context.Context, _ string) (*models.Program, error) {
-		return &models.Program{TaskTemplates: json.RawMessage(`[{"name":"Code of Conduct","description":"Read it"}]`)}, nil
+		return &models.Program{TaskTemplates: json.RawMessage(`[{"name":"Code of Conduct","description":"Read it","submitFile":"required","dueDate":"2026-05-01","custom":true}]`)}, nil
 	}}
 	svc := newApplicationSvc(repo, &stubTaskRepo{}, termRepo, progRepo)
 	_, err := svc.Create(context.Background(), "term-1", models.ApplicationCreateInput{
