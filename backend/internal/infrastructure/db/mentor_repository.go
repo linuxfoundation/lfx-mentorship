@@ -59,7 +59,7 @@ const mentorEligibleCTE = `
 			j.user_id,
 			j.joined_at,
 			NULLIF(TRIM(COALESCE(NULLIF(TRIM(u.name), ''), CONCAT_WS(' ', up.first_name, up.last_name))), '') AS name,
-			COALESCE(up.logo_url, u.avatar_url) AS avatar_url,
+			COALESCE(NULLIF(up.logo_url, ''), u.avatar_url) AS avatar_url,
 			up.introduction,
 			COALESCE((
 				SELECT ARRAY_AGG(e #>> '{}' ORDER BY e #>> '{}')
@@ -461,7 +461,7 @@ func (r *MentorRepository) loadMentorsByProgram(ctx context.Context, ids []strin
 		return out, nil
 	}
 	rows, err := r.pool.Query(ctx, `
-		SELECT pm.id, pm.program_id, pm.user_id, u.name, COALESCE(up.logo_url, u.avatar_url)
+		SELECT pm.id, pm.program_id, pm.user_id, u.name, COALESCE(NULLIF(up.logo_url, ''), u.avatar_url)
 		FROM program_members pm
 		LEFT JOIN users u ON u.id = pm.user_id
 		LEFT JOIN LATERAL (
@@ -496,7 +496,7 @@ func (r *MentorRepository) loadMentorMentees(ctx context.Context, mentorUserID s
 		SELECT DISTINCT ON (a.user_id, CASE WHEN a.status = 'graduated' THEN 1 ELSE 0 END)
 			a.user_id, a.status, p.name, pt.name,
 			NULLIF(TRIM(COALESCE(NULLIF(TRIM(u.name), ''), CONCAT_WS(' ', up.first_name, up.last_name))), ''),
-			COALESCE(up.logo_url, u.avatar_url),
+			COALESCE(NULLIF(up.logo_url, ''), u.avatar_url),
 			up.introduction
 		FROM applications a
 		JOIN program_terms pt ON pt.id = a.program_term_id

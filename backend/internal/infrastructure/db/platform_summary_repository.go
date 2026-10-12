@@ -71,7 +71,7 @@ WITH
 		SELECT
 			gmu.user_id,
 			NULLIF(TRIM(COALESCE(NULLIF(TRIM(u.name), ''), CONCAT_WS(' ', up.first_name, up.last_name))), '') AS name,
-			COALESCE(up.logo_url, u.avatar_url) AS avatar_url,
+			COALESCE(NULLIF(up.logo_url, ''), u.avatar_url) AS avatar_url,
 			gmu.graduated_on
 		FROM graduated_mentee_users gmu
 		LEFT JOIN users u ON u.id = gmu.user_id
