@@ -129,6 +129,8 @@ def test_task_templates_reduce_to_prerequisite_shape():
         {"name": "Code of Conduct", "description": "", "category": "prerequisite", "submitFile": "", "dueDate": "soon"},
         {"name": "Weekly report", "description": "Mentor task", "category": "non_prerequisite", "submitFile": "required"},
         {"name": "Demo", "description": "Mentor task", "category": "nonPrerequisite"},
+        {"name": "  ", "description": "Blank name", "category": "prerequisite"},
+        {"description": "No name", "category": "prerequisite"},
         {"name": "Uncategorised", "submitFile": "yes"},
     ]
     assert json.loads(m._task_templates(legacy)) == [
@@ -139,7 +141,7 @@ def test_task_templates_reduce_to_prerequisite_shape():
     ]
 
 
-@pytest.mark.parametrize("legacy", [None, [], {}, [{"name": "Weekly report", "category": "non_prerequisite"}], [{"name": "Demo", "category": "nonPrerequisite"}]])
+@pytest.mark.parametrize("legacy", [None, [], {}, [{"name": "Weekly report", "category": "non_prerequisite"}], [{"name": "Demo", "category": "nonPrerequisite"}], [{"name": " ", "category": "prerequisite"}]])
 def test_task_templates_without_prerequisites_are_null(legacy):
     assert m._task_templates(legacy) is None
 

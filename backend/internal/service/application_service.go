@@ -326,6 +326,10 @@ func (s *ApplicationService) prerequisiteTasks(ctx context.Context, programTermI
 	}
 	tasks := make([]models.TaskCreateInput, 0, len(templates))
 	for _, tmpl := range templates {
+		// Program update requires a name; one saved before it did would clone a blank task.
+		if strings.TrimSpace(tmpl.Name) == "" {
+			continue
+		}
 		category := models.TaskCategoryPrerequisite
 		termID := programTermID
 		createdBy := input.UserID

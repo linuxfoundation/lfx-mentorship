@@ -672,11 +672,12 @@ func TestApplicationService_Create_ClonesOldFormatTaskTemplates(t *testing.T) {
 		cloned = tasks
 		return &models.Application{ID: "new", ProgramTermID: "term-1", UserID: "u1", Status: models.ApplicationStatusPending, Role: models.ApplicationRoleMentee}, nil
 	}
-	// Saved before the migration and update normalized templates: string custom flags, and
-	// blank or invalid submitFile and dueDate values.
+	// Saved before the migration and update normalized templates: string custom flags, a blank name,
+	// and blank or invalid submitFile and dueDate values.
 	progRepo := &stubProgRepo{getByID: func(_ context.Context, _ string) (*models.Program, error) {
 		return &models.Program{TaskTemplates: json.RawMessage(`[
 			{"name":"Essay","submitFile":"","dueDate":"","custom":"true"},
+			{"name":"  ","submitFile":"required","custom":"true"},
 			{"name":"Resume","submitFile":"yes","dueDate":"soon","custom":"false"},
 			{"name":"Bio","submitFile":"required","dueDate":"2026-05-01","custom":"undefined"}
 		]`)}, nil

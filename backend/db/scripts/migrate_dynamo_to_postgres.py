@@ -376,7 +376,7 @@ def _task_templates(templates) -> str | None:
     """Reduce legacy taskTemplates to the shape the API clones into prerequisite tasks.
 
     Legacy stored whole Task objects, with submitFile "" for no upload, and also appended
-    mentors' non-prerequisite tasks; programs.task_templates holds only prerequisites as
+    mentors' non-prerequisite tasks; programs.task_templates holds only named prerequisites as
     {name, description, submitFile: "required" | null, dueDate, custom}. The built-in templates
     (custom "false": Resume, Cover Letter, ...) always required a file in legacy.
     """
@@ -391,7 +391,9 @@ def _task_templates(templates) -> str | None:
             "custom": _as_bool(t.get("custom")),
         }
         for t in templates
-        if isinstance(t, dict) and _task_category(t.get("category")) != _NON_PREREQUISITE
+        if isinstance(t, dict)
+        and str(t.get("name") or "").strip()
+        and _task_category(t.get("category")) != _NON_PREREQUISITE
     ]
     return _to_jsonb(reduced) if reduced else None
 
