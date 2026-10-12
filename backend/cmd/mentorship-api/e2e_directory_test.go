@@ -318,4 +318,13 @@ func TestE2EProfilePicturePrefersProfileLogo(t *testing.T) {
 			t.Errorf("%s shows the legacy avatar over the profile logo: %s", tc.path, body)
 		}
 	}
+
+	// The platform summary only previews graduated mentees.
+	if _, err := e2e.pool.Exec(context.Background(), `UPDATE applications SET status = 'graduated' WHERE user_id = $1`, mentee.ID); err != nil {
+		t.Fatal(err)
+	}
+	body := string(anonymous().call(t, http.MethodGet, "/summary", nil).expect(http.StatusOK).Body)
+	if !strings.Contains(body, menteeLogo) || strings.Contains(body, legacy) {
+		t.Errorf("/summary must preview the graduate's profile logo, not the legacy avatar: %s", body)
+	}
 }
