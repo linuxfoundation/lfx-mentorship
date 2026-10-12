@@ -154,6 +154,39 @@ def test_task_category_maps_legacy_spellings(legacy, expected):
     assert m._task_category(legacy) == expected
 
 
+@pytest.mark.parametrize(
+    "legacy, expected",
+    [
+        ("incomplete", "incomplete"), ("inProgress", "in_progress"), ("in_progress", "in_progress"), ("submitted", "submitted"),
+        ("completed", "complete"), ("complete", "complete"), (" Completed ", "complete"), ("pending", "incomplete"), ("", "incomplete"), (None, "incomplete"),
+    ],
+)
+def test_task_status_maps_legacy_spellings(legacy, expected):
+    assert m._task_status(legacy) == expected
+
+
+@pytest.mark.parametrize("legacy, expected", [("required", "required"), (" required ", "required"), ("no-required", None), ("", None), (None, None), ("yes", None)])
+def test_submit_file_keeps_only_required(legacy, expected):
+    assert m._submit_file(legacy) == expected
+
+
+def test_tasks_import_with_legacy_status_category_and_submit_file(monkeypatch):
+    captured = []
+    monkeypatch.setattr(m.psycopg2.extras, "execute_batch", lambda cur, sql, rows, page_size=0: captured.append(rows) if "INSERT INTO tasks" in sql else None)
+    cur = types.SimpleNamespace(execute=lambda *args: None)
+    term, assignee, application = "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1", "b2b2b2b2-b2b2-4b2b-8b2b-b2b2b2b2b2b2", "c3c3c3c3-c3c3-4c3c-8c3c-c3c3c3c3c3c3"
+    tasks = [
+        {"id": "d4d4d4d4-d4d4-4d4d-8d4d-d4d4d4d4d4d4", "programTermId": term, "assigneeId": assignee, "status": "inProgress", "category": "nonPrerequisite", "submitFile": "no-required"},
+        {"id": "e5e5e5e5-e5e5-4e5e-8e5e-e5e5e5e5e5e5", "programTermId": term, "assigneeId": assignee, "status": "completed", "category": "prerequisite", "submitFile": "required"},
+    ]
+    m.migrate_tasks(cur, tasks, {(term, assignee): application}, {term: "open"}, {assignee}, _Files())
+    # Columns: category, status at 7-8; submit_file at 12.
+    assert [(row[7], row[8], row[12]) for row in captured[0]] == [
+        ("non_prerequisite", "in_progress", None),
+        ("prerequisite", "complete", "required"),
+    ]
+
+
 def program_rows(monkeypatch, projects, resolved):
     captured = []
     monkeypatch.setattr(m.psycopg2.extras, "execute_batch", lambda cur, sql, rows, page_size=0: captured.append(rows) if "INSERT INTO programs" in sql else None)

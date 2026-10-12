@@ -27,6 +27,7 @@ PENDING_MENTOR = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 UNKNOWN_TERM_APPLICATION = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 UNASSIGNED_TASK = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
 LIN = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+LEGACY_TASK = "12121212-1212-4121-8121-121212121212"
 
 SOURCES = {
     "users": [
@@ -55,6 +56,8 @@ SOURCES = {
     ],
     "tasks": [
         {"id": TASK, "programTermId": TERM, "assigneeId": MENTEE, "ownerId": ADMIN, "name": "Intro", "status": "submitted", "category": "prerequisite"},
+        # Legacy jobspring spellings that only the dev-data repair rewrote.
+        {"id": LEGACY_TASK, "programTermId": TERM, "assigneeId": MENTEE, "name": "Weekly report", "status": "inProgress", "category": "nonPrerequisite", "submitFile": "no-required"},
         {"id": ORPHAN_TASK, "programTermId": TERM, "assigneeId": ADMIN, "name": "No application"},
         {"id": UNASSIGNED_TASK, "programTermId": TERM, "name": "No assignee"},
     ],
