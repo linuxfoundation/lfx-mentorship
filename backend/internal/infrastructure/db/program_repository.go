@@ -602,12 +602,12 @@ func (r *ProgramRepository) ListCatalogMentees(ctx context.Context, programID st
 	span.SetAttributes(attribute.String("db.program_id", programID))
 
 	rows, err := r.pool.Query(ctx, `
-		SELECT a.user_id, u.name, u.avatar_url, up.introduction, a.status, pt.id, pt.name
+		SELECT a.user_id, u.name, COALESCE(NULLIF(up.logo_url, ''), u.avatar_url), up.introduction, a.status, pt.id, pt.name
 		FROM applications a
 		JOIN program_terms pt ON pt.id = a.program_term_id
 		LEFT JOIN users u ON u.id = a.user_id
 		LEFT JOIN LATERAL (
-			SELECT introduction
+			SELECT introduction, logo_url
 			FROM user_profiles
 			WHERE user_id = a.user_id
 			  AND profile_type = 'mentee'
@@ -741,11 +741,11 @@ func (r *ProgramRepository) loadCatalogTerms(ctx context.Context, ids []string) 
 func (r *ProgramRepository) loadCatalogMentors(ctx context.Context, ids []string) (map[string][]models.ProgramCatalogMentor, error) {
 	out := map[string][]models.ProgramCatalogMentor{}
 	rows, err := r.pool.Query(ctx, `
-		SELECT pm.id, pm.program_id, pm.user_id, u.name, u.avatar_url, up.introduction
+		SELECT pm.id, pm.program_id, pm.user_id, u.name, COALESCE(NULLIF(up.logo_url, ''), u.avatar_url), up.introduction
 		FROM program_members pm
 		LEFT JOIN users u ON u.id = pm.user_id
 		LEFT JOIN LATERAL (
-			SELECT introduction
+			SELECT introduction, logo_url
 			FROM user_profiles
 			WHERE user_id = pm.user_id
 			  AND profile_type = 'mentor'

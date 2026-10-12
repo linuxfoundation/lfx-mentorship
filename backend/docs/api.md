@@ -187,6 +187,10 @@ Date-only fields use `"YYYY-MM-DD"` format.
 
 All request bodies are capped at **1 MB**.
 
+### Person Pictures
+
+Where a person is listed in a role, their `avatar_url` is the `logo_url` of their profile for that role (mentor or mentee), falling back to `users.avatar_url` when that is null or empty. This covers the mentor and mentee directories and profiles, `GET /v1/summary`, the program catalog, the program mentee list, the application list, and member management. `GET /v1/me` returns the stored `users.avatar_url`, and the mentor candidate search returns the stored `users.avatar_url`, or the auth-service avatar for an account found there.
+
 ---
 
 ## 4. Error Reference
@@ -682,7 +686,7 @@ Through the gateway this is the one service-owned collection route: Heimdall aut
 }
 ```
 
-Nested `terms` omit soft-deleted terms. Nested `mentors` are `member_type = mentor` and `status = active`, joined to `users` for name and avatar, and to the mentor `user_profiles` row for `introduction`.
+Nested `terms` omit soft-deleted terms. Nested `mentors` are `member_type = mentor` and `status = active`, joined to `users` for name and to the mentor `user_profiles` row for `introduction`. `avatar_url` follows [Person Pictures](#person-pictures).
 
 LF project / foundation is not included yet — `programs.lfid` remains the owner username.
 
@@ -718,7 +722,7 @@ Public list of accepted and graduated mentees for a program (UUID or slug). Hidd
 }
 ```
 
-`status` is the application status: `accepted` or `graduated`. Display fields come from `users` and the mentee `user_profiles` row. `term_name` is `program_terms.name`.
+`status` is the application status: `accepted` or `graduated`. Display fields come from `users` and the mentee `user_profiles` row; `avatar_url` follows [Person Pictures](#person-pictures). `term_name` is `program_terms.name`.
 
 **Errors** `404`
 
