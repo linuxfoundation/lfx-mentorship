@@ -72,7 +72,8 @@ func (s *ProgramMemberService) assertActiveProgramAdmin(ctx context.Context, pro
 // to. A mentor's request is the mentor's to make or withdraw: an admin
 // approves, declines, or deletes it, so requested/pending → withdrawn and
 // withdrawn → requested are absent here and reachable only through
-// WithdrawMine and RequestMentorship.
+// WithdrawMine and RequestMentorship. Declined and withdrawn have no admin
+// edge here, but inviting the mentor again through Create reopens them.
 var memberTransitions = map[models.ProgramMemberStatus]map[models.ProgramMemberStatus]bool{
 	models.ProgramMemberStatusInvited: {
 		models.ProgramMemberStatusActive:   true,
