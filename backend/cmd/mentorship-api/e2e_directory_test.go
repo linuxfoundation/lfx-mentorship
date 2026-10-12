@@ -6,6 +6,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"testing"
@@ -264,4 +265,57 @@ func TestE2EMachinePrincipals(t *testing.T) {
 	bot.call(t, http.MethodGet, "/me/mentor-programs", nil).expect(http.StatusUnauthorized)
 	bot.call(t, http.MethodGet, "/programs/"+p.ID+"/management-summary", nil).expect(http.StatusOK)
 	bot.call(t, http.MethodGet, "/programs/"+p.ID, nil).expect(http.StatusOK)
+}
+
+// A migrated user keeps their legacy photo in users.avatar_url, while a picture
+// saved on a mentorship page lands in the role profile's logo_url, which must win.
+func TestE2EProfilePicturePrefersProfileLogo(t *testing.T) {
+	reset(t)
+	mentor, mentee := directoryFixture(t)
+	const legacy = "https://legacy.example.org/old.png"
+	mentorLogo, menteeLogo := "https://cdn.example.org/mentor.png", "https://cdn.example.org/mentee.png"
+	for _, p := range []struct{ id, profileType, logo string }{{mentor.ID, "mentor", mentorLogo}, {mentee.ID, "mentee", menteeLogo}} {
+		if _, err := e2e.pool.Exec(context.Background(), `UPDATE users SET avatar_url = $2 WHERE id = $1`, p.id, legacy); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e2e.pool.Exec(context.Background(), `UPDATE user_profiles SET logo_url = $3 WHERE user_id = $1 AND profile_type = $2`, p.id, p.profileType, p.logo); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var mine struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	mentor.mustJSON(t, http.MethodGet, "/me/mentor-programs", nil, http.StatusOK, &mine)
+	if len(mine.Data) != 1 {
+		t.Fatalf("mentor programs: %+v", mine)
+	}
+	programID := mine.Data[0].ID
+	admin := signIn(t, "admin")
+
+	for _, tc := range []struct {
+		caller *actor
+		path   string
+		want   []string
+	}{
+		{anonymous(), "/mentors", []string{mentorLogo}},
+		{anonymous(), "/mentors/" + mentor.ID, []string{mentorLogo, menteeLogo}},
+		{anonymous(), "/mentees", []string{menteeLogo}},
+		{anonymous(), "/mentees/" + mentee.ID, []string{menteeLogo, mentorLogo}},
+		{anonymous(), "/programs/catalog", []string{mentorLogo}},
+		{anonymous(), "/programs/" + programID + "/mentees", []string{menteeLogo}},
+		{admin, "/programs/" + programID + "/applications", []string{menteeLogo}},
+		{admin, "/programs/" + programID + "/member-management", []string{mentorLogo}},
+	} {
+		body := string(tc.caller.call(t, http.MethodGet, tc.path, nil).expect(http.StatusOK).Body)
+		for _, want := range tc.want {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s does not show %s: %s", tc.path, want, body)
+			}
+		}
+		if strings.Contains(body, legacy) {
+			t.Errorf("%s shows the legacy avatar over the profile logo: %s", tc.path, body)
+		}
+	}
 }

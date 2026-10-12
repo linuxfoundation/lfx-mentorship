@@ -88,7 +88,7 @@ const menteeEnrichedCTE = `
 			f.program_slug,
 			f.program_logo_url,
 			NULLIF(TRIM(COALESCE(NULLIF(TRIM(u.name), ''), CONCAT_WS(' ', up.first_name, up.last_name))), '') AS name,
-			COALESCE(u.avatar_url, up.logo_url) AS avatar_url,
+			COALESCE(up.logo_url, u.avatar_url) AS avatar_url,
 			up.introduction,
 			COALESCE((
 				SELECT ARRAY_AGG(e #>> '{}' ORDER BY e #>> '{}')
@@ -490,9 +490,17 @@ func (r *MenteeRepository) loadMentorsByProgram(ctx context.Context, ids []strin
 		return out, nil
 	}
 	rows, err := r.pool.Query(ctx, `
-		SELECT pm.id, pm.program_id, pm.user_id, u.name, u.avatar_url
+		SELECT pm.id, pm.program_id, pm.user_id, u.name, COALESCE(up.logo_url, u.avatar_url)
 		FROM program_members pm
 		LEFT JOIN users u ON u.id = pm.user_id
+		LEFT JOIN LATERAL (
+			SELECT logo_url
+			FROM user_profiles
+			WHERE user_id = pm.user_id
+			  AND profile_type = 'mentor'
+			ORDER BY updated_on DESC
+			LIMIT 1
+		) up ON true
 		WHERE pm.program_id = ANY($1::uuid[])
 		  AND pm.member_type = 'mentor'
 		  AND pm.status = 'active'
