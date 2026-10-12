@@ -21,7 +21,6 @@ type programMemberService interface {
 	SearchCandidates(ctx context.Context, programID, query string) ([]*models.MentorCandidate, error)
 	Update(ctx context.Context, programID, id string, input models.ProgramMemberUpdateInput, actorID string) (*models.ProgramMember, error)
 	Delete(ctx context.Context, programID, id, actorID string) error
-	ResendInvite(ctx context.Context, programID, id, actorID string) error
 	ListMine(ctx context.Context, userID string, filter models.ProgramMemberFilter) ([]*models.ProgramMembership, *models.PaginationMeta, error)
 	RequestMentorship(ctx context.Context, programID, userID string) (*models.ProgramMember, error)
 	WithdrawMine(ctx context.Context, id, userID string) error
@@ -172,21 +171,6 @@ func (h *ProgramMemberHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.svc.Delete(r.Context(), chi.URLParam(r, "id"), chi.URLParam(r, "memberId"), principal.UserID); err != nil {
-		Error(w, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// ResendInvite handles POST /v1/programs/{id}/members/{memberId}/resend-invite — requires JWT.
-func (h *ProgramMemberHandler) ResendInvite(w http.ResponseWriter, r *http.Request) {
-	principal := auth.PrincipalFromContext(r.Context())
-	if principal == nil {
-		Error(w, domain.ErrUnauthorized)
-		return
-	}
-
-	if err := h.svc.ResendInvite(r.Context(), chi.URLParam(r, "id"), chi.URLParam(r, "memberId"), principal.UserID); err != nil {
 		Error(w, err)
 		return
 	}
