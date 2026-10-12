@@ -106,5 +106,6 @@ how an admin resends an invite. A `409` covers the rest:
 - Quick checks:
   - search your own LF username → one result;
   - search a name fragment of someone not in Mentorship → no results (expected);
-  - invite the same person twice → `409`;
+  - invite the same person twice → `201` both times, the same row, and a second invite email;
+  - invite someone who is already an active mentor → `409`;
   - invite `nobody-xyz@example.invalid` → `422`.

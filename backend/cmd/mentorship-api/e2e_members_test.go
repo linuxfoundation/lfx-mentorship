@@ -159,12 +159,13 @@ func TestE2EMentorInvites(t *testing.T) {
 		newcomer.call(t, http.MethodPost, "/mentor-invites/"+url.PathEscape(token)+"/decline", nil).expect(http.StatusBadRequest)
 
 		// A declined mentor can be invited again, and the link they already have works.
+		before := len(e2e.fakes.emailsTo(newcomer.Email))
 		var again member
 		admin.mustJSON(t, http.MethodPost, members, map[string]any{"lfid": "newcomer", "member_type": "mentor"}, http.StatusCreated, &again)
 		if again.ID != invited.ID || again.Status != "invited" {
 			t.Fatalf("re-invite after decline: %+v", again)
 		}
-		inviteToken(t, newcomer.Email, 1)
+		inviteToken(t, newcomer.Email, before+1)
 		newcomer.call(t, http.MethodPost, "/mentor-invites/"+url.PathEscape(token)+"/accept", nil).expect(http.StatusOK)
 	})
 
