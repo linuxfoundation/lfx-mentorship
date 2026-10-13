@@ -24,6 +24,10 @@ node_modules/
 **/.venv/
 **/venv/
 
+# Python caches
+__pycache__/
+.pytest_cache/
+
 # Build output
 dist/
 bin/
