@@ -459,12 +459,15 @@ func (s *ApplicationService) Update(ctx context.Context, id string, input models
 			s.notifier.NotifyMenteeGraduated(ctx, id)
 		}
 	}
-	if input.Status != nil && *input.Status == models.ApplicationStatusWithdrawn && a.Role == models.ApplicationRoleMentor {
-		// The write has landed, so a failed lookup costs only the admins' notice.
+	if input.Status != nil && a.Role == models.ApplicationRoleMentor &&
+		(*input.Status == models.ApplicationStatusWithdrawn || *input.Status == models.ApplicationStatusDeclined) {
+		// The write has landed, so a failed lookup costs only the notice.
 		if term, err := s.termRepo.GetByID(ctx, a.ProgramTermID); err != nil {
 			span.RecordError(err)
-		} else {
+		} else if *input.Status == models.ApplicationStatusWithdrawn {
 			s.notifier.NotifyAdminMentorWithdrew(ctx, term.ProgramID, a.UserID)
+		} else {
+			s.notifier.NotifyMentorDeclined(ctx, term.ProgramID, a.UserID)
 		}
 	}
 
@@ -535,9 +538,11 @@ func (s *ApplicationService) WithdrawForMenteeAfterGatewayAuthorization(ctx cont
 }
 
 // assistedWithdraw withdraws an application on the mentee's behalf, notifying them unless it was already withdrawn.
+// The write applies only while the row keeps the status read before it, so a concurrent change fails
+// rather than being overwritten and notified twice.
 func (s *ApplicationService) assistedWithdraw(ctx context.Context, application *models.Application) (*models.Application, error) {
 	status := models.ApplicationStatusWithdrawn
-	updated, err := s.repo.Update(ctx, application.ID, models.ApplicationUpdateInput{Status: &status})
+	updated, err := s.repo.Update(ctx, application.ID, models.ApplicationUpdateInput{Status: &status, ExpectedStatus: &application.Status})
 	if err != nil {
 		return nil, fmt.Errorf("assisted withdrawal: %w", err)
 	}
