@@ -509,7 +509,8 @@ func (s *ProgramMemberService) RequestMentorship(ctx context.Context, programID 
 	}
 
 	requested := models.ProgramMemberStatusRequested
-	// A blank email stays NULL, so member listings fall back to the user's own address.
+	// A blank email is never written: a new row keeps it NULL so listings fall back to the
+	// user's own address, and a reopened row keeps the address it already has.
 	var email *string
 	if user.Email != "" {
 		email = &user.Email
@@ -544,7 +545,7 @@ func (s *ProgramMemberService) RequestMentorship(ctx context.Context, programID 
 		return nil, fmt.Errorf("%w: a mentor membership for this program is already %q", domain.ErrConflict, current)
 	}
 
-	m, err := s.repo.UpdateIfStatus(ctx, existing.ID, []models.ProgramMemberStatus{models.ProgramMemberStatusWithdrawn}, models.ProgramMemberUpdateInput{Status: &requested})
+	m, err := s.repo.UpdateIfStatus(ctx, existing.ID, []models.ProgramMemberStatus{models.ProgramMemberStatusWithdrawn}, models.ProgramMemberUpdateInput{Status: &requested, Email: email})
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("reopen mentor request: %w", err)

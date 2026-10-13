@@ -29,6 +29,10 @@ const dispatchTimeout = 30 * time.Second
 // sendConcurrency caps parallel sends per notification, so slow recipients cannot starve the rest of the deadline.
 const sendConcurrency = 5
 
+// maxConcurrentDispatches caps notifications resolving and sending at once across the notifier, so a
+// bulk operation that notifies hundreds of mentees cannot exhaust the database pool or flood NATS.
+const maxConcurrentDispatches = 10
+
 var notifierTracer = otel.Tracer("email-notifier")
 
 const (
@@ -95,6 +99,8 @@ type Notifier struct {
 	allowedRecipients map[string]bool
 	logger            *slog.Logger
 	wg                sync.WaitGroup
+	// dispatches holds one slot per notification in progress, up to maxConcurrentDispatches.
+	dispatches chan struct{}
 }
 
 var _ domain.Notifier = (*Notifier)(nil)
@@ -109,6 +115,7 @@ func NewNotifier(sender Sender, repos Repositories, cfg NotifierConfig, logger *
 		hrInbox:      cfg.HRInbox,
 		reviewInbox:  cfg.ReviewInbox,
 		logger:       logger,
+		dispatches:   make(chan struct{}, maxConcurrentDispatches),
 
 		allowedRecipients: recipientSet(cfg.AllowedRecipients),
 	}
@@ -284,7 +291,7 @@ func (n *Notifier) NotifyProgramSubmitted(ctx context.Context, programID, submit
 			if err != nil {
 				n.logger.WarnContext(ctx, "program submitter unavailable", "user_id", submitterID, "error", err)
 			} else {
-				data.SubmitterName = fullName(submitter, "")
+				data.SubmitterName = fullName(submitter, deref(submitter.LFID))
 				data.SubmitterEmail = strings.TrimSpace(deref(submitter.Email))
 			}
 		}
@@ -605,10 +612,14 @@ func countryName(country string) string {
 // dispatch resolves and sends a notification in the background, logging any failure.
 func (n *Notifier) dispatch(ctx context.Context, notification string, build func(context.Context) ([]Message, error)) {
 	// The triggering request's context is cancelled when it returns; keep its values (trace) only.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), dispatchTimeout)
+	ctx = context.WithoutCancel(ctx)
 	n.wg.Add(1)
 	go func() {
 		defer n.wg.Done()
+		// The deadline starts once a slot is free, so a queued notification is not timed out for waiting.
+		n.dispatches <- struct{}{}
+		defer func() { <-n.dispatches }()
+		ctx, cancel := context.WithTimeout(ctx, dispatchTimeout)
 		defer cancel()
 		// Chi's recoverer does not cover this goroutine; a panic here would take down the API.
 		defer func() {
@@ -691,7 +702,7 @@ func (n *Notifier) activeMembers(ctx context.Context, programID string, memberTy
 	}
 }
 
-// mentorNames lists the full names of the program's active mentors, skipping any that cannot be resolved.
+// mentorNames lists the program's active mentors by full name, or LFID when unnamed, skipping any that cannot be resolved.
 func (n *Notifier) mentorNames(ctx context.Context, programID string) ([]string, error) {
 	members, err := n.activeMembers(ctx, programID, models.MemberTypeMentor)
 	if err != nil {
@@ -704,7 +715,7 @@ func (n *Notifier) mentorNames(ctx context.Context, programID string) ([]string,
 			n.logger.WarnContext(ctx, "skipping program mentor name", "user_id", m.UserID, "error", err)
 			continue
 		}
-		if name := fullName(user, ""); name != "" {
+		if name := fullName(user, deref(user.LFID)); name != "" {
 			names = append(names, name)
 		}
 	}

@@ -653,6 +653,7 @@ func TestProgramMemberService_RequestMentorship_ReopensWithdrawnRow(t *testing.T
 	var updatedID string
 	var gotFrom []models.ProgramMemberStatus
 	var updatedStatus models.ProgramMemberStatus
+	var updatedEmail *string
 	memberRepo := &stubMemberRepo{
 		findByUserAndType: func(_ context.Context, programID, userID string, mt models.MemberType) (*models.ProgramMember, error) {
 			if mt != models.MemberTypeMentor {
@@ -665,7 +666,7 @@ func TestProgramMemberService_RequestMentorship_ReopensWithdrawnRow(t *testing.T
 			return nil, nil
 		},
 		updateIfStatus: func(_ context.Context, id string, from []models.ProgramMemberStatus, in models.ProgramMemberUpdateInput) (*models.ProgramMember, error) {
-			updatedID, gotFrom, updatedStatus = id, from, *in.Status
+			updatedID, gotFrom, updatedStatus, updatedEmail = id, from, *in.Status, in.Email
 			return &models.ProgramMember{ID: id, Status: in.Status}, nil
 		},
 	}
@@ -679,6 +680,10 @@ func TestProgramMemberService_RequestMentorship_ReopensWithdrawnRow(t *testing.T
 	}
 	if updatedID != "existing" || updatedStatus != models.ProgramMemberStatusRequested {
 		t.Errorf("UpdateIfStatus(%q, _, %q); want (existing, requested)", updatedID, updatedStatus)
+	}
+	// The reopened row records the caller's current email, as a new row would.
+	if updatedEmail == nil || *updatedEmail != requester.Email {
+		t.Errorf("email = %v; want the caller's email", updatedEmail)
 	}
 	if !slices.Equal(gotFrom, []models.ProgramMemberStatus{models.ProgramMemberStatusWithdrawn}) {
 		t.Errorf("from = %v; want only withdrawn, so a concurrent change is not overwritten", gotFrom)

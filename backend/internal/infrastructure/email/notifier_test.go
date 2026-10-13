@@ -621,6 +621,16 @@ func TestNotifyProgramSubmitted(t *testing.T) {
 	}
 }
 
+func TestNotifyProgramSubmitted_UnnamedSubmitterNamedByLFID(t *testing.T) {
+	f := newFixture()
+	f.users.users["unnamed"] = &models.User{ID: "unnamed", LFID: strPtr("quiet-admin"), Email: strPtr("quiet@linuxfoundation.org")}
+
+	f.n.NotifyProgramSubmitted(context.Background(), "p1", "unnamed")
+
+	review := byRecipient(f.wait(t))[testReviewInbox]
+	mustContain(t, "review text", review.Text, "submitted for review by quiet-admin (quiet@linuxfoundation.org).")
+}
+
 func TestNotifyProgramSubmitted_UnknownSubmitterStillNotifiesReviewers(t *testing.T) {
 	for name, submitter := range map[string]string{"no actor": "", "lookup fails": "missing"} {
 		t.Run(name, func(t *testing.T) {
@@ -792,10 +802,12 @@ func TestNotifyMenteeWithdrawn(t *testing.T) {
 func TestNotifyMenteeGraduated(t *testing.T) {
 	f := newFixture()
 	f.users.users["mentor2"] = &models.User{ID: "mentor2", GivenName: strPtr("Ana"), FamilyName: strPtr("Guide")}
+	f.users.users["unnamed"] = &models.User{ID: "unnamed", LFID: strPtr("quiet-mentor")}
 	f.members.members = []*models.ProgramMember{
 		{UserID: "admin1", MemberType: models.MemberTypeProgramAdmin},
 		{UserID: "mentor", MemberType: models.MemberTypeMentor},
 		{UserID: "mentor2", MemberType: models.MemberTypeMentor},
+		{UserID: "unnamed", MemberType: models.MemberTypeMentor},
 		{UserID: "gone", MemberType: models.MemberTypeMentor},
 	}
 
@@ -809,7 +821,7 @@ func TestNotifyMenteeGraduated(t *testing.T) {
 	mustContain(t, "text", msg.Text,
 		time.Now().UTC().Format(dateLayout)+"\n\nTo Whom It May Concern:",
 		"certify that Mia Mentee successfully completed the Kernel <Dev> mentorship program at The Linux Foundation from September 1, 2026 – November 30, 2026.",
-		"mentored by Mo Mentor, Ana Guide.",
+		"mentored by Mo Mentor, Ana Guide, quiet-mentor.",
 		"Work on <drivers>.",
 		"Sincerely,\nThe Linux Foundation Mentorship Team",
 	)
@@ -877,6 +889,46 @@ func TestNotifyMenteeTaskAssigned_TaskWithoutApplicationSendsNothing(t *testing.
 
 	if sent := f.wait(t); len(sent) != 0 {
 		t.Fatalf("sent = %+v", sent)
+	}
+}
+
+// countingProgramRepo records how many notifications resolve their program at once.
+type countingProgramRepo struct {
+	domain.ProgramRepository
+	program  *models.Program
+	mu       sync.Mutex
+	inFlight int
+	max      int
+}
+
+func (r *countingProgramRepo) GetByID(context.Context, string) (*models.Program, error) {
+	r.mu.Lock()
+	r.inFlight++
+	r.max = max(r.max, r.inFlight)
+	r.mu.Unlock()
+	time.Sleep(5 * time.Millisecond)
+	r.mu.Lock()
+	r.inFlight--
+	r.mu.Unlock()
+	return r.program, nil
+}
+
+func TestNotify_BoundsConcurrentDispatches(t *testing.T) {
+	f := newFixture()
+	programs := &countingProgramRepo{program: f.program}
+	f.n.repos.Programs = programs
+	const notifications = 3 * maxConcurrentDispatches
+
+	// A bulk decline fires one notification per mentee; they queue for a slot rather than all running at once.
+	for range notifications {
+		f.n.NotifyMentorDeclined(context.Background(), "p1", "mentor")
+	}
+
+	if sent := f.wait(t); len(sent) != notifications {
+		t.Fatalf("sent %d messages, want %d", len(sent), notifications)
+	}
+	if programs.max < 2 || programs.max > maxConcurrentDispatches {
+		t.Fatalf("max notifications in flight = %d, want between 2 and %d", programs.max, maxConcurrentDispatches)
 	}
 }
 
