@@ -139,7 +139,7 @@ func TestProgramMemberHandler_SearchCandidates_Errors(t *testing.T) {
 	}
 }
 
-// The public roster is active members only, and the caller must not be able to
+// The public roster is approved members only, and the caller must not be able to
 // widen it by asking for another status.
 func TestProgramMemberHandler_List_PinsApprovedStatus(t *testing.T) {
 	var captured models.ProgramMemberFilter

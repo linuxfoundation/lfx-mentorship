@@ -17,9 +17,9 @@ import (
 
 func newMemberSvc(memberRepo *stubMemberRepo, progRepo *stubProgRepo, notifier *stubNotifier) *service.ProgramMemberService {
 	if memberRepo.findByProgramUser == nil {
-		active := models.ProgramMemberStatusApproved
+		approved := models.ProgramMemberStatusApproved
 		memberRepo.findByProgramUser = func(_ context.Context, programID, userID string) (*models.ProgramMember, error) {
-			return &models.ProgramMember{ProgramID: programID, UserID: userID, MemberType: models.MemberTypeProgramAdmin, Status: &active}, nil
+			return &models.ProgramMember{ProgramID: programID, UserID: userID, MemberType: models.MemberTypeProgramAdmin, Status: &approved}, nil
 		}
 	}
 	return service.NewProgramMemberService(memberRepo, progRepo, &stubLFIDUsers{ids: map[string]string{"mentor-lfid": "mentor-1"}}, nil, notifier, "test-secret")
@@ -303,10 +303,10 @@ func TestProgramMemberService_Create_ProgramAdmin_SetsApprovedStatus(t *testing.
 
 func TestProgramMemberService_Update_ValidTransition_InvitedToApproved(t *testing.T) {
 	invited := models.ProgramMemberStatusInvited
-	active := models.ProgramMemberStatusApproved
+	approved := models.ProgramMemberStatusApproved
 	memberRepo := &stubMemberRepo{
 		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
-			return &models.ProgramMember{MemberType: models.MemberTypeProgramAdmin, Status: &active}, nil
+			return &models.ProgramMember{MemberType: models.MemberTypeProgramAdmin, Status: &approved}, nil
 		},
 		getByID: func(_ context.Context, id string) (*models.ProgramMember, error) {
 			return &models.ProgramMember{ID: id, ProgramID: "prog-1", UserID: "u1", Status: &invited}, nil
@@ -316,17 +316,17 @@ func TestProgramMemberService_Update_ValidTransition_InvitedToApproved(t *testin
 	next := models.ProgramMemberStatusApproved
 	_, err := svc.Update(context.Background(), "prog-1", "member-1", models.ProgramMemberUpdateInput{Status: &next}, "admin-1")
 	if err != nil {
-		t.Errorf("invited→active should be valid, got %v", err)
+		t.Errorf("invited→approved should be valid, got %v", err)
 	}
 }
 
 func TestProgramMemberService_Update_RejectsMemberFromDifferentProgram_WithoutRepoWrite(t *testing.T) {
 	invited := models.ProgramMemberStatusInvited
-	active := models.ProgramMemberStatusApproved
+	approved := models.ProgramMemberStatusApproved
 	updateCalled := false
 	memberRepo := &stubMemberRepo{
 		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
-			return &models.ProgramMember{MemberType: models.MemberTypeProgramAdmin, Status: &active}, nil
+			return &models.ProgramMember{MemberType: models.MemberTypeProgramAdmin, Status: &approved}, nil
 		},
 		getByID: func(_ context.Context, id string) (*models.ProgramMember, error) {
 			return &models.ProgramMember{ID: id, ProgramID: "prog-other", UserID: "u1", Status: &invited}, nil
@@ -363,7 +363,7 @@ func TestProgramMemberService_Update_InvalidTransition_DeclinedToApproved(t *tes
 	next := models.ProgramMemberStatusApproved
 	_, err := svc.Update(context.Background(), "prog-1", "member-1", models.ProgramMemberUpdateInput{Status: &next}, "admin-1")
 	if !errors.Is(err, domain.ErrInvalidStateTransition) {
-		t.Errorf("expected ErrInvalidStateTransition for declined→active, got %v", err)
+		t.Errorf("expected ErrInvalidStateTransition for declined→approved, got %v", err)
 	}
 }
 
@@ -378,7 +378,7 @@ func TestProgramMemberService_Update_InvalidTransition_WithdrawnTerminal(t *test
 	next := models.ProgramMemberStatusApproved
 	_, err := svc.Update(context.Background(), "prog-1", "member-1", models.ProgramMemberUpdateInput{Status: &next}, "admin-1")
 	if !errors.Is(err, domain.ErrInvalidStateTransition) {
-		t.Errorf("expected ErrInvalidStateTransition for withdrawn→active, got %v", err)
+		t.Errorf("expected ErrInvalidStateTransition for withdrawn→approved, got %v", err)
 	}
 }
 
@@ -538,8 +538,8 @@ func TestProgramMemberService_Update_AdminLookupFailurePropagates(t *testing.T) 
 	}
 	svc := newMemberSvc(memberRepo, &stubProgRepo{}, &stubNotifier{})
 
-	active := models.ProgramMemberStatusApproved
-	_, err := svc.Update(context.Background(), "prog-1", "member-1", models.ProgramMemberUpdateInput{Status: &active}, "admin-1")
+	approved := models.ProgramMemberStatusApproved
+	_, err := svc.Update(context.Background(), "prog-1", "member-1", models.ProgramMemberUpdateInput{Status: &approved}, "admin-1")
 	if err == nil {
 		t.Fatal("expected error")
 	}
