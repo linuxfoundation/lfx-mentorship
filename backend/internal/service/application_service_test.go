@@ -437,7 +437,7 @@ func (n *stubNotifier) NotifyMenteeTaskAssigned(_ context.Context, _ string) {
 func newApplicationSvc(appRepo *stubAppRepo, taskRepo *stubTaskRepo, termRepo *stubTermRepo, progRepo *stubProgRepo) *service.ApplicationService {
 	return service.NewApplicationService(appRepo, taskRepo, termRepo, progRepo, &stubMemberRepo{
 		findActiveReviewer: func(context.Context, string, string) (*models.ProgramMember, error) {
-			status := models.ProgramMemberStatusActive
+			status := models.ProgramMemberStatusApproved
 			return &models.ProgramMember{MemberType: models.MemberTypeMentor, Status: &status}, nil
 		},
 	}, &stubNotifier{})
@@ -773,7 +773,7 @@ func TestApplicationService_Update_AcceptedMenteeSendsNotification(t *testing.T)
 			return &models.Application{ID: id, Status: models.ApplicationStatusAccepted, ProgramTermID: "term-1", UserID: "mentee-1", Role: models.ApplicationRoleMentee, AttendanceType: &attType}, nil
 		},
 	}
-	status := models.ProgramMemberStatusActive
+	status := models.ProgramMemberStatusApproved
 	svc := service.NewApplicationService(repo, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{}, &stubMemberRepo{
 		findActiveReviewer: func(context.Context, string, string) (*models.ProgramMember, error) {
 			return &models.ProgramMember{MemberType: models.MemberTypeMentor, Status: &status}, nil
@@ -871,7 +871,7 @@ func TestApplicationService_GetByIDForActor_ApplicantAllowed(t *testing.T) {
 }
 
 func TestApplicationService_GetByIDForActor_ActiveReviewerAllowed(t *testing.T) {
-	active := models.ProgramMemberStatusActive
+	active := models.ProgramMemberStatusApproved
 	svc := newApplicationSvcWithMember(&stubAppRepo{
 		getByID: func(_ context.Context, id string) (*models.Application, error) {
 			return &models.Application{ID: id, UserID: "user-1", ProgramTermID: "term-1"}, nil
@@ -984,7 +984,7 @@ func TestApplicationService_ListByProgramTermForActor_NonReviewerForcesUserFilte
 }
 
 func TestApplicationService_ListByProgramTermForActor_ReviewerKeepsFilterUserID(t *testing.T) {
-	active := models.ProgramMemberStatusActive
+	active := models.ProgramMemberStatusApproved
 	svc := newApplicationSvcWithMember(&stubAppRepo{
 		listByProgramTerm: func(_ context.Context, _ string, f models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error) {
 			if f.UserID != "explicit-user" {
@@ -1035,7 +1035,7 @@ func TestApplicationService_ListByProgram_StatusFilter(t *testing.T) {
 // ── notifications ───────────────────────────────────────────────────────────
 
 func newApplicationSvcWithNotifier(appRepo *stubAppRepo, termRepo *stubTermRepo, n *stubNotifier) *service.ApplicationService {
-	status := models.ProgramMemberStatusActive
+	status := models.ProgramMemberStatusApproved
 	return service.NewApplicationService(appRepo, &stubTaskRepo{}, termRepo, &stubProgRepo{}, &stubMemberRepo{
 		findActiveReviewer: func(context.Context, string, string) (*models.ProgramMember, error) {
 			return &models.ProgramMember{MemberType: models.MemberTypeMentor, Status: &status}, nil

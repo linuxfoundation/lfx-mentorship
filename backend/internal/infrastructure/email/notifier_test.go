@@ -350,7 +350,7 @@ func TestNotifyAdminTasksSubmitted(t *testing.T) {
 	if !strings.Contains(sent[0].Text, "Hi there!") || !strings.Contains(sent[0].Text, "application from Mia Mentee to become a mentee for the Kernel <Dev> program (Fall 2026 term).") {
 		t.Fatalf("text = %s", sent[0].Text)
 	}
-	want := []models.ProgramMemberFilter{{Limit: pageSize, MemberType: "program_admin", Status: "active"}}
+	want := []models.ProgramMemberFilter{{Limit: pageSize, MemberType: "program_admin", Status: "approved"}}
 	if !slices.Equal(f.members.filters, want) {
 		t.Fatalf("filters = %+v, want %+v", f.members.filters, want)
 	}
@@ -890,7 +890,7 @@ func TestNotifyMenteeGraduated(t *testing.T) {
 			t.Fatalf("certificate letter carries the notice greeting or sign-off:\n%s", body)
 		}
 	}
-	want := []models.ProgramMemberFilter{{Limit: mentorPageSize, Status: "active"}}
+	want := []models.ProgramMemberFilter{{Limit: mentorPageSize, Status: "approved"}}
 	if !slices.Equal(f.members.mentorFilters, want) {
 		t.Fatalf("mentor filters = %+v, want %+v", f.members.mentorFilters, want)
 	}

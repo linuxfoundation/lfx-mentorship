@@ -96,15 +96,15 @@ func TestMentorRepositoryIntegration_ListMentoredByUserScopesToActivePublished(t
 	seed.user("other")
 
 	seed.program("mine", "Mine", "published")
-	seed.member("mine", "mentor", "mentor", "active")
+	seed.member("mine", "mentor", "mentor", "approved")
 	seed.program("unpublished", "Unpublished", "pending")
-	seed.member("unpublished", "mentor", "mentor", "active")
+	seed.member("unpublished", "mentor", "mentor", "approved")
 	seed.program("invited", "Invited", "published")
 	seed.member("invited", "mentor", "mentor", "invited")
 	seed.program("admin-only", "Admin Only", "published")
-	seed.member("admin-only", "mentor", "program_admin", "active")
+	seed.member("admin-only", "mentor", "program_admin", "approved")
 	seed.program("theirs", "Theirs", "published")
-	seed.member("theirs", "other", "mentor", "active")
+	seed.member("theirs", "other", "mentor", "approved")
 
 	repo := NewMentorRepository(pool)
 	got, meta, err := repo.ListMentoredByUser(context.Background(), seed.id("mentor"), models.MentoredProgramFilter{})
@@ -136,8 +136,8 @@ func TestMentorRepositoryIntegration_ListMentoredByUserStatusAndOrder(t *testing
 	seed.user("both")
 	both := func(label, name string) {
 		seed.program(label, name, "published")
-		seed.member(label, "both", "program_admin", "active")
-		seed.member(label, "both", "mentor", "active")
+		seed.member(label, "both", "program_admin", "approved")
+		seed.member(label, "both", "mentor", "approved")
 	}
 
 	both("running", "delta")
@@ -203,7 +203,7 @@ func TestMentorRepositoryIntegration_ListMentoredByUserCountsOpenTermsOnly(t *te
 		seed.user(u)
 	}
 	program := seed.program("counted", "Counted", "published")
-	seed.member("counted", "mentor", "mentor", "active")
+	seed.member("counted", "mentor", "mentor", "approved")
 	seed.term("counted", "current", "open", daysFromNow(-7))
 	seed.term("counted", "upcoming", "open", daysFromNow(30))
 	seed.term("counted", "previous", "closed", daysFromNow(-120))
@@ -245,7 +245,7 @@ func TestMentorRepositoryIntegration_ListMentoredByUserCountsOpenTermsOnly(t *te
 
 	// A completed program, with only a closed term, counts zero.
 	done := seed.program("done", "Done", "published")
-	seed.member("done", "mentor", "mentor", "active")
+	seed.member("done", "mentor", "mentor", "approved")
 	seed.term("done", "done-term", "closed", daysFromNow(-90))
 	seed.application("app-done", "done-term", "done-mentee", "mentee", "accepted", base)
 	seed.task("task-done", "app-done", "done-term", "done-mentee", "submitted")
@@ -288,7 +288,7 @@ func TestMentorRepositoryIntegration_ListMentoredByUserPages(t *testing.T) {
 	seed.user("mentor")
 	for _, name := range []string{"Alpha", "Bravo", "Charlie"} {
 		seed.program(name, name, "published")
-		seed.member(name, "mentor", "mentor", "active")
+		seed.member(name, "mentor", "mentor", "approved")
 	}
 
 	got, meta, err := NewMentorRepository(pool).ListMentoredByUser(context.Background(), seed.id("mentor"), models.MentoredProgramFilter{Limit: 1, Offset: 1})

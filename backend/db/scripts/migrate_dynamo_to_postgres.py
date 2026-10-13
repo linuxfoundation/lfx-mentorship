@@ -34,7 +34,8 @@ Key notes
 - The enrollments table no longer exists; applications now covers the full mentee
   lifecycle (pending → accepted → graduated|withdrawn).
 - attendance_type is not captured in DynamoDB; it is migrated as NULL.
-- DynamoDB member status "approved" maps to program_members.status "active".
+- DynamoDB member status "approved" is kept as program_members.status "approved";
+  "accepted" and "active" map onto it.
 - Legacy program statuses draft, pending and submitted all import as programs.status
   "pending": the target has no draft state, so an approver triages every one of them.
   A legacy draft is therefore indistinguishable from a submitted program after import.
@@ -1003,9 +1004,15 @@ _MEMBER_TYPE_MAP = {
     "program_admin": "program_admin",
     "mentor": "mentor",
 }
-_VALID_MEMBER_STATUSES = {"invited", "requested", "pending", "active", "declined", "withdrawn"}
-# DynamoDB used "approved" for accepted mentors; Postgres stores that as "active".
-_MEMBER_STATUS_MAP = {"accepted": "active", "approved": "active"}
+_VALID_MEMBER_STATUSES = {"invited", "requested", "pending", "approved", "declined", "withdrawn"}
+# DynamoDB used "approved" for accepted mentors, which Postgres keeps; "accepted" and "active" collapse into it.
+_MEMBER_STATUS_MAP = {"accepted": "approved", "active": "approved"}
+
+
+def _member_status(status: str | None) -> str | None:
+    """Map a DynamoDB member status to program_members.status, or None when it has no target."""
+    mapped = _MEMBER_STATUS_MAP.get(status, status) if status else None
+    return mapped if mapped in _VALID_MEMBER_STATUSES else None
 
 
 def load_member_user_overrides(path: str) -> dict:
@@ -1139,8 +1146,8 @@ def migrate_program_members(
             )
             skipped += 1
             continue
-        mapped_status = _MEMBER_STATUS_MAP.get(raw_status, raw_status) if raw_status else None
-        if mapped_status not in _VALID_MEMBER_STATUSES:
+        status = _member_status(raw_status)
+        if status is None:
             log.warning(
                 "UNMAPPED_MEMBER_STATUS member_id=%s program_id=%s user_id=%s status=%r",
                 mid,
@@ -1150,7 +1157,6 @@ def migrate_program_members(
             )
             skipped += 1
             continue
-        status = mapped_status
         member_rows.append(
             (
                 mid,
@@ -1544,7 +1550,7 @@ def seed_derived_state(cur) -> None:
         FROM programs
         JOIN program_members ON program_members.program_id = programs.id
         JOIN users ON users.id = program_members.user_id
-        WHERE program_members.status = 'active'
+        WHERE program_members.status = 'approved'
           AND program_members.member_type IN ('program_admin', 'mentor')
           AND NULLIF(users.lfid, '') IS NULL
         ORDER BY programs.id, program_members.id
@@ -1617,7 +1623,7 @@ def seed_derived_state(cur) -> None:
           FROM program_members
           JOIN users ON users.id = program_members.user_id
           WHERE program_members.program_id = program.id
-            AND program_members.status = 'active'
+            AND program_members.status = 'approved'
             AND program_members.member_type IN ('program_admin', 'mentor')
             AND NULLIF(users.lfid, '') IS NULL
         )
@@ -1712,7 +1718,7 @@ def seed_derived_state(cur) -> None:
                     'status', status,
                     'logo_url', logo_url,
                     'stats', jsonb_build_object(
-                        'mentors', (SELECT COUNT(*) FROM program_members pm WHERE pm.program_id = programs.id AND pm.member_type = 'mentor' AND pm.status = 'active'),
+                        'mentors', (SELECT COUNT(*) FROM program_members pm WHERE pm.program_id = programs.id AND pm.member_type = 'mentor' AND pm.status = 'approved'),
                         'mentees', (SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE pt.program_id = programs.id AND a.role = 'mentee' AND a.status = 'accepted'),
                         'graduated', (SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE pt.program_id = programs.id AND a.role = 'mentee' AND a.status = 'graduated')
                     ),

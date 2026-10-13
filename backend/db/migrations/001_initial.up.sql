@@ -165,13 +165,13 @@ CREATE TABLE IF NOT EXISTS program_members (
   program_id  UUID         NOT NULL REFERENCES programs(id) ON DELETE CASCADE,
   user_id     UUID         NOT NULL REFERENCES users(id),
   member_type VARCHAR(20)  NOT NULL,                       -- program_admin | mentor
-  status      VARCHAR(20),                                 -- invited | requested | pending | active | declined | withdrawn
+  status      VARCHAR(20),                                 -- invited | requested | pending | approved | declined | withdrawn
   email       TEXT,
   created_on  TIMESTAMPTZ  DEFAULT NOW(),
   updated_on  TIMESTAMPTZ  DEFAULT NOW(),
   UNIQUE (program_id, user_id, member_type),
   CONSTRAINT program_members_type_check   CHECK (member_type IN ('program_admin', 'mentor')),
-  CONSTRAINT program_members_status_check CHECK (status IS NULL OR status IN ('invited', 'requested', 'pending', 'active', 'declined', 'withdrawn'))
+  CONSTRAINT program_members_status_check CHECK (status IS NULL OR status IN ('invited', 'requested', 'pending', 'approved', 'declined', 'withdrawn'))
 );
 
 -- ============================================

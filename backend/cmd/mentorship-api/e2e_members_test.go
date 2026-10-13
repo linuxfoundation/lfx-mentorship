@@ -108,7 +108,7 @@ func TestE2EMentorInvites(t *testing.T) {
 
 		var accepted member
 		mentor.mustJSON(t, http.MethodPost, "/mentor-invites/"+escaped+"/accept", nil, http.StatusOK, &accepted)
-		if accepted.Status != "active" {
+		if accepted.Status != "approved" {
 			t.Fatalf("accepted: %+v", accepted)
 		}
 		awaitEmail(t, admin.Email, "accepted your mentor invitation", 1)
@@ -132,7 +132,7 @@ func TestE2EMentorInvites(t *testing.T) {
 			} `json:"data"`
 		}
 		mentor.mustJSON(t, http.MethodGet, "/me/program-memberships?member_type=mentor", nil, http.StatusOK, &mine)
-		if len(mine.Data) != 1 || mine.Data[0].ProgramName != "Invite Program" || mine.Data[0].Status != "active" {
+		if len(mine.Data) != 1 || mine.Data[0].ProgramName != "Invite Program" || mine.Data[0].Status != "approved" {
 			t.Fatalf("my memberships: %+v", mine)
 		}
 		mentor.call(t, http.MethodGet, "/me/program-memberships?member_type=owner", nil).expect(http.StatusBadRequest)
@@ -237,30 +237,30 @@ func TestE2EProgramMemberManagement(t *testing.T) {
 	admin.mustJSON(t, http.MethodPost, members, map[string]any{"user_id": mentor.ID, "member_type": "mentor"}, http.StatusCreated, &m)
 
 	t.Run("status lifecycle", func(t *testing.T) {
-		for _, step := range []struct{ to, want string }{{"pending", "pending"}, {"active", "active"}, {"withdrawn", "withdrawn"}} {
+		for _, step := range []struct{ to, want string }{{"pending", "pending"}, {"approved", "approved"}, {"withdrawn", "withdrawn"}} {
 			admin.mustJSON(t, http.MethodPatch, members+"/"+m.ID, map[string]any{"status": step.to}, http.StatusOK, &m)
 			if m.Status != step.want {
 				t.Fatalf("after %s: %+v", step.to, m)
 			}
 		}
-		admin.call(t, http.MethodPatch, members+"/"+m.ID, map[string]any{"status": "active"}).expect(http.StatusConflict)
+		admin.call(t, http.MethodPatch, members+"/"+m.ID, map[string]any{"status": "approved"}).expect(http.StatusConflict)
 		admin.call(t, http.MethodPatch, members+"/"+m.ID, map[string]any{"status": "bogus"}).expect(http.StatusBadRequest)
 		admin.mustJSON(t, http.MethodPatch, members+"/"+m.ID, map[string]any{"email": "mentor-two@work.example.org"}, http.StatusOK, &m)
 		if m.Email == nil || *m.Email != "mentor-two@work.example.org" {
 			t.Fatalf("email update: %+v", m)
 		}
-		admin.call(t, http.MethodPatch, members+"/00000000-0000-4000-8000-000000000000", map[string]any{"status": "active"}).expect(http.StatusNotFound)
+		admin.call(t, http.MethodPatch, members+"/00000000-0000-4000-8000-000000000000", map[string]any{"status": "approved"}).expect(http.StatusNotFound)
 		other := publishProgram(t, admin, "Other Members Program")
 		admin.call(t, http.MethodPatch, "/programs/"+other.ID+"/members/"+m.ID, map[string]any{"status": "pending"}).expect(http.StatusNotFound)
 		admin.call(t, http.MethodDelete, "/programs/"+other.ID+"/members/"+m.ID, nil).expect(http.StatusNotFound)
-		anonymous().call(t, http.MethodPatch, members+"/"+m.ID, map[string]any{"status": "active"}).expect(http.StatusUnauthorized)
+		anonymous().call(t, http.MethodPatch, members+"/"+m.ID, map[string]any{"status": "approved"}).expect(http.StatusUnauthorized)
 	})
 
 	t.Run("program admins are active on creation", func(t *testing.T) {
 		coAdmin := signIn(t, "co-admin")
 		var a member
 		admin.mustJSON(t, http.MethodPost, members, map[string]any{"user_id": coAdmin.ID, "member_type": "program_admin"}, http.StatusCreated, &a)
-		if a.Status != "active" || a.MemberType != "program_admin" {
+		if a.Status != "approved" || a.MemberType != "program_admin" {
 			t.Fatalf("co-admin: %+v", a)
 		}
 		var mine programPage
@@ -282,7 +282,7 @@ func TestE2EProgramMemberManagement(t *testing.T) {
 		if len(rows.Data) != 1 || rows.Data[0].UserID != mentor.ID {
 			t.Fatalf("mentor management: %+v", rows)
 		}
-		admin.mustJSON(t, http.MethodGet, "/programs/"+p.ID+"/member-management?status=active", nil, http.StatusOK, &rows)
+		admin.mustJSON(t, http.MethodGet, "/programs/"+p.ID+"/member-management?status=approved", nil, http.StatusOK, &rows)
 		if len(rows.Data) != 0 {
 			t.Fatalf("status filter: %+v", rows)
 		}

@@ -19,7 +19,7 @@ var allTaskStatuses = []models.TaskStatus{
 // reviewerRepos wires an application, term and program membership so actorID is an active
 // reviewer of the program with the given member type.
 func reviewerRepos(appID, actorID string, memberType models.MemberType) (*stubAppRepo, *stubTermRepo, *stubMemberRepo) {
-	activeStatus := models.ProgramMemberStatusActive
+	activeStatus := models.ProgramMemberStatusApproved
 	appRepo := &stubAppRepo{getByID: func(_ context.Context, _ string) (*models.Application, error) {
 		return &models.Application{ID: appID, ProgramTermID: "term-1"}, nil
 	}}

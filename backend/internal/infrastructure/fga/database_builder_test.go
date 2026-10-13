@@ -57,7 +57,7 @@ func (builderApplications) GetByID(context.Context, string) (*models.Application
 }
 
 func activeMember(userID string, memberType models.MemberType) *models.ProgramMember {
-	status := models.ProgramMemberStatusActive
+	status := models.ProgramMemberStatusApproved
 	return &models.ProgramMember{ProgramID: "program-1", UserID: userID, MemberType: memberType, Status: &status}
 }
 
