@@ -526,7 +526,7 @@ Programs are the top-level entity for a mentorship offering.
 }
 ```
 
-**Status lifecycle**: `pending → published | rejected`; `rejected → pending`;
+**Status lifecycle**: `pending → published | rejected`;
 `published ↔ hidden`; `published | hidden → archived`. See [§15](#15-domain-state-machines).
 
 | Status | Meaning |
@@ -1129,7 +1129,12 @@ Publish or reject a `pending` program. Approver team only.
 `status` is required and must be `published` or `rejected`.
 
 **Response** `200` → `<Program>`  
-**Errors** `400` (missing or other `status`), `404`, `409` (program is not `pending`)
+**Guard** (publishing only): a linked LF project, `description`, `repo_link` and
+`logo_url` are non-empty; at least 1 skill tag; at least 1 open term. Rejecting has
+no guard. `rejected` is final: no transition leaves it.
+
+**Errors** `400` (missing or other `status`), `404`, `409` (program is not `pending`, or
+the publication guard blocked)
 
 ---
 
@@ -2223,8 +2228,7 @@ both added by #161.
   create and update routes take its URL as `logo_url`. Profile writes drop
   `profile_links.resumeLink` rather than reject it, since resumes are not a file
   class and a client may echo back a migrated profile.
-- An archived program's logo cannot change (`409`); a rejected program's can,
-  since resubmitting requires a logo.
+- An archived program's logo cannot change (`409`); a rejected program's logo stays editable.
 
 | Route | Body | Response |
 |---|---|---|
@@ -2253,18 +2257,17 @@ pending ──────┬──► published ◄──► hidden
               │          │              │
               │          └──► archived ◄┘
               │
-              └──► rejected ──► pending
+              └──► rejected
 ```
 
 | From | To | Notes |
 |---|---|---|
-| `pending` | `published` | `POST /programs/{id}/decision`; reviewer approves |
+| `pending` | `published` | `POST /programs/{id}/decision`; reviewer approves. Guard: a linked LF project, description, repo_link, logo_url, ≥1 skill and ≥1 open term |
 | `pending` | `rejected` | `POST /programs/{id}/decision`; reviewer declines |
 | `published` | `hidden` | `POST /programs/{id}/hide`; no pending/accepted/graduated applications |
 | `published` | `archived` | Program complete |
 | `hidden` | `published` | `POST /programs/{id}/unhide` |
 | `hidden` | `archived` | Program complete while hidden |
-| `rejected` | `pending` | Resubmission for review. The transition guard requires a linked LF project, description, repo_link, logo_url, ≥1 skill and ≥1 open term; no route exposes it yet |
 
 ### Program Term Status
 
@@ -2548,7 +2551,8 @@ Body: { "status": "declined" } // decline
    Body: { "lfid": "alice", "description": "...", "repo_link": "...", "logo_url": "..." }
    ```
 5. The program stays `pending` until an approver publishes or rejects it with
-   `POST /v1/programs/{id}/decision`.
+   `POST /v1/programs/{id}/decision`. Publishing returns `409` with a descriptive error if
+   any required field or guard condition is not met.
 
 #### CSV Export
 

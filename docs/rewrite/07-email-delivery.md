@@ -50,7 +50,7 @@ Status column: **hook** — a `Notifier` method exists but delivers nothing yet;
 | --- | --- | --- | --- |
 | **Programs** | | | |
 | `admin-mentorship-submission-confirmation` | Program Admin | program created as `pending` | none |
-| `communitybridge-review-mentorship-submission` | LF staff review inbox | program created as `pending` and `rejected → pending` — the notification-only replacement for the signed approval link ([02](./02-target-architecture.md)) | none |
+| `communitybridge-review-mentorship-submission` | LF staff review inbox | program created as `pending` — the notification-only replacement for the signed approval link ([02](./02-target-architecture.md)) | none |
 | `admin-mentorship-submission-approved` | Program Admin | program `pending → published` | none |
 | `admin-mentorship-submission-rejected` | Program Admin | program `pending → rejected` | none |
 | `admin-project-edited-notification` | Program Admin | Program Admin edits a program that is not `rejected` | none |

@@ -89,6 +89,13 @@ func TestE2EProgramLifecycle(t *testing.T) {
 		}
 	})
 
+	t.Run("publishing requires a logo", func(t *testing.T) {
+		res := approver(t).call(t, http.MethodPost, "/programs/"+id+"/decision", map[string]any{"status": "published"}).expect(http.StatusConflict)
+		if !strings.Contains(res.errorMessage(), "logo is required") {
+			t.Fatalf("got %q", res.errorMessage())
+		}
+	})
+
 	var logo struct {
 		PublicURL   string `json:"public_url"`
 		ContentType string `json:"content_type"`

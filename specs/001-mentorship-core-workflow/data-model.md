@@ -35,14 +35,13 @@ Authoritative entity reference. Schema source of truth: `backend/db/migrations/0
 ```
 pending ──approve──► published ◄──unhide──┐
         └──reject──► rejected             │
-                     rejected ──resubmit──► pending
 published ──hide──► hidden ──────────────────────────────────►─┘
 published │ hidden ──archive──► archived
 ```
 
 **Guard: hide blocked while any application on the program has status ∈ {`pending`, `accepted`, `graduated`, `hold`}**
 
-**Resubmission guard (`rejected → pending`): program must have ≥ 1 open term and all required fields present.**
+**Publication guard (`pending → published`): program must have ≥ 1 open term and all required fields present.**
 
 ---
 

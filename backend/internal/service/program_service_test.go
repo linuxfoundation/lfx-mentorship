@@ -252,14 +252,44 @@ func TestProgramService_Decide(t *testing.T) {
 		{models.ProgramStatusPending, models.ProgramStatusHidden, domain.ErrInvalidInput},
 	} {
 		repo := &stubProgRepo{
-			getByID: func(_ context.Context, id string) (*models.Program, error) {
-				return &models.Program{ID: id, Status: tc.current}, nil
+			getByID: func(_ context.Context, _ string) (*models.Program, error) {
+				prog := fullProgram()
+				prog.Status = tc.current
+				return prog, nil
+			},
+			listSkills: func(context.Context, string) ([]*models.ProgramSkill, error) {
+				return []*models.ProgramSkill{{ID: "s1"}}, nil
+			},
+		}
+		termRepo := &stubTermRepo{countOpenByProgram: func(context.Context, string) (int, error) { return 1, nil }}
+		svc := newProgramSvc(repo, termRepo, &stubAppRepo{})
+		_, err := svc.Decide(context.Background(), "prog-1", tc.next)
+		if tc.want == nil && err != nil || tc.want != nil && !errors.Is(err, tc.want) {
+			t.Errorf("%s→%s: got %v; want %v", tc.current, tc.next, err, tc.want)
+		}
+	}
+}
+
+// Decide publishes only a complete program, but rejects any pending one.
+func TestProgramService_Decide_IncompleteProgram(t *testing.T) {
+	for _, tc := range []struct {
+		next models.ProgramStatus
+		want error
+	}{
+		{models.ProgramStatusPublished, domain.ErrStateLocked},
+		{models.ProgramStatusRejected, nil},
+	} {
+		repo := &stubProgRepo{
+			getByID: func(_ context.Context, _ string) (*models.Program, error) {
+				prog := fullProgram()
+				prog.LogoURL = nil
+				return prog, nil
 			},
 		}
 		svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
 		_, err := svc.Decide(context.Background(), "prog-1", tc.next)
 		if tc.want == nil && err != nil || tc.want != nil && !errors.Is(err, tc.want) {
-			t.Errorf("%s→%s: got %v; want %v", tc.current, tc.next, err, tc.want)
+			t.Errorf("incomplete program → %s: got %v; want %v", tc.next, err, tc.want)
 		}
 	}
 }
@@ -357,7 +387,7 @@ func TestProgramService_Update_ArchivedTerminal(t *testing.T) {
 	}
 }
 
-// ── submission guard ──────────────────────────────────────────────────────────
+// ── publication guard ──────────────────────────────────────────────────────────
 
 func fullProgram() *models.Program {
 	lfid := "lf-123"
@@ -367,7 +397,7 @@ func fullProgram() *models.Program {
 	logo := "https://example.com/logo.png"
 	return &models.Program{
 		ID:          "prog-1",
-		Status:      models.ProgramStatusRejected,
+		Status:      models.ProgramStatusPending,
 		ProjectUID:  &projectUID,
 		LFID:        &lfid,
 		Description: &desc,
@@ -376,45 +406,45 @@ func fullProgram() *models.Program {
 	}
 }
 
-func TestProgramService_Update_Resubmit_NoLFID(t *testing.T) {
+func TestProgramService_Update_Publish_NoLFID(t *testing.T) {
 	prog := fullProgram()
 	prog.LFID = nil
 	repo := &stubProgRepo{getByID: func(_ context.Context, _ string) (*models.Program, error) { return prog, nil }, listSkills: func(context.Context, string) ([]*models.ProgramSkill, error) {
 		return []*models.ProgramSkill{{ID: "s1"}}, nil
 	}}
 	svc := newProgramSvc(repo, &stubTermRepo{countOpenByProgram: func(context.Context, string) (int, error) { return 1, nil }}, &stubAppRepo{})
-	next := models.ProgramStatusPending
+	next := models.ProgramStatusPublished
 	_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Status: &next})
 	if err != nil {
-		t.Errorf("expected resubmission to ignore legacy LFID, got %v", err)
+		t.Errorf("expected publication to ignore legacy LFID, got %v", err)
 	}
 }
 
-func TestProgramService_Update_Resubmit_NoProjectUID(t *testing.T) {
+func TestProgramService_Update_Publish_NoProjectUID(t *testing.T) {
 	prog := fullProgram()
 	prog.ProjectUID = nil
 	repo := &stubProgRepo{getByID: func(_ context.Context, _ string) (*models.Program, error) { return prog, nil }}
 	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
-	next := models.ProgramStatusPending
+	next := models.ProgramStatusPublished
 	_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Status: &next})
 	if !errors.Is(err, domain.ErrStateLocked) {
 		t.Errorf("expected ErrStateLocked for missing project_uid, got %v", err)
 	}
 }
 
-func TestProgramService_Update_Resubmit_NoDescription(t *testing.T) {
+func TestProgramService_Update_Publish_NoDescription(t *testing.T) {
 	prog := fullProgram()
 	prog.Description = nil
 	repo := &stubProgRepo{getByID: func(_ context.Context, _ string) (*models.Program, error) { return prog, nil }}
 	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
-	next := models.ProgramStatusPending
+	next := models.ProgramStatusPublished
 	_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Status: &next})
 	if !errors.Is(err, domain.ErrStateLocked) {
 		t.Errorf("expected ErrStateLocked for missing description, got %v", err)
 	}
 }
 
-func TestProgramService_Update_Resubmit_NoSkills(t *testing.T) {
+func TestProgramService_Update_Publish_NoSkills(t *testing.T) {
 	prog := fullProgram()
 	repo := &stubProgRepo{
 		getByID:    func(_ context.Context, _ string) (*models.Program, error) { return prog, nil },
@@ -422,14 +452,14 @@ func TestProgramService_Update_Resubmit_NoSkills(t *testing.T) {
 	}
 	termRepo := &stubTermRepo{countOpenByProgram: func(_ context.Context, _ string) (int, error) { return 1, nil }}
 	svc := newProgramSvc(repo, termRepo, &stubAppRepo{})
-	next := models.ProgramStatusPending
+	next := models.ProgramStatusPublished
 	_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Status: &next})
 	if !errors.Is(err, domain.ErrStateLocked) {
 		t.Errorf("expected ErrStateLocked for no skills, got %v", err)
 	}
 }
 
-func TestProgramService_Update_Resubmit_NoOpenTerms(t *testing.T) {
+func TestProgramService_Update_Publish_NoOpenTerms(t *testing.T) {
 	prog := fullProgram()
 	repo := &stubProgRepo{
 		getByID: func(_ context.Context, _ string) (*models.Program, error) { return prog, nil },
@@ -439,14 +469,14 @@ func TestProgramService_Update_Resubmit_NoOpenTerms(t *testing.T) {
 	}
 	termRepo := &stubTermRepo{countOpenByProgram: func(_ context.Context, _ string) (int, error) { return 0, nil }}
 	svc := newProgramSvc(repo, termRepo, &stubAppRepo{})
-	next := models.ProgramStatusPending
+	next := models.ProgramStatusPublished
 	_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Status: &next})
 	if !errors.Is(err, domain.ErrStateLocked) {
 		t.Errorf("expected ErrStateLocked for no open terms, got %v", err)
 	}
 }
 
-func TestProgramService_Update_Resubmit_AllPresent_OK(t *testing.T) {
+func TestProgramService_Update_Publish_AllPresent_OK(t *testing.T) {
 	prog := fullProgram()
 	repo := &stubProgRepo{
 		getByID: func(_ context.Context, _ string) (*models.Program, error) { return prog, nil },
@@ -456,10 +486,10 @@ func TestProgramService_Update_Resubmit_AllPresent_OK(t *testing.T) {
 	}
 	termRepo := &stubTermRepo{countOpenByProgram: func(_ context.Context, _ string) (int, error) { return 1, nil }}
 	svc := newProgramSvc(repo, termRepo, &stubAppRepo{})
-	next := models.ProgramStatusPending
+	next := models.ProgramStatusPublished
 	_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Status: &next})
 	if err != nil {
-		t.Errorf("resubmit with all required fields should succeed, got %v", err)
+		t.Errorf("publish with all required fields should succeed, got %v", err)
 	}
 }
 

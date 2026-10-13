@@ -185,14 +185,13 @@ the program_admin can manage the program's visibility and terms throughout its l
 - **FR-002**: System MUST support the following optional program fields: CII project
   ID, website URL, code of conduct, and prerequisite task templates.
 - **FR-003**: System MUST enforce a maximum of 4 open terms per program.
-- **FR-004**: System MUST check that all required fields (FR-001) are present before a
-  `rejected` program returns to `pending`.
+- **FR-004**: System MUST check that all required fields (FR-001) are present and at least
+  one term is open before a `pending` program is published.
 - **FR-005**: System MUST allow a reviewer to transition a `pending` program to
   either `published` or `rejected`.
 - **FR-006**: System MUST activate the Mentees, Mentors, and Terms admin tabs only
   once a program reaches `published`.
-- **FR-007**: System MUST allow a `rejected` program to return to `pending` for another
-  review.
+- **FR-007**: System MUST treat `rejected` as a final status: no transition leaves it.
 - **FR-008**: System MUST allow a program_admin to transition a `published` program to
   `hidden`, and MUST block this transition while any application on the program has
   `status` of `pending`, `accepted`, or `graduated`.
@@ -314,7 +313,7 @@ the program_admin can manage the program's visibility and terms throughout its l
   LF project. Key attributes: name (unique), description, repository URL, logo,
   skill tags (≥1), CII project ID (optional), website URL (optional), code of conduct
   (optional), prerequisite task templates (optional). Status lifecycle: `pending` →
-  `published` | `rejected`; `rejected` → `pending`; `published` ↔
+  `published` | `rejected`; `published` ↔
   `hidden`; `published` | `hidden` → `archived`.
 - **ProgramTerm**: A time-boxed run of a program (max 4 open per program). Key
   attributes: `application_start_date`, `application_end_date`, end date. Status
@@ -341,7 +340,7 @@ the program_admin can manage the program's visibility and terms throughout its l
 ## Success Criteria *(mandatory)*
 
 - **SC-001**: 100% of program status transitions observed in the system match the
-  lifecycle `pending → published | rejected`, `rejected → pending`,
+  lifecycle `pending → published | rejected`,
   `published ↔ hidden`, `published | hidden → archived`; no
   program is ever observed in an undefined status.
 - **SC-002**: 0 terms can be closed while an `accepted` application remains open on
