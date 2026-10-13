@@ -7,7 +7,7 @@
 
 ## Execution Flow (main)
 ```
-1. Program Admin creates a program in pending and submits it for review
+1. Program Admin creates a program in pending, where it awaits review
 2. Reviewer publishes or rejects the program
 3. Program Admin invites mentors, or mentors self-request; each is approved or declined
 4. Mentee creates a profile (subject to an eligibility gate) and applies to an open term
@@ -22,8 +22,8 @@
 ## User Scenarios & Testing *(mandatory)*
 
 ### Primary User Story
-A program_admin stands up a mentorship program, defines one or more terms, and submits
-it for review. Once published, mentors join by invitation or self-request, and
+A program_admin stands up a mentorship program, defines one or more terms, and awaits
+review. Once published, mentors join by invitation or self-request, and
 prospective mentees create a profile, apply to an open term, and complete prerequisite
 tasks. The program_admin reviews completed tasks and decides whether to accept, decline,
 or hold each applicant. Accepted mentees move through the program to graduation, and
@@ -35,14 +35,12 @@ the program_admin can manage the program's visibility and terms throughout its l
    a unique name, description, repository URL, logo, at least one skill tag, and at
    least one term, **Then** the program is created with `status = pending`.
 
-2. **Given** a `pending` program that meets all required fields, **When** the program_admin
-   submits it, **Then** `status` transitions to `submitted` and it becomes visible to
-   reviewers.
+2. **Given** a `pending` program, **Then** it is visible to reviewers.
 
-3. **Given** a `submitted` program, **When** a reviewer approves it, **Then**
+3. **Given** a `pending` program, **When** a reviewer approves it, **Then**
    `status` transitions to `published` and the Mentees, Mentors, and Terms admin tabs
    become active. **When** a reviewer instead declines it, **Then** `status`
-   transitions to `rejected` and the program_admin may revise and resubmit.
+   transitions to `rejected`.
 
 4. **Given** a `published` program with no `pending`, `accepted`, or `graduated`
    applications, **When** the program_admin hides it, **Then** `status` transitions to
@@ -150,12 +148,12 @@ the program_admin can manage the program's visibility and terms throughout its l
 
 ### Edge Cases
 
-- What happens when a program_admin attempts to submit a program with zero terms, or a
-  fifth open term (exceeding the 4-open-term maximum)? → Submission/term-creation must
+- What happens when a program_admin attempts to create a program with zero terms, or a
+  fifth open term (exceeding the 4-open-term maximum)? → Program/term creation must
   be blocked. [NEEDS CLARIFICATION: exact error/validation message not specified in
   source]
 - What happens when a reviewer attempts to act on a program that is not in
-  `submitted` state? → Out of scope for this spec; assumed blocked by state guard.
+  `pending` state? → Out of scope for this spec; assumed blocked by state guard.
   [NEEDS CLARIFICATION: no explicit rule given]
 - What happens if a program_admin tries to hide a program while an application is
   `hold`? → Not addressed by source document; only `pending`, `accepted`, and
@@ -187,14 +185,13 @@ the program_admin can manage the program's visibility and terms throughout its l
 - **FR-002**: System MUST support the following optional program fields: CII project
   ID, website URL, code of conduct, and prerequisite task templates.
 - **FR-003**: System MUST enforce a maximum of 4 open terms per program.
-- **FR-004**: System MUST allow a program_admin to transition a program from `pending` to
-  `submitted` only when all required fields (FR-001) are present.
-- **FR-005**: System MUST allow a reviewer to transition a `submitted` program to
+- **FR-004**: System MUST check that all required fields (FR-001) are present and at least
+  one term is open before a `pending` program is published.
+- **FR-005**: System MUST allow a reviewer to transition a `pending` program to
   either `published` or `rejected`.
 - **FR-006**: System MUST activate the Mentees, Mentors, and Terms admin tabs only
   once a program reaches `published`.
-- **FR-007**: System MUST allow a program_admin to revise and resubmit a `rejected`
-  program.
+- **FR-007**: System MUST treat `rejected` as a final status: no transition leaves it.
 - **FR-008**: System MUST allow a program_admin to transition a `published` program to
   `hidden`, and MUST block this transition while any application on the program has
   `status` of `pending`, `accepted`, or `graduated`.
@@ -316,7 +313,7 @@ the program_admin can manage the program's visibility and terms throughout its l
   LF project. Key attributes: name (unique), description, repository URL, logo,
   skill tags (≥1), CII project ID (optional), website URL (optional), code of conduct
   (optional), prerequisite task templates (optional). Status lifecycle: `pending` →
-  `submitted` → `published` | `rejected`; `rejected` → `submitted`; `published` ↔
+  `published` | `rejected`; `published` ↔
   `hidden`; `published` | `hidden` → `archived`.
 - **ProgramTerm**: A time-boxed run of a program (max 4 open per program). Key
   attributes: `application_start_date`, `application_end_date`, end date. Status
@@ -343,7 +340,7 @@ the program_admin can manage the program's visibility and terms throughout its l
 ## Success Criteria *(mandatory)*
 
 - **SC-001**: 100% of program status transitions observed in the system match the
-  lifecycle `pending → submitted → published | rejected`, `rejected → submitted`,
+  lifecycle `pending → published | rejected`,
   `published ↔ hidden`, `published | hidden → archived`; no
   program is ever observed in an undefined status.
 - **SC-002**: 0 terms can be closed while an `accepted` application remains open on
@@ -387,8 +384,8 @@ the program_admin can manage the program's visibility and terms throughout its l
 
 | # | Location | Question |
 |---|---|---|
-| 1 | Edge Cases | What error/message is shown when program submission fails due to zero terms or exceeding the 4-open-term cap? |
-| 2 | Edge Cases | Should reviewer actions be blocked on programs not in `submitted` status, and if so, how should that be surfaced? |
+| 1 | Edge Cases | What error/message is shown when program creation fails due to zero terms or exceeding the 4-open-term cap? |
+| 2 | Edge Cases | Should reviewer actions be blocked on programs not in `pending` status, and if so, how should that be surfaced? |
 | 3 | Edge Cases | Does an application in `hold` also block hiding a program, alongside `pending`, `accepted`, and `graduated`? |
 | 4 | Edge Cases | Are `deleted` terms excluded from both the 4-open-term cap and mentee application eligibility? |
 | 5 | Mentor Invitation | ~~What happens when an invitation token expires before the mentor responds — is re-invitation automatic or manual?~~ Answered: tokens do not expire; a Program Admin re-invites by inviting the same person again (research.md C-5). |

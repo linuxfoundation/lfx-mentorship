@@ -337,7 +337,6 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			// Programs
 			r.Post("/programs", programH.Create)
 			r.Patch("/programs/{id}", programH.Update)
-			r.Post("/programs/{id}/submit", programH.Submit)
 			r.Post("/programs/{id}/decision", programH.Decision)
 			r.Post("/programs/{id}/hide", programH.Hide)
 			r.Post("/programs/{id}/unhide", programH.Unhide)

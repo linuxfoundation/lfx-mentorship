@@ -257,8 +257,8 @@ func TestMentorModuleRoutesAreCoveredByHeimdall(t *testing.T) {
 	}
 }
 
-// Hiding and unhiding are program-admin actions, gated like submit and not like
-// the approver-team decision.
+// Hiding and unhiding are program-admin actions, gated by the program writer relation
+// rather than the approver-team decision.
 func TestProgramVisibilityRequiresProgramWriter(t *testing.T) {
 	block := ruleBlock(t, "program-visibility")
 	if strings.Count(block, "- path:") != 2 ||

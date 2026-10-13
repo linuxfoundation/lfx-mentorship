@@ -357,22 +357,7 @@ func (h *ProgramHandler) NameAvailable(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, map[string]bool{"available": available})
 }
 
-// Submit transitions a program from pending or rejected to submitted.
-func (h *ProgramHandler) Submit(w http.ResponseWriter, r *http.Request) {
-	if auth.PrincipalFromContext(r.Context()) == nil {
-		Error(w, domain.ErrUnauthorized)
-		return
-	}
-	status := models.ProgramStatusSubmitted
-	program, err := h.svc.Update(r.Context(), chi.URLParam(r, "id"), models.ProgramUpdateInput{Status: &status})
-	if err != nil {
-		Error(w, err)
-		return
-	}
-	JSON(w, http.StatusOK, program)
-}
-
-// Decision applies a published or rejected decision to a submitted program.
+// Decision applies a published or rejected decision to a pending program.
 func (h *ProgramHandler) Decision(w http.ResponseWriter, r *http.Request) {
 	if auth.PrincipalFromContext(r.Context()) == nil {
 		Error(w, domain.ErrUnauthorized)
@@ -516,7 +501,7 @@ func (h *ProgramHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if input.Status != nil {
-		Error(w, fmt.Errorf("%w: status transitions are handled by dedicated submit/decision routes", domain.ErrInvalidInput))
+		Error(w, fmt.Errorf("%w: status transitions are handled by dedicated decision/hide/unhide routes", domain.ErrInvalidInput))
 		return
 	}
 	program, err := h.svc.Update(r.Context(), id, input)

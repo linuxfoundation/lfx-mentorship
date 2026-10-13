@@ -89,15 +89,11 @@ func TestE2EProgramLifecycle(t *testing.T) {
 		}
 	})
 
-	t.Run("submission requires a logo", func(t *testing.T) {
-		res := admin.call(t, http.MethodPost, "/programs/"+id+"/submit", nil).expect(http.StatusConflict)
+	t.Run("publishing requires a logo", func(t *testing.T) {
+		res := approver(t).call(t, http.MethodPost, "/programs/"+id+"/decision", map[string]any{"status": "published"}).expect(http.StatusConflict)
 		if !strings.Contains(res.errorMessage(), "logo is required") {
 			t.Fatalf("got %q", res.errorMessage())
 		}
-	})
-
-	t.Run("a pending program cannot be decided", func(t *testing.T) {
-		approver(t).call(t, http.MethodPost, "/programs/"+id+"/decision", map[string]any{"status": "published"}).expect(http.StatusConflict)
 	})
 
 	var logo struct {
@@ -108,18 +104,6 @@ func TestE2EProgramLifecycle(t *testing.T) {
 	if !strings.HasPrefix(logo.PublicURL, e2eCDNPrefix+"/") || logo.ContentType != "image/png" {
 		t.Fatalf("logo upload: %+v", logo)
 	}
-
-	var submitted program
-	admin.mustJSON(t, http.MethodPost, "/programs/"+id+"/submit", nil, http.StatusOK, &submitted)
-	if submitted.Status != "submitted" {
-		t.Fatalf("after submit: %q", submitted.Status)
-	}
-
-	t.Run("a submitted program is hidden from anonymous callers", func(t *testing.T) {
-		anonymous().call(t, http.MethodGet, "/programs/"+id, nil).expect(http.StatusNotFound)
-		anonymous().call(t, http.MethodGet, "/programs/"+id+"/catalog", nil).expect(http.StatusNotFound)
-		admin.call(t, http.MethodGet, "/programs/"+id, nil).expect(http.StatusOK)
-	})
 
 	t.Run("decision validates its input", func(t *testing.T) {
 		approver(t).call(t, http.MethodPost, "/programs/"+id+"/decision", map[string]any{}).expect(http.StatusBadRequest)
@@ -187,12 +171,10 @@ func TestE2EProgramLifecycle(t *testing.T) {
 	})
 }
 
-func TestE2EProgramRejectionAndResubmission(t *testing.T) {
+func TestE2EProgramRejection(t *testing.T) {
 	reset(t)
 	admin := signIn(t, "admin")
 	p := createProgram(t, admin, "Rejected Program")
-	uploadLogo(t, admin, p.ID).expect(http.StatusCreated)
-	admin.mustJSON(t, http.MethodPost, "/programs/"+p.ID+"/submit", nil, http.StatusOK, nil)
 
 	var rejected program
 	approver(t).mustJSON(t, http.MethodPost, "/programs/"+p.ID+"/decision", map[string]any{"status": "rejected"}, http.StatusOK, &rejected)
@@ -205,12 +187,6 @@ func TestE2EProgramRejectionAndResubmission(t *testing.T) {
 		t.Fatalf("rejected filter: %+v", mine)
 	}
 
-	// A rejected program goes straight back to submitted.
-	var resubmitted program
-	admin.mustJSON(t, http.MethodPost, "/programs/"+p.ID+"/submit", nil, http.StatusOK, &resubmitted)
-	if resubmitted.Status != "submitted" {
-		t.Fatalf("after resubmit: %q", resubmitted.Status)
-	}
 	admin.call(t, http.MethodPost, "/programs/"+p.ID+"/hide", nil).expect(http.StatusConflict)
 }
 

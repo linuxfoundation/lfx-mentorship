@@ -641,7 +641,7 @@ func TestProgramListAdministeredIntegration_GroupsStatusAndScopesToActiveAdmin(t
 		`INSERT INTO users (id, lfid, name) VALUES ('` + otherUserID + `', 'fixture-user-2', 'Fixture User 2')`,
 		`INSERT INTO programs (id, name, slug, status, lf_project_name) VALUES
 			('` + completedID + `', 'Alpha', 'alpha', 'published', 'LF Energy'),
-			('` + pendingID + `', 'beta', 'beta', 'submitted', 'CNCF'),
+			('` + pendingID + `', 'beta', 'beta', 'pending', 'CNCF'),
 			('` + mentorOnlyID + `', 'Mentored', 'mentored', 'published', NULL),
 			('` + withdrawnID + `', 'Withdrawn', 'withdrawn', 'published', NULL),
 			('` + rejectedID + `', 'Gamma', 'gamma', 'rejected', NULL),

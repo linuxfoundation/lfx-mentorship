@@ -526,16 +526,15 @@ Programs are the top-level entity for a mentorship offering.
 }
 ```
 
-**Status lifecycle**: `pending → submitted → published | rejected`; `rejected → submitted`;
+**Status lifecycle**: `pending → published | rejected`;
 `published ↔ hidden`; `published | hidden → archived`. See [§15](#15-domain-state-machines).
 
 | Status | Meaning |
 |---|---|
-| `pending` | Being configured; not visible to public |
-| `submitted` | Under reviewer inspection |
+| `pending` | Awaiting reviewer decision |
 | `published` | Live; accepts applications |
 | `hidden` | Soft-hidden; only visible to owner |
-| `rejected` | Reviewer declined; program_admin may revise and resubmit |
+| `rejected` | Reviewer declined |
 | `archived` | Completed; read-only |
 
 ### Program Skill Object
@@ -1044,8 +1043,7 @@ The backend reads the project's slug, name, and logo from Project Service by `pr
 #### `PATCH /v1/programs/{id}` 🔒
 
 Update program fields. Status cannot be changed here: a body with `status` returns
-`400`; use [`POST /v1/programs/{id}/submit`](#post-v1programsidsubmit-),
-[`POST /v1/programs/{id}/decision`](#post-v1programsiddecision-),
+`400`; use [`POST /v1/programs/{id}/decision`](#post-v1programsiddecision-),
 [`POST /v1/programs/{id}/hide`](#post-v1programsidhide-) and
 [`POST /v1/programs/{id}/unhide`](#post-v1programsidunhide-).
 
@@ -1119,22 +1117,9 @@ that has applications), `503` (Project Service unavailable)
 
 ---
 
-#### `POST /v1/programs/{id}/submit` 🔒
-
-Submit a `pending` or `rejected` program for review (`→ submitted`). No request body.
-See [§15 State Machines](#15-domain-state-machines).
-
-**Guard**: a linked LF project, `description`, `repo_link` and `logo_url` are
-non-empty; at least 1 skill tag; at least 1 open term.
-
-**Response** `200` → `<Program>`  
-**Errors** `404`, `409` (invalid transition or guard blocked)
-
----
-
 #### `POST /v1/programs/{id}/decision` 🔒
 
-Publish or reject a `submitted` program. Approver team only.
+Publish or reject a `pending` program. Approver team only.
 
 **Request body**
 ```json
@@ -1144,7 +1129,12 @@ Publish or reject a `submitted` program. Approver team only.
 `status` is required and must be `published` or `rejected`.
 
 **Response** `200` → `<Program>`  
-**Errors** `400` (missing or other `status`), `404`, `409` (program is not `submitted`)
+**Guard** (publishing only): a linked LF project, `description`, `repo_link` and
+`logo_url` are non-empty; at least 1 skill tag; at least 1 open term. Rejecting has
+no guard. `rejected` is final: no transition leaves it.
+
+**Errors** `400` (missing or other `status`), `404`, `409` (program is not `pending`, or
+the publication guard blocked)
 
 ---
 
@@ -1164,7 +1154,7 @@ Program admins only (`writer` on the program).
 
 Make a `hidden` program public again (`→ published`). No request body. Program
 admins only (`writer` on the program). Only a `hidden` program can be unhidden: an
-`archived` program stays archived, and a `submitted` program is published only
+`archived` program stays archived, and a `pending` program is published only
 through [`POST /v1/programs/{id}/decision`](#post-v1programsiddecision-).
 
 **Response** `200` → `<Program>`  
@@ -1599,7 +1589,7 @@ matches `GET /v1/programs/{id}/header`.
 
 | `admin_status` | When |
 |---|---|
-| `pending_review` | `status` is `pending` or `submitted` |
+| `pending_review` | `status` is `pending` |
 | `open` | `status` is `published` and the program has an open term, or no terms yet |
 | `completed` | `status` is `published` and every term is closed (deleted terms are ignored) |
 | `rejected` | `status` is `rejected` |
@@ -1748,7 +1738,7 @@ the program, that row is reset to `requested` instead. No invite email is sent.
 |---|---|
 | `400` | `program_id` is not a UUID, or the program is `pending` |
 | `401` | No signed-in user |
-| `404` | The program does not exist, or is not visible to every signed-in user (`submitted`, `rejected`, `archived`, `hidden`) |
+| `404` | The program does not exist, or is not visible to every signed-in user (`rejected`, `archived`, `hidden`) |
 | `409` | The caller already has a mentor row in `invited`, `requested`, `pending`, `active`, or `declined`, or the row changed concurrently |
 
 ---
@@ -2238,8 +2228,7 @@ both added by #161.
   create and update routes take its URL as `logo_url`. Profile writes drop
   `profile_links.resumeLink` rather than reject it, since resumes are not a file
   class and a client may echo back a migrated profile.
-- An archived program's logo cannot change (`409`); a rejected program's can,
-  since resubmitting requires a logo.
+- An archived program's logo cannot change (`409`); a rejected program's logo stays editable.
 
 | Route | Body | Response |
 |---|---|---|
@@ -2264,31 +2253,21 @@ the object returns `416`.
 ### Program Status
 
 ```
-pending ────────────────────────────────► submitted
-                                              │
-                              ┌───────────────┼─────────────────┐
-                              ▼               ▼                 │
-                          rejected        published             │
-                              │           /       \             │
-                              │      hidden    archived         │
-                              │      /   \                      │
-                              │  published archived             │
-                              │                                 │
-                              └──►submitted                     │
-                                                                │
-                              (rejected → resubmit directly)
+pending ──────┬──► published ◄──► hidden
+              │          │              │
+              │          └──► archived ◄┘
+              │
+              └──► rejected
 ```
 
 | From | To | Notes |
 |---|---|---|
-| `pending` | `submitted` | All required fields present (linked LF project, description, repo_link, logo_url, ≥1 skill, ≥1 open term) |
-| `submitted` | `published` | Reviewer approves |
-| `submitted` | `rejected` | Reviewer declines |
+| `pending` | `published` | `POST /programs/{id}/decision`; reviewer approves. Guard: a linked LF project, description, repo_link, logo_url, ≥1 skill and ≥1 open term |
+| `pending` | `rejected` | `POST /programs/{id}/decision`; reviewer declines |
 | `published` | `hidden` | `POST /programs/{id}/hide`; no pending/accepted/graduated applications |
 | `published` | `archived` | Program complete |
 | `hidden` | `published` | `POST /programs/{id}/unhide` |
 | `hidden` | `archived` | Program complete while hidden |
-| `rejected` | `submitted` | Program Admin resubmits |
 
 ### Program Term Status
 
@@ -2551,7 +2530,7 @@ Body: { "status": "active" }   // approve
 Body: { "status": "declined" } // decline
 ```
 
-#### Program Submission Workflow (Program Admin)
+#### Program Creation Workflow (Program Admin)
 
 1. Create program in pending:
    ```
@@ -2571,11 +2550,9 @@ Body: { "status": "declined" } // decline
    PATCH /v1/programs/{id}
    Body: { "lfid": "alice", "description": "...", "repo_link": "...", "logo_url": "..." }
    ```
-5. Submit for review:
-   ```
-   POST /v1/programs/{id}/submit
-   ```
-   Returns `409` with a descriptive error if any required field or guard condition is not met.
+5. The program stays `pending` until an approver publishes or rejects it with
+   `POST /v1/programs/{id}/decision`. Publishing returns `409` with a descriptive error if
+   any required field or guard condition is not met.
 
 #### CSV Export
 

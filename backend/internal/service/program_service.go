@@ -68,10 +68,9 @@ func (s *ProgramService) SetProjectLookup(projects domain.ProjectLookup) {
 
 // programTransitions defines the valid next states for each program status.
 var programTransitions = map[models.ProgramStatus][]models.ProgramStatus{
-	models.ProgramStatusPending:   {models.ProgramStatusSubmitted},
-	models.ProgramStatusSubmitted: {models.ProgramStatusPublished, models.ProgramStatusRejected},
+	models.ProgramStatusPending:   {models.ProgramStatusPublished, models.ProgramStatusRejected},
 	models.ProgramStatusPublished: {models.ProgramStatusArchived, models.ProgramStatusHidden},
-	models.ProgramStatusRejected:  {models.ProgramStatusSubmitted}, // resubmit directly; no detour through pending
+	models.ProgramStatusRejected:  {},
 	models.ProgramStatusArchived:  {},
 	models.ProgramStatusHidden:    {models.ProgramStatusPublished, models.ProgramStatusArchived},
 }
@@ -458,17 +457,17 @@ func validateHTTPURL(value *string) error {
 	return nil
 }
 
-// Decide publishes or rejects a submitted program.
+// Decide publishes or rejects a pending program.
 func (s *ProgramService) Decide(ctx context.Context, id string, status models.ProgramStatus) (*models.Program, error) {
 	if status != models.ProgramStatusPublished && status != models.ProgramStatusRejected {
-		return nil, fmt.Errorf("%w: decision must publish or reject a submitted program", domain.ErrInvalidInput)
+		return nil, fmt.Errorf("%w: decision must publish or reject a pending program", domain.ErrInvalidInput)
 	}
 	current, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("get program for decision: %w", err)
 	}
-	if current.Status != models.ProgramStatusSubmitted {
-		return nil, fmt.Errorf("%w: only a submitted program can be decided, not %q", domain.ErrInvalidStateTransition, current.Status)
+	if current.Status != models.ProgramStatusPending {
+		return nil, fmt.Errorf("%w: only a pending program can be decided, not %q", domain.ErrInvalidStateTransition, current.Status)
 	}
 	return s.Update(ctx, id, models.ProgramUpdateInput{Status: &status})
 }
@@ -481,7 +480,7 @@ func (s *ProgramService) Hide(ctx context.Context, id string) (*models.Program, 
 }
 
 // Unhide makes a hidden program public again. It pins the source status because
-// programTransitions also allows submitted → published, which only the approver
+// programTransitions also allows pending → published, which only the approver
 // team may apply through Decide.
 func (s *ProgramService) Unhide(ctx context.Context, id string) (*models.Program, error) {
 	from, to := models.ProgramStatusHidden, models.ProgramStatusPublished
@@ -569,19 +568,19 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 		// The transition was validated against current.Status, so the write must apply only while the row still has it.
 		input.ExpectedStatus = &current.Status
 
-		// Submission guard (FR-004): all required fields must be present and at least one open term.
-		if next == models.ProgramStatusSubmitted {
+		// Publication guard (FR-004): a pending program needs all required fields and at least one open term.
+		if current.Status == models.ProgramStatusPending && next == models.ProgramStatusPublished {
 			if current.ProjectUID == nil || strings.TrimSpace(*current.ProjectUID) == "" {
-				return nil, fmt.Errorf("%w: a linked LF project is required before submission", domain.ErrStateLocked)
+				return nil, fmt.Errorf("%w: a linked LF project is required before publication", domain.ErrStateLocked)
 			}
 			if current.Description == nil || strings.TrimSpace(*current.Description) == "" {
-				return nil, fmt.Errorf("%w: description is required before submission", domain.ErrStateLocked)
+				return nil, fmt.Errorf("%w: description is required before publication", domain.ErrStateLocked)
 			}
 			if current.RepoLink == nil || strings.TrimSpace(*current.RepoLink) == "" {
-				return nil, fmt.Errorf("%w: repository URL is required before submission", domain.ErrStateLocked)
+				return nil, fmt.Errorf("%w: repository URL is required before publication", domain.ErrStateLocked)
 			}
 			if current.LogoURL == nil || strings.TrimSpace(*current.LogoURL) == "" {
-				return nil, fmt.Errorf("%w: logo is required before submission", domain.ErrStateLocked)
+				return nil, fmt.Errorf("%w: logo is required before publication", domain.ErrStateLocked)
 			}
 			skills, err := s.repo.ListSkills(ctx, id)
 			if err != nil {
@@ -589,7 +588,7 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 				return nil, fmt.Errorf("check program skills: %w", err)
 			}
 			if len(skills) == 0 {
-				return nil, fmt.Errorf("%w: at least one skill tag is required before submission", domain.ErrStateLocked)
+				return nil, fmt.Errorf("%w: at least one skill tag is required before publication", domain.ErrStateLocked)
 			}
 			count, err := s.termRepo.CountOpenTermsByProgram(ctx, id)
 			if err != nil {
@@ -597,7 +596,7 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 				return nil, fmt.Errorf("check open terms: %w", err)
 			}
 			if count == 0 {
-				return nil, fmt.Errorf("%w: program must have at least one open term to be submitted", domain.ErrStateLocked)
+				return nil, fmt.Errorf("%w: program must have at least one open term to be published", domain.ErrStateLocked)
 			}
 		}
 
