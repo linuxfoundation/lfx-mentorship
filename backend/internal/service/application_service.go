@@ -459,15 +459,21 @@ func (s *ApplicationService) Update(ctx context.Context, id string, input models
 			s.notifier.NotifyMenteeGraduated(ctx, id)
 		}
 	}
-	if input.Status != nil && a.Role == models.ApplicationRoleMentor &&
-		(*input.Status == models.ApplicationStatusWithdrawn || *input.Status == models.ApplicationStatusDeclined) {
-		// The write has landed, so a failed lookup costs only the notice.
-		if term, err := s.termRepo.GetByID(ctx, a.ProgramTermID); err != nil {
-			span.RecordError(err)
-		} else if *input.Status == models.ApplicationStatusWithdrawn {
-			s.notifier.NotifyAdminMentorWithdrew(ctx, term.ProgramID, a.UserID)
-		} else {
-			s.notifier.NotifyMentorDeclined(ctx, term.ProgramID, a.UserID)
+	if input.Status != nil && a.Role == models.ApplicationRoleMentor {
+		withdrew := *input.Status == models.ApplicationStatusWithdrawn
+		// A decline answers only an outstanding request (ExpectedStatus is the status the write applied
+		// from). Declining an accepted mentor leaves their approved membership in place, so it sends nothing.
+		declinedRequest := *input.Status == models.ApplicationStatusDeclined && input.ExpectedStatus != nil &&
+			(*input.ExpectedStatus == models.ApplicationStatusPending || *input.ExpectedStatus == models.ApplicationStatusHold)
+		if withdrew || declinedRequest {
+			// The write has landed, so a failed lookup costs only the notice.
+			if term, err := s.termRepo.GetByID(ctx, a.ProgramTermID); err != nil {
+				span.RecordError(err)
+			} else if withdrew {
+				s.notifier.NotifyAdminMentorWithdrew(ctx, term.ProgramID, a.UserID)
+			} else {
+				s.notifier.NotifyMentorDeclined(ctx, term.ProgramID, a.UserID)
+			}
 		}
 	}
 

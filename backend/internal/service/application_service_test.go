@@ -1136,23 +1136,25 @@ func TestApplicationService_Update_NotifiesMenteeOfStatusChange(t *testing.T) {
 func TestApplicationService_Update_NotifiesOfMentorApplicationDecision(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
-		to           models.ApplicationStatus
+		from, to     models.ApplicationStatus
 		actor        string
 		termErr      error
 		wantWithdrew int
 		wantDeclined int
 	}{
-		{name: "withdrawn tells admins", to: models.ApplicationStatusWithdrawn, actor: "mentor-1", wantWithdrew: 1},
-		{name: "declined tells the mentor", to: models.ApplicationStatusDeclined, actor: "reviewer", wantDeclined: 1},
-		{name: "put on hold sends nothing", to: models.ApplicationStatusHold, actor: "reviewer"},
-		{name: "withdrawn, term lookup fails after the write", to: models.ApplicationStatusWithdrawn, actor: "mentor-1", termErr: errors.New("db down")},
-		{name: "declined, term lookup fails after the write", to: models.ApplicationStatusDeclined, actor: "reviewer", termErr: errors.New("db down")},
+		{name: "withdrawn tells admins", from: models.ApplicationStatusPending, to: models.ApplicationStatusWithdrawn, actor: "mentor-1", wantWithdrew: 1},
+		{name: "declined while pending tells the mentor", from: models.ApplicationStatusPending, to: models.ApplicationStatusDeclined, actor: "reviewer", wantDeclined: 1},
+		{name: "declined while on hold tells the mentor", from: models.ApplicationStatusHold, to: models.ApplicationStatusDeclined, actor: "reviewer", wantDeclined: 1},
+		{name: "declined after acceptance sends nothing", from: models.ApplicationStatusAccepted, to: models.ApplicationStatusDeclined, actor: "reviewer"},
+		{name: "put on hold sends nothing", from: models.ApplicationStatusPending, to: models.ApplicationStatusHold, actor: "reviewer"},
+		{name: "withdrawn, term lookup fails after the write", from: models.ApplicationStatusPending, to: models.ApplicationStatusWithdrawn, actor: "mentor-1", termErr: errors.New("db down")},
+		{name: "declined, term lookup fails after the write", from: models.ApplicationStatusPending, to: models.ApplicationStatusDeclined, actor: "reviewer", termErr: errors.New("db down")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			written := false
 			repo := &stubAppRepo{
 				getByID: func(_ context.Context, id string) (*models.Application, error) {
-					return &models.Application{ID: id, Status: models.ApplicationStatusPending, ProgramTermID: "term-1", UserID: "mentor-1", Role: models.ApplicationRoleMentor}, nil
+					return &models.Application{ID: id, Status: tc.from, ProgramTermID: "term-1", UserID: "mentor-1", Role: models.ApplicationRoleMentor}, nil
 				},
 				update: func(_ context.Context, id string, _ models.ApplicationUpdateInput) (*models.Application, error) {
 					written = true
