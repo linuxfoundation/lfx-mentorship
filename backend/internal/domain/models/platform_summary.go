@@ -18,6 +18,9 @@ type PlatformSummary struct {
 	// currently have at least one open term whose application window
 	// includes the current moment.
 	AcceptingProgramCount int `json:"accepting_program_count"`
+	// ProjectCount is the number of distinct LF projects that own at least
+	// one published program.
+	ProjectCount int `json:"project_count"`
 	// MentorCount is the number of distinct users who are an active
 	// mentor member of at least one published program.
 	MentorCount int `json:"mentor_count"`

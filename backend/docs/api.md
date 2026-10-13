@@ -954,6 +954,7 @@ Aggregated marketing/landing counts plus a small graduated-mentee preview. All c
 
 - `program_count` — number of published programs.
 - `accepting_program_count` — subset of published programs with at least one open term whose `application_start_date` ≤ `NOW()` ≤ `application_end_date`.
+- `project_count` — distinct LF projects (`lf_project_uid`) that own at least one published program.
 - `mentor_count` — distinct users who are an `approved` `mentor` member of any published program.
 - `graduated_mentee_count` — distinct users with at least one mentee application in status `graduated` on a non-deleted term of a published program.
 - `stipends_paid` — total amount spent by published programs.
@@ -964,6 +965,7 @@ Aggregated marketing/landing counts plus a small graduated-mentee preview. All c
 {
   "program_count": 18,
   "accepting_program_count": 3,
+  "project_count": 5,
   "mentor_count": 7,
   "graduated_mentee_count": 42,
   "stipends_paid": 12500.00,
@@ -2442,11 +2444,10 @@ Do not compose the directory from `GET /v1/user-profiles` or by calling `GET /v1
 
 ```
 GET /v1/summary
-→ Hero and stats: program_count, accepting_program_count, mentor_count,
-  graduated_mentee_count, and graduated_mentee_users (up to four avatars)
+→ Hero and stats: program_count, accepting_program_count, project_count,
+  mentor_count, graduated_mentee_count, stipends_paid, and
+  graduated_mentee_users (up to four avatars)
 ```
-
-Foundations and stipend totals are not on this endpoint yet — keep those as static marketing copy until they are modeled.
 
 #### Applying to a Term (Mentee)
 
