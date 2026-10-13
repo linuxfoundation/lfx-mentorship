@@ -1191,6 +1191,20 @@ def migrate_program_members(
             )
         )
 
+    # A rerun can resolve a member to a different user than an earlier run stored. The upsert
+    # only reconciles the business key, so drop the earlier row for that id first.
+    cur.execute(
+        """
+        DELETE FROM program_members AS pm
+        USING unnest(%s::uuid[], %s::uuid[], %s::uuid[], %s::text[]) AS k(id, program_id, user_id, member_type)
+        WHERE pm.id = k.id
+          AND (pm.program_id, pm.user_id, pm.member_type) IS DISTINCT FROM (k.program_id, k.user_id, k.member_type)
+        """,
+        [[row[i] for row in member_rows] for i in range(4)],  # id, program_id, user_id, member_type
+    )
+    if cur.rowcount:
+        log.info("  → %d program_members re-keyed since an earlier run", cur.rowcount)
+
     psycopg2.extras.execute_batch(
         cur,
         """

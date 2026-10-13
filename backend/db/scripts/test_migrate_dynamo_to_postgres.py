@@ -317,6 +317,30 @@ def test_rerun_replaces_mentee_profile_when_keeper_changes(cursor):
     assert cursor.fetchall() == [(NEW_MENTEE, "mentee"), (MENTOR, "mentor")]
 
 
+LEGACY_USER = "77777777-7777-4777-8777-777777777777"
+EMAIL_USER = "88888888-8888-4888-8888-888888888888"
+MEMBER = "99999999-9999-4999-8999-999999999999"
+OTHER_MEMBER = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+
+
+def import_members(cur, *members):
+    programs = m.migrate_programs(cur, [{"projectId": PROGRAM, "name": "P"}], set(), _Files(), {})
+    rows = [{"id": mid, "projectId": PROGRAM, "userId": uid, "memberType": "mentor", "status": "accepted"} for mid, uid in members]
+    m.migrate_program_members(cur, rows, programs, set())
+    cur.execute("SELECT id::text, user_id::text FROM program_members WHERE program_id = %s ORDER BY id", (PROGRAM,))
+    return cur.fetchall()
+
+
+def test_rerun_moves_a_member_to_its_newly_resolved_user(cursor):
+    import_members(cursor, (MEMBER, LEGACY_USER))
+    assert import_members(cursor, (MEMBER, EMAIL_USER)) == [(MEMBER, EMAIL_USER)]
+
+
+def test_rerun_collapses_a_member_onto_its_users_existing_row(cursor):
+    import_members(cursor, (MEMBER, LEGACY_USER), (OTHER_MEMBER, EMAIL_USER))
+    assert import_members(cursor, (MEMBER, EMAIL_USER), (OTHER_MEMBER, EMAIL_USER)) == [(OTHER_MEMBER, EMAIL_USER)]
+
+
 MEMBER_USERS = [
     {"id": "u-alice", "email": "Alice@Example.org", "lfid": "alice"},
     {"id": "u-shared-1", "email": "shared@example.org", "lfid": "owner"},
