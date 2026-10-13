@@ -1111,7 +1111,6 @@ func TestApplicationService_Update_NotifiesMenteeOfStatusChange(t *testing.T) {
 		{name: "self-withdrawn", from: models.ApplicationStatusPending, to: models.ApplicationStatusWithdrawn, role: models.ApplicationRoleMentee, actor: "mentee-1", want: menteeDecisionCalls{withdrawn: 1}},
 		{name: "graduated", from: models.ApplicationStatusAccepted, to: models.ApplicationStatusGraduated, role: models.ApplicationRoleMentee, actor: "reviewer", want: menteeDecisionCalls{graduated: 1}},
 		{name: "put on hold", from: models.ApplicationStatusPending, to: models.ApplicationStatusHold, role: models.ApplicationRoleMentee, actor: "reviewer"},
-		{name: "mentor application declined", from: models.ApplicationStatusPending, to: models.ApplicationStatusDeclined, role: models.ApplicationRoleMentor, actor: "reviewer"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := &stubAppRepo{
@@ -1134,34 +1133,51 @@ func TestApplicationService_Update_NotifiesMenteeOfStatusChange(t *testing.T) {
 	}
 }
 
-func TestApplicationService_Update_MentorWithdrawalTellsAdmins(t *testing.T) {
+func TestApplicationService_Update_NotifiesOfMentorApplicationDecision(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		termErr error
-		want    int
+		name         string
+		from, to     models.ApplicationStatus
+		actor        string
+		termErr      error
+		wantWithdrew int
+		wantDeclined int
 	}{
-		{name: "term found", want: 1},
-		{name: "term lookup fails after the write", termErr: errors.New("db down"), want: 0},
+		{name: "withdrawn tells admins", from: models.ApplicationStatusPending, to: models.ApplicationStatusWithdrawn, actor: "mentor-1", wantWithdrew: 1},
+		{name: "declined while pending tells the mentor", from: models.ApplicationStatusPending, to: models.ApplicationStatusDeclined, actor: "reviewer", wantDeclined: 1},
+		{name: "declined while on hold tells the mentor", from: models.ApplicationStatusHold, to: models.ApplicationStatusDeclined, actor: "reviewer", wantDeclined: 1},
+		{name: "declined after acceptance sends nothing", from: models.ApplicationStatusAccepted, to: models.ApplicationStatusDeclined, actor: "reviewer"},
+		{name: "put on hold sends nothing", from: models.ApplicationStatusPending, to: models.ApplicationStatusHold, actor: "reviewer"},
+		{name: "withdrawn, term lookup fails after the write", from: models.ApplicationStatusPending, to: models.ApplicationStatusWithdrawn, actor: "mentor-1", termErr: errors.New("db down")},
+		{name: "declined, term lookup fails after the write", from: models.ApplicationStatusPending, to: models.ApplicationStatusDeclined, actor: "reviewer", termErr: errors.New("db down")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			written := false
 			repo := &stubAppRepo{
 				getByID: func(_ context.Context, id string) (*models.Application, error) {
-					return &models.Application{ID: id, Status: models.ApplicationStatusPending, ProgramTermID: "term-1", UserID: "mentor-1", Role: models.ApplicationRoleMentor}, nil
+					return &models.Application{ID: id, Status: tc.from, ProgramTermID: "term-1", UserID: "mentor-1", Role: models.ApplicationRoleMentor}, nil
 				},
 				update: func(_ context.Context, id string, _ models.ApplicationUpdateInput) (*models.Application, error) {
-					return &models.Application{ID: id, Status: models.ApplicationStatusWithdrawn, ProgramTermID: "term-1", UserID: "mentor-1", Role: models.ApplicationRoleMentor}, nil
+					written = true
+					return &models.Application{ID: id, Status: tc.to, ProgramTermID: "term-1", UserID: "mentor-1", Role: models.ApplicationRoleMentor}, nil
 				},
 			}
+			// The reviewer check also reads the term, so fail only the lookup after the write.
 			termRepo := &stubTermRepo{getByID: func(_ context.Context, id string) (*models.ProgramTerm, error) {
-				return &models.ProgramTerm{ID: id, ProgramID: "prog-1"}, tc.termErr
+				if written && tc.termErr != nil {
+					return nil, tc.termErr
+				}
+				return &models.ProgramTerm{ID: id, ProgramID: "prog-1"}, nil
 			}}
 			n := &stubNotifier{}
-			next := models.ApplicationStatusWithdrawn
-			if _, err := newApplicationSvcWithNotifier(repo, termRepo, n).Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &next, ActorID: "mentor-1"}); err != nil {
+			next := tc.to
+			if _, err := newApplicationSvcWithNotifier(repo, termRepo, n).Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &next, ActorID: tc.actor}); err != nil {
 				t.Fatalf("Update: %v", err)
 			}
-			if n.adminMentorWithdrewCalls != tc.want || n.menteeWithdrawnCalls != 0 {
-				t.Fatalf("mentor withdrew / mentee withdrawn notifications = %d / %d; want %d / 0", n.adminMentorWithdrewCalls, n.menteeWithdrawnCalls, tc.want)
+			if n.adminMentorWithdrewCalls != tc.wantWithdrew || n.mentorDeclinedCalls != tc.wantDeclined {
+				t.Fatalf("mentor withdrew / mentor declined notifications = %d / %d; want %d / %d", n.adminMentorWithdrewCalls, n.mentorDeclinedCalls, tc.wantWithdrew, tc.wantDeclined)
+			}
+			if got := n.menteeDecisions(); got != (menteeDecisionCalls{}) {
+				t.Fatalf("mentee notifications = %+v; want none", got)
 			}
 		})
 	}
@@ -1206,11 +1222,13 @@ func TestApplicationService_AssistedWithdrawal_NotifiesMentee(t *testing.T) {
 			},
 		} {
 			t.Run(tc.name+" via "+path, func(t *testing.T) {
+				var expected *models.ApplicationStatus
 				repo := &stubAppRepo{
 					getByID: func(_ context.Context, id string) (*models.Application, error) {
 						return &models.Application{ID: id, Status: tc.from, ProgramTermID: "term-1", UserID: "mentee-1", Role: tc.role}, nil
 					},
 					update: func(_ context.Context, id string, in models.ApplicationUpdateInput) (*models.Application, error) {
+						expected = in.ExpectedStatus
 						return &models.Application{ID: id, Status: *in.Status, ProgramTermID: "term-1", UserID: "mentee-1", Role: tc.role}, nil
 					},
 				}
@@ -1218,11 +1236,34 @@ func TestApplicationService_AssistedWithdrawal_NotifiesMentee(t *testing.T) {
 				if _, err := withdraw(newApplicationSvcWithNotifier(repo, &stubTermRepo{}, n)); err != nil {
 					t.Fatalf("withdraw: %v", err)
 				}
+				if expected == nil || *expected != tc.from {
+					t.Fatalf("ExpectedStatus = %v; want %q", expected, tc.from)
+				}
 				if n.menteeWithdrawnCalls != tc.want {
 					t.Fatalf("withdrawn notifications = %d; want %d", n.menteeWithdrawnCalls, tc.want)
 				}
 			})
 		}
+	}
+}
+
+func TestApplicationService_AssistedWithdrawal_LostRaceSendsNothing(t *testing.T) {
+	repo := &stubAppRepo{
+		getByID: func(_ context.Context, id string) (*models.Application, error) {
+			return &models.Application{ID: id, Status: models.ApplicationStatusPending, ProgramTermID: "term-1", UserID: "mentee-1", Role: models.ApplicationRoleMentee}, nil
+		},
+		// The row changed between the read and the write, so the conditional update is rejected.
+		update: func(context.Context, string, models.ApplicationUpdateInput) (*models.Application, error) {
+			return nil, domain.ErrInvalidStateTransition
+		},
+	}
+	n := &stubNotifier{}
+	_, err := newApplicationSvcWithNotifier(repo, &stubTermRepo{}, n).WithdrawForMenteeAfterGatewayAuthorization(context.Background(), "app-1")
+	if !errors.Is(err, domain.ErrInvalidStateTransition) {
+		t.Fatalf("err = %v; want ErrInvalidStateTransition", err)
+	}
+	if n.menteeWithdrawnCalls != 0 {
+		t.Fatalf("withdrawn notifications = %d; want 0", n.menteeWithdrawnCalls)
 	}
 }
 
