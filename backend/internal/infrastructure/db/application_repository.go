@@ -972,14 +972,14 @@ func (r *ApplicationRepository) CountWithdrawnByTermAndUser(ctx context.Context,
 	return count, nil
 }
 
-// BulkDeclineByTerm moves all pending/submitted applications in a term to declined.
-func (r *ApplicationRepository) BulkDeclineByTerm(ctx context.Context, termID string) (int, error) {
+// BulkDeclineByTerm moves all pending applications in a term to declined and returns them.
+func (r *ApplicationRepository) BulkDeclineByTerm(ctx context.Context, termID string) ([]*models.Application, error) {
 	ctx, span := applicationTracer.Start(ctx, "db.applications.BulkDeclineByTerm")
 	defer span.End()
 	span.SetAttributes(attribute.String("db.term_id", termID))
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("begin bulk decline transaction: %w", err)
+		return nil, fmt.Errorf("begin bulk decline transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
@@ -991,47 +991,45 @@ func (r *ApplicationRepository) BulkDeclineByTerm(ctx context.Context, termID st
 	rows, err := tx.Query(ctx, q, termID)
 	if err != nil {
 		span.RecordError(err)
-		return 0, fmt.Errorf("bulk decline: %w", err)
+		return nil, fmt.Errorf("bulk decline: %w", err)
 	}
 	defer rows.Close()
 
-	var count int
 	applications := make([]*models.Application, 0)
 	for rows.Next() {
 		application, scanErr := scanApplication(rows)
 		if scanErr != nil {
-			return 0, fmt.Errorf("scan bulk-declined application: %w", scanErr)
+			return nil, fmt.Errorf("scan bulk-declined application: %w", scanErr)
 		}
 		applications = append(applications, application)
-		count++
 	}
 	if err := rows.Err(); err != nil {
 		span.RecordError(err)
-		return 0, fmt.Errorf("bulk decline rows: %w", err)
+		return nil, fmt.Errorf("bulk decline rows: %w", err)
 	}
 	rows.Close()
 	for _, application := range applications {
 		if err := syncAndEnqueueTasksWithApplicationState(ctx, tx, application); err != nil {
-			return 0, fmt.Errorf("sync bulk-declined tasks: %w", err)
+			return nil, fmt.Errorf("sync bulk-declined tasks: %w", err)
 		}
 		if err := enqueueApplicationMarker(ctx, tx, application, "update_access"); err != nil {
-			return 0, err
+			return nil, err
 		}
 		if err := enqueueApplicationIndex(ctx, tx, application, "updated"); err != nil {
-			return 0, err
+			return nil, err
 		}
 	}
 	var programID string
 	if err := tx.QueryRow(ctx, `SELECT program_id FROM program_terms WHERE id = $1`, termID).Scan(&programID); err != nil {
-		return 0, fmt.Errorf("resolve bulk-declined program for index refresh: %w", err)
+		return nil, fmt.Errorf("resolve bulk-declined program for index refresh: %w", err)
 	}
 	if err := enqueueProgramIndexByID(ctx, tx, programID); err != nil {
-		return 0, err
+		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("commit bulk decline transaction: %w", err)
+		return nil, fmt.Errorf("commit bulk decline transaction: %w", err)
 	}
-	return count, nil
+	return applications, nil
 }
 
 // ListPastMenteesByTerm returns accepted/graduated applications for a term.

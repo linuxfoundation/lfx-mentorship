@@ -22,7 +22,7 @@ type programMemberService interface {
 	Update(ctx context.Context, programID, id string, input models.ProgramMemberUpdateInput, actorID string) (*models.ProgramMember, error)
 	Delete(ctx context.Context, programID, id, actorID string) error
 	ListMine(ctx context.Context, userID string, filter models.ProgramMemberFilter) ([]*models.ProgramMembership, *models.PaginationMeta, error)
-	RequestMentorship(ctx context.Context, programID, userID string) (*models.ProgramMember, error)
+	RequestMentorship(ctx context.Context, programID string, user models.UserPrincipal) (*models.ProgramMember, error)
 	WithdrawMine(ctx context.Context, id, userID string) error
 }
 
@@ -213,7 +213,12 @@ func (h *ProgramMemberHandler) RequestMine(w http.ResponseWriter, r *http.Reques
 	if !decodeBody(w, r, &input) {
 		return
 	}
-	member, err := h.svc.RequestMentorship(r.Context(), input.ProgramID, principal.UserID)
+	user := models.UserPrincipal{
+		LFID:   principal.Username,
+		UserID: principal.UserID,
+		Email:  principal.Email,
+	}
+	member, err := h.svc.RequestMentorship(r.Context(), input.ProgramID, user)
 	if err != nil {
 		Error(w, err)
 		return

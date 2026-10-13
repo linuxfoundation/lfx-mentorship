@@ -636,6 +636,9 @@ func TestProgramMemberService_RequestMentorship_CreatesRequestedRowWithoutInvite
 	if n.mentorInvitedCalls != 0 {
 		t.Errorf("NotifyMentorInvited called %d times; want 0", n.mentorInvitedCalls)
 	}
+	if n.adminMentorRequestedCalls != 1 {
+		t.Errorf("NotifyAdminMentorRequested called %d times; want 1", n.adminMentorRequestedCalls)
+	}
 }
 
 func TestProgramMemberService_RequestMentorship_ReopensWithdrawnRow(t *testing.T) {
@@ -676,6 +679,9 @@ func TestProgramMemberService_RequestMentorship_ReopensWithdrawnRow(t *testing.T
 	if n.mentorInvitedCalls != 0 {
 		t.Errorf("NotifyMentorInvited called %d times; want 0", n.mentorInvitedCalls)
 	}
+	if n.adminMentorRequestedCalls != 1 {
+		t.Errorf("NotifyAdminMentorRequested called %d times; want 1", n.adminMentorRequestedCalls)
+	}
 }
 
 func TestProgramMemberService_RequestMentorship_ConflictsWithExistingRow(t *testing.T) {
@@ -696,10 +702,14 @@ func TestProgramMemberService_RequestMentorship_ConflictsWithExistingRow(t *test
 					return nil, nil
 				},
 			}
-			svc := newMemberSvc(memberRepo, publishedProgRepo(), &stubNotifier{})
+			n := &stubNotifier{}
+			svc := newMemberSvc(memberRepo, publishedProgRepo(), n)
 			_, err := svc.RequestMentorship(context.Background(), selfProgramID, "user-1")
 			if !errors.Is(err, domain.ErrConflict) {
 				t.Errorf("expected ErrConflict, got %v", err)
+			}
+			if n.adminMentorRequestedCalls != 0 {
+				t.Errorf("NotifyAdminMentorRequested called %d times; want 0", n.adminMentorRequestedCalls)
 			}
 		})
 	}
@@ -782,9 +792,13 @@ func TestProgramMemberService_WithdrawMine_FromRequestedOrPending(t *testing.T) 
 					return &models.ProgramMember{ID: id, Status: in.Status}, nil
 				},
 			}
-			svc := newMemberSvc(memberRepo, &stubProgRepo{}, &stubNotifier{})
+			n := &stubNotifier{}
+			svc := newMemberSvc(memberRepo, &stubProgRepo{}, n)
 			if err := svc.WithdrawMine(context.Background(), selfMemberID, "user-1"); err != nil {
 				t.Fatalf("WithdrawMine: %v", err)
+			}
+			if n.adminMentorWithdrewCalls != 1 {
+				t.Errorf("NotifyAdminMentorWithdrew called %d times; want 1", n.adminMentorWithdrewCalls)
 			}
 			if updatedStatus != models.ProgramMemberStatusWithdrawn {
 				t.Errorf("status = %q; want withdrawn", updatedStatus)
@@ -813,10 +827,14 @@ func TestProgramMemberService_WithdrawMine_OtherStatusesConflict(t *testing.T) {
 					return nil, nil
 				},
 			}
-			svc := newMemberSvc(memberRepo, &stubProgRepo{}, &stubNotifier{})
+			n := &stubNotifier{}
+			svc := newMemberSvc(memberRepo, &stubProgRepo{}, n)
 			err := svc.WithdrawMine(context.Background(), selfMemberID, "user-1")
 			if !errors.Is(err, domain.ErrInvalidStateTransition) {
 				t.Errorf("expected ErrInvalidStateTransition, got %v", err)
+			}
+			if n.adminMentorWithdrewCalls != 0 {
+				t.Errorf("NotifyAdminMentorWithdrew called %d times; want 0", n.adminMentorWithdrewCalls)
 			}
 		})
 	}

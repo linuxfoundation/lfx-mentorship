@@ -442,7 +442,8 @@ func TestTaskService_DueDateMustBeISODate(t *testing.T) {
 	appRepo := &stubAppRepo{getByID: func(_ context.Context, id string) (*models.Application, error) {
 		return &models.Application{ID: id, UserID: "u1", Role: models.ApplicationRoleMentee, Status: models.ApplicationStatusAccepted}, nil
 	}}
-	svc := newTaskSvc(taskRepo, appRepo, &stubTermRepo{}, &stubMemberRepo{})
+	n := &stubNotifier{}
+	svc := service.NewTaskService(taskRepo, appRepo, &stubTermRepo{}, &stubMemberRepo{}, n)
 
 	for _, bad := range []string{"tomorrow", "2026-2-5", "2026-02-30", ""} {
 		due := bad
@@ -456,10 +457,16 @@ func TestTaskService_DueDateMustBeISODate(t *testing.T) {
 	if created {
 		t.Fatal("repository create called for an invalid due date")
 	}
+	if n.taskAssignedCalls != 0 {
+		t.Fatalf("NotifyMenteeTaskAssigned called %d times for rejected tasks; want 0", n.taskAssignedCalls)
+	}
 
 	valid := "2026-02-15"
 	if _, err := svc.Create(context.Background(), "app-1", models.TaskCreateInput{AssigneeID: "u1", DueDate: &valid}); err != nil || !created {
 		t.Fatalf("create valid due_date: created=%v err=%v", created, err)
+	}
+	if n.taskAssignedCalls != 1 {
+		t.Fatalf("NotifyMenteeTaskAssigned called %d times; want 1", n.taskAssignedCalls)
 	}
 }
 

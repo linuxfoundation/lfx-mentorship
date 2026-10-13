@@ -472,6 +472,7 @@ func (h *ProgramHandler) Create(w http.ResponseWriter, r *http.Request) {
 			Industry:           request.Industry,
 			CIIProjectID:       request.CIIProjectID,
 			TermsAndConditions: request.TermsAccepted,
+			LFID:               &principal.Username,
 		},
 		Terms:         terms,
 		Skills:        request.Skills,

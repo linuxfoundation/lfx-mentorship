@@ -381,10 +381,13 @@ func TestE2EMentorApplication(t *testing.T) {
 	awaitFGA(t, "lfx.fga-sync.member_put", func(m fgaMessage) bool {
 		return m.ObjectType == "mentorship_program" && m.Data.UID == p.ID && m.Data.Username == "mentor-applicant"
 	})
-	// Accepting a mentor sends no mentee welcome.
+	// The mentor application tells the program admins; accepting it sends no mentee welcome,
+	// so the volunteer gets only the receipt for their mentee application.
+	awaitEmail(t, admin.Email, "requested to mentor for", 1)
+	awaitEmail(t, volunteer.Email, "We received your application", 1)
 	awaitEmailsSent(t)
-	if n := len(e2e.fakes.emailsTo(volunteer.Email)); n != 0 {
-		t.Fatalf("mentor applicant got %d emails", n)
+	if n := len(e2e.fakes.emailsTo(volunteer.Email)); n != 1 {
+		t.Fatalf("mentor applicant got %d emails; want only the mentee application receipt", n)
 	}
 }
 

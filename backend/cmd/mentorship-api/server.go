@@ -136,10 +136,12 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			Terms:        programTermRepo,
 			Members:      programMemberRepo,
 			Applications: applicationRepo,
+			Tasks:        taskRepo,
 		}, email.NotifierConfig{
 			PublicSiteURL: cfg.Email.PublicSiteURL,
 			SelfServeURL:  cfg.Email.SelfServeURL,
 			HRInbox:       cfg.Email.HRInbox,
+			ReviewInbox:   cfg.Email.ReviewInbox,
 
 			AllowedRecipients: cfg.Email.AllowedRecipients,
 		}, logger)
@@ -152,7 +154,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	// Services
 	userSvc := service.NewUserService(userRepo)
 	userProfileSvc := service.NewUserProfileService(userProfileRepo)
-	programSvc := service.NewProgramService(programRepo, programTermRepo, applicationRepo, programMemberRepo)
+	programSvc := service.NewProgramService(programRepo, programTermRepo, applicationRepo, programMemberRepo, notifier)
 	if cfg.Crowdfunding.IsConfigured() {
 		programSvc.SetCrowdfundingClient(clients.NewCrowdfundingClient(clients.CrowdfundingConfig{
 			BaseURL: cfg.Crowdfunding.BaseURL,
@@ -162,7 +164,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	if natsConn != nil {
 		programSvc.SetProjectLookup(projects.NewClient(natsConn))
 	}
-	programTermSvc := service.NewProgramTermService(programTermRepo, applicationRepo)
+	programTermSvc := service.NewProgramTermService(programTermRepo, applicationRepo, notifier)
 	programMemberSvc := service.NewProgramMemberService(programMemberRepo, programRepo, userRepo, accounts, notifier, cfg.Local.InviteSecret)
 	applicationSvc := service.NewApplicationService(applicationRepo, taskRepo, programTermRepo, programRepo, programMemberRepo, notifier)
 	taskSvc := service.NewTaskService(taskRepo, applicationRepo, programTermRepo, programMemberRepo, notifier)

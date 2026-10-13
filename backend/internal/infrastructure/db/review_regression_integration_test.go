@@ -134,8 +134,8 @@ func TestProgramTermIntegration_CloseReopenSynchronizesProjections(t *testing.T)
 	}
 
 	repo := NewProgramTermRepository(pool)
-	if _, declined, err := repo.CloseWithBulkDecline(ctx, fixture.OpenTerm); err != nil || declined != 1 {
-		t.Fatalf("close term declined=%d, err=%v", declined, err)
+	if _, declined, err := repo.CloseWithBulkDecline(ctx, fixture.OpenTerm); err != nil || len(declined) != 1 || declined[0].ID != applicationID {
+		t.Fatalf("close term declined=%+v, err=%v", declined, err)
 	}
 	assertTermProjectionStatus(t, pool, fixture.OpenTerm, "closed")
 

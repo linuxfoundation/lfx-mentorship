@@ -107,3 +107,9 @@ type ProgramMemberUpdateInput struct {
 	Status *ProgramMemberStatus `json:"status,omitempty"`
 	Email  *string              `json:"email,omitempty"`
 }
+
+type UserPrincipal struct {
+	LFID   string `json:"lfid"`
+	UserID string `json:"user_id"`
+	Email  string `json:"email"`
+}

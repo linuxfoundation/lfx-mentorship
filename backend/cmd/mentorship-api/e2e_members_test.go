@@ -27,26 +27,35 @@ type member struct {
 
 var inviteLink = regexp.MustCompile(regexp.QuoteMeta(e2eSelfServeURL) + `/mentorship/mentor/invites\?token=([^\s"<&]+)`)
 
+// emailsAbout returns the emails sent so far to address whose subject contains subject.
+func emailsAbout(address, subject string) []emailapi.SendEmailRequest {
+	var match []emailapi.SendEmailRequest
+	for _, e := range e2e.fakes.emailsTo(address) {
+		if strings.Contains(e.Subject, subject) {
+			match = append(match, e)
+		}
+	}
+	return match
+}
+
 // awaitEmail waits for the nth (1-based) email to address whose subject contains subject.
 func awaitEmail(t *testing.T, address, subject string, n int) emailapi.SendEmailRequest {
 	t.Helper()
 	var match []emailapi.SendEmailRequest
 	eventually(t, 5*time.Second, "email to "+address+" about "+subject, func() bool {
-		match = match[:0]
-		for _, e := range e2e.fakes.emailsTo(address) {
-			if strings.Contains(e.Subject, subject) {
-				match = append(match, e)
-			}
-		}
+		match = emailsAbout(address, subject)
 		return len(match) >= n
 	})
 	return match[n-1]
 }
 
+// inviteSubject identifies mentor invitation emails.
+const inviteSubject = "invited to mentor"
+
 // inviteToken returns the token from the nth invite email sent to address.
 func inviteToken(t *testing.T, address string, n int) string {
 	t.Helper()
-	msg := awaitEmail(t, address, "invited to mentor", n)
+	msg := awaitEmail(t, address, inviteSubject, n)
 	m := inviteLink.FindStringSubmatch(msg.Text)
 	if m == nil {
 		t.Fatalf("no invite link in email: %s", msg.Text)
@@ -64,7 +73,7 @@ func inviteToken(t *testing.T, address string, n int) string {
 // inviteMentor invites mentor to p and has them accept, returning the active membership.
 func inviteMentor(t *testing.T, p *program, mentor *actor) member {
 	t.Helper()
-	before := len(e2e.fakes.emailsTo(mentor.Email))
+	before := len(emailsAbout(mentor.Email, inviteSubject))
 	var m member
 	p.Admin.mustJSON(t, http.MethodPost, "/programs/"+p.ID+"/members", map[string]any{"lfid": mentor.LFID, "member_type": "mentor"}, http.StatusCreated, &m)
 	token := inviteToken(t, mentor.Email, before+1)
@@ -159,7 +168,7 @@ func TestE2EMentorInvites(t *testing.T) {
 		newcomer.call(t, http.MethodPost, "/mentor-invites/"+url.PathEscape(token)+"/decline", nil).expect(http.StatusBadRequest)
 
 		// A declined mentor can be invited again, and the link they already have works.
-		before := len(e2e.fakes.emailsTo(newcomer.Email))
+		before := len(emailsAbout(newcomer.Email, inviteSubject))
 		var again member
 		admin.mustJSON(t, http.MethodPost, members, map[string]any{"lfid": "newcomer", "member_type": "mentor"}, http.StatusCreated, &again)
 		if again.ID != invited.ID || again.Status != "invited" {

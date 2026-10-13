@@ -24,6 +24,7 @@ const (
 	testPublicSiteURL = "https://mentorship.example.org"
 	testSelfServeURL  = "https://app.example.org"
 	testHRInbox       = "hr@linuxfoundation.org"
+	testReviewInbox   = "review@linuxfoundation.org"
 )
 
 type senderStub struct {
@@ -98,11 +99,18 @@ type memberRepoStub struct {
 	filters []models.ProgramMemberFilter
 }
 
+// ListByProgram filters by member type only for members that set one, so admin-only fixtures can leave it out.
 func (r *memberRepoStub) ListByProgram(_ context.Context, _ string, filter models.ProgramMemberFilter) ([]*models.ProgramMember, *models.PaginationMeta, error) {
 	r.filters = append(r.filters, filter)
-	start := min(filter.Offset, len(r.members))
-	end := min(start+filter.Limit, len(r.members))
-	return r.members[start:end], &models.PaginationMeta{Total: len(r.members), Limit: filter.Limit, Offset: filter.Offset}, nil
+	var members []*models.ProgramMember
+	for _, m := range r.members {
+		if m.MemberType == "" || string(m.MemberType) == filter.MemberType {
+			members = append(members, m)
+		}
+	}
+	start := min(filter.Offset, len(members))
+	end := min(start+filter.Limit, len(members))
+	return members[start:end], &models.PaginationMeta{Total: len(members), Limit: filter.Limit, Offset: filter.Offset}, nil
 }
 
 type applicationRepoStub struct {
@@ -112,6 +120,28 @@ type applicationRepoStub struct {
 
 func (r *applicationRepoStub) GetByID(context.Context, string) (*models.Application, error) {
 	return r.app, nil
+}
+
+type taskRepoStub struct {
+	domain.TaskRepository
+	tasks []*models.Task
+	err   error
+}
+
+func (r *taskRepoStub) GetByID(_ context.Context, id string) (*models.Task, error) {
+	for _, t := range r.tasks {
+		if t.ID == id {
+			return t, nil
+		}
+	}
+	return nil, domain.ErrTaskNotFound
+}
+
+func (r *taskRepoStub) ListByApplication(context.Context, string, models.TaskFilter) ([]*models.Task, *models.PaginationMeta, error) {
+	if r.err != nil {
+		return nil, nil, r.err
+	}
+	return r.tasks, &models.PaginationMeta{Total: len(r.tasks)}, nil
 }
 
 type profileRepoStub struct {
@@ -147,6 +177,8 @@ type fixture struct {
 	members  *memberRepoStub
 	users    *userRepoStub
 	profiles *profileRepoStub
+	tasks    *taskRepoStub
+	program  *models.Program
 	n        *Notifier
 }
 
@@ -162,11 +194,13 @@ func newFixture() *fixture {
 		}},
 		members:  &memberRepoStub{},
 		profiles: &profileRepoStub{address: json.RawMessage(`{"country":"IN","city":"Pune"}`)},
+		tasks:    &taskRepoStub{},
+		program:  &models.Program{ID: "p1", Name: "Kernel <Dev>", Slug: "kernel-dev", Description: strPtr("Work on <drivers>.")},
 	}
 	f.n = NewNotifier(f.sender, Repositories{
 		Users:    f.users,
 		Profiles: f.profiles,
-		Programs: &programRepoStub{program: &models.Program{ID: "p1", Name: "Kernel <Dev>", Slug: "kernel-dev"}},
+		Programs: &programRepoStub{program: f.program},
 		Terms: &termRepoStub{term: &models.ProgramTerm{
 			ID: "t1", ProgramID: "p1", Name: "Fall 2026",
 			StartDateTime: timePtr(time.Date(2026, time.September, 1, 0, 0, 0, 0, time.UTC)),
@@ -174,7 +208,8 @@ func newFixture() *fixture {
 		}},
 		Members:      f.members,
 		Applications: &applicationRepoStub{app: &models.Application{ID: "a1", ProgramTermID: "t1", UserID: "mentee"}},
-	}, NotifierConfig{PublicSiteURL: testPublicSiteURL + "/", SelfServeURL: testSelfServeURL, HRInbox: testHRInbox}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		Tasks:        f.tasks,
+	}, NotifierConfig{PublicSiteURL: testPublicSiteURL + "/", SelfServeURL: testSelfServeURL, HRInbox: testHRInbox, ReviewInbox: testReviewInbox}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	return f
 }
 
@@ -298,7 +333,7 @@ func TestNotifyAdminTasksSubmitted(t *testing.T) {
 	if !strings.Contains(sent[0].Text, "Hi there!") || !strings.Contains(sent[0].Text, "application from Mia Mentee to become a mentee for the Kernel <Dev> program (Fall 2026 term).") {
 		t.Fatalf("text = %s", sent[0].Text)
 	}
-	want := []models.ProgramMemberFilter{{Limit: adminPageSize, MemberType: "program_admin", Status: "active"}}
+	want := []models.ProgramMemberFilter{{Limit: pageSize, MemberType: "program_admin", Status: "active"}}
 	if !slices.Equal(f.members.filters, want) {
 		t.Fatalf("filters = %+v, want %+v", f.members.filters, want)
 	}
@@ -307,7 +342,7 @@ func TestNotifyAdminTasksSubmitted(t *testing.T) {
 func TestNotifyAdminTasksSubmitted_PagesThroughAllAdmins(t *testing.T) {
 	f := newFixture()
 	f.sender.delay = 5 * time.Millisecond
-	for i := range adminPageSize + 1 {
+	for i := range pageSize + 1 {
 		id := "page-admin-" + strconv.Itoa(i)
 		f.users.users[id] = &models.User{ID: id, Email: strPtr(id + "@linuxfoundation.org")}
 		f.members.members = append(f.members.members, &models.ProgramMember{UserID: id})
@@ -315,11 +350,11 @@ func TestNotifyAdminTasksSubmitted_PagesThroughAllAdmins(t *testing.T) {
 
 	f.n.NotifyAdminTasksSubmitted(context.Background(), "a1")
 
-	if sent := f.wait(t); len(sent) != adminPageSize+1 {
-		t.Fatalf("sent %d messages, want %d", len(sent), adminPageSize+1)
+	if sent := f.wait(t); len(sent) != pageSize+1 {
+		t.Fatalf("sent %d messages, want %d", len(sent), pageSize+1)
 	}
-	if len(f.members.filters) != 2 || f.members.filters[1].Offset != adminPageSize {
-		t.Fatalf("filters = %+v, want a second page at offset %d", f.members.filters, adminPageSize)
+	if len(f.members.filters) != 2 || f.members.filters[1].Offset != pageSize {
+		t.Fatalf("filters = %+v, want a second page at offset %d", f.members.filters, pageSize)
 	}
 	// Slow recipients are sent in parallel so they cannot use up the deadline, but never more than the cap at once.
 	if f.sender.maxInFlight < 2 || f.sender.maxInFlight > sendConcurrency {
@@ -547,5 +582,311 @@ func TestRecipientAllowed(t *testing.T) {
 		if got := n.recipientAllowed(addr); got != want {
 			t.Errorf("recipientAllowed(%q) = %v, want %v", addr, got, want)
 		}
+	}
+}
+
+// mustContain fails the test unless body contains every want.
+func mustContain(t *testing.T, label, body string, want ...string) {
+	t.Helper()
+	for _, w := range want {
+		if !strings.Contains(body, w) {
+			t.Fatalf("%s missing %q:\n%s", label, w, body)
+		}
+	}
+}
+
+func TestNotifyProgramSubmitted(t *testing.T) {
+	f := newFixture()
+	f.members.members = []*models.ProgramMember{{UserID: "admin1"}}
+
+	f.n.NotifyProgramSubmitted(context.Background(), "p1", "mentor")
+
+	sent := byRecipient(f.wait(t))
+	if len(sent) != 2 {
+		t.Fatalf("sent = %+v, want the admin and the review inbox", sent)
+	}
+	admin := sent["admin1@linuxfoundation.org"]
+	if admin.Subject != "We received your submission of Kernel <Dev>" {
+		t.Fatalf("admin subject = %q", admin.Subject)
+	}
+	mustContain(t, "admin text", admin.Text, "Thank you for submitting Kernel <Dev>", "up to 5 business days", testSelfServeURL+"/mentorship")
+	review := sent[testReviewInbox]
+	if review.Subject != "Mentorship program submitted for review: Kernel <Dev>" {
+		t.Fatalf("review subject = %q", review.Subject)
+	}
+	mustContain(t, "review text", review.Text, "Hi LF Mentorship team!", "submitted for review by Mo Mentor (mentor@linuxfoundation.org).", "Review in Self Serve: "+testSelfServeURL+"/mentorship")
+	mustContain(t, "review html", review.HTML, ">Review in Self Serve</a>", "Kernel &lt;Dev&gt;")
+	if strings.Contains(review.HTML, "Approve") || strings.Contains(review.HTML, "Reject") {
+		t.Fatalf("review notice must not carry approve or reject links:\n%s", review.HTML)
+	}
+}
+
+func TestNotifyProgramSubmitted_UnknownSubmitterStillNotifiesReviewers(t *testing.T) {
+	for name, submitter := range map[string]string{"no actor": "", "lookup fails": "missing"} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture()
+			f.n.NotifyProgramSubmitted(context.Background(), "p1", submitter)
+
+			sent := f.wait(t)
+			if len(sent) != 1 || sent[0].To != testReviewInbox {
+				t.Fatalf("sent = %+v, want only the review inbox", sent)
+			}
+			mustContain(t, "review text", sent[0].Text, "The Kernel <Dev> mentorship program was submitted for review.")
+		})
+	}
+}
+
+func TestNotifyProgramDecided(t *testing.T) {
+	for _, tc := range []struct {
+		status  models.ProgramStatus
+		subject string
+		want    []string
+	}{
+		{models.ProgramStatusPublished, "Kernel <Dev> has been approved", []string{"approved to participate in LFX Mentorship and is now live", "View program: " + testPublicSiteURL + "/programs/kernel-dev"}},
+		{models.ProgramStatusRejected, "Kernel <Dev> was not approved", []string{"has not been approved", "submit it again", supportDeskURL, "Manage your program: " + testSelfServeURL + "/mentorship"}},
+	} {
+		t.Run(string(tc.status), func(t *testing.T) {
+			f := newFixture()
+			f.members.members = []*models.ProgramMember{{UserID: "admin1"}, {UserID: "admin2"}}
+
+			f.n.NotifyProgramDecided(context.Background(), "p1", tc.status)
+
+			sent := byRecipient(f.wait(t))
+			if len(sent) != 2 {
+				t.Fatalf("sent = %+v, want both admins", sent)
+			}
+			msg := sent["admin2@linuxfoundation.org"]
+			if msg.Subject != tc.subject {
+				t.Fatalf("subject = %q, want %q", msg.Subject, tc.subject)
+			}
+			mustContain(t, "text", msg.Text, tc.want...)
+		})
+	}
+}
+
+func TestNotifyProgramDecided_OtherStatusSendsNothing(t *testing.T) {
+	f := newFixture()
+	f.members.members = []*models.ProgramMember{{UserID: "admin1"}}
+
+	f.n.NotifyProgramDecided(context.Background(), "p1", models.ProgramStatusHidden)
+
+	if sent := f.wait(t); len(sent) != 0 {
+		t.Fatalf("sent = %+v", sent)
+	}
+}
+
+func TestNotifyAdminMentorRequestedAndWithdrew(t *testing.T) {
+	for name, tc := range map[string]struct {
+		notify  func(*Notifier)
+		subject string
+		want    []string
+	}{
+		"requested": {
+			notify:  func(n *Notifier) { n.NotifyAdminMentorRequested(context.Background(), "p1", "mentor") },
+			subject: "Mo Mentor requested to mentor for Kernel <Dev>",
+			want:    []string{"Mo Mentor requested to join the Kernel <Dev> mentorship program as a mentor.", "contact them at mentor@linuxfoundation.org", "Review the request: " + testSelfServeURL + "/mentorship"},
+		},
+		"withdrew": {
+			notify:  func(n *Notifier) { n.NotifyAdminMentorWithdrew(context.Background(), "p1", "mentor") },
+			subject: "Mo Mentor withdrew their mentor request for Kernel <Dev>",
+			want:    []string{"Mo Mentor withdrew the request to participate as a mentor for the Kernel <Dev> mentorship program.", testSelfServeURL + "/mentorship"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture()
+			f.members.members = []*models.ProgramMember{{UserID: "admin1"}}
+
+			tc.notify(f.n)
+
+			sent := f.wait(t)
+			if len(sent) != 1 || sent[0].To != "admin1@linuxfoundation.org" || sent[0].Subject != tc.subject {
+				t.Fatalf("sent = %+v", sent)
+			}
+			mustContain(t, "text", sent[0].Text, tc.want...)
+		})
+	}
+}
+
+func TestNotifyMenteeApplicationReceived(t *testing.T) {
+	prerequisite, other := models.TaskCategoryPrerequisite, models.TaskCategoryNonPrerequisite
+	f := newFixture()
+	f.tasks.tasks = []*models.Task{
+		{ID: "t1", Name: strPtr("Write an <intro>"), Category: &prerequisite},
+		{ID: "t2", Name: strPtr("Unrelated"), Category: &other},
+		{ID: "t3", Name: strPtr("  "), Category: &prerequisite},
+		{ID: "t4", Name: strPtr("Fix a bug"), Category: &prerequisite},
+	}
+
+	f.n.NotifyMenteeApplicationReceived(context.Background(), "a1")
+
+	sent := f.wait(t)
+	if len(sent) != 1 || sent[0].To != "mentee@linuxfoundation.org" || sent[0].Subject != "We received your application to Kernel <Dev>" {
+		t.Fatalf("sent = %+v", sent)
+	}
+	mustContain(t, "text", sent[0].Text, "Hi Mia!", "Prerequisite tasks:\n- Write an <intro>\n- Fix a bug\n", "View your prerequisite tasks: "+testSelfServeURL+"/mentorship")
+	if strings.Contains(sent[0].Text, "Unrelated") {
+		t.Fatalf("text lists a task that is not a prerequisite:\n%s", sent[0].Text)
+	}
+	mustContain(t, "html", sent[0].HTML, "<li>Write an &lt;intro&gt;</li>", ">View Prerequisite Tasks</a>")
+}
+
+func TestNotifyMenteeApplicationReceived_NoTasks(t *testing.T) {
+	f := newFixture()
+	f.n.NotifyMenteeApplicationReceived(context.Background(), "a1")
+
+	sent := f.wait(t)
+	if len(sent) != 1 {
+		t.Fatalf("sent = %+v", sent)
+	}
+	mustContain(t, "text", sent[0].Text, "It will be reviewed, and you will be notified", "View your application: ")
+	if strings.Contains(sent[0].Text, "Prerequisite tasks") {
+		t.Fatalf("text lists prerequisite tasks that do not exist:\n%s", sent[0].Text)
+	}
+}
+
+func TestNotifyMenteeApplicationReceived_TaskLookupFailureSendsNothing(t *testing.T) {
+	f := newFixture()
+	f.tasks.err = errors.New("db down")
+	f.n.NotifyMenteeApplicationReceived(context.Background(), "a1")
+
+	if sent := f.wait(t); len(sent) != 0 {
+		t.Fatalf("sent = %+v", sent)
+	}
+}
+
+func TestNotifyMenteeDeclined(t *testing.T) {
+	f := newFixture()
+	f.members.members = []*models.ProgramMember{{UserID: "admin1"}}
+
+	f.n.NotifyMenteeDeclined(context.Background(), "a1")
+
+	sent := f.wait(t)
+	if len(sent) != 1 || sent[0].To != "mentee@linuxfoundation.org" || sent[0].Subject != "An update on your application to Kernel <Dev>" {
+		t.Fatalf("sent = %+v, want only the mentee", sent)
+	}
+	mustContain(t, "text", sent[0].Text, "has not been accepted", "mentorship@linuxfoundation.org", "Log in to LFX Mentorship: "+testSelfServeURL+"/mentorship")
+}
+
+func TestNotifyMenteeWithdrawn(t *testing.T) {
+	f := newFixture()
+	f.members.members = []*models.ProgramMember{{UserID: "admin1"}}
+
+	f.n.NotifyMenteeWithdrawn(context.Background(), "a1")
+
+	sent := byRecipient(f.wait(t))
+	if len(sent) != 2 {
+		t.Fatalf("sent = %+v, want the mentee and the admin", sent)
+	}
+	mentee := sent["mentee@linuxfoundation.org"]
+	if mentee.Subject != "Your application to Kernel <Dev> has been withdrawn" {
+		t.Fatalf("mentee subject = %q", mentee.Subject)
+	}
+	mustContain(t, "mentee text", mentee.Text, "Hi Mia!", "has been withdrawn", "View program: "+testPublicSiteURL+"/programs/kernel-dev")
+	admin := sent["admin1@linuxfoundation.org"]
+	if admin.Subject != "Mia Mentee's application to Kernel <Dev> was withdrawn" {
+		t.Fatalf("admin subject = %q", admin.Subject)
+	}
+	mustContain(t, "admin text", admin.Text, "the application submitted by Mia Mentee for the Kernel <Dev> mentorship program (Fall 2026 term) has been withdrawn.", testSelfServeURL+"/mentorship")
+}
+
+func TestNotifyMenteeGraduated(t *testing.T) {
+	f := newFixture()
+	f.users.users["mentor2"] = &models.User{ID: "mentor2", GivenName: strPtr("Ana"), FamilyName: strPtr("Guide")}
+	f.members.members = []*models.ProgramMember{
+		{UserID: "admin1", MemberType: models.MemberTypeProgramAdmin},
+		{UserID: "mentor", MemberType: models.MemberTypeMentor},
+		{UserID: "mentor2", MemberType: models.MemberTypeMentor},
+		{UserID: "gone", MemberType: models.MemberTypeMentor},
+	}
+
+	f.n.NotifyMenteeGraduated(context.Background(), "a1")
+
+	sent := f.wait(t)
+	if len(sent) != 1 || sent[0].To != "mentee@linuxfoundation.org" || sent[0].Subject != "Your LFX Mentorship certificate of completion for Kernel <Dev>" {
+		t.Fatalf("sent = %+v, want only the mentee", sent)
+	}
+	msg := sent[0]
+	mustContain(t, "text", msg.Text,
+		time.Now().UTC().Format(dateLayout)+"\n\nTo Whom It May Concern:",
+		"certify that Mia Mentee successfully completed the Kernel <Dev> mentorship program at The Linux Foundation from September 1, 2026 – November 30, 2026.",
+		"mentored by Mo Mentor, Ana Guide.",
+		"Work on <drivers>.",
+		"Sincerely,\nThe Linux Foundation Mentorship Team",
+	)
+	mustContain(t, "html", msg.HTML, "Work on &lt;drivers&gt;.")
+	for _, body := range []string{msg.Text, msg.HTML} {
+		if strings.Contains(body, "Hi ") || strings.Contains(body, "Thank you,") {
+			t.Fatalf("certificate letter carries the notice greeting or sign-off:\n%s", body)
+		}
+	}
+}
+
+func TestNotifyMenteeGraduated_WithoutMentorsOrDescription(t *testing.T) {
+	f := newFixture()
+	f.program.Description = nil
+	f.n.NotifyMenteeGraduated(context.Background(), "a1")
+
+	sent := f.wait(t)
+	if len(sent) != 1 {
+		t.Fatalf("sent = %+v", sent)
+	}
+	mustContain(t, "text", sent[0].Text, "Mia Mentee worked on Kernel <Dev>.\n\nMia Mentee learned")
+	if strings.Contains(sent[0].Text, "mentored by") || strings.Contains(sent[0].Text, "brief description") {
+		t.Fatalf("text = %s", sent[0].Text)
+	}
+}
+
+func TestNotifyMenteeTaskAssigned(t *testing.T) {
+	appID := "a1"
+	created := time.Date(2026, time.October, 5, 23, 0, 0, 0, time.UTC)
+	for name, tc := range map[string]struct {
+		due     *string
+		want    string
+		notWant string
+	}{
+		"with due date":    {due: strPtr("2026-10-20"), want: "Due Date: October 20, 2026\n"},
+		"without due date": {notWant: "Due Date"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture()
+			f.tasks.tasks = []*models.Task{{ID: "task-1", ApplicationID: &appID, AssigneeID: "mentee", Name: strPtr("Ship <it>"), DueDate: tc.due, CreatedOn: created}}
+
+			f.n.NotifyMenteeTaskAssigned(context.Background(), "task-1")
+
+			sent := f.wait(t)
+			if len(sent) != 1 || sent[0].To != "mentee@linuxfoundation.org" || sent[0].Subject != "You have a new task for Kernel <Dev>" {
+				t.Fatalf("sent = %+v", sent)
+			}
+			mustContain(t, "text", sent[0].Text, "Hi Mia!", "Task Name: Ship <it>\nTask Created On: October 5, 2026\n", "View your tasks: "+testSelfServeURL+"/mentorship")
+			mustContain(t, "html", sent[0].HTML, "Ship &lt;it&gt;")
+			if tc.want != "" {
+				mustContain(t, "text", sent[0].Text, tc.want)
+			}
+			if tc.notWant != "" && (strings.Contains(sent[0].Text, tc.notWant) || strings.Contains(sent[0].HTML, tc.notWant)) {
+				t.Fatalf("message mentions %q:\n%s", tc.notWant, sent[0].Text)
+			}
+		})
+	}
+}
+
+func TestNotifyMenteeTaskAssigned_TaskWithoutApplicationSendsNothing(t *testing.T) {
+	f := newFixture()
+	f.tasks.tasks = []*models.Task{{ID: "task-1", AssigneeID: "mentee"}}
+	f.n.NotifyMenteeTaskAssigned(context.Background(), "task-1")
+	f.n.NotifyMenteeTaskAssigned(context.Background(), "missing")
+
+	if sent := f.wait(t); len(sent) != 0 {
+		t.Fatalf("sent = %+v", sent)
+	}
+}
+
+func TestDueDate(t *testing.T) {
+	for in, want := range map[string]string{"2026-02-05": "February 5, 2026", "next week": "next week", "": ""} {
+		if got := dueDate(&in); got != want {
+			t.Errorf("dueDate(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := dueDate(nil); got != "" {
+		t.Errorf("dueDate(nil) = %q", got)
 	}
 }

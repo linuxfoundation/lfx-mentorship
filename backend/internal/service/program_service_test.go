@@ -18,11 +18,15 @@ import (
 )
 
 func newProgramSvc(progRepo *stubProgRepo, termRepo *stubTermRepo, appRepo *stubAppRepo) *service.ProgramService {
-	return service.NewProgramService(progRepo, termRepo, appRepo, &stubMemberRepo{})
+	return newProgramSvcWithNotifier(progRepo, termRepo, appRepo, &stubNotifier{})
+}
+
+func newProgramSvcWithNotifier(progRepo *stubProgRepo, termRepo *stubTermRepo, appRepo *stubAppRepo, n *stubNotifier) *service.ProgramService {
+	return service.NewProgramService(progRepo, termRepo, appRepo, &stubMemberRepo{}, n)
 }
 
 func newProgramSvcWithMember(progRepo *stubProgRepo, termRepo *stubTermRepo, appRepo *stubAppRepo, memberRepo *stubMemberRepo) *service.ProgramService {
-	return service.NewProgramService(progRepo, termRepo, appRepo, memberRepo)
+	return service.NewProgramService(progRepo, termRepo, appRepo, memberRepo, &stubNotifier{})
 }
 
 // ── state machine ────────────────────────────────────────────────────────────
@@ -32,18 +36,39 @@ func TestProgramService_Create_AlwaysPending(t *testing.T) {
 	repo := &stubProgRepo{
 		create: func(_ context.Context, in models.ProgramCreateInput) (*models.Program, error) {
 			capturedStatus = in.Status
-			return &models.Program{Status: in.Status}, nil
+			return &models.Program{ID: in.ID, Status: in.Status}, nil
 		},
 	}
-	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	n := &stubNotifier{}
+	svc := newProgramSvcWithNotifier(repo, &stubTermRepo{}, &stubAppRepo{}, n)
 	projectUID := "00000000-0000-0000-0000-000000000001"
 	projectSlug, projectName := "test-project", "Test Project"
-	_, err := svc.Create(context.Background(), models.ProgramCreateInput{Name: "Test", Slug: "test", ProjectUID: &projectUID, ProjectSlug: &projectSlug, ProjectName: &projectName})
+	_, err := svc.Create(context.Background(), models.ProgramCreateInput{CreatorUserID: "creator-1", Name: "Test", Slug: "test", ProjectUID: &projectUID, ProjectSlug: &projectSlug, ProjectName: &projectName})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	if capturedStatus != models.ProgramStatusPending {
 		t.Errorf("status = %q; want %q", capturedStatus, models.ProgramStatusPending)
+	}
+	// A new program is submitted for review: its admins and the review inbox are told.
+	if n.programSubmittedCalls != 1 || n.programSubmitters[0] != "creator-1" {
+		t.Errorf("submission notifications = %d %v; want one from creator-1", n.programSubmittedCalls, n.programSubmitters)
+	}
+}
+
+func TestProgramService_Create_RepoErrorSendsNothing(t *testing.T) {
+	repo := &stubProgRepo{create: func(context.Context, models.ProgramCreateInput) (*models.Program, error) {
+		return nil, errors.New("db down")
+	}}
+	n := &stubNotifier{}
+	svc := newProgramSvcWithNotifier(repo, &stubTermRepo{}, &stubAppRepo{}, n)
+	projectUID := "00000000-0000-0000-0000-000000000001"
+	projectSlug, projectName := "test-project", "Test Project"
+	if _, err := svc.Create(context.Background(), models.ProgramCreateInput{CreatorUserID: "creator-1", Name: "Test", Slug: "test", ProjectUID: &projectUID, ProjectSlug: &projectSlug, ProjectName: &projectName}); err == nil {
+		t.Fatal("Create succeeded despite the repository error")
+	}
+	if n.programSubmittedCalls != 0 {
+		t.Errorf("submission notifications = %d; want 0", n.programSubmittedCalls)
 	}
 }
 
@@ -85,10 +110,11 @@ func TestProgramService_CreateEnrollment_NormalizesSkills(t *testing.T) {
 		captured = input
 		return &models.Program{ID: "p1"}, nil
 	}}
-	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	n := &stubNotifier{}
+	svc := newProgramSvcWithNotifier(repo, &stubTermRepo{}, &stubAppRepo{}, n)
 	projectSlug, projectName, projectLogo := " program-project ", "Program Project", " "
 	_, err := svc.CreateEnrollment(context.Background(), models.ProgramEnrollmentInput{
-		Program: models.ProgramCreateInput{ProjectUID: &projectUID, ProjectSlug: &projectSlug, ProjectName: &projectName, ProjectLogoURL: &projectLogo, Name: "Program", Slug: "program"},
+		Program: models.ProgramCreateInput{CreatorUserID: "creator-1", ProjectUID: &projectUID, ProjectSlug: &projectSlug, ProjectName: &projectName, ProjectLogoURL: &projectLogo, Name: "Program", Slug: "program"},
 		Skills:  []string{" Go ", "go", "Kubernetes"},
 		Terms:   []models.ProgramTermCreateInput{{Name: "Term", StartDateTime: &start, EndDateTime: &termEnd, ApplicationStartDate: &applicationStart, ApplicationEndDate: &applicationEnd}},
 	})
@@ -100,6 +126,9 @@ func TestProgramService_CreateEnrollment_NormalizesSkills(t *testing.T) {
 	}
 	if captured.Program.ProjectSlug == nil || *captured.Program.ProjectSlug != "program-project" || captured.Program.ProjectName == nil || *captured.Program.ProjectName != "Program Project" || captured.Program.ProjectLogoURL != nil {
 		t.Fatalf("project metadata=%v %v %v", captured.Program.ProjectSlug, captured.Program.ProjectName, captured.Program.ProjectLogoURL)
+	}
+	if n.programSubmittedCalls != 1 || n.programSubmitters[0] != "creator-1" {
+		t.Fatalf("submission notifications = %d %v; want one from creator-1", n.programSubmittedCalls, n.programSubmitters)
 	}
 }
 
@@ -256,10 +285,18 @@ func TestProgramService_Decide(t *testing.T) {
 				return &models.Program{ID: id, Status: tc.current}, nil
 			},
 		}
-		svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+		n := &stubNotifier{}
+		svc := newProgramSvcWithNotifier(repo, &stubTermRepo{}, &stubAppRepo{}, n)
 		_, err := svc.Decide(context.Background(), "prog-1", tc.next)
 		if tc.want == nil && err != nil || tc.want != nil && !errors.Is(err, tc.want) {
 			t.Errorf("%s→%s: got %v; want %v", tc.current, tc.next, err, tc.want)
+		}
+		var wantDecisions []models.ProgramStatus
+		if tc.want == nil {
+			wantDecisions = []models.ProgramStatus{tc.next}
+		}
+		if !reflect.DeepEqual(n.programDecisions, wantDecisions) {
+			t.Errorf("%s→%s: decision notifications = %v; want %v", tc.current, tc.next, n.programDecisions, wantDecisions)
 		}
 	}
 }
@@ -298,12 +335,17 @@ func TestProgramService_HideUnhide(t *testing.T) {
 				},
 			}
 			appRepo := &stubAppRepo{countBlocking: func(context.Context, string) (int, error) { return tc.blocking, nil }}
-			svc := newProgramSvc(repo, &stubTermRepo{}, appRepo)
+			n := &stubNotifier{}
+			svc := newProgramSvcWithNotifier(repo, &stubTermRepo{}, appRepo, n)
 			change := svc.Hide
 			if tc.unhide {
 				change = svc.Unhide
 			}
 			program, err := change(context.Background(), "prog-1")
+			// Unhiding republishes the program but is not an approval decision.
+			if n.programDecisions != nil || n.programSubmittedCalls != 0 {
+				t.Fatalf("notified %v / %d submissions; want nothing", n.programDecisions, n.programSubmittedCalls)
+			}
 			if reads != 1 {
 				t.Fatalf("program read %d times; want once", reads)
 			}
@@ -438,11 +480,15 @@ func TestProgramService_Update_Resubmit_NoOpenTerms(t *testing.T) {
 		},
 	}
 	termRepo := &stubTermRepo{countOpenByProgram: func(_ context.Context, _ string) (int, error) { return 0, nil }}
-	svc := newProgramSvc(repo, termRepo, &stubAppRepo{})
+	n := &stubNotifier{}
+	svc := newProgramSvcWithNotifier(repo, termRepo, &stubAppRepo{}, n)
 	next := models.ProgramStatusPending
 	_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Status: &next})
 	if !errors.Is(err, domain.ErrStateLocked) {
 		t.Errorf("expected ErrStateLocked for no open terms, got %v", err)
+	}
+	if n.programSubmittedCalls != 0 {
+		t.Errorf("submission notifications = %d; want 0", n.programSubmittedCalls)
 	}
 }
 
@@ -455,11 +501,15 @@ func TestProgramService_Update_Resubmit_AllPresent_OK(t *testing.T) {
 		},
 	}
 	termRepo := &stubTermRepo{countOpenByProgram: func(_ context.Context, _ string) (int, error) { return 1, nil }}
-	svc := newProgramSvc(repo, termRepo, &stubAppRepo{})
+	n := &stubNotifier{}
+	svc := newProgramSvcWithNotifier(repo, termRepo, &stubAppRepo{}, n)
 	next := models.ProgramStatusPending
 	_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Status: &next})
 	if err != nil {
 		t.Errorf("resubmit with all required fields should succeed, got %v", err)
+	}
+	if n.programSubmittedCalls != 1 {
+		t.Errorf("submission notifications = %d; want 1 for the resubmission", n.programSubmittedCalls)
 	}
 }
 

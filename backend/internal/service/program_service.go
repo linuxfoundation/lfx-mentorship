@@ -44,13 +44,14 @@ type ProgramService struct {
 	termRepo   domain.ProgramTermRepository
 	appRepo    domain.ApplicationRepository
 	memberRepo domain.ProgramMemberRepository
+	notifier   domain.Notifier
 	cfClient   clients.CrowdfundingClient
 	projects   domain.ProjectLookup
 }
 
 // NewProgramService returns a ProgramService.
-func NewProgramService(repo domain.ProgramRepository, termRepo domain.ProgramTermRepository, appRepo domain.ApplicationRepository, memberRepo domain.ProgramMemberRepository) *ProgramService {
-	return &ProgramService{repo: repo, termRepo: termRepo, appRepo: appRepo, memberRepo: memberRepo}
+func NewProgramService(repo domain.ProgramRepository, termRepo domain.ProgramTermRepository, appRepo domain.ApplicationRepository, memberRepo domain.ProgramMemberRepository, notifier domain.Notifier) *ProgramService {
+	return &ProgramService{repo: repo, termRepo: termRepo, appRepo: appRepo, memberRepo: memberRepo, notifier: notifier}
 }
 
 // SetCrowdfundingClient configures the outbound crowdfunding client used by
@@ -299,6 +300,7 @@ func (s *ProgramService) Create(ctx context.Context, input models.ProgramCreateI
 		span.RecordError(err)
 		return nil, fmt.Errorf("create program: %w", err)
 	}
+	s.notifier.NotifyProgramSubmitted(ctx, p.ID, input.CreatorUserID)
 	return p, nil
 }
 
@@ -396,7 +398,12 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 	}
 	input.Program.Status = models.ProgramStatusPending
 	input.Program.ID = uuid.New().String()
-	return s.repo.CreateEnrollment(ctx, input)
+	p, err := s.repo.CreateEnrollment(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	s.notifier.NotifyProgramSubmitted(ctx, p.ID, input.Program.CreatorUserID)
+	return p, nil
 }
 
 // resolveProjectMetadata replaces the caller's project slug, name, and logo
@@ -469,7 +476,12 @@ func (s *ProgramService) Decide(ctx context.Context, id string, status models.Pr
 	if current.Status != models.ProgramStatusPending {
 		return nil, fmt.Errorf("%w: only a pending program can be decided, not %q", domain.ErrInvalidStateTransition, current.Status)
 	}
-	return s.Update(ctx, id, models.ProgramUpdateInput{Status: &status})
+	p, err := s.Update(ctx, id, models.ProgramUpdateInput{Status: &status})
+	if err != nil {
+		return nil, err
+	}
+	s.notifier.NotifyProgramDecided(ctx, id, status)
+	return p, nil
 }
 
 // Hide takes a published program out of public view. The hide guard in Update
@@ -617,6 +629,10 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("update program: %w", err)
+	}
+	// Only a rejected program moves back to pending: it is resubmitted for review.
+	if input.Status != nil && *input.Status == models.ProgramStatusPending {
+		s.notifier.NotifyProgramSubmitted(ctx, id, "")
 	}
 	return p, nil
 }

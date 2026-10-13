@@ -20,8 +20,8 @@ import (
 	"golang.org/x/text/language/display"
 )
 
-// adminPageSize is the largest page the member repository serves.
-const adminPageSize = 100
+// pageSize is the largest page the member and task repositories serve.
+const pageSize = 100
 
 // dispatchTimeout bounds one notification's lookups and sends so a stuck dependency cannot hold shutdown.
 const dispatchTimeout = 30 * time.Second
@@ -36,7 +36,18 @@ const (
 	menteeFallback   = "A mentee"
 	mentorFallback   = "A mentor"
 	hrGreeting       = "HR team"
+	reviewGreeting   = "LF Mentorship team"
 )
+
+const (
+	// monthLayout renders a term as the legacy acceptance email did.
+	monthLayout = "January 2006"
+	// dateLayout renders a calendar date in task and graduation emails.
+	dateLayout = "January 2, 2006"
+)
+
+// supportDeskURL is the LF support desk the legacy program rejection email pointed program admins at.
+const supportDeskURL = "https://jira.linuxfoundation.org/servicedesk/customer/portal/4/group/31"
 
 // selfServeMentorshipPath is the Self Serve lens where program admins, mentors, and mentees manage mentorships.
 const selfServeMentorshipPath = "/mentorship"
@@ -54,6 +65,8 @@ type NotifierConfig struct {
 	PublicSiteURL string
 	SelfServeURL  string
 	HRInbox       string
+	// ReviewInbox is the LF staff inbox that reviews submitted programs.
+	ReviewInbox string
 	// AllowedRecipients, when set, are the only addresses mail goes to; every other send is suppressed.
 	AllowedRecipients []string
 }
@@ -66,6 +79,7 @@ type Repositories struct {
 	Terms        domain.ProgramTermRepository
 	Members      domain.ProgramMemberRepository
 	Applications domain.ApplicationRepository
+	Tasks        domain.TaskRepository
 }
 
 // Notifier implements domain.Notifier by emailing through the email service.
@@ -76,6 +90,7 @@ type Notifier struct {
 	publicURL    string
 	selfServeURL string
 	hrInbox      string
+	reviewInbox  string
 	// allowedRecipients holds lowercased addresses; nil sends to everyone.
 	allowedRecipients map[string]bool
 	logger            *slog.Logger
@@ -92,6 +107,7 @@ func NewNotifier(sender Sender, repos Repositories, cfg NotifierConfig, logger *
 		publicURL:    strings.TrimRight(cfg.PublicSiteURL, "/"),
 		selfServeURL: strings.TrimRight(cfg.SelfServeURL, "/"),
 		hrInbox:      cfg.HRInbox,
+		reviewInbox:  cfg.ReviewInbox,
 		logger:       logger,
 
 		allowedRecipients: recipientSet(cfg.AllowedRecipients),
@@ -183,31 +199,36 @@ func (n *Notifier) NotifyMentorDeclined(ctx context.Context, programID, userID s
 
 // NotifyAdminMentorAccepted tells every active program admin that an invited mentor accepted.
 func (n *Notifier) NotifyAdminMentorAccepted(ctx context.Context, programID, userID string) {
-	n.dispatch(ctx, templateAdminMentorAccepted, func(ctx context.Context) ([]Message, error) {
-		program, err := n.repos.Programs.GetByID(ctx, programID)
-		if err != nil {
-			return nil, fmt.Errorf("get program: %w", err)
-		}
-		mentor, err := n.repos.Users.GetByID(ctx, userID)
-		if err != nil {
-			return nil, fmt.Errorf("get mentor: %w", err)
-		}
-		admins, err := n.activeAdmins(ctx, program.ID, templateAdminMentorAccepted)
-		if err != nil {
-			return nil, err
-		}
-		mentorName := fullName(mentor, mentorFallback)
-		return adminMessages(admins, templateAdminMentorAccepted, mentorName+" accepted your mentor invitation for "+program.Name, templateData{
-			ProgramName: program.Name,
-			ManageURL:   n.manageURL(),
-			MentorName:  mentorName,
-		})
+	n.notifyAdminsOfMentor(ctx, templateAdminMentorAccepted, programID, userID, func(mentor, program string) string {
+		return mentor + " accepted your mentor invitation for " + program
 	})
 }
 
 // NotifyAdminMentorDeclined tells every active program admin that an invited mentor declined.
 func (n *Notifier) NotifyAdminMentorDeclined(ctx context.Context, programID, userID string) {
-	n.dispatch(ctx, templateAdminMentorDeclined, func(ctx context.Context) ([]Message, error) {
+	n.notifyAdminsOfMentor(ctx, templateAdminMentorDeclined, programID, userID, func(mentor, program string) string {
+		return mentor + " declined your mentor invitation for " + program
+	})
+}
+
+// NotifyAdminMentorRequested tells every active program admin that a mentor asked to join the program.
+func (n *Notifier) NotifyAdminMentorRequested(ctx context.Context, programID, userID string) {
+	n.notifyAdminsOfMentor(ctx, templateAdminMentorRequested, programID, userID, func(mentor, program string) string {
+		return mentor + " requested to mentor for " + program
+	})
+}
+
+// NotifyAdminMentorWithdrew tells every active program admin that a mentor withdrew their request to join.
+func (n *Notifier) NotifyAdminMentorWithdrew(ctx context.Context, programID, userID string) {
+	n.notifyAdminsOfMentor(ctx, templateAdminMentorWithdrew, programID, userID, func(mentor, program string) string {
+		return mentor + " withdrew their mentor request for " + program
+	})
+}
+
+// notifyAdminsOfMentor tells every active program admin what a mentor did; subject builds the
+// subject line from the mentor's and the program's names.
+func (n *Notifier) notifyAdminsOfMentor(ctx context.Context, name, programID, userID string, subject func(mentor, program string) string) {
+	n.dispatch(ctx, name, func(ctx context.Context) ([]Message, error) {
 		program, err := n.repos.Programs.GetByID(ctx, programID)
 		if err != nil {
 			return nil, fmt.Errorf("get program: %w", err)
@@ -216,15 +237,88 @@ func (n *Notifier) NotifyAdminMentorDeclined(ctx context.Context, programID, use
 		if err != nil {
 			return nil, fmt.Errorf("get mentor: %w", err)
 		}
-		mentorName := fullName(mentor, mentorFallback)
-		admins, err := n.activeAdmins(ctx, program.ID, templateAdminMentorDeclined)
+		admins, err := n.activeAdmins(ctx, program.ID, name)
 		if err != nil {
 			return nil, err
 		}
-		return adminMessages(admins, templateAdminMentorDeclined, mentorName+" declined your mentor invitation for "+program.Name, templateData{
+		mentorName := fullName(mentor, mentorFallback)
+		return adminMessages(admins, name, subject(mentorName, program.Name), templateData{
 			ProgramName: program.Name,
 			ManageURL:   n.manageURL(),
 			MentorName:  mentorName,
+			MentorEmail: strings.TrimSpace(deref(mentor.Email)),
+		})
+	})
+}
+
+// NotifyProgramSubmitted tells every active program admin their program is in review, and the
+// LF staff review inbox that it awaits a decision.
+func (n *Notifier) NotifyProgramSubmitted(ctx context.Context, programID, submitterID string) {
+	n.dispatch(ctx, templateProgramSubmitted, func(ctx context.Context) ([]Message, error) {
+		program, err := n.repos.Programs.GetByID(ctx, programID)
+		if err != nil {
+			return nil, fmt.Errorf("get program: %w", err)
+		}
+		admins, err := n.activeAdmins(ctx, program.ID, templateProgramSubmitted)
+		if err != nil {
+			return nil, err
+		}
+		return adminMessages(admins, templateProgramSubmitted, "We received your submission of "+program.Name, templateData{
+			ProgramName: program.Name,
+			ManageURL:   n.manageURL(),
+		})
+	})
+	n.dispatch(ctx, templateProgramReview, func(ctx context.Context) ([]Message, error) {
+		program, err := n.repos.Programs.GetByID(ctx, programID)
+		if err != nil {
+			return nil, fmt.Errorf("get program: %w", err)
+		}
+		data := templateData{
+			RecipientName: reviewGreeting,
+			ProgramName:   program.Name,
+			ManageURL:     n.manageURL(),
+		}
+		// The submitter is context for the reviewer; a failed lookup must not hold back the notice.
+		if submitterID != "" {
+			submitter, err := n.repos.Users.GetByID(ctx, submitterID)
+			if err != nil {
+				n.logger.WarnContext(ctx, "program submitter unavailable", "user_id", submitterID, "error", err)
+			} else {
+				data.SubmitterName = fullName(submitter, "")
+				data.SubmitterEmail = strings.TrimSpace(deref(submitter.Email))
+			}
+		}
+		msg, err := render(templateProgramReview, n.reviewInbox, "Mentorship program submitted for review: "+program.Name, data)
+		return []Message{msg}, err
+	})
+}
+
+// NotifyProgramDecided tells every active program admin their program was published or rejected.
+func (n *Notifier) NotifyProgramDecided(ctx context.Context, programID string, status models.ProgramStatus) {
+	var name, verdict string
+	switch status {
+	case models.ProgramStatusPublished:
+		name, verdict = templateProgramApproved, " has been approved"
+	case models.ProgramStatusRejected:
+		name, verdict = templateProgramRejected, " was not approved"
+	default:
+		n.logger.WarnContext(ctx, "program decision has no email", "program_id", programID, "status", status)
+		return
+	}
+	n.dispatch(ctx, name, func(ctx context.Context) ([]Message, error) {
+		program, err := n.repos.Programs.GetByID(ctx, programID)
+		if err != nil {
+			return nil, fmt.Errorf("get program: %w", err)
+		}
+		admins, err := n.activeAdmins(ctx, program.ID, name)
+		if err != nil {
+			return nil, err
+		}
+		return adminMessages(admins, name, program.Name+verdict, templateData{
+			ProgramName: program.Name,
+			ProgramURL:  n.programURL(program),
+			ManageURL:   n.manageURL(),
+			SupportURL:  supportDeskURL,
 		})
 	})
 }
@@ -293,7 +387,7 @@ func (n *Notifier) NotifyMenteeAccepted(ctx context.Context, applicationID, atte
 			ProgramName:    program.Name,
 			ManageURL:      n.manageURL(),
 			TermName:       term.Name,
-			TermPeriod:     termPeriod(term),
+			TermPeriod:     termPeriod(term, monthLayout),
 			MenteeName:     menteeName,
 			MenteeEmail:    strings.TrimSpace(deref(mentee.Email)),
 			AttendanceType: attendance,
@@ -313,6 +407,159 @@ func (n *Notifier) NotifyMenteeAccepted(ctx context.Context, applicationID, atte
 		// HR goes first: dispatch keeps the first message per address, and an HR inbox that is
 		// also an admin must still get the HR notice with the country of residence.
 		return append([]Message{hr}, msgs...), nil
+	})
+}
+
+// NotifyMenteeApplicationReceived confirms the application to the mentee and lists the prerequisite tasks to complete.
+func (n *Notifier) NotifyMenteeApplicationReceived(ctx context.Context, applicationID string) {
+	n.dispatch(ctx, templateMenteeApplicationReceived, func(ctx context.Context) ([]Message, error) {
+		app, _, program, err := n.applicationContext(ctx, applicationID)
+		if err != nil {
+			return nil, err
+		}
+		user, to, err := n.recipient(ctx, app.UserID)
+		if err != nil {
+			return nil, err
+		}
+		tasks, _, err := n.repos.Tasks.ListByApplication(ctx, app.ID, models.TaskFilter{Limit: pageSize})
+		if err != nil {
+			return nil, fmt.Errorf("list application tasks: %w", err)
+		}
+		var names []string
+		for _, task := range tasks {
+			if task.Category == nil || *task.Category != models.TaskCategoryPrerequisite {
+				continue
+			}
+			if name := strings.TrimSpace(deref(task.Name)); name != "" {
+				names = append(names, name)
+			}
+		}
+		msg, err := render(templateMenteeApplicationReceived, to, "We received your application to "+program.Name, templateData{
+			RecipientName: firstName(user),
+			ProgramName:   program.Name,
+			ManageURL:     n.manageURL(),
+			Tasks:         names,
+		})
+		return []Message{msg}, err
+	})
+}
+
+// NotifyMenteeDeclined tells the mentee their application was declined.
+func (n *Notifier) NotifyMenteeDeclined(ctx context.Context, applicationID string) {
+	n.dispatch(ctx, templateMenteeDeclined, func(ctx context.Context) ([]Message, error) {
+		app, _, program, err := n.applicationContext(ctx, applicationID)
+		if err != nil {
+			return nil, err
+		}
+		user, to, err := n.recipient(ctx, app.UserID)
+		if err != nil {
+			return nil, err
+		}
+		msg, err := render(templateMenteeDeclined, to, "An update on your application to "+program.Name, templateData{
+			RecipientName: firstName(user),
+			ProgramName:   program.Name,
+			ManageURL:     n.manageURL(),
+		})
+		return []Message{msg}, err
+	})
+}
+
+// NotifyMenteeWithdrawn confirms the withdrawal to the mentee and tells every active program admin.
+func (n *Notifier) NotifyMenteeWithdrawn(ctx context.Context, applicationID string) {
+	n.dispatch(ctx, templateMenteeWithdrawn, func(ctx context.Context) ([]Message, error) {
+		app, _, program, err := n.applicationContext(ctx, applicationID)
+		if err != nil {
+			return nil, err
+		}
+		user, to, err := n.recipient(ctx, app.UserID)
+		if err != nil {
+			return nil, err
+		}
+		msg, err := render(templateMenteeWithdrawn, to, "Your application to "+program.Name+" has been withdrawn", templateData{
+			RecipientName: firstName(user),
+			ProgramName:   program.Name,
+			ProgramURL:    n.programURL(program),
+		})
+		return []Message{msg}, err
+	})
+	n.dispatch(ctx, templateAdminMenteeWithdrawn, func(ctx context.Context) ([]Message, error) {
+		app, term, program, err := n.applicationContext(ctx, applicationID)
+		if err != nil {
+			return nil, err
+		}
+		mentee, err := n.repos.Users.GetByID(ctx, app.UserID)
+		if err != nil {
+			return nil, fmt.Errorf("get mentee: %w", err)
+		}
+		admins, err := n.activeAdmins(ctx, program.ID, templateAdminMenteeWithdrawn)
+		if err != nil {
+			return nil, err
+		}
+		menteeName := fullName(mentee, menteeFallback)
+		return adminMessages(admins, templateAdminMenteeWithdrawn, menteeName+"'s application to "+program.Name+" was withdrawn", templateData{
+			ProgramName: program.Name,
+			ManageURL:   n.manageURL(),
+			TermName:    term.Name,
+			MenteeName:  menteeName,
+		})
+	})
+}
+
+// NotifyMenteeGraduated sends the mentee a letter certifying they completed the program.
+func (n *Notifier) NotifyMenteeGraduated(ctx context.Context, applicationID string) {
+	n.dispatch(ctx, templateMenteeGraduated, func(ctx context.Context) ([]Message, error) {
+		app, term, program, err := n.applicationContext(ctx, applicationID)
+		if err != nil {
+			return nil, err
+		}
+		user, to, err := n.recipient(ctx, app.UserID)
+		if err != nil {
+			return nil, err
+		}
+		mentors, err := n.mentorNames(ctx, program.ID)
+		if err != nil {
+			return nil, err
+		}
+		msg, err := render(templateMenteeGraduated, to, "Your LFX Mentorship certificate of completion for "+program.Name, templateData{
+			Letter:             true,
+			IssuedDate:         time.Now().UTC().Format(dateLayout),
+			MenteeName:         fullName(user, deref(user.LFID)),
+			ProgramName:        program.Name,
+			ProgramDescription: strings.TrimSpace(deref(program.Description)),
+			TermPeriod:         termPeriod(term, dateLayout),
+			MentorNames:        mentors,
+		})
+		return []Message{msg}, err
+	})
+}
+
+// NotifyMenteeTaskAssigned tells the task's assignee a reviewer assigned them a task.
+func (n *Notifier) NotifyMenteeTaskAssigned(ctx context.Context, taskID string) {
+	n.dispatch(ctx, templateMenteeTaskAssigned, func(ctx context.Context) ([]Message, error) {
+		task, err := n.repos.Tasks.GetByID(ctx, taskID)
+		if err != nil {
+			return nil, fmt.Errorf("get task: %w", err)
+		}
+		if task.ApplicationID == nil {
+			return nil, fmt.Errorf("task %s has no application", taskID)
+		}
+		_, _, program, err := n.applicationContext(ctx, *task.ApplicationID)
+		if err != nil {
+			return nil, err
+		}
+		user, to, err := n.recipient(ctx, task.AssigneeID)
+		if err != nil {
+			return nil, err
+		}
+		msg, err := render(templateMenteeTaskAssigned, to, "You have a new task for "+program.Name, templateData{
+			RecipientName: firstName(user),
+			ProgramName:   program.Name,
+			ManageURL:     n.manageURL(),
+			TaskName:      deref(task.Name),
+			TaskCreatedOn: task.CreatedOn.UTC().Format(dateLayout),
+			TaskDueDate:   dueDate(task.DueDate),
+		})
+		return []Message{msg}, err
 	})
 }
 
@@ -424,23 +671,51 @@ type recipientUser struct {
 	email string
 }
 
-// activeAdmins resolves every active admin of the program, skipping any without an email address.
-func (n *Notifier) activeAdmins(ctx context.Context, programID, notification string) ([]recipientUser, error) {
+// activeMembers lists every active member of the program with the given type.
+func (n *Notifier) activeMembers(ctx context.Context, programID string, memberType models.MemberType) ([]*models.ProgramMember, error) {
 	var members []*models.ProgramMember
 	for {
 		page, meta, err := n.repos.Members.ListByProgram(ctx, programID, models.ProgramMemberFilter{
-			Limit:      adminPageSize,
+			Limit:      pageSize,
 			Offset:     len(members),
-			MemberType: string(models.MemberTypeProgramAdmin),
+			MemberType: string(memberType),
 			Status:     string(models.ProgramMemberStatusActive),
 		})
 		if err != nil {
-			return nil, fmt.Errorf("list program admins: %w", err)
+			return nil, err
 		}
 		members = append(members, page...)
 		if len(page) == 0 || meta == nil || len(members) >= meta.Total {
-			break
+			return members, nil
 		}
+	}
+}
+
+// mentorNames lists the full names of the program's active mentors, skipping any that cannot be resolved.
+func (n *Notifier) mentorNames(ctx context.Context, programID string) ([]string, error) {
+	members, err := n.activeMembers(ctx, programID, models.MemberTypeMentor)
+	if err != nil {
+		return nil, fmt.Errorf("list program mentors: %w", err)
+	}
+	var names []string
+	for _, m := range members {
+		user, err := n.repos.Users.GetByID(ctx, m.UserID)
+		if err != nil {
+			n.logger.WarnContext(ctx, "skipping program mentor name", "user_id", m.UserID, "error", err)
+			continue
+		}
+		if name := fullName(user, ""); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names, nil
+}
+
+// activeAdmins resolves every active admin of the program, skipping any without an email address.
+func (n *Notifier) activeAdmins(ctx context.Context, programID, notification string) ([]recipientUser, error) {
+	members, err := n.activeMembers(ctx, programID, models.MemberTypeProgramAdmin)
+	if err != nil {
+		return nil, fmt.Errorf("list program admins: %w", err)
 	}
 	var admins []recipientUser
 	for _, m := range members {
@@ -554,12 +829,21 @@ func fullName(user *models.User, fallback string) string {
 	return fallback
 }
 
-// termPeriod renders the term as "Month Year – Month Year", as the legacy acceptance email did.
-func termPeriod(term *models.ProgramTerm) string {
+// termPeriod renders the term's start and end in layout as "start – end", or "" when either is unset.
+func termPeriod(term *models.ProgramTerm, layout string) string {
 	if term.StartDateTime == nil || term.EndDateTime == nil {
 		return ""
 	}
-	return term.StartDateTime.UTC().Format("January 2006") + " – " + term.EndDateTime.UTC().Format("January 2006")
+	return term.StartDateTime.UTC().Format(layout) + " – " + term.EndDateTime.UTC().Format(layout)
+}
+
+// dueDate renders a task's YYYY-MM-DD due date in dateLayout; any other value is returned as stored.
+func dueDate(value *string) string {
+	d, err := time.Parse(time.DateOnly, deref(value))
+	if err != nil {
+		return deref(value)
+	}
+	return d.Format(dateLayout)
 }
 
 func attendanceLabel(t models.AttendanceType) string {

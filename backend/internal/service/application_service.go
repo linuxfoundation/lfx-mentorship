@@ -295,6 +295,7 @@ func (s *ApplicationService) Create(ctx context.Context, programTermID string, i
 		if err != nil {
 			return nil, fmt.Errorf("reapply application: %w", err)
 		}
+		s.notifyApplicationReceived(ctx, a, term.ProgramID)
 		return a, nil
 	}
 
@@ -308,8 +309,19 @@ func (s *ApplicationService) Create(ctx context.Context, programTermID string, i
 		span.RecordError(err)
 		return nil, fmt.Errorf("create application: %w", err)
 	}
-
+	s.notifyApplicationReceived(ctx, a, term.ProgramID)
 	return a, nil
+}
+
+// notifyApplicationReceived confirms a mentee application to the mentee, and tells program
+// admins about a mentor application.
+func (s *ApplicationService) notifyApplicationReceived(ctx context.Context, a *models.Application, programID string) {
+	switch a.Role {
+	case models.ApplicationRoleMentee:
+		s.notifier.NotifyMenteeApplicationReceived(ctx, a.ID)
+	case models.ApplicationRoleMentor:
+		s.notifier.NotifyAdminMentorRequested(ctx, programID, a.UserID)
+	}
 }
 
 func (s *ApplicationService) prerequisiteTasks(ctx context.Context, programTermID string, input models.ApplicationCreateInput, programID string) ([]models.TaskCreateInput, error) {
@@ -354,7 +366,8 @@ func (s *ApplicationService) prerequisiteTasks(ctx context.Context, programTermI
 // Update applies status changes to an application.
 // Enforces the state machine defined in applicationTransitions.
 // When accepting, attendance_type is required.
-// When accepting, the mentee is notified.
+// A mentee is notified when their application is accepted, declined, withdrawn, or graduated;
+// program admins are notified when a mentor withdraws their application.
 func (s *ApplicationService) Update(ctx context.Context, id string, input models.ApplicationUpdateInput) (*models.Application, error) {
 	ctx, span := applicationSvcTracer.Start(ctx, "ApplicationService.Update")
 	defer span.End()
@@ -430,16 +443,28 @@ func (s *ApplicationService) Update(ctx context.Context, id string, input models
 	}
 
 	// Post-update side-effects.
-	if input.Status != nil {
+	if input.Status != nil && a.Role == models.ApplicationRoleMentee {
 		switch *input.Status {
 		case models.ApplicationStatusAccepted:
-			if a.Role == models.ApplicationRoleMentee {
-				attType := ""
-				if a.AttendanceType != nil {
-					attType = string(*a.AttendanceType)
-				}
-				s.notifier.NotifyMenteeAccepted(ctx, id, attType)
+			attType := ""
+			if a.AttendanceType != nil {
+				attType = string(*a.AttendanceType)
 			}
+			s.notifier.NotifyMenteeAccepted(ctx, id, attType)
+		case models.ApplicationStatusDeclined:
+			s.notifier.NotifyMenteeDeclined(ctx, id)
+		case models.ApplicationStatusWithdrawn:
+			s.notifier.NotifyMenteeWithdrawn(ctx, id)
+		case models.ApplicationStatusGraduated:
+			s.notifier.NotifyMenteeGraduated(ctx, id)
+		}
+	}
+	if input.Status != nil && *input.Status == models.ApplicationStatusWithdrawn && a.Role == models.ApplicationRoleMentor {
+		// The write has landed, so a failed lookup costs only the admins' notice.
+		if term, err := s.termRepo.GetByID(ctx, a.ProgramTermID); err != nil {
+			span.RecordError(err)
+		} else {
+			s.notifier.NotifyAdminMentorWithdrew(ctx, term.ProgramID, a.UserID)
 		}
 	}
 
@@ -496,40 +521,54 @@ func (s *ApplicationService) WithdrawForMentee(ctx context.Context, id, actorID 
 		}
 		return nil, fmt.Errorf("verify program admin: %w", memberErr)
 	}
-	status := models.ApplicationStatusWithdrawn
-	updated, err := s.repo.Update(ctx, id, models.ApplicationUpdateInput{Status: &status})
-	if err != nil {
-		return nil, fmt.Errorf("assisted withdrawal: %w", err)
-	}
-	return updated, nil
+	return s.assistedWithdraw(ctx, application)
 }
 
 // WithdrawForMenteeAfterGatewayAuthorization applies the state transition after
 // Heimdall has verified the caller's manager relation on the application.
 func (s *ApplicationService) WithdrawForMenteeAfterGatewayAuthorization(ctx context.Context, id string) (*models.Application, error) {
-	if _, err := s.repo.GetByID(ctx, id); err != nil {
+	application, err := s.repo.GetByID(ctx, id)
+	if err != nil {
 		return nil, fmt.Errorf("get application for assisted withdrawal: %w", err)
 	}
+	return s.assistedWithdraw(ctx, application)
+}
+
+// assistedWithdraw withdraws an application on the mentee's behalf, notifying them unless it was already withdrawn.
+func (s *ApplicationService) assistedWithdraw(ctx context.Context, application *models.Application) (*models.Application, error) {
 	status := models.ApplicationStatusWithdrawn
-	updated, err := s.repo.Update(ctx, id, models.ApplicationUpdateInput{Status: &status})
+	updated, err := s.repo.Update(ctx, application.ID, models.ApplicationUpdateInput{Status: &status})
 	if err != nil {
 		return nil, fmt.Errorf("assisted withdrawal: %w", err)
+	}
+	if application.Status != models.ApplicationStatusWithdrawn && updated.Role == models.ApplicationRoleMentee {
+		s.notifier.NotifyMenteeWithdrawn(ctx, updated.ID)
 	}
 	return updated, nil
 }
 
-// BulkDeclineByTerm moves all pending/submitted applications in a term to declined.
+// BulkDeclineByTerm moves all pending applications in a term to declined and notifies each mentee.
 func (s *ApplicationService) BulkDeclineByTerm(ctx context.Context, termID string) (int, error) {
 	ctx, span := applicationSvcTracer.Start(ctx, "ApplicationService.BulkDeclineByTerm")
 	defer span.End()
 	span.SetAttributes(attribute.String("term.id", termID))
 
-	count, err := s.repo.BulkDeclineByTerm(ctx, termID)
+	declined, err := s.repo.BulkDeclineByTerm(ctx, termID)
 	if err != nil {
 		span.RecordError(err)
 		return 0, fmt.Errorf("bulk decline: %w", err)
 	}
-	return count, nil
+	notifyMenteesDeclined(ctx, s.notifier, declined)
+	return len(declined), nil
+}
+
+// notifyMenteesDeclined tells each mentee among the bulk-declined applications; mentor applications get no email.
+func notifyMenteesDeclined(ctx context.Context, notifier domain.Notifier, declined []*models.Application) {
+	for _, a := range declined {
+		if a.Role == models.ApplicationRoleMentee {
+			notifier.NotifyMenteeDeclined(ctx, a.ID)
+		}
+	}
 }
 
 // ListPastMenteesByTerm returns accepted/graduated applications for a term.
