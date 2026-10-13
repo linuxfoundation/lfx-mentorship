@@ -95,22 +95,37 @@ func (r *termRepoStub) GetByID(context.Context, string) (*models.ProgramTerm, er
 
 type memberRepoStub struct {
 	domain.ProgramMemberRepository
-	members []*models.ProgramMember
-	filters []models.ProgramMemberFilter
+	members       []*models.ProgramMember
+	filters       []models.ProgramMemberFilter
+	mentors       []*models.ProgramMentorManagementRow
+	mentorFilters []models.ProgramMemberFilter
+	// mentorRow is the mentor's own program_members row; nil reports it not found unless mentorErr is set.
+	mentorRow *models.ProgramMember
+	mentorErr error
 }
 
-// ListByProgram filters by member type only for members that set one, so admin-only fixtures can leave it out.
 func (r *memberRepoStub) ListByProgram(_ context.Context, _ string, filter models.ProgramMemberFilter) ([]*models.ProgramMember, *models.PaginationMeta, error) {
 	r.filters = append(r.filters, filter)
-	var members []*models.ProgramMember
-	for _, m := range r.members {
-		if m.MemberType == "" || string(m.MemberType) == filter.MemberType {
-			members = append(members, m)
-		}
+	start := min(filter.Offset, len(r.members))
+	end := min(start+filter.Limit, len(r.members))
+	return r.members[start:end], &models.PaginationMeta{Total: len(r.members), Limit: filter.Limit, Offset: filter.Offset}, nil
+}
+
+func (r *memberRepoStub) ListMentorManagement(_ context.Context, _ string, filter models.ProgramMemberFilter) ([]*models.ProgramMentorManagementRow, *models.PaginationMeta, error) {
+	r.mentorFilters = append(r.mentorFilters, filter)
+	start := min(filter.Offset, len(r.mentors))
+	end := min(start+filter.Limit, len(r.mentors))
+	return r.mentors[start:end], &models.PaginationMeta{Total: len(r.mentors), Limit: filter.Limit, Offset: filter.Offset}, nil
+}
+
+func (r *memberRepoStub) FindByProgramUserAndType(context.Context, string, string, models.MemberType) (*models.ProgramMember, error) {
+	if r.mentorErr != nil {
+		return nil, r.mentorErr
 	}
-	start := min(filter.Offset, len(members))
-	end := min(start+filter.Limit, len(members))
-	return members[start:end], &models.PaginationMeta{Total: len(members), Limit: filter.Limit, Offset: filter.Offset}, nil
+	if r.mentorRow == nil {
+		return nil, domain.ErrProgramMemberNotFound
+	}
+	return r.mentorRow, nil
 }
 
 type applicationRepoStub struct {
@@ -137,11 +152,13 @@ func (r *taskRepoStub) GetByID(_ context.Context, id string) (*models.Task, erro
 	return nil, domain.ErrTaskNotFound
 }
 
-func (r *taskRepoStub) ListByApplication(context.Context, string, models.TaskFilter) ([]*models.Task, *models.PaginationMeta, error) {
+func (r *taskRepoStub) ListByApplication(_ context.Context, _ string, filter models.TaskFilter) ([]*models.Task, *models.PaginationMeta, error) {
 	if r.err != nil {
 		return nil, nil, r.err
 	}
-	return r.tasks, &models.PaginationMeta{Total: len(r.tasks)}, nil
+	start := min(filter.Offset, len(r.tasks))
+	end := min(start+filter.Limit, len(r.tasks))
+	return r.tasks[start:end], &models.PaginationMeta{Total: len(r.tasks), Limit: filter.Limit, Offset: filter.Offset}, nil
 }
 
 type profileRepoStub struct {
@@ -685,6 +702,33 @@ func TestNotifyProgramDecided_OtherStatusSendsNothing(t *testing.T) {
 	}
 }
 
+func TestNotifyAdminMentorRequested_PrefersMemberEmail(t *testing.T) {
+	for name, tc := range map[string]struct {
+		row  *models.ProgramMember
+		err  error
+		want string
+	}{
+		"member row email":         {row: &models.ProgramMember{Email: strPtr(" current@linuxfoundation.org ")}, want: "current@linuxfoundation.org"},
+		"member row without email": {row: &models.ProgramMember{}, want: "mentor@linuxfoundation.org"},
+		"no member row":            {want: "mentor@linuxfoundation.org"},
+		"lookup fails":             {err: errors.New("db down"), want: "mentor@linuxfoundation.org"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture()
+			f.members.members = []*models.ProgramMember{{UserID: "admin1"}}
+			f.members.mentorRow, f.members.mentorErr = tc.row, tc.err
+
+			f.n.NotifyAdminMentorRequested(context.Background(), "p1", "mentor")
+
+			sent := f.wait(t)
+			if len(sent) != 1 {
+				t.Fatalf("sent = %+v", sent)
+			}
+			mustContain(t, "text", sent[0].Text, "contact them at "+tc.want+".")
+		})
+	}
+}
+
 func TestNotifyAdminMentorRequestedAndWithdrew(t *testing.T) {
 	for name, tc := range map[string]struct {
 		notify  func(*Notifier)
@@ -738,6 +782,24 @@ func TestNotifyMenteeApplicationReceived(t *testing.T) {
 		t.Fatalf("text lists a task that is not a prerequisite:\n%s", sent[0].Text)
 	}
 	mustContain(t, "html", sent[0].HTML, "<li>Write an &lt;intro&gt;</li>", ">View Prerequisite Tasks</a>")
+}
+
+func TestNotifyMenteeApplicationReceived_PagesThroughAllTasks(t *testing.T) {
+	prerequisite := models.TaskCategoryPrerequisite
+	f := newFixture()
+	for i := range pageSize + 1 {
+		f.tasks.tasks = append(f.tasks.tasks, &models.Task{ID: "t" + strconv.Itoa(i), Name: strPtr("Task " + strconv.Itoa(i)), Category: &prerequisite})
+	}
+
+	f.n.NotifyMenteeApplicationReceived(context.Background(), "a1")
+
+	sent := f.wait(t)
+	if len(sent) != 1 {
+		t.Fatalf("sent = %+v", sent)
+	}
+	if got := strings.Count(sent[0].Text, "\n- Task "); got != pageSize+1 {
+		t.Fatalf("listed %d prerequisite tasks, want %d", got, pageSize+1)
+	}
 }
 
 func TestNotifyMenteeApplicationReceived_NoTasks(t *testing.T) {
@@ -801,14 +863,11 @@ func TestNotifyMenteeWithdrawn(t *testing.T) {
 
 func TestNotifyMenteeGraduated(t *testing.T) {
 	f := newFixture()
-	f.users.users["mentor2"] = &models.User{ID: "mentor2", GivenName: strPtr("Ana"), FamilyName: strPtr("Guide")}
-	f.users.users["unnamed"] = &models.User{ID: "unnamed", LFID: strPtr("quiet-mentor")}
-	f.members.members = []*models.ProgramMember{
-		{UserID: "admin1", MemberType: models.MemberTypeProgramAdmin},
-		{UserID: "mentor", MemberType: models.MemberTypeMentor},
-		{UserID: "mentor2", MemberType: models.MemberTypeMentor},
-		{UserID: "unnamed", MemberType: models.MemberTypeMentor},
-		{UserID: "gone", MemberType: models.MemberTypeMentor},
+	f.members.mentors = []*models.ProgramMentorManagementRow{
+		{UserID: "mentor", Name: strPtr("Mo Mentor"), Username: strPtr("momentor")},
+		{UserID: "mentor2", Name: strPtr(" Ana Guide ")},
+		{UserID: "unnamed", Name: strPtr(" "), Username: strPtr("quiet-mentor")},
+		{UserID: "anonymous"},
 	}
 
 	f.n.NotifyMenteeGraduated(context.Background(), "a1")
@@ -830,6 +889,28 @@ func TestNotifyMenteeGraduated(t *testing.T) {
 		if strings.Contains(body, "Hi ") || strings.Contains(body, "Thank you,") {
 			t.Fatalf("certificate letter carries the notice greeting or sign-off:\n%s", body)
 		}
+	}
+	want := []models.ProgramMemberFilter{{Limit: mentorPageSize, Status: "active"}}
+	if !slices.Equal(f.members.mentorFilters, want) {
+		t.Fatalf("mentor filters = %+v, want %+v", f.members.mentorFilters, want)
+	}
+}
+
+func TestNotifyMenteeGraduated_PagesThroughAllMentors(t *testing.T) {
+	f := newFixture()
+	for i := range mentorPageSize + 1 {
+		f.members.mentors = append(f.members.mentors, &models.ProgramMentorManagementRow{Username: strPtr("mentor-" + strconv.Itoa(i))})
+	}
+
+	f.n.NotifyMenteeGraduated(context.Background(), "a1")
+
+	sent := f.wait(t)
+	if len(sent) != 1 {
+		t.Fatalf("sent = %+v", sent)
+	}
+	mustContain(t, "text", sent[0].Text, "mentor-0, ", ", mentor-"+strconv.Itoa(mentorPageSize)+".")
+	if len(f.members.mentorFilters) != 2 || f.members.mentorFilters[1].Offset != mentorPageSize {
+		t.Fatalf("mentor filters = %+v, want a second page at offset %d", f.members.mentorFilters, mentorPageSize)
 	}
 }
 

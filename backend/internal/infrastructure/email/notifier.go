@@ -6,6 +6,7 @@ package email
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -22,6 +23,9 @@ import (
 
 // pageSize is the largest page the member and task repositories serve.
 const pageSize = 100
+
+// mentorPageSize is the largest page the mentor management listing serves.
+const mentorPageSize = 50
 
 // dispatchTimeout bounds one notification's lookups and sends so a stuck dependency cannot hold shutdown.
 const dispatchTimeout = 30 * time.Second
@@ -253,9 +257,25 @@ func (n *Notifier) notifyAdminsOfMentor(ctx context.Context, name, programID, us
 			ProgramName: program.Name,
 			ManageURL:   n.manageURL(),
 			MentorName:  mentorName,
-			MentorEmail: strings.TrimSpace(deref(mentor.Email)),
+			MentorEmail: n.mentorEmail(ctx, programID, mentor),
 		})
 	})
+}
+
+// mentorEmail is the address on the mentor's program_members row, which records the email the
+// mentor asked or was invited with, falling back to their account email. A mentor-role
+// application has no member row, and a failed lookup must not hold back the notice.
+func (n *Notifier) mentorEmail(ctx context.Context, programID string, mentor *models.User) string {
+	member, err := n.repos.Members.FindByProgramUserAndType(ctx, programID, mentor.ID, models.MemberTypeMentor)
+	switch {
+	case err == nil:
+		if email := strings.TrimSpace(deref(member.Email)); email != "" {
+			return email
+		}
+	case !errors.Is(err, domain.ErrProgramMemberNotFound):
+		n.logger.WarnContext(ctx, "mentor member email unavailable", "user_id", mentor.ID, "error", err)
+	}
+	return strings.TrimSpace(deref(mentor.Email))
 }
 
 // NotifyProgramSubmitted tells every active program admin their program is in review, and the
@@ -428,9 +448,9 @@ func (n *Notifier) NotifyMenteeApplicationReceived(ctx context.Context, applicat
 		if err != nil {
 			return nil, err
 		}
-		tasks, _, err := n.repos.Tasks.ListByApplication(ctx, app.ID, models.TaskFilter{Limit: pageSize})
+		tasks, err := n.applicationTasks(ctx, app.ID)
 		if err != nil {
-			return nil, fmt.Errorf("list application tasks: %w", err)
+			return nil, err
 		}
 		var names []string
 		for _, task := range tasks {
@@ -702,20 +722,46 @@ func (n *Notifier) activeMembers(ctx context.Context, programID string, memberTy
 	}
 }
 
-// mentorNames lists the program's active mentors by full name, or LFID when unnamed, skipping any that cannot be resolved.
+// applicationTasks lists every task on the application, a page at a time.
+func (n *Notifier) applicationTasks(ctx context.Context, applicationID string) ([]*models.Task, error) {
+	var tasks []*models.Task
+	for {
+		page, meta, err := n.repos.Tasks.ListByApplication(ctx, applicationID, models.TaskFilter{Limit: pageSize, Offset: len(tasks)})
+		if err != nil {
+			return nil, fmt.Errorf("list application tasks: %w", err)
+		}
+		tasks = append(tasks, page...)
+		if len(page) == 0 || meta == nil || len(tasks) >= meta.Total {
+			return tasks, nil
+		}
+	}
+}
+
+// mentorNames lists the program's active mentors by name, or LFID when unnamed. The mentor
+// management listing joins each mentor's user, so this costs one query per page, not per mentor.
 func (n *Notifier) mentorNames(ctx context.Context, programID string) ([]string, error) {
-	members, err := n.activeMembers(ctx, programID, models.MemberTypeMentor)
-	if err != nil {
-		return nil, fmt.Errorf("list program mentors: %w", err)
+	var rows []*models.ProgramMentorManagementRow
+	for {
+		page, meta, err := n.repos.Members.ListMentorManagement(ctx, programID, models.ProgramMemberFilter{
+			Limit:  mentorPageSize,
+			Offset: len(rows),
+			Status: string(models.ProgramMemberStatusActive),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("list program mentors: %w", err)
+		}
+		rows = append(rows, page...)
+		if len(page) == 0 || meta == nil || len(rows) >= meta.Total {
+			break
+		}
 	}
 	var names []string
-	for _, m := range members {
-		user, err := n.repos.Users.GetByID(ctx, m.UserID)
-		if err != nil {
-			n.logger.WarnContext(ctx, "skipping program mentor name", "user_id", m.UserID, "error", err)
-			continue
+	for _, row := range rows {
+		name := strings.TrimSpace(deref(row.Name))
+		if name == "" {
+			name = strings.TrimSpace(deref(row.Username))
 		}
-		if name := fullName(user, deref(user.LFID)); name != "" {
+		if name != "" {
 			names = append(names, name)
 		}
 	}
