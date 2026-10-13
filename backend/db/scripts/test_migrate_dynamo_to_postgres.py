@@ -343,7 +343,6 @@ def test_resolve_member_user_ids_matches_by_email_then_program_lfid():
         _member("m-mentor-shared", "shared@example.org", member_type="mentor"),
         _member("m-unknown", "ghost@example.org"),
         _member("m-noemail"),
-        _member("m-has-user", "alice@example.org", userId="u-existing"),
     ])
     assert got == {
         "m-email": "u-alice",
@@ -352,8 +351,31 @@ def test_resolve_member_user_ids_matches_by_email_then_program_lfid():
         "m-mentor-shared": None,
         "m-unknown": None,
         "m-noemail": None,
-        "m-has-user": "u-existing",
     }
+
+
+def test_resolve_member_user_ids_prefers_email_then_falls_back_to_user_id():
+    got = _user_ids([
+        # The email's user replaces a different legacy userId.
+        _member("m-email-wins", "alice@example.org", userId="u-shared-1"),
+        _member("m-unknown-email", "ghost@example.org", userId="u-alice"),
+        _member("m-ambiguous-email", "shared@example.org", project="p2", userId="u-shared-2"),
+        _member("m-no-email", userId="u-alice"),
+    ])
+    assert got == {
+        "m-email-wins": "u-alice",
+        "m-unknown-email": "u-alice",
+        "m-ambiguous-email": "u-shared-2",
+        "m-no-email": "u-alice",
+    }
+
+
+def test_resolve_member_user_ids_takes_a_missing_email_from_the_user():
+    resolved = m.resolve_member_user_ids(
+        [_member("m-no-email", userId="u-alice"), _member("m-email", " ghost@example.org ", userId="u-alice")],
+        MEMBER_USERS, MEMBER_PROJECTS, {},
+    )
+    assert {r["id"]: r["email"] for r in resolved} == {"m-no-email": "Alice@Example.org", "m-email": "ghost@example.org"}
 
 
 def test_resolve_member_user_ids_applies_overrides_only_when_matching_fails():
@@ -371,9 +393,10 @@ def test_resolve_member_user_ids_applies_overrides_only_when_matching_fails():
 
 
 def test_resolve_member_user_ids_does_not_mutate_input():
-    members = [_member("m", "alice@example.org")]
+    members = [_member("m", "alice@example.org"), _member("m-no-email", userId="u-alice")]
     m.resolve_member_user_ids(members, MEMBER_USERS, MEMBER_PROJECTS, {})
     assert "userId" not in members[0]
+    assert members[1]["email"] is None
 
 
 def test_load_member_user_overrides(tmp_path):
