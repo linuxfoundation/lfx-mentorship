@@ -49,10 +49,10 @@ Status column: **hook** — a `Notifier` method exists but delivers nothing yet;
 | Legacy template | To | Rewrite trigger | Status |
 | --- | --- | --- | --- |
 | **Programs** | | | |
-| `admin-mentorship-submission-confirmation` | Program Admin | program created as `pending` | done: `NotifyProgramSubmitted` from `Create`/`CreateEnrollment`, and from `Update` on `rejected → pending` |
-| `communitybridge-review-mentorship-submission` | LF staff review inbox | program created as `pending` and `rejected → pending` — the notification-only replacement for the signed approval link ([02](./02-target-architecture.md)) | done: `NotifyProgramSubmitted` — to `EMAIL_REVIEW_INBOX`, names the submitter when known, and links to Self Serve with no approve or reject links |
-| `admin-mentorship-submission-approved` | Program Admin | program `pending → published` | done: `NotifyProgramDecided` from `Decide`; `Unhide` (`hidden → published`) sends nothing |
-| `admin-mentorship-submission-rejected` | Program Admin | program `pending → rejected` | done: `NotifyProgramDecided` from `Decide` — links the legacy LF support desk, still to be confirmed current |
+| `admin-mentorship-submission-confirmation` | Program Admin | program created as `pending` | none |
+| `communitybridge-review-mentorship-submission` | LF staff review inbox | program created as `pending` — the notification-only replacement for the signed approval link ([02](./02-target-architecture.md)) | none |
+| `admin-mentorship-submission-approved` | Program Admin | program `pending → published` | none |
+| `admin-mentorship-submission-rejected` | Program Admin | program `pending → rejected` | none |
 | `admin-project-edited-notification` | Program Admin | Program Admin edits a program that is not `rejected` | none |
 | **Mentors** | | | |
 | `mentor-project-invite` | invited mentor | mentor added to a program (`invited`) | done: `NotifyMentorInvited` — links to Self Serve `/mentorship/mentor/invites?token=…`; the link does not expire, and inviting the same person again re-sends it |

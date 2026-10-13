@@ -35,6 +35,9 @@ Key notes
   lifecycle (pending → accepted → graduated|withdrawn).
 - attendance_type is not captured in DynamoDB; it is migrated as NULL.
 - DynamoDB member status "approved" maps to program_members.status "active".
+- Legacy program statuses draft, pending and submitted all import as programs.status
+  "pending": the target has no draft state, so an approver triages every one of them.
+  A legacy draft is therefore indistinguishable from a submitted program after import.
 - jobspring never wrote userId on a program creator's maintainer row (or on
   some mentor rows). A member row without userId is matched to its user at
   import time: the one user with that email (case-insensitive); for maintainer
@@ -472,7 +475,10 @@ def _redact_dsn(dsn: str) -> str:
 
 
 def _normalize_program_status(status: str | None) -> str:
-    """Map DynamoDB project status to Postgres programs.status."""
+    """Map DynamoDB project status to Postgres programs.status.
+
+    draft, pending and submitted all map to "pending", the only review state.
+    """
     if not status:
         return "pending"
     m = {

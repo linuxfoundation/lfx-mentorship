@@ -16,8 +16,8 @@ documents key architectural decisions.
 - `POST /programs/{id}/terms` → 422 `"a program may not have more than 4 open terms"` if
   opening a term would exceed the cap. Only terms with `status = open` count toward the cap;
   `closed` and `deleted` terms do not.
-- `PATCH /programs/{id}` with `status = pending` (a `rejected` program resubmitted) → 422
-  `"program must have at least one open term before submission"` if no open terms exist.
+- `POST /programs/{id}/decision` publishing a program → 409 `"program must have at least one
+  open term before publication"` if no open terms exist.
 
 **Rationale**: Fail fast at the API boundary; no DB constraint required (DB has no aggregate
 term count constraint; enforced in service layer).
@@ -35,7 +35,6 @@ Valid transitions enforced in `ProgramService.Update`:
 |--------|------|-------|
 | `pending` | `published` | reviewer |
 | `pending` | `rejected` | reviewer |
-| `rejected` | `pending` | program_admin (resubmit) |
 | `published` | `hidden` | program_admin (guard: no blocking apps) |
 | `hidden` | `published` | program_admin |
 | `published` \| `hidden` | `archived` | program_admin |

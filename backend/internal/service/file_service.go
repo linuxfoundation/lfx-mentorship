@@ -300,7 +300,7 @@ func (s *FileService) getLogo(ctx context.Context, stored *string, byteRange str
 }
 
 // programLogoEditable locks the logo of an archived program, a terminal state. A rejected
-// program stays editable, since resubmitting it requires a logo.
+// program's logo stays editable.
 func programLogoEditable(program *models.Program) error {
 	if program.Status == models.ProgramStatusArchived {
 		return fmt.Errorf("%w: an archived program's logo cannot change", domain.ErrStateLocked)

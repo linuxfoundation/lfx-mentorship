@@ -71,7 +71,7 @@ func (s *ProgramService) SetProjectLookup(projects domain.ProjectLookup) {
 var programTransitions = map[models.ProgramStatus][]models.ProgramStatus{
 	models.ProgramStatusPending:   {models.ProgramStatusPublished, models.ProgramStatusRejected},
 	models.ProgramStatusPublished: {models.ProgramStatusArchived, models.ProgramStatusHidden},
-	models.ProgramStatusRejected:  {models.ProgramStatusPending}, // resubmit for review
+	models.ProgramStatusRejected:  {},
 	models.ProgramStatusArchived:  {},
 	models.ProgramStatusHidden:    {models.ProgramStatusPublished, models.ProgramStatusArchived},
 }
@@ -580,19 +580,19 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 		// The transition was validated against current.Status, so the write must apply only while the row still has it.
 		input.ExpectedStatus = &current.Status
 
-		// Submission guard (FR-004): all required fields must be present and at least one open term.
-		if next == models.ProgramStatusPending {
+		// Publication guard (FR-004): a pending program needs all required fields and at least one open term.
+		if current.Status == models.ProgramStatusPending && next == models.ProgramStatusPublished {
 			if current.ProjectUID == nil || strings.TrimSpace(*current.ProjectUID) == "" {
-				return nil, fmt.Errorf("%w: a linked LF project is required before submission", domain.ErrStateLocked)
+				return nil, fmt.Errorf("%w: a linked LF project is required before publication", domain.ErrStateLocked)
 			}
 			if current.Description == nil || strings.TrimSpace(*current.Description) == "" {
-				return nil, fmt.Errorf("%w: description is required before submission", domain.ErrStateLocked)
+				return nil, fmt.Errorf("%w: description is required before publication", domain.ErrStateLocked)
 			}
 			if current.RepoLink == nil || strings.TrimSpace(*current.RepoLink) == "" {
-				return nil, fmt.Errorf("%w: repository URL is required before submission", domain.ErrStateLocked)
+				return nil, fmt.Errorf("%w: repository URL is required before publication", domain.ErrStateLocked)
 			}
 			if current.LogoURL == nil || strings.TrimSpace(*current.LogoURL) == "" {
-				return nil, fmt.Errorf("%w: logo is required before submission", domain.ErrStateLocked)
+				return nil, fmt.Errorf("%w: logo is required before publication", domain.ErrStateLocked)
 			}
 			skills, err := s.repo.ListSkills(ctx, id)
 			if err != nil {
@@ -600,7 +600,7 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 				return nil, fmt.Errorf("check program skills: %w", err)
 			}
 			if len(skills) == 0 {
-				return nil, fmt.Errorf("%w: at least one skill tag is required before submission", domain.ErrStateLocked)
+				return nil, fmt.Errorf("%w: at least one skill tag is required before publication", domain.ErrStateLocked)
 			}
 			count, err := s.termRepo.CountOpenTermsByProgram(ctx, id)
 			if err != nil {
@@ -608,7 +608,7 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 				return nil, fmt.Errorf("check open terms: %w", err)
 			}
 			if count == 0 {
-				return nil, fmt.Errorf("%w: program must have at least one open term to be submitted", domain.ErrStateLocked)
+				return nil, fmt.Errorf("%w: program must have at least one open term to be published", domain.ErrStateLocked)
 			}
 		}
 
