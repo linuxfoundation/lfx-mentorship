@@ -1009,6 +1009,12 @@ _VALID_MEMBER_STATUSES = {"invited", "requested", "pending", "approved", "declin
 _MEMBER_STATUS_MAP = {"accepted": "approved", "active": "approved"}
 
 
+def _member_status(status: str | None) -> str | None:
+    """Map a DynamoDB member status to program_members.status, or None when it has no target."""
+    mapped = _MEMBER_STATUS_MAP.get(status, status) if status else None
+    return mapped if mapped in _VALID_MEMBER_STATUSES else None
+
+
 def load_member_user_overrides(path: str) -> dict:
     """Read a member_id,user_id CSV; an empty path means no overrides."""
     if not path:
@@ -1140,8 +1146,8 @@ def migrate_program_members(
             )
             skipped += 1
             continue
-        mapped_status = _MEMBER_STATUS_MAP.get(raw_status, raw_status) if raw_status else None
-        if mapped_status not in _VALID_MEMBER_STATUSES:
+        status = _member_status(raw_status)
+        if status is None:
             log.warning(
                 "UNMAPPED_MEMBER_STATUS member_id=%s program_id=%s user_id=%s status=%r",
                 mid,
@@ -1151,7 +1157,6 @@ def migrate_program_members(
             )
             skipped += 1
             continue
-        status = mapped_status
         member_rows.append(
             (
                 mid,

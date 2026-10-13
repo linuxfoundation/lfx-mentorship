@@ -271,7 +271,7 @@ func TestProgramMemberService_Create_ReinviteErrors(t *testing.T) {
 	}
 }
 
-func TestProgramMemberService_Create_ProgramAdmin_SetsActiveStatus(t *testing.T) {
+func TestProgramMemberService_Create_ProgramAdmin_SetsApprovedStatus(t *testing.T) {
 	var capturedStatus models.ProgramMemberStatus
 	progRepo := &stubProgRepo{
 		getByID: func(_ context.Context, _ string) (*models.Program, error) {
@@ -301,7 +301,7 @@ func TestProgramMemberService_Create_ProgramAdmin_SetsActiveStatus(t *testing.T)
 
 // ── Update ────────────────────────────────────────────────────────────────────
 
-func TestProgramMemberService_Update_ValidTransition_InvitedToActive(t *testing.T) {
+func TestProgramMemberService_Update_ValidTransition_InvitedToApproved(t *testing.T) {
 	invited := models.ProgramMemberStatusInvited
 	active := models.ProgramMemberStatusApproved
 	memberRepo := &stubMemberRepo{
@@ -352,7 +352,7 @@ func TestProgramMemberService_Update_RejectsMemberFromDifferentProgram_WithoutRe
 	}
 }
 
-func TestProgramMemberService_Update_InvalidTransition_DeclinedToActive(t *testing.T) {
+func TestProgramMemberService_Update_InvalidTransition_DeclinedToApproved(t *testing.T) {
 	declined := models.ProgramMemberStatusDeclined
 	memberRepo := &stubMemberRepo{
 		getByID: func(_ context.Context, id string) (*models.ProgramMember, error) {
@@ -385,22 +385,26 @@ func TestProgramMemberService_Update_InvalidTransition_WithdrawnTerminal(t *test
 // An unknown status matches no edge in memberTransitions, so it must be
 // rejected as invalid input before the lifecycle check turns it into a
 // conflict — and before the member is ever fetched.
+// "active" was the stored spelling before the rename to "approved"; it must now be rejected.
 func TestProgramMemberService_Update_InvalidStatus(t *testing.T) {
-	fetched := false
-	memberRepo := &stubMemberRepo{
-		getByID: func(_ context.Context, id string) (*models.ProgramMember, error) {
-			fetched = true
-			return &models.ProgramMember{ID: id}, nil
-		},
-	}
-	svc := newMemberSvc(memberRepo, &stubProgRepo{}, &stubNotifier{})
-	bad := models.ProgramMemberStatus("teleported")
-	_, err := svc.Update(context.Background(), "prog-1", "member-1", models.ProgramMemberUpdateInput{Status: &bad}, "admin-1")
-	if !errors.Is(err, domain.ErrInvalidInput) {
-		t.Errorf("expected ErrInvalidInput for invalid status, got %v", err)
-	}
-	if fetched {
-		t.Error("expected validation to reject before fetching the member")
+	for _, bad := range []models.ProgramMemberStatus{"teleported", "active"} {
+		t.Run(string(bad), func(t *testing.T) {
+			fetched := false
+			memberRepo := &stubMemberRepo{
+				getByID: func(_ context.Context, id string) (*models.ProgramMember, error) {
+					fetched = true
+					return &models.ProgramMember{ID: id}, nil
+				},
+			}
+			svc := newMemberSvc(memberRepo, &stubProgRepo{}, &stubNotifier{})
+			_, err := svc.Update(context.Background(), "prog-1", "member-1", models.ProgramMemberUpdateInput{Status: &bad}, "admin-1")
+			if !errors.Is(err, domain.ErrInvalidInput) {
+				t.Errorf("expected ErrInvalidInput for invalid status, got %v", err)
+			}
+			if fetched {
+				t.Error("expected validation to reject before fetching the member")
+			}
+		})
 	}
 }
 

@@ -76,12 +76,12 @@ func (s *ProgramMemberService) assertActiveProgramAdmin(ctx context.Context, pro
 // edge here, but inviting the mentor again through Create reopens them.
 var memberTransitions = map[models.ProgramMemberStatus]map[models.ProgramMemberStatus]bool{
 	models.ProgramMemberStatusInvited: {
-		models.ProgramMemberStatusApproved:   true,
+		models.ProgramMemberStatusApproved: true,
 		models.ProgramMemberStatusDeclined: true,
 		models.ProgramMemberStatusPending:  true,
 	},
 	models.ProgramMemberStatusRequested: {
-		models.ProgramMemberStatusApproved:   true,
+		models.ProgramMemberStatusApproved: true,
 		models.ProgramMemberStatusDeclined: true,
 		models.ProgramMemberStatusPending:  true,
 	},
@@ -90,7 +90,7 @@ var memberTransitions = map[models.ProgramMemberStatus]map[models.ProgramMemberS
 		models.ProgramMemberStatusPending:   true,
 	},
 	models.ProgramMemberStatusPending: {
-		models.ProgramMemberStatusApproved:   true,
+		models.ProgramMemberStatusApproved: true,
 		models.ProgramMemberStatusDeclined: true,
 	},
 	models.ProgramMemberStatusDeclined:  {},
@@ -677,8 +677,8 @@ func (s *ProgramMemberService) AcceptInvite(ctx context.Context, token, actorID 
 		return nil, err
 	}
 
-	activeStatus := models.ProgramMemberStatusApproved
-	m, err := s.repo.UpdateIfStatus(ctx, memberID, []models.ProgramMemberStatus{models.ProgramMemberStatusInvited}, models.ProgramMemberUpdateInput{Status: &activeStatus})
+	approvedStatus := models.ProgramMemberStatusApproved
+	m, err := s.repo.UpdateIfStatus(ctx, memberID, []models.ProgramMemberStatus{models.ProgramMemberStatusInvited}, models.ProgramMemberUpdateInput{Status: &approvedStatus})
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("accept invite: %w", err)

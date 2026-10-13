@@ -2395,7 +2395,7 @@ GET /v1/programs/catalog?limit=20
 GET /v1/programs/{id}
 GET /v1/programs/{id}/terms
 GET /v1/programs/{id}/skills
-GET /v1/programs/{id}/members?member_type=mentor&status=active
+GET /v1/programs/{id}/members?member_type=mentor
 GET /v1/programs/{id}/transactions?categoryType=mentorship&limit=25&offset=0
 ```
 

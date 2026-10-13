@@ -116,6 +116,14 @@ def test_program_status_maps_legacy_values(legacy, expected):
 
 @pytest.mark.parametrize(
     "legacy, expected",
+    [("approved", "approved"), ("accepted", "approved"), ("active", "approved"), ("invited", "invited"), ("requested", "requested"), ("pending", "pending"), ("declined", "declined"), ("withdrawn", "withdrawn"), ("rejected", None), ("", None), (None, None)],
+)
+def test_member_status_maps_legacy_values(legacy, expected):
+    assert m._member_status(legacy) == expected
+
+
+@pytest.mark.parametrize(
+    "legacy, expected",
     [("2026-05-01", "2026-05-01"), ("2026-5-1", "2026-05-01"), (" 2026-05-01 ", "2026-05-01"), ("05/01/2026", None), ("2026-02-30", None), ("", None), (None, None)],
 )
 def test_due_date_keeps_only_iso_dates(legacy, expected):

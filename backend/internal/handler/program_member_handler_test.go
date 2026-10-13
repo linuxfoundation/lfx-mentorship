@@ -141,7 +141,7 @@ func TestProgramMemberHandler_SearchCandidates_Errors(t *testing.T) {
 
 // The public roster is active members only, and the caller must not be able to
 // widen it by asking for another status.
-func TestProgramMemberHandler_List_PinsActiveStatus(t *testing.T) {
+func TestProgramMemberHandler_List_PinsApprovedStatus(t *testing.T) {
 	var captured models.ProgramMemberFilter
 	h := handler.NewProgramMemberHandler(&stubProgramMemberSvc{
 		listByProgram: func(_ context.Context, _ string, f models.ProgramMemberFilter) ([]*models.ProgramMember, *models.PaginationMeta, error) {
