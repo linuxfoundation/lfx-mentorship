@@ -178,6 +178,23 @@ def test_submit_file_keeps_only_required(legacy, expected):
     assert m._submit_file(legacy) == expected
 
 
+@pytest.mark.parametrize(
+    "task, expected",
+    [
+        ({"custom": "false", "submitFile": ""}, "required"),
+        ({"custom": False, "submitFile": "no-required"}, "required"),
+        ({"custom": "false"}, "required"),
+        ({"custom": "true", "submitFile": "required"}, "required"),
+        ({"custom": "true", "submitFile": ""}, None),
+        ({"submitFile": "required"}, "required"),
+        ({"submitFile": "no-required"}, None),
+        ({}, None),
+    ],
+)
+def test_task_submit_file_requires_built_in_tasks(task, expected):
+    assert m._task_submit_file(task) == expected
+
+
 def test_tasks_import_with_legacy_status_category_and_submit_file(monkeypatch):
     captured = []
     monkeypatch.setattr(m.psycopg2.extras, "execute_batch", lambda cur, sql, rows, page_size=0: captured.append(rows) if "INSERT INTO tasks" in sql else None)
@@ -186,12 +203,14 @@ def test_tasks_import_with_legacy_status_category_and_submit_file(monkeypatch):
     tasks = [
         {"id": "d4d4d4d4-d4d4-4d4d-8d4d-d4d4d4d4d4d4", "programTermId": term, "assigneeId": assignee, "status": "inProgress", "category": "nonPrerequisite", "submitFile": "no-required"},
         {"id": "e5e5e5e5-e5e5-4e5e-8e5e-e5e5e5e5e5e5", "programTermId": term, "assigneeId": assignee, "status": "completed", "category": "prerequisite", "submitFile": "required"},
+        {"id": "f6f6f6f6-f6f6-4f6f-8f6f-f6f6f6f6f6f6", "programTermId": term, "assigneeId": assignee, "status": "incomplete", "category": "prerequisite", "submitFile": "", "custom": "false"},
     ]
     m.migrate_tasks(cur, tasks, {(term, assignee): application}, {term: "open"}, {assignee}, _Files())
     # Columns: category, status at 7-8; submit_file at 12.
     assert [(row[7], row[8], row[12]) for row in captured[0]] == [
         ("non_prerequisite", "in_progress", None),
         ("prerequisite", "complete", "required"),
+        ("prerequisite", "incomplete", "required"),
     ]
 
 
