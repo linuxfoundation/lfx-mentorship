@@ -287,25 +287,30 @@ func TestProgramService_Update_InvalidTransition(t *testing.T) {
 }
 
 func TestProgramService_Decide(t *testing.T) {
+	logo, blank := "https://cdn.example.org/logo.png", "  "
 	for _, tc := range []struct {
 		current, next models.ProgramStatus
+		logo          *string
 		want          error
 	}{
-		{models.ProgramStatusSubmitted, models.ProgramStatusPublished, nil},
-		{models.ProgramStatusSubmitted, models.ProgramStatusRejected, nil},
-		{models.ProgramStatusHidden, models.ProgramStatusPublished, domain.ErrInvalidStateTransition},
-		{models.ProgramStatusPending, models.ProgramStatusPublished, domain.ErrInvalidStateTransition},
-		{models.ProgramStatusSubmitted, models.ProgramStatusHidden, domain.ErrInvalidInput},
+		{models.ProgramStatusSubmitted, models.ProgramStatusPublished, &logo, nil},
+		{models.ProgramStatusSubmitted, models.ProgramStatusRejected, &logo, nil},
+		{models.ProgramStatusSubmitted, models.ProgramStatusRejected, nil, nil},
+		{models.ProgramStatusSubmitted, models.ProgramStatusPublished, nil, domain.ErrStateLocked},
+		{models.ProgramStatusSubmitted, models.ProgramStatusPublished, &blank, domain.ErrStateLocked},
+		{models.ProgramStatusHidden, models.ProgramStatusPublished, &logo, domain.ErrInvalidStateTransition},
+		{models.ProgramStatusPending, models.ProgramStatusPublished, &logo, domain.ErrInvalidStateTransition},
+		{models.ProgramStatusSubmitted, models.ProgramStatusHidden, &logo, domain.ErrInvalidInput},
 	} {
 		repo := &stubProgRepo{
 			getByID: func(_ context.Context, id string) (*models.Program, error) {
-				return &models.Program{ID: id, Status: tc.current}, nil
+				return &models.Program{ID: id, Status: tc.current, LogoURL: tc.logo}, nil
 			},
 		}
 		svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
 		_, err := svc.Decide(context.Background(), "prog-1", tc.next)
 		if tc.want == nil && err != nil || tc.want != nil && !errors.Is(err, tc.want) {
-			t.Errorf("%s→%s: got %v; want %v", tc.current, tc.next, err, tc.want)
+			t.Errorf("%s→%s (logo %v): got %v; want %v", tc.current, tc.next, tc.logo, err, tc.want)
 		}
 	}
 }

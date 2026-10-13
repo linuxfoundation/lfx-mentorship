@@ -465,7 +465,8 @@ func validateHTTPURL(value *string) error {
 	return nil
 }
 
-// Decide publishes or rejects a submitted program.
+// Decide publishes or rejects a submitted program. Publishing requires a logo,
+// which is uploaded after creation; rejecting does not.
 func (s *ProgramService) Decide(ctx context.Context, id string, status models.ProgramStatus) (*models.Program, error) {
 	if status != models.ProgramStatusPublished && status != models.ProgramStatusRejected {
 		return nil, fmt.Errorf("%w: decision must publish or reject a submitted program", domain.ErrInvalidInput)
@@ -476,6 +477,9 @@ func (s *ProgramService) Decide(ctx context.Context, id string, status models.Pr
 	}
 	if current.Status != models.ProgramStatusSubmitted {
 		return nil, fmt.Errorf("%w: only a submitted program can be decided, not %q", domain.ErrInvalidStateTransition, current.Status)
+	}
+	if status == models.ProgramStatusPublished && (current.LogoURL == nil || strings.TrimSpace(*current.LogoURL) == "") {
+		return nil, fmt.Errorf("%w: logo is required before approval", domain.ErrStateLocked)
 	}
 	return s.Update(ctx, id, models.ProgramUpdateInput{Status: &status})
 }

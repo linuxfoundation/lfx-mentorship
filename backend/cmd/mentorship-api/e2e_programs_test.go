@@ -94,6 +94,10 @@ func TestE2EProgramLifecycle(t *testing.T) {
 		admin.call(t, http.MethodPost, "/programs/"+id+"/submit", nil).expect(http.StatusConflict)
 	})
 
+	t.Run("approval requires a logo", func(t *testing.T) {
+		approver(t).call(t, http.MethodPost, "/programs/"+id+"/decision", map[string]any{"status": "published"}).expect(http.StatusConflict)
+	})
+
 	var logo struct {
 		PublicURL   string `json:"public_url"`
 		ContentType string `json:"content_type"`

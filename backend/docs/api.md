@@ -1135,7 +1135,8 @@ non-empty; at least 1 skill tag; at least 1 open term.
 
 #### `POST /v1/programs/{id}/decision` 🔒
 
-Publish or reject a `submitted` program. Approver team only.
+Publish or reject a `submitted` program. Approver team only. Publishing requires the
+program to have a logo; rejecting does not.
 
 **Request body**
 ```json
@@ -1145,7 +1146,7 @@ Publish or reject a `submitted` program. Approver team only.
 `status` is required and must be `published` or `rejected`.
 
 **Response** `200` → `<Program>`  
-**Errors** `400` (missing or other `status`), `404`, `409` (program is not `submitted`)
+**Errors** `400` (missing or other `status`), `404`, `409` (program is not `submitted`, or is being published without a logo)
 
 ---
 
