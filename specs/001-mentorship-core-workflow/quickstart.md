@@ -54,9 +54,9 @@ curl -s -X POST $BASE/programs/$PROGRAM_ID/terms $AUTH \
 ### 1c. Approve (reviewer action)
 
 ```bash
-curl -s -X PATCH $BASE/programs/$PROGRAM_ID $AUTH \
+curl -s -X POST $BASE/programs/$PROGRAM_ID/decision $AUTH \
   -d '{"status":"published"}'
-# Expected: 200, "status":"published"
+# Expected: 200, "status":"published" (approver team only)
 ```
 
 ### 1d. Hide — blocked by pending application (tested in Scenario 3c)
