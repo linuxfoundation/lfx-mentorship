@@ -317,6 +317,30 @@ def test_rerun_replaces_mentee_profile_when_keeper_changes(cursor):
     assert cursor.fetchall() == [(NEW_MENTEE, "mentee"), (MENTOR, "mentor")]
 
 
+LEGACY_USER = "77777777-7777-4777-8777-777777777777"
+EMAIL_USER = "88888888-8888-4888-8888-888888888888"
+MEMBER = "99999999-9999-4999-8999-999999999999"
+OTHER_MEMBER = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+
+
+def import_members(cur, *members):
+    programs = m.migrate_programs(cur, [{"projectId": PROGRAM, "name": "P"}], set(), _Files(), {})
+    rows = [{"id": mid, "projectId": PROGRAM, "userId": uid, "memberType": "mentor", "status": "accepted"} for mid, uid in members]
+    m.migrate_program_members(cur, rows, programs, set())
+    cur.execute("SELECT id::text, user_id::text FROM program_members WHERE program_id = %s ORDER BY id", (PROGRAM,))
+    return cur.fetchall()
+
+
+def test_rerun_moves_a_member_to_its_newly_resolved_user(cursor):
+    import_members(cursor, (MEMBER, LEGACY_USER))
+    assert import_members(cursor, (MEMBER, EMAIL_USER)) == [(MEMBER, EMAIL_USER)]
+
+
+def test_rerun_collapses_a_member_onto_its_users_existing_row(cursor):
+    import_members(cursor, (MEMBER, LEGACY_USER), (OTHER_MEMBER, EMAIL_USER))
+    assert import_members(cursor, (MEMBER, EMAIL_USER), (OTHER_MEMBER, EMAIL_USER)) == [(OTHER_MEMBER, EMAIL_USER)]
+
+
 MEMBER_USERS = [
     {"id": "u-alice", "email": "Alice@Example.org", "lfid": "alice"},
     {"id": "u-shared-1", "email": "shared@example.org", "lfid": "owner"},
@@ -343,7 +367,6 @@ def test_resolve_member_user_ids_matches_by_email_then_program_lfid():
         _member("m-mentor-shared", "shared@example.org", member_type="mentor"),
         _member("m-unknown", "ghost@example.org"),
         _member("m-noemail"),
-        _member("m-has-user", "alice@example.org", userId="u-existing"),
     ])
     assert got == {
         "m-email": "u-alice",
@@ -352,8 +375,31 @@ def test_resolve_member_user_ids_matches_by_email_then_program_lfid():
         "m-mentor-shared": None,
         "m-unknown": None,
         "m-noemail": None,
-        "m-has-user": "u-existing",
     }
+
+
+def test_resolve_member_user_ids_prefers_email_then_falls_back_to_user_id():
+    got = _user_ids([
+        # The email's user replaces a different legacy userId.
+        _member("m-email-wins", "alice@example.org", userId="u-shared-1"),
+        _member("m-unknown-email", "ghost@example.org", userId="u-alice"),
+        _member("m-ambiguous-email", "shared@example.org", project="p2", userId="u-shared-2"),
+        _member("m-no-email", userId="u-alice"),
+    ])
+    assert got == {
+        "m-email-wins": "u-alice",
+        "m-unknown-email": "u-alice",
+        "m-ambiguous-email": "u-shared-2",
+        "m-no-email": "u-alice",
+    }
+
+
+def test_resolve_member_user_ids_takes_a_missing_email_from_the_user():
+    resolved = m.resolve_member_user_ids(
+        [_member("m-no-email", userId="u-alice"), _member("m-email", " ghost@example.org ", userId="u-alice")],
+        MEMBER_USERS, MEMBER_PROJECTS, {},
+    )
+    assert {r["id"]: r["email"] for r in resolved} == {"m-no-email": "Alice@Example.org", "m-email": "ghost@example.org"}
 
 
 def test_resolve_member_user_ids_applies_overrides_only_when_matching_fails():
@@ -371,9 +417,10 @@ def test_resolve_member_user_ids_applies_overrides_only_when_matching_fails():
 
 
 def test_resolve_member_user_ids_does_not_mutate_input():
-    members = [_member("m", "alice@example.org")]
+    members = [_member("m", "alice@example.org"), _member("m-no-email", userId="u-alice")]
     m.resolve_member_user_ids(members, MEMBER_USERS, MEMBER_PROJECTS, {})
     assert "userId" not in members[0]
+    assert members[1]["email"] is None
 
 
 def test_load_member_user_overrides(tmp_path):

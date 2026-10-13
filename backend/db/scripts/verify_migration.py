@@ -273,12 +273,13 @@ def _lower(value) -> str:
 
 
 def resolve_member_users(members, users, projects, overrides) -> list:
-    """Fills a member's missing userId by the matching rules, written apart from the importer's.
+    """Sets a member's user by the matching rules, written apart from the importer's.
 
     The one user with the member's email; for a program admin row with several, the one whose
-    lfid is the program's (its creator); otherwise the override, if it names a known user.
+    lfid is the program's (its creator); otherwise the row's own userId; otherwise the override,
+    if it names a known user. A member without an email takes its user's.
     """
-    user_ids = {u.get("id") for u in users} - {None}
+    by_id = {u.get("id"): u for u in users if u.get("id")}
     by_email: dict = {}
     for u in users:
         if u.get("id") and _lower(u.get("email")):
@@ -286,17 +287,18 @@ def resolve_member_users(members, users, projects, overrides) -> list:
     creator = {p.get("projectId"): _lower(p.get("lfid")) for p in projects}
     resolved = []
     for member in members:
-        if member.get("userId"):
-            resolved.append(member)
-            continue
         matches = by_email.get(_lower(member.get("email")), [])
         lfid = creator.get(member.get("projectId"))
         if len(matches) > 1 and _lower(member.get("memberType")) == "maintainer" and lfid:
             matches = [u for u in matches if _lower(u.get("lfid")) == lfid]
-        user_id = matches[0]["id"] if len(matches) == 1 else None
-        if user_id is None and overrides.get(member.get("id")) in user_ids:
+        user_id = matches[0]["id"] if len(matches) == 1 else member.get("userId")
+        if not user_id and overrides.get(member.get("id")) in by_id:
             user_id = overrides[member["id"]]
-        resolved.append({**member, "userId": user_id} if user_id else member)
+        if not user_id:
+            resolved.append(member)
+            continue
+        email = _text(member.get("email")) or _text(by_id.get(user_id, {}).get("email"))
+        resolved.append({**member, "userId": user_id, "email": email})
     return resolved
 
 

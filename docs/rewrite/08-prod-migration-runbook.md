@@ -244,7 +244,7 @@ python copy_legacy_objects.py 2>&1 | tee /work/copy.log
 ## Phase 5: verify (before go/no-go)
 
 1. **`import.log`** ends with `Migration complete.`. Check these lines:
-   - `Member rows without userId: 1876 (… email_unique=1523, email_and_program_lfid=1 …)` means about 1,524 rows were linked;
+   - `Member user resolution: N rows (email_unique=…, email_and_program_lfid=…, user_id=…, …); M legacy userIds replaced by the email's user`. Each member is linked to the user with its email first, and to its own legacy `userId` only when the email settles nothing; each replaced `userId` is listed as `MEMBER_USER_FROM_EMAIL`;
    - file-rewrite counts: `missing` should be roughly zero for each column;
    - the `UNRESOLVED_MEMBER_USER`, `UNMAPPED_PROGRAM_PROJECT_MAPPING` and `UNMAPPED_MENTOR_MEMBER` reports.
 2. **Row counts.** Reference numbers from a smoke import of prod data on 2026-10-09; small growth since then is expected:

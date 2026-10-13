@@ -121,6 +121,25 @@ def test_legacy_submitted_program_is_expected_as_pending():
     assert v._program_status("submitted") == "pending"
 
 
+def test_verifier_member_users_match_the_importer():
+    users = [
+        {"id": "u-alice", "email": "Alice@Example.org", "lfid": "alice"},
+        {"id": "u-shared-1", "email": "shared@example.org", "lfid": "owner"},
+        {"id": "u-shared-2", "email": "shared@example.org", "lfid": "other"},
+    ]
+    projects = [{"projectId": "p1", "lfid": "owner"}, {"projectId": "p2"}]
+    members = [
+        {"id": "m-email-wins", "projectId": "p1", "memberType": "mentor", "email": "alice@example.org", "userId": "u-shared-1"},
+        {"id": "m-creator", "projectId": "p1", "memberType": "maintainer", "email": "shared@example.org"},
+        {"id": "m-ambiguous", "projectId": "p2", "memberType": "maintainer", "email": "shared@example.org", "userId": "u-shared-2"},
+        {"id": "m-no-email", "projectId": "p2", "memberType": "mentor", "userId": "u-alice"},
+        {"id": "m-override", "projectId": "p2", "memberType": "mentor", "email": "ghost@example.org"},
+        {"id": "m-unresolved", "projectId": "p2", "memberType": "mentor"},
+    ]
+    overrides = {"m-override": "u-alice"}
+    assert v.resolve_member_users(members, users, projects, overrides) == m.resolve_member_user_ids(members, users, projects, overrides)
+
+
 def test_clean_import_passes(imported):
     assert run(imported) == []
 
