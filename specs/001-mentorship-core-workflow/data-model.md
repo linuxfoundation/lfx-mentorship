@@ -33,16 +33,16 @@ Authoritative entity reference. Schema source of truth: `backend/db/migrations/0
 ### Status Lifecycle
 
 ```
-pending ─submit─► submitted ──approve──► published ◄──unhide──┐
-                             └──reject──► rejected             │
-                                         rejected ──resubmit──► submitted
+pending ──approve──► published ◄──unhide──┐
+        └──reject──► rejected             │
+                     rejected ──resubmit──► pending
 published ──hide──► hidden ──────────────────────────────────►─┘
 published │ hidden ──archive──► archived
 ```
 
 **Guard: hide blocked while any application on the program has status ∈ {`pending`, `accepted`, `graduated`, `hold`}**
 
-**Submission guard: program must have ≥ 1 open term and all required fields present.**
+**Resubmission guard (`rejected → pending`): program must have ≥ 1 open term and all required fields present.**
 
 ---
 

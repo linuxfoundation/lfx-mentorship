@@ -478,7 +478,7 @@ def _normalize_program_status(status: str | None) -> str:
     m = {
         "draft": "pending",
         "pending": "pending",
-        "submitted": "submitted",
+        "submitted": "pending",
         "published": "published",
         "rejected": "rejected",
         "archived": "archived",

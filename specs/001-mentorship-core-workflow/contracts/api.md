@@ -17,14 +17,6 @@ The existing `PATCH /v1/programs/{id}` is extended with state-machine validation
 `PATCH /v1/programs/{id}` does not change status; a body with `status` returns `400`.
 
 ```
-POST /v1/programs/{id}/submit
-Authorization: Bearer {token}
-```
-
-Moves a `pending` or `rejected` program to `submitted`. Requires a linked LF
-project, description, repository URL, logo, ≥1 skill tag and ≥1 open term.
-
-```
 POST /v1/programs/{id}/decision
 Authorization: Bearer {token}
 Content-Type: application/json
@@ -32,7 +24,7 @@ Content-Type: application/json
 { "status": "published" | "rejected" }
 ```
 
-Approver team only; moves a `submitted` program to `published` or `rejected`.
+Approver team only; moves a `pending` program to `published` or `rejected`.
 
 ```
 POST /v1/programs/{id}/hide

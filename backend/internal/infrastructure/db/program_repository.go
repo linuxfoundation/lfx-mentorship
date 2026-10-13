@@ -199,7 +199,7 @@ func (r *ProgramRepository) GetHeaderProjection(ctx context.Context, programID s
 }
 
 // sqlUnreviewedProgramStatuses lists program statuses that have not passed review.
-const sqlUnreviewedProgramStatuses = `('` + string(models.ProgramStatusPending) + `', '` + string(models.ProgramStatusSubmitted) + `')`
+const sqlUnreviewedProgramStatuses = `('` + string(models.ProgramStatusPending) + `')`
 
 // sqlProgramTermsAllClosed is true for a programs row that has a closed term
 // and no open one; deleted terms are ignored. A published program in that state
