@@ -1023,6 +1023,43 @@ func TestProgramUpdateIntegration_ReplacesSkills(t *testing.T) {
 	}
 }
 
+func TestProgramUpdateIntegration_RequireLogoGuardsStatusChange(t *testing.T) {
+	pool := integrationPool(t)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name) VALUES ('00000000-0000-0000-0000-000000000060', 'logo-admin', 'Logo Admin')`); err != nil {
+		t.Fatal(err)
+	}
+	projectUID := "00000000-0000-0000-0000-000000000099"
+	repo := NewProgramRepository(pool)
+	program, err := repo.CreateEnrollment(ctx, models.ProgramEnrollmentInput{Program: models.ProgramCreateInput{ID: "00000000-0000-0000-0000-000000000061", CreatorUserID: "00000000-0000-0000-0000-000000000060", ProjectUID: &projectUID, Name: "Logo Guard", Slug: "logo-guard", Status: models.ProgramStatusSubmitted}, Skills: []string{"Go"}})
+	if err != nil {
+		t.Fatalf("create enrollment: %v", err)
+	}
+	published := models.ProgramStatusPublished
+	submitted := models.ProgramStatusSubmitted
+	publish := models.ProgramUpdateInput{Status: &published, ExpectedStatus: &submitted, RequireLogo: true}
+
+	if _, err := repo.Update(ctx, program.ID, publish); !errors.Is(err, domain.ErrStateLocked) {
+		t.Fatalf("publish without a logo: got %v; want ErrStateLocked", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE programs SET logo_url = '   ' WHERE id = $1`, program.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Update(ctx, program.ID, publish); !errors.Is(err, domain.ErrStateLocked) {
+		t.Fatalf("publish with a blank logo: got %v; want ErrStateLocked", err)
+	}
+	var status models.ProgramStatus
+	if err := pool.QueryRow(ctx, `SELECT status FROM programs WHERE id = $1`, program.ID).Scan(&status); err != nil || status != submitted {
+		t.Fatalf("status after refused publish = %q, %v; want submitted", status, err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE programs SET logo_url = 'https://cdn.example.org/logo.png' WHERE id = $1`, program.ID); err != nil {
+		t.Fatal(err)
+	}
+	if updated, err := repo.Update(ctx, program.ID, publish); err != nil || updated.Status != published {
+		t.Fatalf("publish with a logo: got %v, %v", updated, err)
+	}
+}
+
 func TestProgramUpdateIntegration_ReplacesOpenTerms(t *testing.T) {
 	pool := integrationPool(t)
 	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})

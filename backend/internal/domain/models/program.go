@@ -139,6 +139,9 @@ type ProgramUpdateInput struct {
 	// ExpectedStatus, when set, makes a status change apply only from this status. The service
 	// refuses any other current status and then pins the one it validated for the repository.
 	ExpectedStatus *ProgramStatus `json:"-"`
+	// RequireLogo, when set, makes a status change apply only while the program has a logo. The
+	// repository checks it under the row lock that serialises status changes and logo changes.
+	RequireLogo bool `json:"-"`
 }
 
 // ProgramSkill maps to the public.program_skills table.

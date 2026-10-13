@@ -902,12 +902,15 @@ func (r *ProgramRepository) Update(ctx context.Context, id string, input models.
 	defer func() { _ = tx.Rollback(ctx) }()
 	if input.Status != nil {
 		var current models.ProgramStatus
-		if err := tx.QueryRow(ctx, `SELECT status FROM programs WHERE id = $1 FOR UPDATE`, id).Scan(&current); errors.Is(err, pgx.ErrNoRows) {
+		var hasLogo bool
+		if err := tx.QueryRow(ctx, `SELECT status, NULLIF(BTRIM(logo_url), '') IS NOT NULL FROM programs WHERE id = $1 FOR UPDATE`, id).Scan(&current, &hasLogo); errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrProgramNotFound
 		} else if err != nil {
 			return nil, fmt.Errorf("lock program for status change: %w", err)
 		} else if input.ExpectedStatus != nil && current != *input.ExpectedStatus {
 			return nil, fmt.Errorf("%w: program status changed concurrently", domain.ErrInvalidStateTransition)
+		} else if input.RequireLogo && !hasLogo {
+			return nil, fmt.Errorf("%w: program has no logo", domain.ErrStateLocked)
 		}
 		if *input.Status == models.ProgramStatusHidden {
 			if err := checkNoBlockingApplications(ctx, tx, id); err != nil {

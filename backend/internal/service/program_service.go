@@ -481,7 +481,7 @@ func (s *ProgramService) Decide(ctx context.Context, id string, status models.Pr
 	if status == models.ProgramStatusPublished && (current.LogoURL == nil || strings.TrimSpace(*current.LogoURL) == "") {
 		return nil, fmt.Errorf("%w: logo is required before approval", domain.ErrStateLocked)
 	}
-	return s.Update(ctx, id, models.ProgramUpdateInput{Status: &status})
+	return s.Update(ctx, id, models.ProgramUpdateInput{Status: &status, RequireLogo: status == models.ProgramStatusPublished})
 }
 
 // Hide takes a published program out of public view. The hide guard in Update

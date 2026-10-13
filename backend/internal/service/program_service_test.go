@@ -315,6 +315,37 @@ func TestProgramService_Decide(t *testing.T) {
 	}
 }
 
+func TestProgramService_Decide_RequiresLogoUnderRowLock(t *testing.T) {
+	logo := "https://cdn.example.org/logo.png"
+	for _, tc := range []struct {
+		next        models.ProgramStatus
+		wantRequire bool
+	}{
+		{models.ProgramStatusPublished, true},
+		{models.ProgramStatusRejected, false},
+	} {
+		t.Run(string(tc.next), func(t *testing.T) {
+			var got models.ProgramUpdateInput
+			repo := &stubProgRepo{
+				getByID: func(_ context.Context, id string) (*models.Program, error) {
+					return &models.Program{ID: id, Status: models.ProgramStatusSubmitted, LogoURL: &logo}, nil
+				},
+				update: func(_ context.Context, id string, in models.ProgramUpdateInput) (*models.Program, error) {
+					got = in
+					return &models.Program{ID: id, Status: *in.Status}, nil
+				},
+			}
+			svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+			if _, err := svc.Decide(context.Background(), "prog-1", tc.next); err != nil {
+				t.Fatal(err)
+			}
+			if got.RequireLogo != tc.wantRequire {
+				t.Errorf("RequireLogo = %v; want %v", got.RequireLogo, tc.wantRequire)
+			}
+		})
+	}
+}
+
 func TestProgramService_HideUnhide(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
