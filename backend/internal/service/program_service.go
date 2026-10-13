@@ -630,10 +630,6 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 		span.RecordError(err)
 		return nil, fmt.Errorf("update program: %w", err)
 	}
-	// Only a rejected program moves back to pending: it is resubmitted for review.
-	if input.Status != nil && *input.Status == models.ProgramStatusPending {
-		s.notifier.NotifyProgramSubmitted(ctx, id, "")
-	}
 	return p, nil
 }
 

@@ -565,6 +565,10 @@ func TestProgramMemberService_Delete_AdminLookupFailurePropagates(t *testing.T) 
 // ── Self-service: /me/program-memberships ────────────────────────────────────
 
 const selfProgramID = "6f1c2b7e-4a8d-4f0e-9b3a-2d5c8e1f7a90"
+
+// requester is the signed-in caller asking to mentor in the RequestMentorship tests.
+var requester = models.UserPrincipal{UserID: "user-1", LFID: "user-1-lfid", Email: "user-1@example.org"}
+
 const selfMemberID = "0b9e4d2a-7c61-4e35-8f1d-3a2b6c9d4e17"
 
 func publishedProgRepo() *stubProgRepo {
@@ -623,12 +627,15 @@ func TestProgramMemberService_RequestMentorship_CreatesRequestedRowWithoutInvite
 	}
 	n := &stubNotifier{}
 	svc := newMemberSvc(memberRepo, publishedProgRepo(), n)
-	m, err := svc.RequestMentorship(context.Background(), selfProgramID, "user-1")
+	m, err := svc.RequestMentorship(context.Background(), selfProgramID, requester)
 	if err != nil {
 		t.Fatalf("RequestMentorship: %v", err)
 	}
 	if captured.UserID != "user-1" || captured.MemberType != models.MemberTypeMentor || captured.ID == "" {
 		t.Errorf("create input = %+v; want a new mentor row for user-1", captured)
+	}
+	if captured.Email == nil || *captured.Email != requester.Email {
+		t.Errorf("email = %v; want the caller's email", captured.Email)
 	}
 	if m.Status == nil || *m.Status != models.ProgramMemberStatusRequested {
 		t.Errorf("status = %v; want requested", m.Status)
@@ -664,7 +671,7 @@ func TestProgramMemberService_RequestMentorship_ReopensWithdrawnRow(t *testing.T
 	}
 	n := &stubNotifier{}
 	svc := newMemberSvc(memberRepo, publishedProgRepo(), n)
-	if _, err := svc.RequestMentorship(context.Background(), selfProgramID, "user-1"); err != nil {
+	if _, err := svc.RequestMentorship(context.Background(), selfProgramID, requester); err != nil {
 		t.Fatalf("RequestMentorship: %v", err)
 	}
 	if createCalled {
@@ -704,7 +711,7 @@ func TestProgramMemberService_RequestMentorship_ConflictsWithExistingRow(t *test
 			}
 			n := &stubNotifier{}
 			svc := newMemberSvc(memberRepo, publishedProgRepo(), n)
-			_, err := svc.RequestMentorship(context.Background(), selfProgramID, "user-1")
+			_, err := svc.RequestMentorship(context.Background(), selfProgramID, requester)
 			if !errors.Is(err, domain.ErrConflict) {
 				t.Errorf("expected ErrConflict, got %v", err)
 			}
@@ -738,7 +745,7 @@ func TestProgramMemberService_RequestMentorship_ProgramVisibility(t *testing.T) 
 				},
 			}
 			svc := newMemberSvc(memberRepo, progRepo, &stubNotifier{})
-			_, err := svc.RequestMentorship(context.Background(), selfProgramID, "user-1")
+			_, err := svc.RequestMentorship(context.Background(), selfProgramID, requester)
 			if !errors.Is(err, tc.want) {
 				t.Errorf("expected %v, got %v", tc.want, err)
 			}
@@ -751,7 +758,7 @@ func TestProgramMemberService_RequestMentorship_MissingProgram(t *testing.T) {
 		getByID: func(context.Context, string) (*models.Program, error) { return nil, domain.ErrProgramNotFound },
 	}
 	svc := newMemberSvc(&stubMemberRepo{}, progRepo, &stubNotifier{})
-	_, err := svc.RequestMentorship(context.Background(), selfProgramID, "user-1")
+	_, err := svc.RequestMentorship(context.Background(), selfProgramID, requester)
 	if !errors.Is(err, domain.ErrProgramNotFound) {
 		t.Errorf("expected ErrProgramNotFound, got %v", err)
 	}
@@ -760,7 +767,7 @@ func TestProgramMemberService_RequestMentorship_MissingProgram(t *testing.T) {
 func TestProgramMemberService_RequestMentorship_InvalidProgramID(t *testing.T) {
 	for _, id := range []string{"", "not-a-uuid"} {
 		svc := newMemberSvc(&stubMemberRepo{}, publishedProgRepo(), &stubNotifier{})
-		_, err := svc.RequestMentorship(context.Background(), id, "user-1")
+		_, err := svc.RequestMentorship(context.Background(), id, requester)
 		if !errors.Is(err, domain.ErrInvalidInput) {
 			t.Errorf("program_id %q: expected ErrInvalidInput, got %v", id, err)
 		}
@@ -768,10 +775,35 @@ func TestProgramMemberService_RequestMentorship_InvalidProgramID(t *testing.T) {
 }
 
 func TestProgramMemberService_RequestMentorship_RequiresCaller(t *testing.T) {
-	svc := newMemberSvc(&stubMemberRepo{}, publishedProgRepo(), &stubNotifier{})
-	_, err := svc.RequestMentorship(context.Background(), selfProgramID, "")
-	if !errors.Is(err, domain.ErrUnauthorized) {
-		t.Errorf("expected ErrUnauthorized, got %v", err)
+	for name, user := range map[string]models.UserPrincipal{
+		"no user ID": {LFID: "user-1-lfid"},
+		"no LFID":    {UserID: "user-1"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc := newMemberSvc(&stubMemberRepo{}, publishedProgRepo(), &stubNotifier{})
+			_, err := svc.RequestMentorship(context.Background(), selfProgramID, user)
+			if !errors.Is(err, domain.ErrUnauthorized) {
+				t.Errorf("expected ErrUnauthorized, got %v", err)
+			}
+		})
+	}
+}
+
+// A caller whose token carries no email leaves the member email unset, so listings use the user's address.
+func TestProgramMemberService_RequestMentorship_BlankEmailStaysUnset(t *testing.T) {
+	var captured models.ProgramMemberCreateInput
+	memberRepo := &stubMemberRepo{
+		create: func(_ context.Context, _ string, in models.ProgramMemberCreateInput) (*models.ProgramMember, error) {
+			captured = in
+			return &models.ProgramMember{ID: in.ID, UserID: in.UserID, MemberType: in.MemberType, Status: in.Status}, nil
+		},
+	}
+	svc := newMemberSvc(memberRepo, publishedProgRepo(), &stubNotifier{})
+	if _, err := svc.RequestMentorship(context.Background(), selfProgramID, models.UserPrincipal{UserID: "user-1", LFID: "user-1-lfid"}); err != nil {
+		t.Fatalf("RequestMentorship: %v", err)
+	}
+	if captured.Email != nil {
+		t.Errorf("email = %q; want nil", *captured.Email)
 	}
 }
 
@@ -967,7 +999,7 @@ func TestProgramMemberService_SelfService_ConcurrentChangeConflicts(t *testing.T
 			updateIfStatus: lostRace,
 		}
 		svc := newMemberSvc(memberRepo, publishedProgRepo(), &stubNotifier{})
-		if _, err := svc.RequestMentorship(context.Background(), selfProgramID, "user-1"); !errors.Is(err, domain.ErrInvalidStateTransition) {
+		if _, err := svc.RequestMentorship(context.Background(), selfProgramID, requester); !errors.Is(err, domain.ErrInvalidStateTransition) {
 			t.Errorf("expected ErrInvalidStateTransition, got %v", err)
 		}
 	})

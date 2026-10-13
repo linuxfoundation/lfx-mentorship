@@ -643,7 +643,7 @@ func TestNotifyProgramDecided(t *testing.T) {
 		want    []string
 	}{
 		{models.ProgramStatusPublished, "Kernel <Dev> has been approved", []string{"approved to participate in LFX Mentorship and is now live", "View program: " + testPublicSiteURL + "/programs/kernel-dev"}},
-		{models.ProgramStatusRejected, "Kernel <Dev> was not approved", []string{"has not been approved", "submit it again", supportDeskURL, "Manage your program: " + testSelfServeURL + "/mentorship"}},
+		{models.ProgramStatusRejected, "Kernel <Dev> was not approved", []string{"has not been approved", "Please contact our support team", supportDeskURL, "Manage your program: " + testSelfServeURL + "/mentorship"}},
 	} {
 		t.Run(string(tc.status), func(t *testing.T) {
 			f := newFixture()

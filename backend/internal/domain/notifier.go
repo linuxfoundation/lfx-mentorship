@@ -11,8 +11,8 @@ import (
 
 // Notifier is a swap point for notification delivery (email, events, etc.).
 type Notifier interface {
-	// NotifyProgramSubmitted tells program admins their program is in review, and the LF staff
-	// review inbox that it awaits a decision. submitterID may be empty when no actor is known.
+	// NotifyProgramSubmitted tells program admins their new program is in review, and the LF staff
+	// review inbox that it awaits a decision.
 	NotifyProgramSubmitted(ctx context.Context, programID, submitterID string)
 	// NotifyProgramDecided tells program admins their program was published or rejected.
 	NotifyProgramDecided(ctx context.Context, programID string, status models.ProgramStatus)

@@ -291,10 +291,18 @@ func TestProgramService_Decide(t *testing.T) {
 			},
 		}
 		termRepo := &stubTermRepo{countOpenByProgram: func(context.Context, string) (int, error) { return 1, nil }}
-		svc := newProgramSvc(repo, termRepo, &stubAppRepo{})
+		n := &stubNotifier{}
+		svc := newProgramSvcWithNotifier(repo, termRepo, &stubAppRepo{}, n)
 		_, err := svc.Decide(context.Background(), "prog-1", tc.next)
 		if tc.want == nil && err != nil || tc.want != nil && !errors.Is(err, tc.want) {
 			t.Errorf("%s→%s: got %v; want %v", tc.current, tc.next, err, tc.want)
+		}
+		var wantDecisions []models.ProgramStatus
+		if tc.want == nil {
+			wantDecisions = []models.ProgramStatus{tc.next}
+		}
+		if !reflect.DeepEqual(n.programDecisions, wantDecisions) {
+			t.Errorf("%s→%s: decision notifications = %v; want %v", tc.current, tc.next, n.programDecisions, wantDecisions)
 		}
 	}
 }
@@ -326,7 +334,7 @@ func TestProgramService_Decide_IncompleteProgram(t *testing.T) {
 			wantDecisions = []models.ProgramStatus{tc.next}
 		}
 		if !reflect.DeepEqual(n.programDecisions, wantDecisions) {
-			t.Errorf("%s→%s: decision notifications = %v; want %v", tc.current, tc.next, n.programDecisions, wantDecisions)
+			t.Errorf("incomplete program → %s: decision notifications = %v; want %v", tc.next, n.programDecisions, wantDecisions)
 		}
 	}
 }
@@ -516,9 +524,6 @@ func TestProgramService_Update_Publish_NoOpenTerms(t *testing.T) {
 	if !errors.Is(err, domain.ErrStateLocked) {
 		t.Errorf("expected ErrStateLocked for no open terms, got %v", err)
 	}
-	if n.programSubmittedCalls != 0 {
-		t.Errorf("submission notifications = %d; want 0", n.programSubmittedCalls)
-	}
 }
 
 func TestProgramService_Update_Publish_AllPresent_OK(t *testing.T) {
@@ -530,14 +535,16 @@ func TestProgramService_Update_Publish_AllPresent_OK(t *testing.T) {
 		},
 	}
 	termRepo := &stubTermRepo{countOpenByProgram: func(_ context.Context, _ string) (int, error) { return 1, nil }}
-	svc := newProgramSvc(repo, termRepo, &stubAppRepo{})
+	n := &stubNotifier{}
+	svc := newProgramSvcWithNotifier(repo, termRepo, &stubAppRepo{}, n)
 	next := models.ProgramStatusPublished
 	_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Status: &next})
 	if err != nil {
 		t.Errorf("publish with all required fields should succeed, got %v", err)
 	}
-	if n.programSubmittedCalls != 1 {
-		t.Errorf("submission notifications = %d; want 1 for the resubmission", n.programSubmittedCalls)
+	// Only Decide sends the approval email; a status change through Update sends nothing.
+	if n.programSubmittedCalls != 0 || n.programDecisions != nil {
+		t.Errorf("notified %d submissions / %v decisions; want nothing", n.programSubmittedCalls, n.programDecisions)
 	}
 }
 

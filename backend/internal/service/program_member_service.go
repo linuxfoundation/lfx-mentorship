@@ -509,6 +509,11 @@ func (s *ProgramMemberService) RequestMentorship(ctx context.Context, programID 
 	}
 
 	requested := models.ProgramMemberStatusRequested
+	// A blank email stays NULL, so member listings fall back to the user's own address.
+	var email *string
+	if user.Email != "" {
+		email = &user.Email
+	}
 	existing, err := s.repo.FindByProgramUserAndType(ctx, programID, user.UserID, models.MemberTypeMentor)
 	switch {
 	case errors.Is(err, domain.ErrProgramMemberNotFound):
@@ -518,7 +523,7 @@ func (s *ProgramMemberService) RequestMentorship(ctx context.Context, programID 
 			MemberType: models.MemberTypeMentor,
 			Status:     &requested,
 			LFID:       user.LFID,
-			Email:      &user.Email,
+			Email:      email,
 		})
 		if err != nil {
 			span.RecordError(err)
