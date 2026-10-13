@@ -20,16 +20,17 @@ var programTermSvcTracer = otel.Tracer("program-terms-service")
 
 // ProgramTermService orchestrates program term reads and writes.
 type ProgramTermService struct {
-	repo    domain.ProgramTermRepository
-	appRepo domain.ApplicationRepository
+	repo     domain.ProgramTermRepository
+	appRepo  domain.ApplicationRepository
+	notifier domain.Notifier
 }
 
 // maxOpenTermsPerProgram is the maximum number of concurrently open terms allowed (FR-003).
 const maxOpenTermsPerProgram = 4
 
 // NewProgramTermService returns a ProgramTermService.
-func NewProgramTermService(repo domain.ProgramTermRepository, appRepo domain.ApplicationRepository) *ProgramTermService {
-	return &ProgramTermService{repo: repo, appRepo: appRepo}
+func NewProgramTermService(repo domain.ProgramTermRepository, appRepo domain.ApplicationRepository, notifier domain.Notifier) *ProgramTermService {
+	return &ProgramTermService{repo: repo, appRepo: appRepo, notifier: notifier}
 }
 
 // GetByID returns the program term with the given ID.
@@ -165,7 +166,8 @@ func (s *ProgramTermService) Update(ctx context.Context, id string, input models
 	return t, nil
 }
 
-// Close declines pending applications and closes an open term atomically.
+// Close declines pending applications and closes an open term atomically,
+// then notifies each declined mentee.
 func (s *ProgramTermService) Close(ctx context.Context, id string) (*models.ProgramTerm, int, error) {
 	ctx, span := programTermSvcTracer.Start(ctx, "ProgramTermService.Close")
 	defer span.End()
@@ -174,7 +176,8 @@ func (s *ProgramTermService) Close(ctx context.Context, id string) (*models.Prog
 		span.RecordError(err)
 		return nil, 0, fmt.Errorf("close program term: %w", err)
 	}
-	return term, declined, nil
+	notifyMenteesDeclined(ctx, s.notifier, declined)
+	return term, len(declined), nil
 }
 
 // Reopen returns a closed term to open status while applying the existing

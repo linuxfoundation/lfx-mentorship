@@ -476,13 +476,17 @@ func (s *ProgramMemberService) ListMine(ctx context.Context, userID string, filt
 // matching the applications rule (FR-030).
 //
 // No invite email is sent: the caller asked to join and needs no invitation.
-func (s *ProgramMemberService) RequestMentorship(ctx context.Context, programID, userID string) (*models.ProgramMember, error) {
+// The program's active admins are told about the request instead.
+func (s *ProgramMemberService) RequestMentorship(ctx context.Context, programID string, user models.UserPrincipal) (*models.ProgramMember, error) {
 	ctx, span := programMemberSvcTracer.Start(ctx, "ProgramMemberService.RequestMentorship")
 	defer span.End()
-	span.SetAttributes(attribute.String("program.id", programID), attribute.String("user.id", userID))
+	span.SetAttributes(attribute.String("program.id", programID), attribute.String("user.id", user.UserID), attribute.String("lfid", user.LFID))
 
-	if userID == "" {
+	if user.UserID == "" {
 		return nil, fmt.Errorf("%w: caller identity is required", domain.ErrUnauthorized)
+	}
+	if user.LFID == "" {
+		return nil, fmt.Errorf("%w: caller LFID is required", domain.ErrUnauthorized)
 	}
 	if _, err := uuid.Parse(programID); err != nil {
 		return nil, fmt.Errorf("%w: program_id must be a UUID", domain.ErrInvalidInput)
@@ -505,19 +509,28 @@ func (s *ProgramMemberService) RequestMentorship(ctx context.Context, programID,
 	}
 
 	requested := models.ProgramMemberStatusRequested
-	existing, err := s.repo.FindByProgramUserAndType(ctx, programID, userID, models.MemberTypeMentor)
+	// A blank email is never written: a new row keeps it NULL so listings fall back to the
+	// user's own address, and a reopened row keeps the address it already has.
+	var email *string
+	if user.Email != "" {
+		email = &user.Email
+	}
+	existing, err := s.repo.FindByProgramUserAndType(ctx, programID, user.UserID, models.MemberTypeMentor)
 	switch {
 	case errors.Is(err, domain.ErrProgramMemberNotFound):
 		m, err := s.repo.Create(ctx, programID, models.ProgramMemberCreateInput{
 			ID:         uuid.New().String(),
-			UserID:     userID,
+			UserID:     user.UserID,
 			MemberType: models.MemberTypeMentor,
 			Status:     &requested,
+			LFID:       user.LFID,
+			Email:      email,
 		})
 		if err != nil {
 			span.RecordError(err)
 			return nil, fmt.Errorf("create mentor request: %w", err)
 		}
+		s.notifier.NotifyAdminMentorRequested(ctx, programID, user.UserID)
 		return m, nil
 	case err != nil:
 		span.RecordError(err)
@@ -532,17 +545,18 @@ func (s *ProgramMemberService) RequestMentorship(ctx context.Context, programID,
 		return nil, fmt.Errorf("%w: a mentor membership for this program is already %q", domain.ErrConflict, current)
 	}
 
-	m, err := s.repo.UpdateIfStatus(ctx, existing.ID, []models.ProgramMemberStatus{models.ProgramMemberStatusWithdrawn}, models.ProgramMemberUpdateInput{Status: &requested})
+	m, err := s.repo.UpdateIfStatus(ctx, existing.ID, []models.ProgramMemberStatus{models.ProgramMemberStatusWithdrawn}, models.ProgramMemberUpdateInput{Status: &requested, Email: email})
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("reopen mentor request: %w", err)
 	}
+	s.notifier.NotifyAdminMentorRequested(ctx, programID, user.UserID)
 	return m, nil
 }
 
 // WithdrawMine moves the caller's own requested or pending mentor row to
-// withdrawn. A row that is not the caller's mentor row is reported as not
-// found, so member IDs cannot be probed.
+// withdrawn and tells the program's active admins. A row that is not the
+// caller's mentor row is reported as not found, so member IDs cannot be probed.
 func (s *ProgramMemberService) WithdrawMine(ctx context.Context, id, userID string) error {
 	ctx, span := programMemberSvcTracer.Start(ctx, "ProgramMemberService.WithdrawMine")
 	defer span.End()
@@ -576,6 +590,7 @@ func (s *ProgramMemberService) WithdrawMine(ctx context.Context, id, userID stri
 		span.RecordError(err)
 		return fmt.Errorf("withdraw mentor membership: %w", err)
 	}
+	s.notifier.NotifyAdminMentorWithdrew(ctx, current.ProgramID, userID)
 	return nil
 }
 

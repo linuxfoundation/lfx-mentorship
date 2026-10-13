@@ -1,0 +1,6 @@
+{{- /* Copyright The Linux Foundation and each contributor to LFX. */ -}}
+{{- /* SPDX-License-Identifier: MIT */ -}}
+{{- /* Legacy: admin-mentee-application-withdrawn */ -}}
+{{template "header" .}}<p>We wanted to let you know that the application submitted by <strong>{{.MenteeName}}</strong> for the <strong>{{.ProgramName}}</strong> mentorship program{{with .TermName}} ({{.}} term){{end}} has been withdrawn.</p>
+<p>Please reach out to the mentee directly if you have any questions or concerns.</p>
+{{template "button" .ManageURL}}View Program{{template "button_end"}}{{template "footer" .}}

@@ -107,3 +107,10 @@ type ProgramMemberUpdateInput struct {
 	Status *ProgramMemberStatus `json:"status,omitempty"`
 	Email  *string              `json:"email,omitempty"`
 }
+
+// UserPrincipal is the signed-in caller who asks to mentor a program.
+type UserPrincipal struct {
+	LFID   string `json:"lfid"`
+	UserID string `json:"user_id"`
+	Email  string `json:"email"`
+}
