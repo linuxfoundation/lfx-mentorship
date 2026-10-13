@@ -494,11 +494,11 @@ func (s *ProgramMemberService) RequestMentorship(ctx context.Context, programID,
 		return nil, fmt.Errorf("get program: %w", err)
 	}
 	// This route has no FGA program relation, so only a program visible to any
-	// signed-in user may be acknowledged: published, or pending as a 400. Every
-	// other status is hidden from non-owners (FR-009) and must stay a 404.
-	switch prog.Status {
-	case models.ProgramStatusPublished:
-	case models.ProgramStatusPending:
+	// signed-in user may be acknowledged: published, or pending review as a 400.
+	// Every other status is hidden from non-owners (FR-009) and must stay a 404.
+	switch {
+	case prog.Status == models.ProgramStatusPublished:
+	case prog.Status.IsPendingReview():
 		return nil, fmt.Errorf("%w: program must be published before requesting to mentor", domain.ErrInvalidInput)
 	default:
 		return nil, domain.ErrProgramNotFound

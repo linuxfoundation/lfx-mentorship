@@ -324,12 +324,11 @@ func TestE2EMentorRequests(t *testing.T) {
 	})
 
 	t.Run("request validation", func(t *testing.T) {
-		pending := createProgram(t, admin, "Pending Request Program")
-		mentor.call(t, http.MethodPost, "/me/program-memberships", map[string]any{"program_id": pending.ID}).expect(http.StatusBadRequest)
-		submitted := createProgram(t, admin, "Submitted Request Program")
-		uploadLogo(t, admin, submitted.ID).expect(http.StatusCreated)
-		admin.mustJSON(t, http.MethodPost, "/programs/"+submitted.ID+"/submit", nil, http.StatusOK, nil)
-		mentor.call(t, http.MethodPost, "/me/program-memberships", map[string]any{"program_id": submitted.ID}).expect(http.StatusNotFound)
+		inReview := createProgram(t, admin, "In Review Request Program")
+		mentor.call(t, http.MethodPost, "/me/program-memberships", map[string]any{"program_id": inReview.ID}).expect(http.StatusBadRequest)
+		rejected := createProgram(t, admin, "Rejected Request Program")
+		approver(t).mustJSON(t, http.MethodPost, "/programs/"+rejected.ID+"/decision", map[string]any{"status": "rejected"}, http.StatusOK, nil)
+		mentor.call(t, http.MethodPost, "/me/program-memberships", map[string]any{"program_id": rejected.ID}).expect(http.StatusNotFound)
 		mentor.call(t, http.MethodPost, "/me/program-memberships", map[string]any{"program_id": "nope"}).expect(http.StatusBadRequest)
 		mentor.call(t, http.MethodPost, "/me/program-memberships", map[string]any{"program_id": "00000000-0000-4000-8000-000000000000"}).expect(http.StatusNotFound)
 		anonymous().call(t, http.MethodPost, "/me/program-memberships", map[string]any{"program_id": p.ID}).expect(http.StatusUnauthorized)

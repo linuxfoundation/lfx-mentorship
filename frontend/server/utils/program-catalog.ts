@@ -158,7 +158,10 @@ export function mapCatalogItemToProgram(item: ProgramCatalogItem): Program {
     description: item.description ?? '',
     logoUrl: item.logo_url,
     skills: item.skills ?? [],
-    status: item.status === 'pending' ? 'pending' : toProgramCardStatus(terms),
+    status:
+      item.status === 'pending' || item.status === 'submitted'
+        ? 'pending'
+        : toProgramCardStatus(terms),
     foundation: EMPTY_FOUNDATION,
     terms,
     updatedAt: item.updated_on,

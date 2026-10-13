@@ -2,8 +2,9 @@
 
 ## Status Mapping
 
-Program creation persists the canonical backend status `pending`. The BFF catalog
-mapping shows a `pending` program in its pending-review display state.
+Program creation persists the canonical backend status `submitted`; there is no
+separate draft step. The BFF catalog mapping shows a `pending` or `submitted`
+program in its pending-review display state.
 
 **Base URL**: `https://lfx-api.<environment>/mentorship/v1` through the Heimdall gateway.
 **Content-Type**: `application/json` for all request and response bodies  
@@ -531,8 +532,8 @@ Programs are the top-level entity for a mentorship offering.
 
 | Status | Meaning |
 |---|---|
-| `pending` | Being configured; not visible to public |
-| `submitted` | Under reviewer inspection |
+| `pending` | Not created by `POST /v1/programs`; readable by ID but not listed |
+| `submitted` | Under reviewer inspection; the state every new program starts in. Readable by ID but not listed |
 | `published` | Live; accepts applications |
 | `hidden` | Soft-hidden; only visible to owner |
 | `rejected` | Reviewer declined; program_admin may revise and resubmit |
@@ -1006,7 +1007,7 @@ Resolve a program UUID or slug to the canonical program UUID.
 
 #### `POST /v1/programs` 🔒
 
-Create a program with its first terms, skills, and prerequisites in one transaction. New programs start in `pending` status and the slug is derived from `name`.
+Create a program with its first terms, skills, and prerequisites in one transaction. New programs start in `submitted` status, ready for review, so no separate submit call is needed. The slug is derived from `name`. The logo is uploaded afterwards through its file route and is not required to create the program.
 
 The backend reads the project's slug, name, and logo from Project Service by `projectId` and stores them with the program, where they feed its search index snapshot (`project_slug`, `project_name`, `project_logo_url`). It ignores the `projectSlug`, `projectName`, and `projectLogoUrl` the caller sends, except when `FGA_NATS_URL` is unset in local development, where it stores them as sent.
 
@@ -1018,8 +1019,8 @@ The backend reads the project's slug, name, and logo from Project Service by `pr
   "projectName":      "Cloud Native Computing Foundation",   // required only without FGA_NATS_URL
   "projectLogoUrl":   "https://...",                          // optional; http(s)
   "name":             "CNCF Mentorship 2026",                 // required; must be unique
-  "description":      "...",
-  "repositoryUrl":    "https://github.com/cncf/mentorship",
+  "description":      "...",                                  // required
+  "repositoryUrl":    "https://github.com/cncf/mentorship",   // required; http(s)
   "websiteUrl":       "https://...",
   "codeOfConductUrl": "https://...",
   "industry":         "Cloud Native",                         // optional

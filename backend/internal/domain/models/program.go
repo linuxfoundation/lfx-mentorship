@@ -30,6 +30,11 @@ func (s ProgramStatus) IsValid() bool {
 	return false
 }
 
+// IsPendingReview reports whether the program has not yet been decided by a reviewer.
+func (s ProgramStatus) IsPendingReview() bool {
+	return s == ProgramStatusPending || s == ProgramStatusSubmitted
+}
+
 // Program maps to the public.programs table.
 type Program struct {
 	ID                 string             `json:"id"`

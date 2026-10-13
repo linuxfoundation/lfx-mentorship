@@ -142,7 +142,7 @@ func resolveVisibleProgram(w http.ResponseWriter, r *http.Request, svc programLo
 	if !ok {
 		return nil, false
 	}
-	if program.Status != models.ProgramStatusPublished && program.Status != models.ProgramStatusPending {
+	if program.Status != models.ProgramStatusPublished && !program.Status.IsPendingReview() {
 		principal := auth.PrincipalFromContext(r.Context())
 		if auth.IsGatewayPrincipal(r.Context()) && principal != nil && principal.UserID != "_anonymous" {
 			return program, true

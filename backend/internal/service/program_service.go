@@ -223,7 +223,7 @@ func (s *ProgramService) GetCatalog(ctx context.Context, id string) (*models.Pro
 		span.RecordError(err)
 		return nil, fmt.Errorf("get program catalog: %w", err)
 	}
-	if item.Status != models.ProgramStatusPublished && item.Status != models.ProgramStatusPending {
+	if item.Status != models.ProgramStatusPublished && !item.Status.IsPendingReview() {
 		return nil, fmt.Errorf("get program catalog: %w", domain.ErrProgramNotFound)
 	}
 	applyCatalogLabels([]*models.ProgramCatalogItem{item}, time.Now())
@@ -364,6 +364,13 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 	if strings.TrimSpace(input.Program.Name) == "" {
 		return nil, fmt.Errorf("%w: name is required", domain.ErrInvalidInput)
 	}
+	// Enrollment creates the program already submitted, so it must meet the submission guard in Update.
+	if input.Program.Description == nil || strings.TrimSpace(*input.Program.Description) == "" {
+		return nil, fmt.Errorf("%w: description is required", domain.ErrInvalidInput)
+	}
+	if input.Program.RepoLink == nil || strings.TrimSpace(*input.Program.RepoLink) == "" {
+		return nil, fmt.Errorf("%w: repository URL is required", domain.ErrInvalidInput)
+	}
 	available, err := s.repo.NameAvailable(ctx, input.Program.Name, "")
 	if err != nil {
 		return nil, fmt.Errorf("check program name availability: %w", err)
@@ -395,7 +402,7 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 	if input.Program.ProjectSlug, input.Program.ProjectName, input.Program.ProjectLogoURL, err = s.resolveProjectMetadata(ctx, canonicalProjectUID, input.Program.ProjectSlug, input.Program.ProjectName, input.Program.ProjectLogoURL); err != nil {
 		return nil, err
 	}
-	input.Program.Status = models.ProgramStatusPending
+	input.Program.Status = models.ProgramStatusSubmitted
 	input.Program.ID = uuid.New().String()
 	return s.repo.CreateEnrollment(ctx, input)
 }

@@ -65,7 +65,7 @@ func TestE2EProgramLifecycle(t *testing.T) {
 	// Project Service is the source of the project metadata, not the caller.
 	body["projectSlug"], body["projectName"] = "spoofed", "Spoofed"
 	admin.mustJSON(t, http.MethodPost, "/programs", body, http.StatusCreated, &created)
-	if created.Status != "pending" || created.Slug != "lifecycle-program" || created.ProjectUID != uid ||
+	if created.Status != "submitted" || created.Slug != "lifecycle-program" || created.ProjectUID != uid ||
 		created.ProjectSlug != "lifecycle" || created.ProjectName != "Lifecycle" || !strings.HasSuffix(created.ProjectLogo, "/lifecycle.png") {
 		t.Fatalf("created program: %+v", created)
 	}
@@ -79,25 +79,19 @@ func TestE2EProgramLifecycle(t *testing.T) {
 		}
 	})
 
-	t.Run("a pending program is readable but not listed", func(t *testing.T) {
+	t.Run("a submitted program is readable but not listed", func(t *testing.T) {
 		anonymous().call(t, http.MethodGet, "/programs/"+id, nil).expect(http.StatusOK)
+		anonymous().call(t, http.MethodGet, "/programs/"+id+"/catalog", nil).expect(http.StatusOK)
 		anonymous().call(t, http.MethodGet, "/programs/resolve/lifecycle-program", nil).expect(http.StatusNotFound)
 		var list programPage
 		anonymous().mustJSON(t, http.MethodGet, "/programs", nil, http.StatusOK, &list)
 		if contains(list.ids(), id) {
-			t.Fatalf("pending program is listed publicly")
+			t.Fatalf("submitted program is listed publicly")
 		}
 	})
 
-	t.Run("submission requires a logo", func(t *testing.T) {
-		res := admin.call(t, http.MethodPost, "/programs/"+id+"/submit", nil).expect(http.StatusConflict)
-		if !strings.Contains(res.errorMessage(), "logo is required") {
-			t.Fatalf("got %q", res.errorMessage())
-		}
-	})
-
-	t.Run("a pending program cannot be decided", func(t *testing.T) {
-		approver(t).call(t, http.MethodPost, "/programs/"+id+"/decision", map[string]any{"status": "published"}).expect(http.StatusConflict)
+	t.Run("a submitted program cannot be submitted again", func(t *testing.T) {
+		admin.call(t, http.MethodPost, "/programs/"+id+"/submit", nil).expect(http.StatusConflict)
 	})
 
 	var logo struct {
@@ -108,18 +102,6 @@ func TestE2EProgramLifecycle(t *testing.T) {
 	if !strings.HasPrefix(logo.PublicURL, e2eCDNPrefix+"/") || logo.ContentType != "image/png" {
 		t.Fatalf("logo upload: %+v", logo)
 	}
-
-	var submitted program
-	admin.mustJSON(t, http.MethodPost, "/programs/"+id+"/submit", nil, http.StatusOK, &submitted)
-	if submitted.Status != "submitted" {
-		t.Fatalf("after submit: %q", submitted.Status)
-	}
-
-	t.Run("a submitted program is hidden from anonymous callers", func(t *testing.T) {
-		anonymous().call(t, http.MethodGet, "/programs/"+id, nil).expect(http.StatusNotFound)
-		anonymous().call(t, http.MethodGet, "/programs/"+id+"/catalog", nil).expect(http.StatusNotFound)
-		admin.call(t, http.MethodGet, "/programs/"+id, nil).expect(http.StatusOK)
-	})
 
 	t.Run("decision validates its input", func(t *testing.T) {
 		approver(t).call(t, http.MethodPost, "/programs/"+id+"/decision", map[string]any{}).expect(http.StatusBadRequest)
@@ -191,8 +173,6 @@ func TestE2EProgramRejectionAndResubmission(t *testing.T) {
 	reset(t)
 	admin := signIn(t, "admin")
 	p := createProgram(t, admin, "Rejected Program")
-	uploadLogo(t, admin, p.ID).expect(http.StatusCreated)
-	admin.mustJSON(t, http.MethodPost, "/programs/"+p.ID+"/submit", nil, http.StatusOK, nil)
 
 	var rejected program
 	approver(t).mustJSON(t, http.MethodPost, "/programs/"+p.ID+"/decision", map[string]any{"status": "rejected"}, http.StatusOK, &rejected)
@@ -205,7 +185,8 @@ func TestE2EProgramRejectionAndResubmission(t *testing.T) {
 		t.Fatalf("rejected filter: %+v", mine)
 	}
 
-	// A rejected program goes straight back to submitted.
+	// A rejected program goes straight back to submitted once it has a logo.
+	uploadLogo(t, admin, p.ID).expect(http.StatusCreated)
 	var resubmitted program
 	admin.mustJSON(t, http.MethodPost, "/programs/"+p.ID+"/submit", nil, http.StatusOK, &resubmitted)
 	if resubmitted.Status != "submitted" {
@@ -226,6 +207,8 @@ func TestE2EProgramCreateValidation(t *testing.T) {
 		status int
 	}{
 		{"terms not accepted", func(b map[string]any) { b["termsAccepted"] = false }, http.StatusBadRequest},
+		{"no description", func(b map[string]any) { delete(b, "description") }, http.StatusBadRequest},
+		{"no repository URL", func(b map[string]any) { delete(b, "repositoryUrl") }, http.StatusBadRequest},
 		{"no skills", func(b map[string]any) { b["skills"] = []string{" ", ""} }, http.StatusBadRequest},
 		{"no terms", func(b map[string]any) { b["terms"] = []any{} }, http.StatusBadRequest},
 		{"too many terms", func(b map[string]any) {

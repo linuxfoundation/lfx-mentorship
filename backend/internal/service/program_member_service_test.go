@@ -711,7 +711,7 @@ func TestProgramMemberService_RequestMentorship_ProgramVisibility(t *testing.T) 
 		want   error
 	}{
 		{models.ProgramStatusPending, domain.ErrInvalidInput},
-		{models.ProgramStatusSubmitted, domain.ErrProgramNotFound},
+		{models.ProgramStatusSubmitted, domain.ErrInvalidInput},
 		{models.ProgramStatusRejected, domain.ErrProgramNotFound},
 		{models.ProgramStatusArchived, domain.ErrProgramNotFound},
 		{models.ProgramStatusHidden, domain.ErrProgramNotFound},

@@ -65,6 +65,52 @@ func TestProgramService_Create_RequiresProjectMetadata(t *testing.T) {
 	}
 }
 
+var (
+	enrollmentDescription = "Mentorship program"
+	enrollmentRepoLink    = "https://github.com/example/program"
+)
+
+func TestProgramService_CreateEnrollment_CreatesSubmitted(t *testing.T) {
+	var captured models.ProgramEnrollmentInput
+	repo := &stubProgRepo{createEnrollment: func(_ context.Context, input models.ProgramEnrollmentInput) (*models.Program, error) {
+		captured = input
+		return &models.Program{ID: input.Program.ID, Status: input.Program.Status}, nil
+	}}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	svc.SetProjectLookup(&stubProjectLookup{project: &models.ProjectMetadata{Slug: "cncf", Name: "CNCF"}})
+
+	if _, err := svc.CreateEnrollment(context.Background(), enrollmentWithProjectMetadata("00000000-0000-0000-0000-000000000001")); err != nil {
+		t.Fatal(err)
+	}
+	if captured.Program.Status != models.ProgramStatusSubmitted {
+		t.Errorf("status = %q; want %q", captured.Program.Status, models.ProgramStatusSubmitted)
+	}
+}
+
+func TestProgramService_CreateEnrollment_RequiresDescriptionAndRepoLink(t *testing.T) {
+	blank := "  "
+	for label, mutate := range map[string]func(*models.ProgramCreateInput){
+		"missing description": func(p *models.ProgramCreateInput) { p.Description = nil },
+		"blank description":   func(p *models.ProgramCreateInput) { p.Description = &blank },
+		"missing repo link":   func(p *models.ProgramCreateInput) { p.RepoLink = nil },
+		"blank repo link":     func(p *models.ProgramCreateInput) { p.RepoLink = &blank },
+	} {
+		t.Run(label, func(t *testing.T) {
+			svc := newProgramSvc(&stubProgRepo{createEnrollment: func(context.Context, models.ProgramEnrollmentInput) (*models.Program, error) {
+				t.Fatal("repository must not be called")
+				return nil, nil
+			}}, &stubTermRepo{}, &stubAppRepo{})
+			svc.SetProjectLookup(&stubProjectLookup{project: &models.ProjectMetadata{Slug: "cncf", Name: "CNCF"}})
+			input := enrollmentWithProjectMetadata("00000000-0000-0000-0000-000000000001")
+			mutate(&input.Program)
+
+			if _, err := svc.CreateEnrollment(context.Background(), input); !errors.Is(err, domain.ErrInvalidInput) {
+				t.Fatalf("expected invalid input, got %v", err)
+			}
+		})
+	}
+}
+
 func TestProgramService_CreateEnrollment_RejectsMissingTerms(t *testing.T) {
 	svc := newProgramSvc(&stubProgRepo{}, &stubTermRepo{}, &stubAppRepo{})
 	projectUID := "00000000-0000-0000-0000-000000000001"
@@ -88,7 +134,7 @@ func TestProgramService_CreateEnrollment_NormalizesSkills(t *testing.T) {
 	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
 	projectSlug, projectName, projectLogo := " program-project ", "Program Project", " "
 	_, err := svc.CreateEnrollment(context.Background(), models.ProgramEnrollmentInput{
-		Program: models.ProgramCreateInput{ProjectUID: &projectUID, ProjectSlug: &projectSlug, ProjectName: &projectName, ProjectLogoURL: &projectLogo, Name: "Program", Slug: "program"},
+		Program: models.ProgramCreateInput{ProjectUID: &projectUID, ProjectSlug: &projectSlug, ProjectName: &projectName, ProjectLogoURL: &projectLogo, Name: "Program", Slug: "program", Description: &enrollmentDescription, RepoLink: &enrollmentRepoLink},
 		Skills:  []string{" Go ", "go", "Kubernetes"},
 		Terms:   []models.ProgramTermCreateInput{{Name: "Term", StartDateTime: &start, EndDateTime: &termEnd, ApplicationStartDate: &applicationStart, ApplicationEndDate: &applicationEnd}},
 	})
@@ -114,7 +160,7 @@ func TestProgramService_CreateEnrollment_RejectsNonISOPrerequisiteDueDate(t *tes
 		return nil, nil
 	}}, &stubTermRepo{}, &stubAppRepo{})
 	_, err := svc.CreateEnrollment(context.Background(), models.ProgramEnrollmentInput{
-		Program:       models.ProgramCreateInput{ProjectUID: &projectUID, Name: "Program", Slug: "program"},
+		Program:       models.ProgramCreateInput{ProjectUID: &projectUID, Name: "Program", Slug: "program", Description: &enrollmentDescription, RepoLink: &enrollmentRepoLink},
 		Skills:        []string{"Go"},
 		Terms:         []models.ProgramTermCreateInput{{Name: "Term", StartDateTime: &start, EndDateTime: &termEnd, ApplicationStartDate: &applicationStart, ApplicationEndDate: &applicationEnd}},
 		Prerequisites: json.RawMessage(`[{"name":"PR","description":"Open a PR","required":true,"dueDate":"tomorrow"}]`),
@@ -128,7 +174,7 @@ func TestProgramService_CreateEnrollment_RejectsUnsafeURL(t *testing.T) {
 	projectUID := "00000000-0000-0000-0000-000000000001"
 	unsafe := "javascript:alert(1)"
 	svc := newProgramSvc(&stubProgRepo{}, &stubTermRepo{}, &stubAppRepo{})
-	_, err := svc.CreateEnrollment(context.Background(), models.ProgramEnrollmentInput{Program: models.ProgramCreateInput{ProjectUID: &projectUID, Name: "Program", Slug: "program", WebsiteURL: &unsafe}, Skills: []string{"Go"}, Terms: []models.ProgramTermCreateInput{{Name: "Term"}}})
+	_, err := svc.CreateEnrollment(context.Background(), models.ProgramEnrollmentInput{Program: models.ProgramCreateInput{ProjectUID: &projectUID, Name: "Program", Slug: "program", Description: &enrollmentDescription, RepoLink: &enrollmentRepoLink, WebsiteURL: &unsafe}, Skills: []string{"Go"}, Terms: []models.ProgramTermCreateInput{{Name: "Term"}}})
 	if !errors.Is(err, domain.ErrInvalidInput) {
 		t.Fatalf("expected invalid URL input, got %v", err)
 	}
@@ -157,7 +203,7 @@ func enrollmentWithProjectMetadata(projectUID string) models.ProgramEnrollmentIn
 	applicationEnd := start.Add(-time.Hour)
 	slug, name, logo := "other-project", "Other Project", "javascript:alert(1)"
 	return models.ProgramEnrollmentInput{
-		Program: models.ProgramCreateInput{ProjectUID: &projectUID, ProjectSlug: &slug, ProjectName: &name, ProjectLogoURL: &logo, Name: "Program", Slug: "program"},
+		Program: models.ProgramCreateInput{ProjectUID: &projectUID, ProjectSlug: &slug, ProjectName: &name, ProjectLogoURL: &logo, Name: "Program", Slug: "program", Description: &enrollmentDescription, RepoLink: &enrollmentRepoLink},
 		Skills:  []string{"Go"},
 		Terms:   []models.ProgramTermCreateInput{{Name: "Term", StartDateTime: &start, EndDateTime: &termEnd, ApplicationStartDate: &applicationStart, ApplicationEndDate: &applicationEnd}},
 	}
@@ -582,19 +628,23 @@ func TestProgramService_GetCatalog_NotFound(t *testing.T) {
 	}
 }
 
-func TestProgramService_GetCatalog_PendingReturnsOK(t *testing.T) {
-	repo := &stubProgRepo{
-		getCatalog: func(_ context.Context, id string) (*models.ProgramCatalogItem, error) {
-			return &models.ProgramCatalogItem{Program: models.Program{ID: id, Status: models.ProgramStatusPending}}, nil
-		},
-	}
-	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
-	item, err := svc.GetCatalog(context.Background(), "p1")
-	if err != nil {
-		t.Fatalf("expected nil error for pending, got %v", err)
-	}
-	if item.ID != "p1" {
-		t.Errorf("id = %q; want p1", item.ID)
+func TestProgramService_GetCatalog_PendingReviewReturnsOK(t *testing.T) {
+	for _, status := range []models.ProgramStatus{models.ProgramStatusPending, models.ProgramStatusSubmitted} {
+		t.Run(string(status), func(t *testing.T) {
+			repo := &stubProgRepo{
+				getCatalog: func(_ context.Context, id string) (*models.ProgramCatalogItem, error) {
+					return &models.ProgramCatalogItem{Program: models.Program{ID: id, Status: status}}, nil
+				},
+			}
+			svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+			item, err := svc.GetCatalog(context.Background(), "p1")
+			if err != nil {
+				t.Fatalf("expected nil error for %s, got %v", status, err)
+			}
+			if item.ID != "p1" {
+				t.Errorf("id = %q; want p1", item.ID)
+			}
+		})
 	}
 }
 
@@ -603,7 +653,6 @@ func TestProgramService_GetCatalog_Unpublished(t *testing.T) {
 		models.ProgramStatusRejected,
 		models.ProgramStatusHidden,
 		models.ProgramStatusArchived,
-		models.ProgramStatusSubmitted,
 	} {
 		t.Run(string(status), func(t *testing.T) {
 			repo := &stubProgRepo{
