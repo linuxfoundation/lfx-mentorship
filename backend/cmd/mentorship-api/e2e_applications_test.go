@@ -375,7 +375,7 @@ func TestE2EMentorApplication(t *testing.T) {
 		Data []member `json:"data"`
 	}
 	anonymous().mustJSON(t, http.MethodGet, "/programs/"+p.ID+"/members", nil, http.StatusOK, &roster)
-	if len(roster.Data) != 1 || roster.Data[0].UserID != volunteer.ID || roster.Data[0].Status != "active" {
+	if len(roster.Data) != 1 || roster.Data[0].UserID != volunteer.ID || roster.Data[0].Status != "approved" {
 		t.Fatalf("accepted mentor is not on the roster: %+v", roster)
 	}
 	awaitFGA(t, "lfx.fga-sync.member_put", func(m fgaMessage) bool {

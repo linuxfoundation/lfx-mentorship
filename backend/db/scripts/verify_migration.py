@@ -50,8 +50,8 @@ _TASK_CATEGORY = {"prerequisite": "prerequisite", "non_prerequisite": "non_prere
 _TASK_SUBMIT_FILE = {"required": "required"}  # else NULL ("" and "no-required" mean no upload)
 _MEMBER_TYPE = {"maintainer": "program_admin", "program_admin": "program_admin", "mentor": "mentor"}  # else skipped
 _MEMBER_STATUS = {  # else skipped
-    "invited": "invited", "requested": "requested", "pending": "pending", "active": "active",
-    "accepted": "active", "approved": "active", "declined": "declined", "withdrawn": "withdrawn",
+    "invited": "invited", "requested": "requested", "pending": "pending", "active": "approved",
+    "accepted": "approved", "approved": "approved", "declined": "declined", "withdrawn": "withdrawn",
 }
 
 # Each query lists rows that break an invariant; every one must return nothing.

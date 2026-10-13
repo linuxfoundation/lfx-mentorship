@@ -105,11 +105,11 @@ MEMBER_ID=<id from response>
 ```bash
 # In real flow the token is in the invite email; the caller must be the invited user
 curl -s -X POST $BASE/mentor-invites/<invite-token>/accept $AUTH
-# Expected: 200, "status":"active"
+# Expected: 200, "status":"approved"
 
 # Verify
 curl -s $BASE/programs/$PROGRAM_ID/members | jq '.items[] | select(.id=="'$MEMBER_ID'") | .status'
-# Expected: "active"
+# Expected: "approved"
 ```
 
 ### 3c. Self-request flow
@@ -121,8 +121,8 @@ curl -s -X POST $BASE/programs/$PROGRAM_ID/members $AUTH \
 
 # Program Admin approves
 curl -s -X PATCH $BASE/programs/$PROGRAM_ID/members/<new-member-id> $AUTH \
-  -d '{"status":"active"}'
-# Expected: 200, "status":"active"
+  -d '{"status":"approved"}'
+# Expected: 200, "status":"approved"
 ```
 
 ---

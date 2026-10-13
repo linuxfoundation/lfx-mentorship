@@ -699,7 +699,7 @@ func TestDirectoryIntegration_NonStringSkillsAreDropped(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ('00000000-0000-0000-0000-000000000080', $1, $2, 'mentee', 'accepted')`, fixture.OpenTerm, fixture.UserID); err != nil {
 		t.Fatalf("insert accepted mentee application: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES ('00000000-0000-0000-0000-000000000081', $1, $2, 'mentor', 'active')`, fixture.ProgramID, fixture.UserID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES ('00000000-0000-0000-0000-000000000081', $1, $2, 'mentor', 'approved')`, fixture.ProgramID, fixture.UserID); err != nil {
 		t.Fatalf("insert active mentor membership: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO user_profiles (id, user_id, profile_type, skill_set) VALUES ('00000000-0000-0000-0000-000000000082', $1, 'mentee', $2), ('00000000-0000-0000-0000-000000000083', $1, 'mentor', $2)`, fixture.UserID, skillSet); err != nil {

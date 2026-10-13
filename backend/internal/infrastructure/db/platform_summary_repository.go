@@ -53,7 +53,7 @@ WITH
 		FROM program_members pm
 		JOIN published_programs p ON p.id = pm.program_id
 		WHERE pm.member_type = 'mentor'
-		  AND pm.status      = 'active'
+		  AND pm.status      = 'approved'
 	),
 	graduated_mentee_users AS (
 		SELECT DISTINCT ON (a.user_id)

@@ -76,21 +76,21 @@ func (s *ProgramMemberService) assertActiveProgramAdmin(ctx context.Context, pro
 // edge here, but inviting the mentor again through Create reopens them.
 var memberTransitions = map[models.ProgramMemberStatus]map[models.ProgramMemberStatus]bool{
 	models.ProgramMemberStatusInvited: {
-		models.ProgramMemberStatusActive:   true,
+		models.ProgramMemberStatusApproved:   true,
 		models.ProgramMemberStatusDeclined: true,
 		models.ProgramMemberStatusPending:  true,
 	},
 	models.ProgramMemberStatusRequested: {
-		models.ProgramMemberStatusActive:   true,
+		models.ProgramMemberStatusApproved:   true,
 		models.ProgramMemberStatusDeclined: true,
 		models.ProgramMemberStatusPending:  true,
 	},
-	models.ProgramMemberStatusActive: {
+	models.ProgramMemberStatusApproved: {
 		models.ProgramMemberStatusWithdrawn: true,
 		models.ProgramMemberStatusPending:   true,
 	},
 	models.ProgramMemberStatusPending: {
-		models.ProgramMemberStatusActive:   true,
+		models.ProgramMemberStatusApproved:   true,
 		models.ProgramMemberStatusDeclined: true,
 	},
 	models.ProgramMemberStatusDeclined:  {},
@@ -177,9 +177,9 @@ func (s *ProgramMemberService) Create(ctx context.Context, programID string, inp
 		return nil, fmt.Errorf("%w: program must be published before adding members", domain.ErrInvalidInput)
 	}
 
-	// Mentors are placed in 'invited' status and notified; program_admins are 'active' immediately.
+	// Mentors are placed in 'invited' status and notified; program_admins are 'approved' immediately.
 	if input.Status == nil {
-		defaultStatus := models.ProgramMemberStatusActive
+		defaultStatus := models.ProgramMemberStatusApproved
 		if input.MemberType == models.MemberTypeMentor {
 			defaultStatus = models.ProgramMemberStatusInvited
 		}
@@ -677,7 +677,7 @@ func (s *ProgramMemberService) AcceptInvite(ctx context.Context, token, actorID 
 		return nil, err
 	}
 
-	activeStatus := models.ProgramMemberStatusActive
+	activeStatus := models.ProgramMemberStatusApproved
 	m, err := s.repo.UpdateIfStatus(ctx, memberID, []models.ProgramMemberStatus{models.ProgramMemberStatusInvited}, models.ProgramMemberUpdateInput{Status: &activeStatus})
 	if err != nil {
 		span.RecordError(err)

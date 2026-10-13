@@ -85,7 +85,7 @@ invite) or `withdrawn` is not an error: the backend sets the row back to
 `invited`, returns it with `201` and sends the invite email again. That is also
 how an admin resends an invite. A `409` covers the rest:
 
-- `active`: *"This person is already a mentor on the program."*
+- `approved`: *"This person is already a mentor on the program."*
 - `requested`: point the admin to approving the request.
 - `pending`: find their row in the Mentors tab list and act on its status.
 

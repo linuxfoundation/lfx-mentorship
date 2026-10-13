@@ -710,7 +710,7 @@ func (n *Notifier) activeMembers(ctx context.Context, programID string, memberTy
 			Limit:      pageSize,
 			Offset:     len(members),
 			MemberType: string(memberType),
-			Status:     string(models.ProgramMemberStatusActive),
+			Status:     string(models.ProgramMemberStatusApproved),
 		})
 		if err != nil {
 			return nil, err
@@ -745,7 +745,7 @@ func (n *Notifier) mentorNames(ctx context.Context, programID string) ([]string,
 		page, meta, err := n.repos.Members.ListMentorManagement(ctx, programID, models.ProgramMemberFilter{
 			Limit:  mentorPageSize,
 			Offset: len(rows),
-			Status: string(models.ProgramMemberStatusActive),
+			Status: string(models.ProgramMemberStatusApproved),
 		})
 		if err != nil {
 			return nil, fmt.Errorf("list program mentors: %w", err)

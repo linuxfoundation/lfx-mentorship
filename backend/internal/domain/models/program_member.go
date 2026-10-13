@@ -27,7 +27,7 @@ const (
 	ProgramMemberStatusInvited   ProgramMemberStatus = "invited"
 	ProgramMemberStatusRequested ProgramMemberStatus = "requested"
 	ProgramMemberStatusPending   ProgramMemberStatus = "pending"
-	ProgramMemberStatusActive    ProgramMemberStatus = "active"
+	ProgramMemberStatusApproved  ProgramMemberStatus = "approved"
 	ProgramMemberStatusDeclined  ProgramMemberStatus = "declined"
 	ProgramMemberStatusWithdrawn ProgramMemberStatus = "withdrawn"
 )
@@ -36,7 +36,7 @@ const (
 func (s ProgramMemberStatus) IsValid() bool {
 	switch s {
 	case ProgramMemberStatusInvited, ProgramMemberStatusRequested, ProgramMemberStatusPending,
-		ProgramMemberStatusActive, ProgramMemberStatusDeclined, ProgramMemberStatusWithdrawn:
+		ProgramMemberStatusApproved, ProgramMemberStatusDeclined, ProgramMemberStatusWithdrawn:
 		return true
 	}
 	return false

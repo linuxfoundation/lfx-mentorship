@@ -63,7 +63,7 @@ func seedIntegrationFixture(t *testing.T, pool *pgxpool.Pool) integrationFixture
 	if _, err := pool.Exec(ctx, `INSERT INTO programs (id, lf_project_uid, name, slug, status) VALUES ($1, '00000000-0000-0000-0000-000000000099', 'Fixture Program', 'fixture-program', 'published')`, fixture.ProgramID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES ('00000000-0000-0000-0000-000000000020', $1, $2, 'program_admin', 'active')`, fixture.ProgramID, fixture.UserID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES ('00000000-0000-0000-0000-000000000020', $1, $2, 'program_admin', 'approved')`, fixture.ProgramID, fixture.UserID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO program_terms (id, program_id, name, status) VALUES ($1, $3, 'Open', 'open'), ($2, $3, 'Closed', 'closed')`, fixture.OpenTerm, fixture.ClosedTerm, fixture.ProgramID); err != nil {
@@ -240,7 +240,7 @@ func TestProgramIndexIntegration_RefreshesPublicStats(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name) VALUES ($1, 'fixture-graduated', 'Fixture Graduated')`, graduatedUserID); err != nil {
 		t.Fatal(err)
 	}
-	active := models.ProgramMemberStatusActive
+	active := models.ProgramMemberStatusApproved
 	if _, err := NewProgramMemberRepository(pool).Create(ctx, fixture.ProgramID, models.ProgramMemberCreateInput{
 		ID:         "00000000-0000-0000-0000-000000000021",
 		UserID:     mentorID,
@@ -586,7 +586,7 @@ func TestProgramHeaderProjectionIntegration_CountsProgramState(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name) VALUES ('00000000-0000-0000-0000-000000000002', 'fixture-user-2', 'Fixture User 2')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES ('00000000-0000-0000-0000-000000000021', $1, $2, 'mentor', 'active')`, fixture.ProgramID, fixture.UserID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES ('00000000-0000-0000-0000-000000000021', $1, $2, 'mentor', 'approved')`, fixture.ProgramID, fixture.UserID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ('00000000-0000-0000-0000-000000000030', $1, $2, 'mentee', 'accepted'), ('00000000-0000-0000-0000-000000000031', $1, '00000000-0000-0000-0000-000000000002', 'mentee', 'graduated')`, fixture.OpenTerm, fixture.UserID); err != nil {
@@ -651,18 +651,18 @@ func TestProgramListAdministeredIntegration_GroupsStatusAndScopesToActiveAdmin(t
 			('` + deletedTermID + `', 'Lambda', 'lambda', 'published', NULL),
 			('` + otherAdminID + `', 'Other', 'other', 'pending', NULL)`,
 		`INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES
-			('00000000-0000-0000-0000-000000000044', '` + completedID + `', '` + fixture.UserID + `', 'program_admin', 'active'),
-			('00000000-0000-0000-0000-000000000045', '` + pendingID + `', '` + fixture.UserID + `', 'program_admin', 'active'),
-			('00000000-0000-0000-0000-000000000046', '` + mentorOnlyID + `', '` + fixture.UserID + `', 'mentor', 'active'),
+			('00000000-0000-0000-0000-000000000044', '` + completedID + `', '` + fixture.UserID + `', 'program_admin', 'approved'),
+			('00000000-0000-0000-0000-000000000045', '` + pendingID + `', '` + fixture.UserID + `', 'program_admin', 'approved'),
+			('00000000-0000-0000-0000-000000000046', '` + mentorOnlyID + `', '` + fixture.UserID + `', 'mentor', 'approved'),
 			('00000000-0000-0000-0000-000000000047', '` + withdrawnID + `', '` + fixture.UserID + `', 'program_admin', 'withdrawn'),
-			('00000000-0000-0000-0000-000000000048', '` + fixture.ProgramID + `', '` + fixture.UserID + `', 'mentor', 'active'),
+			('00000000-0000-0000-0000-000000000048', '` + fixture.ProgramID + `', '` + fixture.UserID + `', 'mentor', 'approved'),
 			('00000000-0000-0000-0000-000000000066', '` + fixture.ProgramID + `', '` + otherUserID + `', 'mentor', 'withdrawn'),
-			('00000000-0000-0000-0000-000000000067', '` + rejectedID + `', '` + fixture.UserID + `', 'program_admin', 'active'),
-			('00000000-0000-0000-0000-000000000068', '` + hiddenID + `', '` + fixture.UserID + `', 'program_admin', 'active'),
-			('00000000-0000-0000-0000-000000000069', '` + archivedID + `', '` + fixture.UserID + `', 'program_admin', 'active'),
-			('00000000-0000-0000-0000-00000000006a', '` + noTermsID + `', '` + fixture.UserID + `', 'program_admin', 'active'),
-			('00000000-0000-0000-0000-00000000006b', '` + deletedTermID + `', '` + fixture.UserID + `', 'program_admin', 'active'),
-			('00000000-0000-0000-0000-00000000006c', '` + otherAdminID + `', '` + otherUserID + `', 'program_admin', 'active')`,
+			('00000000-0000-0000-0000-000000000067', '` + rejectedID + `', '` + fixture.UserID + `', 'program_admin', 'approved'),
+			('00000000-0000-0000-0000-000000000068', '` + hiddenID + `', '` + fixture.UserID + `', 'program_admin', 'approved'),
+			('00000000-0000-0000-0000-000000000069', '` + archivedID + `', '` + fixture.UserID + `', 'program_admin', 'approved'),
+			('00000000-0000-0000-0000-00000000006a', '` + noTermsID + `', '` + fixture.UserID + `', 'program_admin', 'approved'),
+			('00000000-0000-0000-0000-00000000006b', '` + deletedTermID + `', '` + fixture.UserID + `', 'program_admin', 'approved'),
+			('00000000-0000-0000-0000-00000000006c', '` + otherAdminID + `', '` + otherUserID + `', 'program_admin', 'approved')`,
 		`INSERT INTO program_terms (id, program_id, name, status, start_date_time) VALUES
 			('00000000-0000-0000-0000-000000000049', '` + completedID + `', 'Spring 2026', 'closed', '2026-01-01'),
 			('00000000-0000-0000-0000-00000000004a', '` + completedID + `', 'Summer 2026', 'closed', '2026-05-01'),
