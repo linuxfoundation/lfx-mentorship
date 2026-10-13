@@ -477,7 +477,7 @@ def _normalize_program_status(status: str | None) -> str:
         return "pending"
     m = {
         "draft": "pending",
-        "pending": "pending",
+        "pending": "submitted",  # the new platform has no draft flow; creation lands on submitted
         "submitted": "submitted",
         "published": "published",
         "rejected": "rejected",

@@ -108,7 +108,7 @@ class _Files:
 
 @pytest.mark.parametrize(
     "legacy, expected",
-    [("draft", "pending"), ("pending", "pending"), ("DRAFT", "pending"), (None, "pending"), ("", "pending"), ("unknown", "pending"), ("published", "published")],
+    [("draft", "pending"), ("pending", "submitted"), ("PENDING", "submitted"), ("DRAFT", "pending"), (None, "pending"), ("", "pending"), ("unknown", "pending"), ("published", "published")],
 )
 def test_program_status_maps_legacy_values(legacy, expected):
     assert m._normalize_program_status(legacy) == expected
