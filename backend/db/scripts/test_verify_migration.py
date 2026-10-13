@@ -28,6 +28,7 @@ UNKNOWN_TERM_APPLICATION = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 UNASSIGNED_TASK = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
 LIN = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
 LEGACY_TASK = "12121212-1212-4121-8121-121212121212"
+BUILT_IN_TASK = "13131313-1313-4131-8131-131313131313"
 
 SOURCES = {
     "users": [
@@ -58,6 +59,8 @@ SOURCES = {
         {"id": TASK, "programTermId": TERM, "assigneeId": MENTEE, "ownerId": ADMIN, "name": "Intro", "status": "submitted", "category": "prerequisite"},
         # Legacy jobspring spellings that only the dev-data repair rewrote.
         {"id": LEGACY_TASK, "programTermId": TERM, "assigneeId": MENTEE, "name": "Weekly report", "status": "inProgress", "category": "nonPrerequisite", "submitFile": "no-required"},
+        # A built-in task always required a file, whatever its stored submitFile says.
+        {"id": BUILT_IN_TASK, "programTermId": TERM, "assigneeId": MENTEE, "name": "Resume", "status": "incomplete", "category": "prerequisite", "custom": "false", "submitFile": ""},
         {"id": ORPHAN_TASK, "programTermId": TERM, "assigneeId": ADMIN, "name": "No application"},
         {"id": UNASSIGNED_TASK, "programTermId": TERM, "name": "No assignee"},
     ],
@@ -176,6 +179,11 @@ def test_importer_mapping_regression_is_reported(db, monkeypatch, name, broken, 
 def test_imported_skipped_row_is_reported(imported, table, row_id, insert):
     imported.execute(insert, (row_id,))
     assert f"{table} {row_id}: imported although the importer should have skipped it" in run(imported)
+
+
+def test_built_in_task_without_required_file_is_reported(imported):
+    imported.execute("UPDATE tasks SET submit_file = NULL WHERE id = %s", (BUILT_IN_TASK,))
+    assert run(imported) == [f"tasks {BUILT_IN_TASK}: submit_file is None, legacy gives 'required'"]
 
 
 def test_duplicate_email_nulled_by_the_importer_is_not_a_mismatch(imported):

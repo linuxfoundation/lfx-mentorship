@@ -35,7 +35,7 @@ func NewPlatformSummaryRepository(pool *pgxpool.Pool) *PlatformSummaryRepository
 const platformSummaryQuery = `
 WITH
 	published_programs AS (
-		SELECT id
+		SELECT id, lf_project_uid
 		FROM programs
 		WHERE status = 'published'
 	),
@@ -87,6 +87,7 @@ WITH
 SELECT
 	(SELECT COUNT(*) FROM published_programs),
 	(SELECT COUNT(*) FROM accepting_programs),
+	(SELECT COUNT(DISTINCT lf_project_uid) FROM published_programs),
 	(SELECT COUNT(*) FROM mentor_users),
 	(SELECT COUNT(*) FROM graduated_mentee_users),
 	(SELECT COALESCE(SUM(pfs.amount_spent), 0)
@@ -117,6 +118,7 @@ func (r *PlatformSummaryRepository) Summary(ctx context.Context) (*models.Platfo
 	if err := r.pool.QueryRow(ctx, platformSummaryQuery, platformSummaryMenteePreviewLimit).Scan(
 		&s.ProgramCount,
 		&s.AcceptingProgramCount,
+		&s.ProjectCount,
 		&s.MentorCount,
 		&s.GraduatedMenteeCount,
 		&s.StipendsPaid,

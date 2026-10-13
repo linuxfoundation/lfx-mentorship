@@ -400,13 +400,23 @@ def _submit_file(value) -> str | None:
     return _SUBMIT_FILE_REQUIRED if str(value or "").strip() == _SUBMIT_FILE_REQUIRED else None
 
 
+def _task_submit_file(task: dict) -> str | None:
+    """Map a legacy task or task template's submitFile, forcing "required" for a built-in one.
+
+    The built-in tasks (custom "false": Resume, Cover Letter, ...) always required a file in
+    legacy, whatever their stored submitFile says.
+    """
+    if str(task.get("custom")).lower() == "false":
+        return _SUBMIT_FILE_REQUIRED
+    return _submit_file(task.get("submitFile"))
+
+
 def _task_templates(templates) -> str | None:
     """Reduce legacy taskTemplates to the shape the API clones into prerequisite tasks.
 
     Legacy stored whole Task objects, with submitFile "" for no upload, and also appended
     mentors' non-prerequisite tasks; programs.task_templates holds only named prerequisites as
-    {name, description, submitFile: "required" | null, dueDate, custom}. The built-in templates
-    (custom "false": Resume, Cover Letter, ...) always required a file in legacy.
+    {name, description, submitFile: "required" | null, dueDate, custom}.
     """
     if not isinstance(templates, list):
         return None
@@ -414,7 +424,7 @@ def _task_templates(templates) -> str | None:
         {
             "name": str(t.get("name") or "").strip(),
             "description": str(t.get("description") or "").strip() or None,
-            "submitFile": _SUBMIT_FILE_REQUIRED if str(t.get("custom")).lower() == "false" else _submit_file(t.get("submitFile")),
+            "submitFile": _task_submit_file(t),
             "dueDate": _due_date(t.get("dueDate")),
             "custom": _as_bool(t.get("custom")),
         }
@@ -1424,7 +1434,7 @@ def migrate_tasks(
             (t.get("applicationStatus") or "").strip() or None,
             _map_program_term_status(known_term_ids.get(resolved_term_id), t.get("programTermStatus")),
             _as_bool(t.get("custom")),
-            _submit_file(t.get("submitFile")),
+            _task_submit_file(t),
             files.rewrite("tasks.file", lo.SUBMISSION, t.get("file")),
             due_date,
             (t.get("createdBy") or "").strip() or None,

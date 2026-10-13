@@ -35,6 +35,7 @@ func TestPlatformSummaryHandler_Get_OK(t *testing.T) {
 			return &models.PlatformSummary{
 				ProgramCount:          18,
 				AcceptingProgramCount: 3,
+				ProjectCount:          5,
 				MentorCount:           7,
 				GraduatedMenteeCount:  42,
 				StipendsPaid:          12500,
@@ -58,6 +59,7 @@ func TestPlatformSummaryHandler_Get_OK(t *testing.T) {
 	want := models.PlatformSummary{
 		ProgramCount:          18,
 		AcceptingProgramCount: 3,
+		ProjectCount:          5,
 		MentorCount:           7,
 		GraduatedMenteeCount:  42,
 		StipendsPaid:          12500,

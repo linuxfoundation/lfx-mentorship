@@ -398,7 +398,8 @@ def verify_tasks(cur, tasks, term_ids, applied: set, report, rng, size):
             "category": _TASK_CATEGORY.get(_text(t.get("category"))),
             "status": _TASK_STATUS.get((_text(t.get("status")) or "").lower(), "incomplete"),
             "custom": m._as_bool(t.get("custom")),
-            "submit_file": _TASK_SUBMIT_FILE.get(_text(t.get("submitFile"))),
+            # Built-in (custom "false") tasks always required a file in legacy.
+            "submit_file": "required" if str(t.get("custom")).lower() == "false" else _TASK_SUBMIT_FILE.get(_text(t.get("submitFile"))),
             "created_on": m._parse_ts(t.get("createdOn")),
         }, row)
     report.sampled["tasks"] = min(len(candidates), size)
