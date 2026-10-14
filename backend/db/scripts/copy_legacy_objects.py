@@ -52,6 +52,7 @@ from contextlib import closing
 from urllib.parse import unquote
 
 import boto3
+from botocore.config import Config
 from botocore.exceptions import ClientError
 
 import legacy_objects as lo
@@ -147,6 +148,17 @@ class Copier:
         return {"status": lo.QUARANTINED, "key": quarantine_key, "reason": reason}
 
 
+def s3_clients(legacy, workers: int) -> tuple:
+    """Source and destination S3 clients with a connection per worker.
+
+    botocore pools 10 connections by default; past that, each request opens a
+    new connection and urllib3 logs a warning when returning it. The x2 covers
+    the transfer threads upload_fileobj runs on the destination client.
+    """
+    config = Config(max_pool_connections=workers * 2)
+    return legacy.client("s3", region_name=SOURCE_REGION, config=config), boto3.client("s3", region_name=DEST_REGION, config=config)
+
+
 def resolve_all(copier, prefix: str, references: list, workers: int) -> dict:
     """Resolve each distinct (class, value) once, `workers` at a time; a failure stops the run."""
     first_column: dict = {}
@@ -180,7 +192,7 @@ def main() -> None:
     prefix = lo.legacy_url_prefix(LEGACY_BUCKET)
     legacy = legacy_session()
     dynamo = legacy.client("dynamodb")
-    copier = Copier(legacy.client("s3", region_name=SOURCE_REGION), boto3.client("s3", region_name=DEST_REGION), LEGACY_BUCKET, buckets)
+    copier = Copier(*s3_clients(legacy, COPY_WORKERS), LEGACY_BUCKET, buckets)
 
     references: list = []  # (column, file_class, value), in scan order
     counts: dict = {}

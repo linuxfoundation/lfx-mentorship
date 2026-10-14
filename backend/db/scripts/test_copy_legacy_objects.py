@@ -6,6 +6,7 @@ import importlib
 import io
 import threading
 
+import boto3
 import pytest
 from botocore.exceptions import ClientError
 
@@ -215,3 +216,10 @@ def test_a_failed_resolution_stops_the_run():
     references = [("users.avatar_url", lo.LOGO, PREFIX + "a.png"), ("users.avatar_url", lo.LOGO, PREFIX + "b.png")]
     with pytest.raises(ClientError):
         c.resolve_all(cp, PREFIX, references, workers=2)
+
+
+def test_s3_clients_pool_enough_connections_for_every_worker():
+    source, dest = c.s3_clients(boto3.Session(region_name="us-east-1"), workers=16)
+    assert source.meta.config.max_pool_connections >= 16
+    # The quarantine path's upload_fileobj runs its own transfer threads on the destination client.
+    assert dest.meta.config.max_pool_connections >= 32
