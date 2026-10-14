@@ -99,8 +99,8 @@ type EmailConfig struct {
 	SelfServeURL string
 	// HRInbox is the LF staff HR inbox copied on every mentee acceptance.
 	HRInbox string
-	// ReviewInbox is the LF staff inbox told about every program submitted for review.
-	ReviewInbox string
+	// ReviewInboxes are the LF staff inboxes told about every program submitted for review.
+	ReviewInboxes []string
 	// AllowedRecipients, when set, are the only addresses mail goes to, so testing on real data cannot reach real users.
 	AllowedRecipients []string
 }
@@ -276,7 +276,6 @@ func loadEmailConfig(natsConfigured bool) (EmailConfig, error) {
 		PublicSiteURL: strings.TrimRight(os.Getenv("PUBLIC_SITE_URL"), "/"),
 		SelfServeURL:  strings.TrimRight(os.Getenv("SELF_SERVE_URL"), "/"),
 		HRInbox:       strings.TrimSpace(os.Getenv("EMAIL_HR_INBOX")),
-		ReviewInbox:   strings.TrimSpace(os.Getenv("EMAIL_REVIEW_INBOX")),
 	}
 	if !natsConfigured {
 		return cfg, nil
@@ -286,26 +285,39 @@ func loadEmailConfig(natsConfigured bool) (EmailConfig, error) {
 			return EmailConfig{}, fmt.Errorf("%s must be an absolute http(s) URL with no query or fragment when FGA_NATS_URL is set", kv[0])
 		}
 	}
-	for _, kv := range [][2]string{{"EMAIL_HR_INBOX", cfg.HRInbox}, {"EMAIL_REVIEW_INBOX", cfg.ReviewInbox}} {
-		if addr, err := mail.ParseAddress(kv[1]); err != nil || addr.Address != kv[1] {
-			return EmailConfig{}, fmt.Errorf("%s must be a bare email address when FGA_NATS_URL is set", kv[0])
-		}
+	if addr, err := mail.ParseAddress(cfg.HRInbox); err != nil || addr.Address != cfg.HRInbox {
+		return EmailConfig{}, fmt.Errorf("EMAIL_HR_INBOX must be a bare email address when FGA_NATS_URL is set")
 	}
-	allowed := os.Getenv("EMAIL_ALLOWED_RECIPIENTS")
-	for r := range strings.SplitSeq(allowed, ",") {
+	var err error
+	if cfg.ReviewInboxes, err = addressList("EMAIL_REVIEW_INBOX"); err != nil {
+		return EmailConfig{}, err
+	}
+	if len(cfg.ReviewInboxes) == 0 {
+		return EmailConfig{}, fmt.Errorf("EMAIL_REVIEW_INBOX must list at least one email address when FGA_NATS_URL is set")
+	}
+	if cfg.AllowedRecipients, err = addressList("EMAIL_ALLOWED_RECIPIENTS"); err != nil {
+		return EmailConfig{}, err
+	}
+	// A set value with no addresses would mean "send to everyone"; fail closed instead.
+	if os.Getenv("EMAIL_ALLOWED_RECIPIENTS") != "" && len(cfg.AllowedRecipients) == 0 {
+		return EmailConfig{}, fmt.Errorf("EMAIL_ALLOWED_RECIPIENTS is set but lists no addresses")
+	}
+	return cfg, nil
+}
+
+// addressList reads key as comma-separated bare email addresses, skipping blank entries.
+func addressList(key string) ([]string, error) {
+	var addrs []string
+	for r := range strings.SplitSeq(os.Getenv(key), ",") {
 		if r = strings.TrimSpace(r); r == "" {
 			continue
 		}
 		if addr, err := mail.ParseAddress(r); err != nil || addr.Address != r {
-			return EmailConfig{}, fmt.Errorf("EMAIL_ALLOWED_RECIPIENTS must be a comma-separated list of bare email addresses")
+			return nil, fmt.Errorf("%s must be a comma-separated list of bare email addresses", key)
 		}
-		cfg.AllowedRecipients = append(cfg.AllowedRecipients, r)
+		addrs = append(addrs, r)
 	}
-	// A set value with no addresses would mean "send to everyone"; fail closed instead.
-	if allowed != "" && len(cfg.AllowedRecipients) == 0 {
-		return EmailConfig{}, fmt.Errorf("EMAIL_ALLOWED_RECIPIENTS is set but lists no addresses")
-	}
-	return cfg, nil
+	return addrs, nil
 }
 
 // loadStorageConfig reads the logos and attachments buckets.

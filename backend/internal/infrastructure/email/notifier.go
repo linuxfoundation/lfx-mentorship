@@ -73,8 +73,8 @@ type NotifierConfig struct {
 	PublicSiteURL string
 	SelfServeURL  string
 	HRInbox       string
-	// ReviewInbox is the LF staff inbox that reviews submitted programs.
-	ReviewInbox string
+	// ReviewInboxes are the LF staff inboxes that review submitted programs; each gets its own copy.
+	ReviewInboxes []string
 	// AllowedRecipients, when set, are the only addresses mail goes to; every other send is suppressed.
 	AllowedRecipients []string
 }
@@ -93,12 +93,12 @@ type Repositories struct {
 // Notifier implements domain.Notifier by emailing through the email service.
 // Sends run in the background so they never delay or fail the triggering request.
 type Notifier struct {
-	sender       Sender
-	repos        Repositories
-	publicURL    string
-	selfServeURL string
-	hrInbox      string
-	reviewInbox  string
+	sender        Sender
+	repos         Repositories
+	publicURL     string
+	selfServeURL  string
+	hrInbox       string
+	reviewInboxes []string
 	// allowedRecipients holds lowercased addresses; nil sends to everyone.
 	allowedRecipients map[string]bool
 	logger            *slog.Logger
@@ -112,14 +112,14 @@ var _ domain.Notifier = (*Notifier)(nil)
 // NewNotifier returns a Notifier that sends through sender.
 func NewNotifier(sender Sender, repos Repositories, cfg NotifierConfig, logger *slog.Logger) *Notifier {
 	return &Notifier{
-		sender:       sender,
-		repos:        repos,
-		publicURL:    strings.TrimRight(cfg.PublicSiteURL, "/"),
-		selfServeURL: strings.TrimRight(cfg.SelfServeURL, "/"),
-		hrInbox:      cfg.HRInbox,
-		reviewInbox:  cfg.ReviewInbox,
-		logger:       logger,
-		dispatches:   make(chan struct{}, maxConcurrentDispatches),
+		sender:        sender,
+		repos:         repos,
+		publicURL:     strings.TrimRight(cfg.PublicSiteURL, "/"),
+		selfServeURL:  strings.TrimRight(cfg.SelfServeURL, "/"),
+		hrInbox:       cfg.HRInbox,
+		reviewInboxes: cfg.ReviewInboxes,
+		logger:        logger,
+		dispatches:    make(chan struct{}, maxConcurrentDispatches),
 
 		allowedRecipients: recipientSet(cfg.AllowedRecipients),
 	}
@@ -315,8 +315,15 @@ func (n *Notifier) NotifyProgramSubmitted(ctx context.Context, programID, submit
 				data.SubmitterEmail = strings.TrimSpace(deref(submitter.Email))
 			}
 		}
-		msg, err := render(templateProgramReview, n.reviewInbox, "Mentorship program submitted for review: "+program.Name, data)
-		return []Message{msg}, err
+		msgs := make([]Message, 0, len(n.reviewInboxes))
+		for _, to := range n.reviewInboxes {
+			msg, err := render(templateProgramReview, to, "Mentorship program submitted for review: "+program.Name, data)
+			if err != nil {
+				return nil, err
+			}
+			msgs = append(msgs, msg)
+		}
+		return msgs, nil
 	})
 }
 

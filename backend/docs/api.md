@@ -2628,7 +2628,7 @@ class ApiError extends Error {
 | `PUBLIC_SITE_URL` | When `FGA_NATS_URL` is set | — | Public Mentorship site that user-facing email links point at |
 | `SELF_SERVE_URL` | When `FGA_NATS_URL` is set | — | LFX Self Serve base URL for management links in email |
 | `EMAIL_HR_INBOX` | When `FGA_NATS_URL` is set | — | LF staff HR inbox sent every mentee acceptance |
-| `EMAIL_REVIEW_INBOX` | When `FGA_NATS_URL` is set | — | LF staff inbox sent every program submitted for review |
+| `EMAIL_REVIEW_INBOX` | When `FGA_NATS_URL` is set | — | Comma-separated LF staff inboxes, each sent every program submitted for review |
 | `FGA_RELAY_BATCH_SIZE` | No | `50` | FGA/index claim batch size |
 | `FGA_RELAY_INTERVAL` | No | `1s` | Relay polling interval |
 | `FGA_RELAY_RETRY_DELAY` | No | `1m` | FGA retry delay |
