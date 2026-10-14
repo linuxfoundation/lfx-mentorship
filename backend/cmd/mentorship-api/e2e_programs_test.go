@@ -225,9 +225,9 @@ func TestE2EProgramCreateValidation(t *testing.T) {
 			term["endDate"] = day(19)
 			b["terms"] = []any{term}
 		}, http.StatusBadRequest},
-		{"application window after the term starts", func(b map[string]any) {
+		{"application window after the term ends", func(b map[string]any) {
 			term := openTermBody("x")
-			term["applicationEndDate"] = day(30)
+			term["applicationEndDate"] = day(130)
 			b["terms"] = []any{term}
 		}, http.StatusBadRequest},
 		{"required prerequisite without description", func(b map[string]any) {

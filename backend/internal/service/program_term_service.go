@@ -212,8 +212,9 @@ func validateTermDates(start, end, applicationStart, applicationEnd *time.Time) 
 	if start == nil || end == nil || !end.After(*start) {
 		return fmt.Errorf("%w: term end date must be after start date", domain.ErrInvalidInput)
 	}
-	if applicationStart == nil || applicationEnd == nil || !applicationEnd.After(*applicationStart) || !applicationEnd.Before(*start) {
-		return fmt.Errorf("%w: application window must end after it starts and before the term", domain.ErrInvalidInput)
+	// The application window may run into the term, but it must close by the time the term ends.
+	if applicationStart == nil || applicationEnd == nil || !applicationEnd.After(*applicationStart) || applicationEnd.After(*end) {
+		return fmt.Errorf("%w: application window must end after it starts and no later than the term end", domain.ErrInvalidInput)
 	}
 	return nil
 }

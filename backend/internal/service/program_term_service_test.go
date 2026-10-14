@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
@@ -20,6 +21,36 @@ func TestProgramTermService_ListByProgram_RejectsNonPublicStatus(t *testing.T) {
 		if !errors.Is(err, domain.ErrInvalidInput) {
 			t.Fatalf("status %q: err=%v; want ErrInvalidInput", status, err)
 		}
+	}
+}
+
+func TestProgramTermService_Create_ApplicationWindowMayRunIntoTerm(t *testing.T) {
+	day := func(n int) *time.Time {
+		d := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, n)
+		return &d
+	}
+	cases := []struct {
+		name             string
+		appStart, appEnd int
+		wantErr          bool
+	}{
+		{"closes before the term starts", 0, 10, false},
+		{"closes after the term starts", 0, 40, false},
+		{"closes as the term ends", 0, 90, false},
+		{"closes after the term ends", 0, 91, true},
+		{"closes as it opens", 10, 10, true},
+	}
+	svc := service.NewProgramTermService(&stubTermRepo{}, &stubAppRepo{}, &stubNotifier{})
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := svc.Create(context.Background(), models.ProgramTermCreateInput{
+				ProgramID: "p1", Name: "Fall", StartDateTime: day(30), EndDateTime: day(90),
+				ApplicationStartDate: day(tc.appStart), ApplicationEndDate: day(tc.appEnd),
+			})
+			if got := errors.Is(err, domain.ErrInvalidInput); got != tc.wantErr {
+				t.Fatalf("err = %v; want invalid input = %v", err, tc.wantErr)
+			}
+		})
 	}
 }
 
