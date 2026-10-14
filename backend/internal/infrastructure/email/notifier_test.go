@@ -226,7 +226,7 @@ func newFixture() *fixture {
 		Members:      f.members,
 		Applications: &applicationRepoStub{app: &models.Application{ID: "a1", ProgramTermID: "t1", UserID: "mentee"}},
 		Tasks:        f.tasks,
-	}, NotifierConfig{PublicSiteURL: testPublicSiteURL + "/", SelfServeURL: testSelfServeURL, HRInbox: testHRInbox, ReviewInbox: testReviewInbox}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}, NotifierConfig{PublicSiteURL: testPublicSiteURL + "/", SelfServeURL: testSelfServeURL, HRInbox: testHRInbox, ReviewInboxes: []string{testReviewInbox}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	return f
 }
 
@@ -635,6 +635,23 @@ func TestNotifyProgramSubmitted(t *testing.T) {
 	mustContain(t, "review html", review.HTML, ">Review in Self Serve</a>", "Kernel &lt;Dev&gt;")
 	if strings.Contains(review.HTML, "Approve") || strings.Contains(review.HTML, "Reject") {
 		t.Fatalf("review notice must not carry approve or reject links:\n%s", review.HTML)
+	}
+}
+
+func TestNotifyProgramSubmitted_EveryReviewInboxGetsACopy(t *testing.T) {
+	f := newFixture()
+	f.n.reviewInboxes = []string{testReviewInbox, "second-review@linuxfoundation.org"}
+
+	f.n.NotifyProgramSubmitted(context.Background(), "p1", "")
+
+	sent := byRecipient(f.wait(t))
+	if len(sent) != 2 {
+		t.Fatalf("sent = %+v, want one notice per review inbox", sent)
+	}
+	for _, to := range f.n.reviewInboxes {
+		if sent[to].Subject != "Mentorship program submitted for review: Kernel <Dev>" {
+			t.Fatalf("%s subject = %q", to, sent[to].Subject)
+		}
 	}
 }
 

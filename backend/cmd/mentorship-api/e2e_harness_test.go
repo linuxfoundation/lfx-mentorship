@@ -167,7 +167,7 @@ func startEnvironment(ctx context.Context, dsn string) (*environment, func(), er
 			RelayRetryDelay: time.Second, RelayMaxAttempts: 3,
 		},
 		Indexer:      IndexerConfig{ServiceToken: "e2e-indexer-token", RetryDelay: time.Second, MaxAttempts: 3},
-		Email:        EmailConfig{PublicSiteURL: e2eSiteURL, SelfServeURL: e2eSelfServeURL, HRInbox: e2eHRInbox, ReviewInbox: e2eReviewInbox},
+		Email:        EmailConfig{PublicSiteURL: e2eSiteURL, SelfServeURL: e2eSelfServeURL, HRInbox: e2eHRInbox, ReviewInboxes: []string{e2eReviewInbox}},
 		Crowdfunding: CrowdfundingConfig{BaseURL: crowdfunding.URL, Timeout: 5 * time.Second},
 		Storage: StorageConfig{
 			Region:      "us-east-1",

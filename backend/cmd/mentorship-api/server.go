@@ -141,7 +141,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			PublicSiteURL: cfg.Email.PublicSiteURL,
 			SelfServeURL:  cfg.Email.SelfServeURL,
 			HRInbox:       cfg.Email.HRInbox,
-			ReviewInbox:   cfg.Email.ReviewInbox,
+			ReviewInboxes: cfg.Email.ReviewInboxes,
 
 			AllowedRecipients: cfg.Email.AllowedRecipients,
 		}, logger)

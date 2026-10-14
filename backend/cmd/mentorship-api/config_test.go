@@ -34,6 +34,9 @@ func TestLoadEmailConfig(t *testing.T) {
 		"display-name hr inbox":       {nats: true, override: map[string]string{"EMAIL_HR_INBOX": "HR <hr@linuxfoundation.org>"}, wantErr: "EMAIL_HR_INBOX"},
 		"missing review inbox":        {nats: true, override: map[string]string{"EMAIL_REVIEW_INBOX": ""}, wantErr: "EMAIL_REVIEW_INBOX"},
 		"invalid review inbox":        {nats: true, override: map[string]string{"EMAIL_REVIEW_INBOX": "review"}, wantErr: "EMAIL_REVIEW_INBOX"},
+		"review inbox list":           {nats: true, override: map[string]string{"EMAIL_REVIEW_INBOX": " a@linuxfoundation.org, b@contractor.linuxfoundation.org ,"}},
+		"review list with bad entry":  {nats: true, override: map[string]string{"EMAIL_REVIEW_INBOX": "a@linuxfoundation.org,review"}, wantErr: "EMAIL_REVIEW_INBOX"},
+		"comma-only review inbox":     {nats: true, override: map[string]string{"EMAIL_REVIEW_INBOX": " , "}, wantErr: "EMAIL_REVIEW_INBOX"},
 		"allowed recipients":          {nats: true, override: map[string]string{"EMAIL_ALLOWED_RECIPIENTS": " a@linuxfoundation.org, b@contractor.linuxfoundation.org ,"}},
 		"invalid allowed recipient":   {nats: true, override: map[string]string{"EMAIL_ALLOWED_RECIPIENTS": "a@linuxfoundation.org,not-an-address"}, wantErr: "EMAIL_ALLOWED_RECIPIENTS"},
 		"comma-only recipients":       {nats: true, override: map[string]string{"EMAIL_ALLOWED_RECIPIENTS": " , "}, wantErr: "EMAIL_ALLOWED_RECIPIENTS"},
@@ -59,8 +62,12 @@ func TestLoadEmailConfig(t *testing.T) {
 			if tc.nats && cfg.PublicSiteURL != "https://mentorship.example.org" {
 				t.Fatalf("PublicSiteURL = %q, want trailing slash trimmed", cfg.PublicSiteURL)
 			}
-			if tc.nats && cfg.ReviewInbox != "review@linuxfoundation.org" {
-				t.Fatalf("ReviewInbox = %q", cfg.ReviewInbox)
+			wantReview := []string{"review@linuxfoundation.org"}
+			if name == "review inbox list" {
+				wantReview = []string{"a@linuxfoundation.org", "b@contractor.linuxfoundation.org"}
+			}
+			if tc.nats && !slices.Equal(cfg.ReviewInboxes, wantReview) {
+				t.Fatalf("ReviewInboxes = %q, want %q", cfg.ReviewInboxes, wantReview)
 			}
 			if want := []string{"a@linuxfoundation.org", "b@contractor.linuxfoundation.org"}; name == "allowed recipients" && !slices.Equal(cfg.AllowedRecipients, want) {
 				t.Fatalf("AllowedRecipients = %q, want %q", cfg.AllowedRecipients, want)

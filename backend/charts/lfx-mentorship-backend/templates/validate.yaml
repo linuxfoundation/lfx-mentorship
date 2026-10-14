@@ -96,8 +96,8 @@ valueFrom is resolved at runtime, so it counts as set without a format check. */
 {{- if not (or (hasKey $emailFromRef "EMAIL_HR_INBOX") (regexMatch "^[^@\\s<>]+@[^@\\s<>]+$" (get $email "EMAIL_HR_INBOX"))) }}
 {{- fail "values.yaml: EMAIL_HR_INBOX must be an email address (in config: or env:) when FGA_NATS_URL is set — every mentee acceptance is sent to it." }}
 {{- end }}
-{{- if not (or (hasKey $emailFromRef "EMAIL_REVIEW_INBOX") (regexMatch "^[^@\\s<>]+@[^@\\s<>]+$" (get $email "EMAIL_REVIEW_INBOX"))) }}
-{{- fail "values.yaml: EMAIL_REVIEW_INBOX must be an email address (in config: or env:) when FGA_NATS_URL is set — every program submitted for review is sent to it." }}
+{{- if not (or (hasKey $emailFromRef "EMAIL_REVIEW_INBOX") (regexMatch "^[^@\\s<>,]+@[^@\\s<>,]+(\\s*,\\s*[^@\\s<>,]+@[^@\\s<>,]+)*$" (get $email "EMAIL_REVIEW_INBOX"))) }}
+{{- fail "values.yaml: EMAIL_REVIEW_INBOX must be one or more comma-separated email addresses (in config: or env:) when FGA_NATS_URL is set — every program submitted for review is sent to each." }}
 {{- end }}
 {{- end }}
 
