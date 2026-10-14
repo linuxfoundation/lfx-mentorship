@@ -10,17 +10,18 @@ Proposal-level plan, modeled on the Crowdfunding cutover ([lfx-crowdfunding/back
 
 ## Development migration
 
-The schema is a single migration, `backend/db/migrations/001_initial.up.sql`,
-which the Helm migration hook applies; `001_initial.down.sql` drops the
-Mentorship schema. Every environment records version 1 in
-`public.schema_migrations`; a database recording any other version predates
-this schema and is reset rather than forced.
+The schema starts from `backend/db/migrations/001_initial.up.sql`; the Helm
+migration hook applies it and every later numbered migration, and
+`001_initial.down.sql` drops the Mentorship schema. **An applied migration is
+never edited**: prod applied `001` on 2026-10-09, and the hook skips any
+version a database has already recorded in `public.schema_migrations`, so an
+in-place edit never reaches it. Every schema change is a new numbered file.
 
 A schema reset is only for disposable databases; do not use it
 against an environment with data. For a reset, export the database, drop the
 Mentorship schema (`001_initial.down.sql`), clear the tracking table
 (`DROP TABLE public.schema_migrations;`, otherwise `cmd/migrate` still sees
-version 1 and recreates nothing), run `cmd/migrate`, and re-import through the
+the recorded version and recreates nothing), run `cmd/migrate`, and re-import through the
 migration scripts.
 
 ## Data volume & risk
