@@ -41,7 +41,7 @@ func TestE2EProgramTerms(t *testing.T) {
 	t.Run("create validation", func(t *testing.T) {
 		admin.call(t, http.MethodPost, base, termBody(" ", 30, 40, 50, 90)).expect(http.StatusBadRequest)
 		admin.call(t, http.MethodPost, base, termBody("Backwards", 30, 40, 90, 50)).expect(http.StatusBadRequest)
-		admin.call(t, http.MethodPost, base, termBody("Late window", 30, 60, 50, 90)).expect(http.StatusBadRequest)
+		admin.call(t, http.MethodPost, base, termBody("Late window", 30, 100, 50, 90)).expect(http.StatusBadRequest)
 		deleted := termBody("Deleted", 30, 40, 50, 90)
 		deleted["status"] = "deleted"
 		admin.call(t, http.MethodPost, base, deleted).expect(http.StatusBadRequest)
@@ -119,6 +119,8 @@ func TestE2EProgramTerms(t *testing.T) {
 		}
 		admin.call(t, http.MethodPatch, base+"/"+created.ID, map[string]any{"status": "closed"}).expect(http.StatusBadRequest)
 		admin.call(t, http.MethodPatch, base+"/"+created.ID, map[string]any{"end_date_time": at(45)}).expect(http.StatusBadRequest)
+		admin.mustJSON(t, http.MethodPatch, base+"/"+created.ID, map[string]any{"application_end_date": at(60)}, http.StatusOK, nil)
+		admin.call(t, http.MethodPatch, base+"/"+created.ID, map[string]any{"application_end_date": at(100)}).expect(http.StatusBadRequest)
 		admin.call(t, http.MethodPatch, base+"/00000000-0000-4000-8000-000000000000", map[string]any{"name": "x"}).expect(http.StatusNotFound)
 	})
 

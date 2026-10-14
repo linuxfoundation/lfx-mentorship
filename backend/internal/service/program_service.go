@@ -325,11 +325,8 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 		if term.Status != "" && term.Status != models.ProgramTermStatusOpen {
 			return nil, fmt.Errorf("%w: enrollment terms must be open", domain.ErrInvalidInput)
 		}
-		if term.StartDateTime == nil || term.EndDateTime == nil || !term.EndDateTime.After(*term.StartDateTime) {
-			return nil, fmt.Errorf("%w: term end date must be after start date", domain.ErrInvalidInput)
-		}
-		if term.ApplicationStartDate == nil || term.ApplicationEndDate == nil || !term.ApplicationEndDate.After(*term.ApplicationStartDate) || !term.ApplicationEndDate.Before(*term.StartDateTime) {
-			return nil, fmt.Errorf("%w: application window must end after it starts and before the term", domain.ErrInvalidInput)
+		if err := validateTermDates(term.StartDateTime, term.EndDateTime, term.ApplicationStartDate, term.ApplicationEndDate); err != nil {
+			return nil, err
 		}
 	}
 	if len(input.Prerequisites) > 0 {
