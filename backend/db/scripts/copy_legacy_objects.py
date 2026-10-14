@@ -16,13 +16,18 @@ ETL (migrate_dynamo_to_postgres.py) rewrites the file columns from.
   never a parsed URL path; the percent-decoded form is tried only when the raw
   key is not found.
 - Logos go to the public bucket, submissions to the private one. The upload
-  routes' allowlist and size caps are applied to the bytes; an object that
-  fails is copied to a quarantine/ prefix in the private bucket instead.
+  routes' allowlist and size caps are applied to the bytes — plus, for logos
+  only, legacy SVGs that carry no active content (legacy_objects.py); an
+  object that fails is copied to a quarantine/ prefix in the private bucket
+  instead.
 - The legacy tables and bucket sit in another AWS account than the new buckets,
   so the bytes are read with the legacy session and written with the default
   (v2) identity; no cross-account grant is needed.
-- Idempotent: a value whose destination (or quarantine) object already exists
-  is not copied again. The manifest is rewritten on every run.
+- Idempotent: a value whose destination object already exists is not copied
+  again. A quarantined object is re-evaluated on every run — promoted, and its
+  held copy removed, if it now passes; otherwise left as held — so that
+  widening the allowlist needs only a rerun. The manifest is rewritten on
+  every run.
 - Each distinct value is resolved once, COPY_WORKERS at a time: a copy is a few
   cross-region round trips, so one at a time runs at about three objects a
   second and the prod bucket takes most of a day.
@@ -94,13 +99,11 @@ class Copier:
         decoded = unquote(raw)
         return [raw] if decoded == raw else [raw, decoded]
 
-    def _already_done(self, file_class: str, key: str) -> dict | None:
-        if _head(self.dest, self.buckets[file_class], key):
-            return {"status": lo.COPIED, "key": key}
-        quarantine_key = lo.QUARANTINE_PREFIX[file_class] + key
-        if _head(self.dest, self.attachments, quarantine_key):
-            return {"status": lo.QUARANTINED, "key": quarantine_key}
-        return None
+    def _copied(self, file_class: str, key: str) -> bool:
+        return _head(self.dest, self.buckets[file_class], key) is not None
+
+    def _held(self, file_class: str, key: str) -> bool:
+        return _head(self.dest, self.attachments, lo.QUARANTINE_PREFIX[file_class] + key) is not None
 
     def _put(self, bucket: str, key: str, data: bytes, content_type: str, cache_control: str) -> None:
         self.dest.put_object(Bucket=bucket, Key=key, Body=data, ContentType=content_type, CacheControl=cache_control)
@@ -108,43 +111,47 @@ class Copier:
     def resolve(self, file_class: str, raw: str) -> dict:
         # The decoded key is a fallback only for a raw key absent from both sides.
         for key in self._candidates(raw):
-            done = self._already_done(file_class, key)
-            if done:
-                return done
+            if self._copied(file_class, key):
+                return {"status": lo.COPIED, "key": key}
             head = _head(self.source, self.legacy_bucket, key)
             if head:
                 break
         else:
             return {"status": lo.MISSING, "reason": "not in the legacy bucket"}
 
+        # A held object is re-evaluated on every run rather than short-circuited, so a
+        # widened allowlist (the legacy SVG allowance) promotes what an earlier run quarantined.
+        held = self._held(file_class, key)
         cap = lo.MAX_BYTES[file_class]
         if head["ContentLength"] > cap:
-            with closing(self._body(key)) as body:
-                return self._quarantine(file_class, key, body, f"{head['ContentLength']} bytes exceeds the {file_class} cap")
+            return self._quarantine(file_class, key, held, lambda: self._body(key), f"{head['ContentLength']} bytes exceeds the {file_class} cap")
         with closing(self._body(key)) as body:
             data = body.read(cap + 1)
         if len(data) > cap:  # replaced by a larger object since the HEAD
-            with closing(self._body(key)) as body:
-                return self._quarantine(file_class, key, body, f"more than {cap} bytes exceeds the {file_class} cap")
+            return self._quarantine(file_class, key, held, lambda: self._body(key), f"more than {cap} bytes exceeds the {file_class} cap")
         content_type = lo.identify(file_class, data)
         if content_type is None:
             reason = f"bytes are not an allowed {file_class} type (stored as {head.get('ContentType')})"
-            return self._quarantine(file_class, key, io.BytesIO(data), reason)
+            return self._quarantine(file_class, key, held, lambda: io.BytesIO(data), reason)
         self._put(self.buckets[file_class], key, data, content_type, lo.CACHE_CONTROL[file_class])
+        if held:
+            self.dest.delete_object(Bucket=self.attachments, Key=lo.QUARANTINE_PREFIX[file_class] + key)
         return {"status": lo.COPIED, "key": key}
 
     def _body(self, key: str):
         return self.source.get_object(Bucket=self.legacy_bucket, Key=key)["Body"]
 
-    def _quarantine(self, file_class: str, key: str, body, reason: str) -> dict:
+    def _quarantine(self, file_class: str, key: str, held: bool, open_body, reason: str) -> dict:
         quarantine_key = lo.QUARANTINE_PREFIX[file_class] + key
-        # A managed upload streams in parts, so an object of any size never sits in memory.
-        self.dest.upload_fileobj(
-            body,
-            self.attachments,
-            quarantine_key,
-            ExtraArgs={"ContentType": "application/octet-stream", "CacheControl": lo.CACHE_CONTROL[lo.SUBMISSION]},
-        )
+        if not held:
+            # A managed upload streams in parts, so an object of any size never sits in memory.
+            with closing(open_body()) as body:
+                self.dest.upload_fileobj(
+                    body,
+                    self.attachments,
+                    quarantine_key,
+                    ExtraArgs={"ContentType": "application/octet-stream", "CacheControl": lo.CACHE_CONTROL[lo.SUBMISSION]},
+                )
         return {"status": lo.QUARANTINED, "key": quarantine_key, "reason": reason}
 
 

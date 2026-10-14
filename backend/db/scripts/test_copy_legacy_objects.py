@@ -15,6 +15,7 @@ import legacy_objects as lo
 import migrate_dynamo_to_postgres as m
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+SVG = b"<?xml version='1.0'?>\n<!-- logo -->\n<svg xmlns='http://www.w3.org/2000/svg'><rect width='1' height='1'/></svg>"
 BUCKETS = {lo.LOGO: "logos", lo.SUBMISSION: "attachments"}
 CHUNK = 8 << 10
 OVERSIZED = PNG + b"\x00" * (lo.MAX_BYTES[lo.LOGO] + 1)
@@ -63,6 +64,9 @@ class FakeS3:
         self.objects[(Bucket, Key)] = b"".join(parts)
         self.puts.append((Bucket, Key, ExtraArgs["ContentType"], ExtraArgs["CacheControl"]))
 
+    def delete_object(self, Bucket, Key):
+        self.objects.pop((Bucket, Key), None)
+
     def copy_object(self, **_):
         raise AssertionError("a cross-account CopyObject must not be used")
 
@@ -79,10 +83,37 @@ def test_allowed_object_is_written_by_the_destination_identity():
     assert dest.puts == [("logos", "a.png", "image/png", lo.CACHE_CONTROL[lo.LOGO])]
 
 
+def test_inert_legacy_svg_logo_is_copied_as_svg():
+    cp, _, dest = copier({("legacy", "a.svg"): SVG})
+    assert cp.resolve(lo.LOGO, "a.svg") == {"status": lo.COPIED, "key": "a.svg"}
+    assert dest.puts == [("logos", "a.svg", "image/svg+xml", lo.CACHE_CONTROL[lo.LOGO])]
+
+
 @pytest.mark.parametrize(
     "data",
-    [b"<svg xmlns='http://www.w3.org/2000/svg'/>", OVERSIZED],
-    ids=["disallowed type", "over the cap"],
+    [
+        b"<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>",
+        b"<svg xmlns='http://www.w3.org/2000/svg' onload='alert(1)'/>",
+        b"<svg xmlns='http://www.w3.org/2000/svg'><a href='javascript:alert(1)'><rect/></a></svg>",
+        b"<svg xmlns='http://www.w3.org/2000/svg'><foreignObject><iframe/></foreignObject></svg>",
+        b"<html><body><svg/></body></html>",
+        b"\xff\xfe<\x00s\x00v\x00g\x00/\x00>\x00",
+    ],
+    ids=["script element", "handler attribute", "script url", "foreign object", "html wrapper", "utf-16"],
+)
+def test_svg_with_active_content_is_not_identified(data):
+    assert lo.identify(lo.LOGO, data) is None
+
+
+def test_svg_is_a_logo_allowance_only():
+    assert lo.identify(lo.LOGO, SVG) == "image/svg+xml"
+    assert lo.identify(lo.SUBMISSION, SVG) == "text/plain; charset=utf-8"
+
+
+@pytest.mark.parametrize(
+    "data",
+    [b"%PDF-1.7", b"<svg xmlns='http://www.w3.org/2000/svg'><script/></svg>", OVERSIZED],
+    ids=["disallowed type", "active svg", "over the cap"],
 )
 def test_failing_object_is_quarantined_in_the_private_bucket(data):
     cp, _, dest = copier({("legacy", "a.png"): data})
@@ -114,6 +145,21 @@ def test_already_copied_object_is_not_read_or_written_again():
     cp, source, dest = copier({}, {("logos", "a.png"): PNG})
     assert cp.resolve(lo.LOGO, "a.png") == {"status": lo.COPIED, "key": "a.png"}
     assert dest.puts == []
+
+
+def test_held_object_that_still_fails_is_not_uploaded_again():
+    held = {("attachments", "quarantine/logos/a.png"): OVERSIZED}
+    cp, source, dest = copier({("legacy", "a.png"): OVERSIZED}, held)
+    assert cp.resolve(lo.LOGO, "a.png")["status"] == lo.QUARANTINED
+    assert dest.puts == [] and source.bodies == []
+
+
+def test_held_object_that_now_passes_is_promoted_and_released():
+    held = {("attachments", "quarantine/logos/a.svg"): SVG}
+    cp, _, dest = copier({("legacy", "a.svg"): SVG}, held)
+    assert cp.resolve(lo.LOGO, "a.svg") == {"status": lo.COPIED, "key": "a.svg"}
+    assert dest.puts == [("logos", "a.svg", "image/svg+xml", lo.CACHE_CONTROL[lo.LOGO])]
+    assert ("attachments", "quarantine/logos/a.svg") not in dest.objects
 
 
 def test_decoded_key_is_a_fallback_and_missing_objects_are_reported():

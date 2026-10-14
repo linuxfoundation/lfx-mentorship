@@ -9,13 +9,15 @@ Legacy stored every file as an absolute URL into the world-readable uploads
 bucket. The copy script moves each referenced object into the bucket its class
 dictates and records the outcome in a copy manifest; the ETL rewrites the file
 columns from that manifest. The upload allowlists here mirror
-backend/internal/service/file_type.go and must stay in sync with it.
+backend/internal/service/file_type.go and must stay in sync with it, with one
+migration-only addition: inert legacy SVG logos (see _ALLOWED).
 """
 
 import io
 import json
 import logging
 import os
+import re
 import struct
 import zipfile
 from urllib.parse import quote
@@ -91,11 +93,32 @@ def _is_plain_text(data: bytes) -> bool:
     return True
 
 
+# An SVG root after optional BOM, whitespace, XML declaration, DOCTYPE and comments.
+_SVG_PROLOGUE = re.compile(rb"\A(?:\xef\xbb\xbf)?(?:\s+|<\?.*?\?>|<!--.*?-->|<!(?!--)[^>]*>)*<svg[\s>/]", re.IGNORECASE | re.DOTALL)
+# Script elements, handler attributes, script URLs and embedded HTML: the content the SVG exclusion keeps out.
+_SVG_ACTIVE_CONTENT = re.compile(rb"<script|\bon[a-z]+\s*=|javascript:|<foreignobject", re.IGNORECASE)
+
+
+def _is_inert_svg(data: bytes) -> bool:
+    """A UTF-8 SVG document with no active content.
+
+    Legacy logos were presigned PUTs of whatever the browser held, so the bytes are
+    checked as the upload route would, not trusted from the stored Content-Type. The
+    UTF-8 requirement keeps the byte patterns meaningful: a UTF-16 payload would slip
+    past them and still be parsed by a browser.
+    """
+    return _is_plain_text(data) and _SVG_PROLOGUE.match(data) is not None and _SVG_ACTIVE_CONTENT.search(data) is None
+
+
 # (content type, matcher) per class, in match order; text last since it has no signature.
+# SVG is a migration-only allowance: legacy logos were reviewed and certified free of
+# scripts, and quarantining them would leave many programs without a logo. The upload
+# route (file_type.go logoFileTypes) still refuses SVG, so no new one enters the system.
 _ALLOWED = {
     LOGO: (
         ("image/png", lambda d: d.startswith(b"\x89PNG\r\n\x1a\n")),
         ("image/jpeg", lambda d: d.startswith(b"\xff\xd8\xff")),
+        ("image/svg+xml", _is_inert_svg),
     ),
     SUBMISSION: (
         ("application/pdf", lambda d: d.startswith(b"%PDF-")),
