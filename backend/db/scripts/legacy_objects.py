@@ -158,6 +158,28 @@ def _svg_element_is_inert(element: ET.Element) -> bool:
     return True
 
 
+def _declares_parameter_entities(data: bytes) -> bool:
+    """Whether the document's DTD declares a parameter entity.
+
+    Expat reports the declaration but never expands the entity, so markup it wraps
+    — an <!ATTLIST svg onload ...> default, say — is absent from the tree checked
+    below yet applied by a browser. Legacy exports declare general entities only.
+    """
+    found = False
+
+    def entity_decl(name, is_parameter_entity, *_):
+        nonlocal found
+        found = found or bool(is_parameter_entity)
+
+    parser = pyexpat.ParserCreate()
+    parser.EntityDeclHandler = entity_decl
+    try:
+        parser.Parse(data, True)
+    except (pyexpat.ExpatError, LookupError, ValueError):
+        pass  # the tree parse below reports the error
+    return found
+
+
 def _is_inert_svg(data: bytes) -> bool:
     """A UTF-8 SVG document whose parsed tree carries no active content.
 
@@ -166,12 +188,15 @@ def _is_inert_svg(data: bytes) -> bool:
     check runs on the namespace-aware parse a browser sees — prefixes resolved,
     character references decoded — and refuses script elements, embedded HTML,
     event-handler attributes, script URLs anywhere, non-image data: links, animation
-    of links or handlers, and processing instructions (an xml-stylesheet can run
-    XSLT). UTF-8 is required so the parse and the browser agree on the encoding.
+    of links or handlers, processing instructions (an xml-stylesheet can run XSLT),
+    and parameter entities (the parse cannot see what they wrap). UTF-8 is required
+    so the parse and the browser agree on the encoding.
     """
     if not _is_plain_text(data):
         return False
     if not _EXPAT_BOUNDS_ENTITIES and b"<!ENTITY" in data:
+        return False
+    if _declares_parameter_entities(data):
         return False
     builder = _SVGTreeBuilder()
     parser = ET.XMLParser(target=builder)

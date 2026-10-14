@@ -14,7 +14,7 @@ ETL (migrate_dynamo_to_postgres.py) rewrites the file columns from.
   under the legacy bucket URL are left to the ETL.
 - Each object keeps its legacy key. The key is the rest of the stored string,
   never a parsed URL path; the percent-decoded form is tried only when the raw
-  key is not found.
+  key is found nowhere — not in the legacy bucket, nor already copied or held.
 - Logos go to the public bucket, submissions to the private one. The upload
   routes' allowlist and size caps are applied to the bytes — plus, for logos
   only, legacy SVGs that carry no active content (legacy_objects.py); an
@@ -110,7 +110,8 @@ class Copier:
         self.dest.put_object(Bucket=bucket, Key=key, Body=data, ContentType=content_type, CacheControl=cache_control)
 
     def resolve(self, file_class: str, raw: str) -> dict:
-        # The decoded key is a fallback only for a raw key absent from both sides.
+        # The decoded key is a fallback only for a raw key absent from the legacy bucket,
+        # the destination and quarantine alike.
         for key in self._candidates(raw):
             if self._copied(file_class, key):
                 # A promotion interrupted between its put and its release left the held copy behind.
@@ -119,6 +120,10 @@ class Copier:
             head = _head(self.source, self.legacy_bucket, key)
             if head:
                 break
+            if self._held(file_class, key):
+                # The held copy is the object this value referenced; a neighbour under the
+                # decoded key is not a substitute for it.
+                return {"status": lo.QUARANTINED, "key": lo.QUARANTINE_PREFIX[file_class] + key, "reason": "held; no longer in the legacy bucket"}
         else:
             return {"status": lo.MISSING, "reason": "not in the legacy bucket"}
 
