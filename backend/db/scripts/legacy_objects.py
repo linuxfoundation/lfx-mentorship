@@ -17,10 +17,12 @@ import io
 import json
 import logging
 import os
-import re
 import struct
+import xml.etree.ElementTree as ET
 import zipfile
 from urllib.parse import quote
+
+import pyexpat
 
 log = logging.getLogger(__name__)
 
@@ -93,21 +95,94 @@ def _is_plain_text(data: bytes) -> bool:
     return True
 
 
-# An SVG root after optional BOM, whitespace, XML declaration, DOCTYPE and comments.
-_SVG_PROLOGUE = re.compile(rb"\A(?:\xef\xbb\xbf)?(?:\s+|<\?.*?\?>|<!--.*?-->|<!(?!--)[^>]*>)*<svg[\s>/]", re.IGNORECASE | re.DOTALL)
-# Script elements, handler attributes, script URLs and embedded HTML: the content the SVG exclusion keeps out.
-_SVG_ACTIVE_CONTENT = re.compile(rb"<script|\bon[a-z]+\s*=|javascript:|<foreignobject", re.IGNORECASE)
+_SVG_NS = "http://www.w3.org/2000/svg"
+# Namespaces whose elements a browser makes active inside an SVG document.
+_ACTIVE_NAMESPACES = frozenset(
+    {
+        "http://www.w3.org/1999/xhtml",
+        "http://www.w3.org/1998/Math/MathML",
+        "http://www.w3.org/1999/XSL/Transform",
+        "http://www.mozilla.org/xbl",
+    }
+)
+# Element local names refused in any namespace, compared case-insensitively.
+_ACTIVE_ELEMENTS = frozenset({"script", "foreignobject", "iframe", "embed", "object", "handler", "listener"})
+_ANIMATION_ELEMENTS = frozenset({"set", "animate", "animatemotion", "animatetransform"})
+_SCRIPT_SCHEMES = ("javascript:", "vbscript:")
+_INERT_DATA_URLS = ("data:image/png", "data:image/jpeg", "data:image/gif", "data:image/webp")
+# Expat 2.4.1 bounds entity amplification; an older one gets no entity declarations at all.
+_EXPAT_BOUNDS_ENTITIES = pyexpat.version_info >= (2, 4, 1)
+
+
+def _local(name: str) -> tuple[str, str]:
+    """Split an ElementTree "{namespace}local" name into (namespace, lowercased local name)."""
+    if name.startswith("{"):
+        namespace, _, local = name[1:].partition("}")
+        return namespace, local.lower()
+    return "", name.lower()
+
+
+def _url(value: str) -> str:
+    # Browsers ignore whitespace and control characters inside a URL scheme.
+    return "".join(c for c in value if c > " ").lower()
+
+
+class _SVGTreeBuilder(ET.TreeBuilder):
+    """Records processing instructions anywhere in the document, which a plain TreeBuilder drops before the root."""
+
+    def __init__(self):
+        super().__init__()
+        self.processing_instructions = 0
+
+    def pi(self, target, data=None):
+        self.processing_instructions += 1
+
+
+def _svg_element_is_inert(element: ET.Element) -> bool:
+    namespace, name = _local(element.tag)
+    if namespace in _ACTIVE_NAMESPACES or name in _ACTIVE_ELEMENTS:
+        return False
+    for attribute, value in element.attrib.items():
+        _, attribute_name = _local(attribute)
+        url = _url(value)
+        if attribute_name.startswith("on") or any(scheme in url for scheme in _SCRIPT_SCHEMES):
+            return False
+        if attribute_name == "href" and url.startswith("data:") and not url.startswith(_INERT_DATA_URLS):
+            return False
+    if name in _ANIMATION_ELEMENTS:
+        target = element.get("attributeName", "").strip().lower().rpartition(":")[2]
+        if target == "href" or target.startswith("on"):
+            return False
+    if name == "style" and any(scheme in _url(element.text or "") for scheme in _SCRIPT_SCHEMES):
+        return False
+    return True
 
 
 def _is_inert_svg(data: bytes) -> bool:
-    """A UTF-8 SVG document with no active content.
+    """A UTF-8 SVG document whose parsed tree carries no active content.
 
     Legacy logos were presigned PUTs of whatever the browser held, so the bytes are
     checked as the upload route would, not trusted from the stored Content-Type. The
-    UTF-8 requirement keeps the byte patterns meaningful: a UTF-16 payload would slip
-    past them and still be parsed by a browser.
+    check runs on the namespace-aware parse a browser sees — prefixes resolved,
+    character references decoded — and refuses script elements, embedded HTML,
+    event-handler attributes, script URLs anywhere, non-image data: links, animation
+    of links or handlers, and processing instructions (an xml-stylesheet can run
+    XSLT). UTF-8 is required so the parse and the browser agree on the encoding.
     """
-    return _is_plain_text(data) and _SVG_PROLOGUE.match(data) is not None and _SVG_ACTIVE_CONTENT.search(data) is None
+    if not _is_plain_text(data):
+        return False
+    if not _EXPAT_BOUNDS_ENTITIES and b"<!ENTITY" in data:
+        return False
+    builder = _SVGTreeBuilder()
+    parser = ET.XMLParser(target=builder)
+    try:
+        parser.feed(data)
+        root = parser.close()
+    except ET.ParseError:
+        return False
+    if root.tag != f"{{{_SVG_NS}}}svg" or builder.processing_instructions:
+        return False
+    return all(_svg_element_is_inert(element) for element in root.iter())
 
 
 # (content type, matcher) per class, in match order; text last since it has no signature.

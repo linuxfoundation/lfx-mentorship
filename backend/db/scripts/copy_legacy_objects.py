@@ -24,7 +24,8 @@ ETL (migrate_dynamo_to_postgres.py) rewrites the file columns from.
   so the bytes are read with the legacy session and written with the default
   (v2) identity; no cross-account grant is needed.
 - Idempotent: a value whose destination object already exists is not copied
-  again. A quarantined object is re-evaluated on every run — promoted, and its
+  again, though a held copy an interrupted promotion left behind is removed.
+  A quarantined object is re-evaluated on every run — promoted, and its
   held copy removed, if it now passes; otherwise left as held — so that
   widening the allowlist needs only a rerun. The manifest is rewritten on
   every run.
@@ -112,6 +113,8 @@ class Copier:
         # The decoded key is a fallback only for a raw key absent from both sides.
         for key in self._candidates(raw):
             if self._copied(file_class, key):
+                # A promotion interrupted between its put and its release left the held copy behind.
+                self._release(file_class, key)
                 return {"status": lo.COPIED, "key": key}
             head = _head(self.source, self.legacy_bucket, key)
             if head:
@@ -135,8 +138,13 @@ class Copier:
             return self._quarantine(file_class, key, held, lambda: io.BytesIO(data), reason)
         self._put(self.buckets[file_class], key, data, content_type, lo.CACHE_CONTROL[file_class])
         if held:
-            self.dest.delete_object(Bucket=self.attachments, Key=lo.QUARANTINE_PREFIX[file_class] + key)
+            self._release(file_class, key)
         return {"status": lo.COPIED, "key": key}
+
+    def _release(self, file_class: str, key: str) -> None:
+        # HEAD first: a DeleteObject on a missing key still writes a delete marker in a versioned bucket.
+        if self._held(file_class, key):
+            self.dest.delete_object(Bucket=self.attachments, Key=lo.QUARANTINE_PREFIX[file_class] + key)
 
     def _body(self, key: str):
         return self.source.get_object(Bucket=self.legacy_bucket, Key=key)["Body"]
