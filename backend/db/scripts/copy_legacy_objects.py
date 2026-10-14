@@ -23,6 +23,9 @@ ETL (migrate_dynamo_to_postgres.py) rewrites the file columns from.
   (v2) identity; no cross-account grant is needed.
 - Idempotent: a value whose destination (or quarantine) object already exists
   is not copied again. The manifest is rewritten on every run.
+- Each distinct value is resolved once, COPY_WORKERS at a time: a copy is a few
+  cross-region round trips, so one at a time runs at about three objects a
+  second and the prod bucket takes most of a day.
 
 Usage
 -----
@@ -33,6 +36,7 @@ Usage
   export LEGACY_UPLOADS_BUCKET=jobspring-prod-uploads   # optional override
   export LOGOS_S3_BUCKET=... ATTACHMENTS_S3_BUCKET=...
   export COPY_MANIFEST=legacy-object-manifest.json
+  export COPY_WORKERS=16                        # concurrent copies; optional
   python3 backend/db/scripts/copy_legacy_objects.py
 
 The legacy credentials need read access to the legacy bucket and the DynamoDB
@@ -43,10 +47,12 @@ import io
 import logging
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from urllib.parse import unquote
 
 import boto3
+from botocore.config import Config
 from botocore.exceptions import ClientError
 
 import legacy_objects as lo
@@ -56,6 +62,8 @@ log = logging.getLogger(__name__)
 
 DEST_REGION = os.environ.get("AWS_REGION", "us-west-2")
 SOURCE_REGION = os.environ.get("LEGACY_UPLOADS_REGION", LEGACY_REGION)
+COPY_WORKERS = int(os.environ.get("COPY_WORKERS", "16"))
+PROGRESS_EVERY = 5000
 
 
 def _required_env(name: str) -> str:
@@ -140,14 +148,53 @@ class Copier:
         return {"status": lo.QUARANTINED, "key": quarantine_key, "reason": reason}
 
 
+def s3_clients(legacy, workers: int) -> tuple:
+    """Source and destination S3 clients with a connection per worker.
+
+    botocore pools 10 connections by default; past that, each request opens a
+    new connection and urllib3 logs a warning when returning it. The x2 covers
+    the transfer threads upload_fileobj runs on the destination client.
+    """
+    config = Config(max_pool_connections=workers * 2)
+    return legacy.client("s3", region_name=SOURCE_REGION, config=config), boto3.client("s3", region_name=DEST_REGION, config=config)
+
+
+def resolve_all(copier, prefix: str, references: list, workers: int) -> dict:
+    """Resolve each distinct (class, value) once, `workers` at a time; a failure stops the run."""
+    first_column: dict = {}
+    for column, file_class, value in references:
+        first_column.setdefault((file_class, value), column)
+
+    def resolve(key):
+        file_class, value = key
+        if value == prefix:
+            return {"status": lo.MISSING, "reason": "empty key"}
+        return copier.resolve(file_class, value[len(prefix):])
+
+    entries: dict = {}
+    log.info("Resolving %d distinct objects from %d references with %d workers ...", len(first_column), len(references), workers)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        try:
+            for key, result in zip(first_column, pool.map(resolve, first_column)):
+                entries[key] = {"class": key[0], "value": key[1], **result}
+                if result["status"] != lo.COPIED:
+                    log.warning("%s %s: %s %s", first_column[key], result["status"].upper(), key[1], result.get("reason", ""))
+                if len(entries) % PROGRESS_EVERY == 0:
+                    log.info("  %d/%d resolved", len(entries), len(first_column))
+        except BaseException:
+            pool.shutdown(cancel_futures=True)  # don't drain the queue before reporting the failure
+            raise
+    return entries
+
+
 def main() -> None:
     buckets = {lo.LOGO: _required_env("LOGOS_S3_BUCKET"), lo.SUBMISSION: _required_env("ATTACHMENTS_S3_BUCKET")}
     prefix = lo.legacy_url_prefix(LEGACY_BUCKET)
     legacy = legacy_session()
     dynamo = legacy.client("dynamodb")
-    copier = Copier(legacy.client("s3", region_name=SOURCE_REGION), boto3.client("s3", region_name=DEST_REGION), LEGACY_BUCKET, buckets)
+    copier = Copier(*s3_clients(legacy, COPY_WORKERS), LEGACY_BUCKET, buckets)
 
-    entries: dict = {}
+    references: list = []  # (column, file_class, value), in scan order
     counts: dict = {}
     for table, field, column, file_class in lo.FILE_FIELDS:
         per_column = counts.setdefault(column, {})
@@ -158,13 +205,12 @@ def main() -> None:
             if not value.startswith(prefix):
                 per_column["foreign"] = per_column.get("foreign", 0) + 1
                 continue
-            if (file_class, value) not in entries:
-                result = copier.resolve(file_class, value[len(prefix):]) if value != prefix else {"status": lo.MISSING, "reason": "empty key"}
-                entries[(file_class, value)] = {"class": file_class, "value": value, **result}
-                if result["status"] != lo.COPIED:
-                    log.warning("%s %s: %s %s", column, result["status"].upper(), value, result.get("reason", ""))
-            status = entries[(file_class, value)]["status"]
-            per_column[status] = per_column.get(status, 0) + 1
+            references.append((column, file_class, value))
+
+    entries = resolve_all(copier, prefix, references, COPY_WORKERS)
+    for column, file_class, value in references:
+        status = entries[(file_class, value)]["status"]
+        counts[column][status] = counts[column].get(status, 0) + 1
 
     lo.write_manifest(COPY_MANIFEST, prefix, buckets, sorted(entries.values(), key=lambda e: (e["class"], e["value"])))
     for column, outcomes in counts.items():

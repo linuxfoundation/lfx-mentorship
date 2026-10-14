@@ -4,7 +4,9 @@
 import hashlib
 import importlib
 import io
+import threading
 
+import boto3
 import pytest
 from botocore.exceptions import ClientError
 
@@ -164,3 +166,60 @@ def test_default_chain_fallback_is_logged(legacy_env, caplog):
     _, reload = legacy_env
     reload().legacy_session()
     assert "legacy reads use the default credential chain" in caplog.text
+
+
+PREFIX = "https://legacy.s3.amazonaws.com/"
+
+
+class ConcurrentCopier:
+    """Resolves only once `parties` calls are in flight together, so a sequential or duplicated resolution times out."""
+
+    def __init__(self, parties, failing=()):
+        self.barrier = threading.Barrier(parties, timeout=5)
+        self.failing = failing
+        self.calls = []
+
+    def resolve(self, file_class, key):
+        self.barrier.wait()
+        self.calls.append((file_class, key))
+        if key in self.failing:
+            raise ClientError({"Error": {"Code": "ExpiredToken"}}, "GetObject")
+        return {"status": lo.COPIED, "key": key}
+
+
+def test_distinct_values_are_resolved_once_and_concurrently():
+    cp = ConcurrentCopier(parties=4)
+    references = [
+        ("users.avatar_url", lo.LOGO, PREFIX + "a.png"),
+        ("user_profiles.logo_url", lo.LOGO, PREFIX + "a.png"),  # same object, referenced twice
+        ("programs.logo_url", lo.LOGO, PREFIX + "b.png"),
+        ("tasks.file", lo.SUBMISSION, PREFIX + "c.pdf"),
+        ("tasks.file", lo.SUBMISSION, PREFIX + "d.pdf"),
+    ]
+    entries = c.resolve_all(cp, PREFIX, references, workers=4)
+    assert sorted(cp.calls) == [(lo.LOGO, "a.png"), (lo.LOGO, "b.png"), (lo.SUBMISSION, "c.pdf"), (lo.SUBMISSION, "d.pdf")]
+    assert entries[(lo.LOGO, PREFIX + "a.png")] == {"class": lo.LOGO, "value": PREFIX + "a.png", "status": lo.COPIED, "key": "a.png"}
+    assert len(entries) == 4
+
+
+def test_empty_key_is_missing_and_reported_for_its_first_column(caplog):
+    cp = ConcurrentCopier(parties=1)
+    references = [("programs.logo_url", lo.LOGO, PREFIX), ("users.avatar_url", lo.LOGO, PREFIX)]
+    entries = c.resolve_all(cp, PREFIX, references, workers=2)
+    assert cp.calls == []
+    assert entries[(lo.LOGO, PREFIX)] == {"class": lo.LOGO, "value": PREFIX, "status": lo.MISSING, "reason": "empty key"}
+    assert caplog.text.count("MISSING") == 1 and "programs.logo_url MISSING" in caplog.text
+
+
+def test_a_failed_resolution_stops_the_run():
+    cp = ConcurrentCopier(parties=2, failing={"b.png"})
+    references = [("users.avatar_url", lo.LOGO, PREFIX + "a.png"), ("users.avatar_url", lo.LOGO, PREFIX + "b.png")]
+    with pytest.raises(ClientError):
+        c.resolve_all(cp, PREFIX, references, workers=2)
+
+
+def test_s3_clients_pool_enough_connections_for_every_worker():
+    source, dest = c.s3_clients(boto3.Session(region_name="us-east-1"), workers=16)
+    assert source.meta.config.max_pool_connections >= 16
+    # The quarantine path's upload_fileobj runs its own transfer threads on the destination client.
+    assert dest.meta.config.max_pool_connections >= 32
