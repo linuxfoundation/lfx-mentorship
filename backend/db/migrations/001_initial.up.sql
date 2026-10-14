@@ -80,7 +80,7 @@ CREATE TABLE IF NOT EXISTS programs (
   id                   UUID         PRIMARY KEY,
   name                 TEXT         NOT NULL,
   slug                 TEXT         NOT NULL UNIQUE,
-  status               VARCHAR(20)  NOT NULL DEFAULT 'pending',  -- pending | published | rejected | archived | hidden
+  status               VARCHAR(20)  NOT NULL DEFAULT 'pending',  -- pending | submitted | published | rejected | archived | hidden
   is_paid              BOOLEAN      NOT NULL DEFAULT false,        -- stipend paid to mentees
   description          TEXT,
   logo_url             TEXT,
@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS programs (
   lf_project_slug      TEXT,
   lf_project_name      TEXT,
   lf_project_logo_url  TEXT,
-  CONSTRAINT programs_status_check CHECK (status IN ('pending', 'published', 'rejected', 'archived', 'hidden'))
+  CONSTRAINT programs_status_check CHECK (status IN ('pending', 'submitted', 'published', 'rejected', 'archived', 'hidden'))
 );
 
 -- ============================================
@@ -165,13 +165,13 @@ CREATE TABLE IF NOT EXISTS program_members (
   program_id  UUID         NOT NULL REFERENCES programs(id) ON DELETE CASCADE,
   user_id     UUID         NOT NULL REFERENCES users(id),
   member_type VARCHAR(20)  NOT NULL,                       -- program_admin | mentor
-  status      VARCHAR(20),                                 -- invited | requested | pending | approved | declined | withdrawn
+  status      VARCHAR(20),                                 -- invited | requested | pending | active | declined | withdrawn
   email       TEXT,
   created_on  TIMESTAMPTZ  DEFAULT NOW(),
   updated_on  TIMESTAMPTZ  DEFAULT NOW(),
   UNIQUE (program_id, user_id, member_type),
   CONSTRAINT program_members_type_check   CHECK (member_type IN ('program_admin', 'mentor')),
-  CONSTRAINT program_members_status_check CHECK (status IS NULL OR status IN ('invited', 'requested', 'pending', 'approved', 'declined', 'withdrawn'))
+  CONSTRAINT program_members_status_check CHECK (status IS NULL OR status IN ('invited', 'requested', 'pending', 'active', 'declined', 'withdrawn'))
 );
 
 -- ============================================
