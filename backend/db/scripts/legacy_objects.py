@@ -178,7 +178,7 @@ def _is_inert_svg(data: bytes) -> bool:
     try:
         parser.feed(data)
         root = parser.close()
-    except ET.ParseError:
+    except (ET.ParseError, LookupError, ValueError):
         return False
     if root.tag != f"{{{_SVG_NS}}}svg" or builder.processing_instructions:
         return False
