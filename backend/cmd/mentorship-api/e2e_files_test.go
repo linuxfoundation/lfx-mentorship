@@ -67,6 +67,25 @@ func TestE2EProgramLogoFiles(t *testing.T) {
 	})
 
 	anonymous().call(t, http.MethodGet, logoPath+"/logo-download", nil).expect(http.StatusNotFound)
+	t.Run("a migrated svg is served as stored", func(t *testing.T) {
+		// The migration copy writes legacy SVG logos that carry no active content; nothing else does.
+		svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg"><rect width="1" height="1"/></svg>`)
+		const key = "legacy-logo.svg"
+		if _, err := e2e.s3.PutObject(e2eLogosBucket, key, map[string]string{"Content-Type": "image/svg+xml"}, bytes.NewReader(svg), int64(len(svg)), nil); err != nil {
+			t.Fatalf("put migrated svg: %v", err)
+		}
+		dbExec(t, "UPDATE programs SET logo_url = $2 WHERE id = $1", p.ID, e2eCDNPrefix+"/"+key)
+		res := anonymous().call(t, http.MethodGet, logoPath+"/logo-download", nil).expect(http.StatusOK)
+		if !bytes.Equal(res.Body, svg) || res.Header.Get("Content-Type") != "image/svg+xml" {
+			t.Fatalf("download: %d bytes, headers %v", len(res.Body), res.Header)
+		}
+		// Undo directly: the row was set outside the file routes, so nothing queued the object.
+		dbExec(t, "UPDATE programs SET logo_url = NULL WHERE id = $1", p.ID)
+		if _, err := e2e.s3.DeleteObject(e2eLogosBucket, key); err != nil {
+			t.Fatalf("delete migrated svg: %v", err)
+		}
+	})
+
 	uploadLogo(t, admin, p.ID).expect(http.StatusCreated)
 	if keys := s3Keys(t, e2eLogosBucket); len(keys) != 1 {
 		t.Fatalf("logos bucket: %v", keys)

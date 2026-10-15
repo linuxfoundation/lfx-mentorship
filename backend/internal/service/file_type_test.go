@@ -65,6 +65,7 @@ func TestIdentifyFileType(t *testing.T) {
 		{"png logo", []byte("\x89PNG\r\n\x1a\nrest"), logoFileTypes, "image/png"},
 		{"jpeg logo", []byte("\xff\xd8\xff\xe0rest"), logoFileTypes, "image/jpeg"},
 		{"svg logo rejected", []byte(`<svg xmlns="http://www.w3.org/2000/svg"><script/></svg>`), logoFileTypes, ""},
+		{"svg rejected even where stored", []byte(`<svg xmlns="http://www.w3.org/2000/svg"/>`), storedLogoFileTypes, ""},
 		{"pdf as logo rejected", []byte("%PDF-1.7"), logoFileTypes, ""},
 		{"pdf", []byte("%PDF-1.7\n\x00\x01"), taskFileTypes, "application/pdf"},
 		{"doc", compoundFileWith(compoundEntry{"\x05SummaryInformation", 2}, compoundEntry{"WordDocument", 2}), taskFileTypes, "application/msword"},

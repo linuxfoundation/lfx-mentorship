@@ -28,12 +28,18 @@ var (
 	fileTypeDOC  = fileType{"application/msword", ".doc", isDOC}
 	fileTypeDOCX = fileType{"application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".docx", isDOCX}
 	fileTypeText = fileType{"text/plain; charset=utf-8", ".txt", isPlainText}
+	// SVG is never identified from an upload: served from S3 it is executable content, a
+	// stored-XSS vector. Only the migration copy writes it, for legacy logos certified free
+	// of active content (db/scripts/legacy_objects.py), so it exists here to be served as stored.
+	fileTypeSVG = fileType{"image/svg+xml", ".svg", neverUploaded}
 
-	// SVG is excluded: served from S3 it is executable content, a stored-XSS vector.
+	// logoFileTypes is the upload allowlist; SVG is excluded.
 	logoFileTypes = []fileType{fileTypePNG, fileTypeJPEG}
+	// storedLogoFileTypes is what a logo object may carry: the allowlist plus migrated legacy SVGs.
+	storedLogoFileTypes = []fileType{fileTypePNG, fileTypeJPEG, fileTypeSVG}
 	// Text is last: it has no signature, so it must not shadow the others.
 	taskFileTypes = []fileType{fileTypePDF, fileTypeDOC, fileTypeDOCX, fileTypeText}
-	allFileTypes  = []fileType{fileTypePNG, fileTypeJPEG, fileTypePDF, fileTypeDOC, fileTypeDOCX, fileTypeText}
+	allFileTypes  = []fileType{fileTypePNG, fileTypeJPEG, fileTypeSVG, fileTypePDF, fileTypeDOC, fileTypeDOCX, fileTypeText}
 )
 
 const (
@@ -77,6 +83,9 @@ func isDOC(data []byte) bool {
 func hasPrefix(signature string) func([]byte) bool {
 	return func(data []byte) bool { return bytes.HasPrefix(data, []byte(signature)) }
 }
+
+// neverUploaded keeps a type out of every upload, whichever allowlist it is placed in.
+func neverUploaded([]byte) bool { return false }
 
 // isDOCX checks the archive structure, since the ZIP signature alone is shared by many formats.
 func isDOCX(data []byte) bool {

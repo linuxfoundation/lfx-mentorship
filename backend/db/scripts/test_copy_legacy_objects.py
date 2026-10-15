@@ -5,6 +5,7 @@ import hashlib
 import importlib
 import io
 import threading
+import time
 
 import boto3
 import pytest
@@ -15,6 +16,7 @@ import legacy_objects as lo
 import migrate_dynamo_to_postgres as m
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+SVG = b"<?xml version='1.0'?>\n<!-- logo -->\n<svg xmlns='http://www.w3.org/2000/svg'><rect width='1' height='1'/></svg>"
 BUCKETS = {lo.LOGO: "logos", lo.SUBMISSION: "attachments"}
 CHUNK = 8 << 10
 OVERSIZED = PNG + b"\x00" * (lo.MAX_BYTES[lo.LOGO] + 1)
@@ -63,6 +65,9 @@ class FakeS3:
         self.objects[(Bucket, Key)] = b"".join(parts)
         self.puts.append((Bucket, Key, ExtraArgs["ContentType"], ExtraArgs["CacheControl"]))
 
+    def delete_object(self, Bucket, Key):
+        self.objects.pop((Bucket, Key), None)
+
     def copy_object(self, **_):
         raise AssertionError("a cross-account CopyObject must not be used")
 
@@ -79,10 +84,110 @@ def test_allowed_object_is_written_by_the_destination_identity():
     assert dest.puts == [("logos", "a.png", "image/png", lo.CACHE_CONTROL[lo.LOGO])]
 
 
+def test_inert_legacy_svg_logo_is_copied_as_svg():
+    cp, _, dest = copier({("legacy", "a.svg"): SVG})
+    assert cp.resolve(lo.LOGO, "a.svg") == {"status": lo.COPIED, "key": "a.svg"}
+    assert dest.puts == [("logos", "a.svg", "image/svg+xml", lo.CACHE_CONTROL[lo.LOGO])]
+
+
+SVG_OPEN = b"<svg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink'>"
+
+
 @pytest.mark.parametrize(
     "data",
-    [b"<svg xmlns='http://www.w3.org/2000/svg'/>", OVERSIZED],
-    ids=["disallowed type", "over the cap"],
+    [
+        SVG_OPEN + b"<script>alert(1)</script></svg>",
+        b"<svg xmlns='http://www.w3.org/2000/svg' onload='alert(1)'/>",
+        SVG_OPEN + b"<a href='javascript:alert(1)'><rect/></a></svg>",
+        SVG_OPEN + b"<foreignObject><iframe/></foreignObject></svg>",
+        b"<html><body><svg/></body></html>",
+        b"\xff\xfe<\x00s\x00v\x00g\x00/\x00>\x00",
+        SVG_OPEN + b"<x:script xmlns:x='http://www.w3.org/2000/svg'>alert(1)</x:script></svg>",
+        SVG_OPEN + b"<a href='jav&#x61;script:alert(1)'><rect/></a></svg>",
+        SVG_OPEN + b"<a xlink:href=' java\tscript:alert(1)'><rect/></a></svg>",
+        SVG_OPEN + b"<g xml:base='javascript:alert(1)//'><a href='x'><rect/></a></g></svg>",
+        SVG_OPEN + b"<h:div xmlns:h='http://www.w3.org/1999/xhtml'/></svg>",
+        SVG_OPEN + b"<a><animate attributeName='href' values='https://x'/><rect/></a></svg>",
+        SVG_OPEN + b"<set attributeName='onmouseover' to='alert(1)'/></svg>",
+        SVG_OPEN + b"<a href='data:text/html,&lt;script&gt;alert(1)&lt;/script&gt;'><rect/></a></svg>",
+        b"<?xml-stylesheet type='text/xsl' href='#x'?>" + SVG_OPEN + b"</svg>",
+        SVG_OPEN + b"<style>@import 'javascript:alert(1)';</style></svg>",
+        b"<!DOCTYPE svg [<!ENTITY e SYSTEM 'file:///etc/passwd'>]>" + SVG_OPEN + b"<text>&e;</text></svg>",
+        b"<!DOCTYPE svg [<!ENTITY % d \"<!ATTLIST svg onload CDATA 'alert(document.domain)'>\">%d;]>" + SVG_OPEN + b"</svg>",
+        b"<!DOCTYPE svg [<!ENTITY\n%\td SYSTEM 'https://x/evil.dtd'>%d;]>" + SVG_OPEN + b"</svg>",
+        b"<svg><rect/></svg>",
+    ],
+    ids=[
+        "script element",
+        "handler attribute",
+        "script url",
+        "foreign object",
+        "html wrapper",
+        "utf-16",
+        "prefixed script",
+        "encoded script url",
+        "whitespace in scheme",
+        "script base url",
+        "xhtml element",
+        "animated link",
+        "animated handler",
+        "html data url",
+        "stylesheet instruction",
+        "script url in style",
+        "external entity",
+        "parameter entity hiding a handler",
+        "external parameter entity",
+        "no svg namespace",
+    ],
+)
+def test_svg_with_active_content_is_not_identified(data):
+    assert lo.identify(lo.LOGO, data) is None
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        b'\xef\xbb\xbf<?xml version="1.0" encoding="UTF-8"?>\n<!-- Generator: Adobe Illustrator -->\n'
+        b'<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd" ['
+        b'<!ENTITY ns_extend "http://ns.adobe.com/Extensibility/1.0/">]>'
+        b'<svg xmlns="http://www.w3.org/2000/svg" xmlns:x="&ns_extend;" opacity="1"><x:pgf/><rect/></svg>',
+        b'<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" '
+        b'xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd" sodipodi:docname="logo.svg">'
+        b'<sodipodi:namedview inkscape:zoom="1"/><metadata><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"/></metadata>'
+        b'<style>.a{fill:#003764}</style><path class="a" d="M0 0h1v1z"/></svg>',
+        SVG_OPEN + b"<defs><linearGradient id='g'/></defs><use xlink:href='#g'/>"
+        b"<image href='data:image/png;base64,iVBORw0KGgo='/><a href='https://lfx.linuxfoundation.org'><rect/></a></svg>",
+    ],
+    ids=["illustrator export", "inkscape export", "links and embedded raster"],
+)
+def test_real_world_svg_logo_is_identified(data):
+    assert lo.identify(lo.LOGO, data) == "image/svg+xml"
+
+
+def test_whitespace_before_a_non_svg_root_is_rejected_in_linear_time():
+    started = time.monotonic()
+    assert lo.identify(lo.LOGO, b" " * (lo.MAX_BYTES[lo.LOGO] // 2) + b"<html/>") is None
+    assert time.monotonic() - started < 1
+
+
+def test_entity_expansion_is_rejected():
+    # Ten levels of tenfold expansion: 10 GB from a few hundred bytes.
+    entities = b"<!ENTITY a0 'aaaaaaaaaa'>" + b"".join(b"<!ENTITY a%d '%s'>" % (i, b"&a%d;" % (i - 1) * 10) for i in range(1, 10))
+    bomb = b"<!DOCTYPE svg [" + entities + b"]>" + SVG_OPEN + b"<text>&a9;</text></svg>"
+    started = time.monotonic()
+    assert lo.identify(lo.LOGO, bomb) is None
+    assert time.monotonic() - started < 5
+
+
+def test_svg_is_a_logo_allowance_only():
+    assert lo.identify(lo.LOGO, SVG) == "image/svg+xml"
+    assert lo.identify(lo.SUBMISSION, SVG) == "text/plain; charset=utf-8"
+
+
+@pytest.mark.parametrize(
+    "data",
+    [b"%PDF-1.7", b"<svg xmlns='http://www.w3.org/2000/svg'><script/></svg>", OVERSIZED],
+    ids=["disallowed type", "active svg", "over the cap"],
 )
 def test_failing_object_is_quarantined_in_the_private_bucket(data):
     cp, _, dest = copier({("legacy", "a.png"): data})
@@ -116,10 +221,42 @@ def test_already_copied_object_is_not_read_or_written_again():
     assert dest.puts == []
 
 
+def test_held_object_that_still_fails_is_not_uploaded_again():
+    held = {("attachments", "quarantine/logos/a.png"): OVERSIZED}
+    cp, source, dest = copier({("legacy", "a.png"): OVERSIZED}, held)
+    assert cp.resolve(lo.LOGO, "a.png")["status"] == lo.QUARANTINED
+    assert dest.puts == [] and source.bodies == []
+
+
+def test_held_object_that_now_passes_is_promoted_and_released():
+    held = {("attachments", "quarantine/logos/a.svg"): SVG}
+    cp, _, dest = copier({("legacy", "a.svg"): SVG}, held)
+    assert cp.resolve(lo.LOGO, "a.svg") == {"status": lo.COPIED, "key": "a.svg"}
+    assert dest.puts == [("logos", "a.svg", "image/svg+xml", lo.CACHE_CONTROL[lo.LOGO])]
+    assert ("attachments", "quarantine/logos/a.svg") not in dest.objects
+
+
+def test_interrupted_promotion_is_released_on_rerun():
+    promoted_but_held = {("logos", "a.svg"): SVG, ("attachments", "quarantine/logos/a.svg"): SVG}
+    cp, source, dest = copier({("legacy", "a.svg"): SVG}, promoted_but_held)
+    assert cp.resolve(lo.LOGO, "a.svg") == {"status": lo.COPIED, "key": "a.svg"}
+    assert ("attachments", "quarantine/logos/a.svg") not in dest.objects
+    assert dest.puts == [] and source.bodies == []
+
+
 def test_decoded_key_is_a_fallback_and_missing_objects_are_reported():
     cp, _, dest = copier({("legacy", "a b.png"): PNG})
     assert cp.resolve(lo.LOGO, "a%20b.png") == {"status": lo.COPIED, "key": "a b.png"}
     assert cp.resolve(lo.LOGO, "gone.png")["status"] == lo.MISSING
+
+
+def test_held_raw_key_is_retained_over_a_decoded_neighbour():
+    held = {("attachments", "quarantine/logos/a%20b.svg"): b"%PDF-1.7"}
+    cp, source, dest = copier({("legacy", "a b.svg"): SVG}, held)
+    got = cp.resolve(lo.LOGO, "a%20b.svg")
+    assert (got["status"], got["key"]) == (lo.QUARANTINED, "quarantine/logos/a%20b.svg")
+    assert dest.puts == [] and source.bodies == []
+    assert ("logos", "a b.svg") not in dest.objects
 
 
 @pytest.fixture

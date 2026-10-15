@@ -210,7 +210,8 @@ python copy_legacy_objects.py 2>&1 | tee /work/copy.log
 ```
 
 - It ends with per-column counts (`copied`, `quarantined`, `missing`, `foreign`) and `Wrote N manifest entries`.
-- Every `QUARANTINED` or `MISSING` line is logged; keep the list for review.
+- Every `QUARANTINED` or `MISSING` line is logged; keep the list for review. Expect `QUARANTINED` logos to be oversized images or SVGs carrying active content only: script-free legacy SVG logos are copied, not quarantined ([03 §S3 objects](./03-migration-plan.md#migration-specific-tasks)).
+- A rerun re-evaluates every quarantined object. If an earlier run of the script quarantined legacy SVG logos (before the SVG allowance), rerunning it promotes them into the logos bucket and removes their held copies; the ETL then rewrites their URLs from the fresh manifest.
 - If the legacy credentials expire partway: refresh the secret (Phase 2, step 1), recreate the pod and re-run the setup check (Phase 2, step 4), then re-run the copy. The pod reads the secret only when it starts, and `/work` is lost with it, so expect the copy to start over; files already copied are skipped.
 
 ## Phase 4: cutover run (inside the freeze)

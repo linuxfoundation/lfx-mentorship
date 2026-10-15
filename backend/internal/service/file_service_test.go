@@ -300,9 +300,20 @@ func TestFileService_DownloadProgramLogo(t *testing.T) {
 		}
 	})
 
-	t.Run("non-image is served inert", func(t *testing.T) {
+	t.Run("legacy svg is served as stored", func(t *testing.T) {
 		d := &fileSvcDeps{logos: &fakeObjectStore{object: storedObject("image/svg+xml", "public, max-age=86400")}}
 		obj, err := d.build().DownloadProgramLogo(context.Background(), &models.Program{LogoURL: ptr(cdnPrefix + "/abc-logo.svg")}, "")
+		if err != nil {
+			t.Fatalf("DownloadProgramLogo: %v", err)
+		}
+		if obj.ContentType != "image/svg+xml" {
+			t.Fatalf("content type = %q; want image/svg+xml", obj.ContentType)
+		}
+	})
+
+	t.Run("non-image is served inert", func(t *testing.T) {
+		d := &fileSvcDeps{logos: &fakeObjectStore{object: storedObject("text/html", "public, max-age=86400")}}
+		obj, err := d.build().DownloadProgramLogo(context.Background(), &models.Program{LogoURL: ptr(cdnPrefix + "/abc-logo.html")}, "")
 		if err != nil {
 			t.Fatalf("DownloadProgramLogo: %v", err)
 		}

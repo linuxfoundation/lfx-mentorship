@@ -289,8 +289,9 @@ func (s *FileService) getLogo(ctx context.Context, stored *string, byteRange str
 	if err != nil {
 		return nil, err
 	}
-	// Anything but an allowlisted image is served inert, so a legacy SVG never renders on the API origin.
-	if t, known := fileTypeByContentType(obj.ContentType); !known || !t.in(logoFileTypes) {
+	// Anything but a stored logo type is served inert. A migrated legacy SVG is served as
+	// stored: the copy admitted only those free of active content, and no new SVG is accepted.
+	if t, known := fileTypeByContentType(obj.ContentType); !known || !t.in(storedLogoFileTypes) {
 		obj.ContentType = octetStream
 	}
 	if obj.CacheControl == "" {
