@@ -21,7 +21,8 @@ Source → Target mapping
   jobspring-prod-program-terms        → program_terms
   jobspring-prod-project-members      → program_members
   jobspring-prod-program-term-mentees → applications     (full lifecycle;
-                                        graduated|hold map directly)
+                                        graduated maps directly,
+                                        hold maps to accepted)
   jobspring-prod-tasks                → tasks
                                         (application_id resolved via
                                         (program_term_id, assignee_id) lookup)
@@ -34,12 +35,19 @@ Key notes
 - The enrollments table no longer exists; applications now covers the full mentee
   lifecycle (pending → accepted → graduated|withdrawn).
 - attendance_type is not captured in DynamoDB; it is migrated as NULL.
-- DynamoDB member status "approved" maps to program_members.status "active".
-- jobspring never wrote userId on a program creator's maintainer row (or on
-  some mentor rows). A member row without userId is matched to its user at
-  import time: the one user with that email (case-insensitive); for maintainer
-  rows only, a shared email settled by the program's lfid (its creator); then
-  an explicit MEMBER_USER_OVERRIDES entry. No placeholder users are created;
+- DynamoDB member status "approved" is kept as program_members.status "approved";
+  "accepted" and "active" map onto it.
+- Legacy program statuses draft, pending and submitted all import as programs.status
+  "pending": the target has no draft state, so an approver triages every one of them.
+  A legacy draft is therefore indistinguishable from a submitted program after import.
+- jobspring wrote some member rows with only an email (a program creator's
+  maintainer row, some mentor rows) and some with only a userId. Every member
+  row is matched to its user by email first: the one user with that email
+  (case-insensitive); for maintainer rows only, a shared email settled by the
+  program's lfid (its creator). A row whose email settles nothing keeps its own
+  userId, and takes that user's email when it has none; then an explicit
+  MEMBER_USER_OVERRIDES entry. An email match replaces a different legacy
+  userId (logged as MEMBER_USER_FROM_EMAIL). No placeholder users are created;
   rows that still have no user are logged as UNRESOLVED_MEMBER_USER and skipped.
 - DynamoDB mentee status "approved" (and "active") maps to applications.status
   "accepted" — applications.status has no "active" value.
@@ -84,10 +92,12 @@ Usage
   export LOGOS_S3_BUCKET=... ATTACHMENTS_S3_BUCKET=...   # must match the manifest
   export NATS_URL=nats://...   # platform NATS, to verify project parents; unset leaves programs unmapped
   export MEMBER_USER_OVERRIDES=overrides.csv   # optional: member_id,user_id for rows matching cannot settle
+  export USER_FIXES=user-fixes.sql   # optional: SQL fixing users whose duplicate email or LFID was cleared
 
   pip install boto3 psycopg2-binary nats-py
   python3 backend/db/scripts/copy_legacy_objects.py
-  python3 backend/db/scripts/migrate_dynamo_to_postgres.py
+  python3 backend/db/scripts/migrate_dynamo_to_postgres.py            # final run: stops on a file missing from the manifest
+  python3 backend/db/scripts/migrate_dynamo_to_postgres.py --test-run # legacy still live: such a file is nulled (MANIFEST_MISS)
 """
 
 import csv
@@ -138,6 +148,7 @@ LOGOS_S3_BUCKET = os.environ.get("LOGOS_S3_BUCKET", "").strip()
 ATTACHMENTS_S3_BUCKET = os.environ.get("ATTACHMENTS_S3_BUCKET", "").strip()
 NATS_URL = os.environ.get("NATS_URL", "").strip()
 MEMBER_USER_OVERRIDES = os.environ.get("MEMBER_USER_OVERRIDES", "").strip()
+USER_FIXES = os.environ.get("USER_FIXES", "").strip()
 
 # Stable UUID namespace — must not change between runs to keep IDs deterministic.
 _UUID_NS = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
@@ -348,6 +359,88 @@ def _to_jsonb(value) -> str | None:
     return json.dumps(value, default=_default).replace("\\u0000", "")
 
 
+def _due_date(value) -> str | None:
+    """Return a YYYY-MM-DD due date (the tasks_due_date_check format), or None if it does not parse."""
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw, "%Y-%m-%d").date().isoformat()
+    except ValueError:
+        return None
+
+
+_PREREQUISITE = "prerequisite"
+_NON_PREREQUISITE = "non_prerequisite"
+# Legacy jobspring wrote "nonPrerequisite"; only the dev-data repair rewrote it to snake case.
+_TASK_CATEGORIES = {_PREREQUISITE: _PREREQUISITE, _NON_PREREQUISITE: _NON_PREREQUISITE, "nonPrerequisite": _NON_PREREQUISITE}
+
+
+def _task_category(value) -> str | None:
+    """Map a legacy task category to tasks.category, or None if it is not one."""
+    return _TASK_CATEGORIES.get(str(value or "").strip())
+
+
+# Legacy jobspring wrote "inProgress" and "completed"; only the dev-data repair rewrote them.
+_TASK_STATUSES = {
+    "incomplete": "incomplete",
+    "inprogress": "in_progress",
+    "in_progress": "in_progress",
+    "submitted": "submitted",
+    "completed": "complete",
+    "complete": "complete",
+}
+
+
+def _task_status(value) -> str:
+    """Map a legacy task status to tasks.status; anything else (e.g. "pending") is incomplete."""
+    return _TASK_STATUSES.get(str(value or "").strip().lower(), "incomplete")
+
+
+_SUBMIT_FILE_REQUIRED = "required"
+
+
+def _submit_file(value) -> str | None:
+    """Map a legacy submitFile to the tasks.submit_file flag: "required", or None for "" and "no-required"."""
+    return _SUBMIT_FILE_REQUIRED if str(value or "").strip() == _SUBMIT_FILE_REQUIRED else None
+
+
+def _task_submit_file(task: dict) -> str | None:
+    """Map a legacy task or task template's submitFile, forcing "required" for a built-in one.
+
+    The built-in tasks (custom "false": Resume, Cover Letter, ...) always required a file in
+    legacy, whatever their stored submitFile says.
+    """
+    if str(task.get("custom")).lower() == "false":
+        return _SUBMIT_FILE_REQUIRED
+    return _submit_file(task.get("submitFile"))
+
+
+def _task_templates(templates) -> str | None:
+    """Reduce legacy taskTemplates to the shape the API clones into prerequisite tasks.
+
+    Legacy stored whole Task objects, with submitFile "" for no upload, and also appended
+    mentors' non-prerequisite tasks; programs.task_templates holds only named prerequisites as
+    {name, description, submitFile: "required" | null, dueDate, custom}.
+    """
+    if not isinstance(templates, list):
+        return None
+    reduced = [
+        {
+            "name": str(t.get("name") or "").strip(),
+            "description": str(t.get("description") or "").strip() or None,
+            "submitFile": _task_submit_file(t),
+            "dueDate": _due_date(t.get("dueDate")),
+            "custom": _as_bool(t.get("custom")),
+        }
+        for t in templates
+        if isinstance(t, dict)
+        and str(t.get("name") or "").strip()
+        and _task_category(t.get("category")) != _NON_PREREQUISITE
+    ]
+    return _to_jsonb(reduced) if reduced else None
+
+
 def _parse_ts(s) -> datetime | None:
     """Parse a DynamoDB timestamp string → tz-aware datetime, or None."""
     if not s:
@@ -398,13 +491,16 @@ def _redact_dsn(dsn: str) -> str:
 
 
 def _normalize_program_status(status: str | None) -> str:
-    """Map DynamoDB project status to Postgres programs.status."""
+    """Map DynamoDB project status to Postgres programs.status.
+
+    draft, pending and submitted all map to "pending", the only review state.
+    """
     if not status:
         return "pending"
     m = {
         "draft": "pending",
         "pending": "pending",
-        "submitted": "submitted",
+        "submitted": "pending",
         "published": "published",
         "rejected": "rejected",
         "archived": "archived",
@@ -413,10 +509,11 @@ def _normalize_program_status(status: str | None) -> str:
     return m.get(status.lower(), "pending")
 
 
-_VALID_APP_STATUSES = {"pending", "accepted", "declined", "withdrawn", "graduated", "hold"}
+_VALID_APP_STATUSES = {"pending", "accepted", "declined", "withdrawn", "graduated"}
 # DynamoDB used "approved" and "active" for an enrolled mentee; applications.status
-# has no "active" value — "accepted" is the enrolled state until graduation.
-_APP_STATUS_MAP = {"approved": "accepted", "active": "accepted"}
+# has no "active" value — "accepted" is the enrolled state until graduation. Nor has
+# it "hold", which in legacy marks a paused accepted mentorship (migration 003).
+_APP_STATUS_MAP = {"approved": "accepted", "active": "accepted", "hold": "accepted"}
 
 
 def _map_application_status(dynamo_status: str | None) -> str:
@@ -424,6 +521,12 @@ def _map_application_status(dynamo_status: str | None) -> str:
     s = (dynamo_status or "pending").lower()
     s = _APP_STATUS_MAP.get(s, s)
     return s if s in _VALID_APP_STATUSES else "pending"
+
+
+def _task_application_status(value: str | None) -> str | None:
+    """Map a task's denormalised legacy application status as its application's is mapped; absent stays NULL."""
+    s = (value or "").strip()
+    return _map_application_status(s) if s else None
 
 
 def _map_profile_type(dynamo_type: str | None) -> str:
@@ -728,7 +831,7 @@ def migrate_programs(cur, projects: list, known_user_ids: set, files: lo.LegacyF
                 _as_int(p.get("discoverSortRank")),
                 amount,
                 _to_jsonb(p.get("menteeNeeds")),  # Legacy apprenticeNeeds fallback is retained only for cutover imports.
-                _to_jsonb(p.get("taskTemplates")),
+                _task_templates(p.get("taskTemplates")),
                 _parse_ts(p.get("createdOn")),
                 _parse_ts(p.get("updatedOn")),
             )
@@ -923,9 +1026,15 @@ _MEMBER_TYPE_MAP = {
     "program_admin": "program_admin",
     "mentor": "mentor",
 }
-_VALID_MEMBER_STATUSES = {"invited", "requested", "pending", "active", "declined", "withdrawn"}
-# DynamoDB used "approved" for accepted mentors; Postgres stores that as "active".
-_MEMBER_STATUS_MAP = {"accepted": "active", "approved": "active"}
+_VALID_MEMBER_STATUSES = {"invited", "requested", "pending", "approved", "declined", "withdrawn"}
+# DynamoDB used "approved" for accepted mentors, which Postgres keeps; "accepted" and "active" collapse into it.
+_MEMBER_STATUS_MAP = {"accepted": "approved", "active": "approved"}
+
+
+def _member_status(status: str | None) -> str | None:
+    """Map a DynamoDB member status to program_members.status, or None when it has no target."""
+    mapped = _MEMBER_STATUS_MAP.get(status, status) if status else None
+    return mapped if mapped in _VALID_MEMBER_STATUSES else None
 
 
 def load_member_user_overrides(path: str) -> dict:
@@ -964,27 +1073,29 @@ def _match_member_user(member: dict, users_by_email: dict, program_lfids: dict) 
 
 
 def resolve_member_user_ids(members: list, users: list, projects: list, overrides: dict) -> list:
-    """Return members with a missing userId filled in where it can be matched.
+    """Return members with userId taken from their email, and a missing email taken from their user.
 
-    Overrides apply only when automatic matching fails, so a stray entry can
-    never displace a unique match. The input rows are not modified.
+    The email decides: a row whose email matches a user gets that user, even
+    over a different legacy userId. The row's own userId is used only when its
+    email cannot settle the match, and overrides only when neither can, so a
+    stray entry can never displace an automatic match. The input rows are not
+    modified.
     """
-    user_ids = {u["id"] for u in users if u.get("id")}
+    users_by_id = {u["id"]: u for u in users if u.get("id")}
     users_by_email: dict = {}
     for u in users:
         if u.get("id") and _norm(u.get("email")):
             users_by_email.setdefault(_norm(u["email"]), []).append(u)
     program_lfids = {p["projectId"]: _norm(p.get("lfid")) for p in projects if p.get("projectId")}
 
-    resolved, outcomes = [], {}
+    resolved, outcomes, replaced = [], {}, 0
     for m in members:
-        if m.get("userId"):
-            resolved.append(m)
-            continue
         result, user_id = _match_member_user(m, users_by_email, program_lfids)
+        if user_id is None and m.get("userId"):
+            result, user_id = "user_id", m["userId"]
         override = overrides.get(m.get("id")) if user_id is None else None
         if override:
-            result, user_id = ("override", override) if override in user_ids else ("override_unknown_user", None)
+            result, user_id = ("override", override) if override in users_by_id else ("override_unknown_user", None)
         outcomes[result] = outcomes.get(result, 0) + 1
         if user_id is None:
             log.warning(
@@ -993,9 +1104,15 @@ def resolve_member_user_ids(members: list, users: list, projects: list, override
             )
             resolved.append(m)
             continue
-        resolved.append({**m, "userId": user_id})
-    if outcomes:
-        log.info("Member rows without userId: %d (%s)", sum(outcomes.values()), ", ".join(f"{k}={v}" for k, v in sorted(outcomes.items())))
+        if m.get("userId") and m["userId"] != user_id:
+            replaced += 1
+            log.info("MEMBER_USER_FROM_EMAIL member_id=%s legacy_user_id=%s user_id=%s", m.get("id"), m["userId"], user_id)
+        email = (m.get("email") or "").strip() or (users_by_id.get(user_id, {}).get("email") or "").strip() or None
+        resolved.append({**m, "userId": user_id, "email": email})
+    log.info(
+        "Member user resolution: %d rows (%s); %d legacy userIds replaced by the email's user",
+        sum(outcomes.values()), ", ".join(f"{k}={v}" for k, v in sorted(outcomes.items())), replaced,
+    )
     return resolved
 
 
@@ -1059,8 +1176,8 @@ def migrate_program_members(
             )
             skipped += 1
             continue
-        mapped_status = _MEMBER_STATUS_MAP.get(raw_status, raw_status) if raw_status else None
-        if mapped_status not in _VALID_MEMBER_STATUSES:
+        status = _member_status(raw_status)
+        if status is None:
             log.warning(
                 "UNMAPPED_MEMBER_STATUS member_id=%s program_id=%s user_id=%s status=%r",
                 mid,
@@ -1070,7 +1187,6 @@ def migrate_program_members(
             )
             skipped += 1
             continue
-        status = mapped_status
         member_rows.append(
             (
                 mid,
@@ -1083,6 +1199,20 @@ def migrate_program_members(
                 _parse_ts(m.get("updatedOn")),
             )
         )
+
+    # A rerun can resolve a member to a different user than an earlier run stored. The upsert
+    # only reconciles the business key, so drop the earlier row for that id first.
+    cur.execute(
+        """
+        DELETE FROM program_members AS pm
+        USING unnest(%s::uuid[], %s::uuid[], %s::uuid[], %s::text[]) AS k(id, program_id, user_id, member_type)
+        WHERE pm.id = k.id
+          AND (pm.program_id, pm.user_id, pm.member_type) IS DISTINCT FROM (k.program_id, k.user_id, k.member_type)
+        """,
+        [[row[i] for row in member_rows] for i in range(4)],  # id, program_id, user_id, member_type
+    )
+    if cur.rowcount:
+        log.info("  → %d program_members re-keyed since an earlier run", cur.rowcount)
 
     psycopg2.extras.execute_batch(
         cur,
@@ -1175,7 +1305,7 @@ def migrate_mentees(
     # break ties by newest updated_on so scan-order cannot change the outcome.
     _STATUS_PRIORITY = {
         "graduated": 5, "accepted": 4,
-        "hold": 3, "pending": 2, "declined": 1, "withdrawn": 0,
+        "pending": 2, "declined": 1, "withdrawn": 0,
     }
     best: dict = {}
     for row in app_rows:
@@ -1275,9 +1405,6 @@ def reconcile_term_scoped_members(cur, term_scoped_members: list) -> None:
 # ---------------------------------------------------------------------------
 
 
-_VALID_TASK_CATEGORIES = {"prerequisite", "non_prerequisite"}
-
-
 def migrate_tasks(
     cur,
     tasks: list,
@@ -1322,20 +1449,11 @@ def migrate_tasks(
         # term_id FK must exist
         resolved_term_id = term_id if term_id in known_term_ids else None
 
-        dynamo_status = (t.get("status") or "incomplete").lower()
-        valid_statuses = {"incomplete", "in_progress", "complete", "submitted"}
-        status = dynamo_status if dynamo_status in valid_statuses else "incomplete"
+        status = _task_status(t.get("status"))
 
-        due_date_raw = (t.get("dueDate") or "").strip() or None
-        due_date = None
-        if due_date_raw:
-            try:
-                due_date = datetime.strptime(due_date_raw, "%Y-%m-%d").date()
-            except ValueError:
-                pass
+        due_date = _due_date(t.get("dueDate"))
 
-        raw_category = (t.get("category") or "").strip() or None
-        category = raw_category if raw_category in _VALID_TASK_CATEGORIES else None
+        category = _task_category(t.get("category"))
 
         row = (
             tid,
@@ -1347,10 +1465,10 @@ def migrate_tasks(
             (t.get("description") or "").strip() or None,
             category,
             status,
-            (t.get("applicationStatus") or "").strip() or None,
+            _task_application_status(t.get("applicationStatus")),
             _map_program_term_status(known_term_ids.get(resolved_term_id), t.get("programTermStatus")),
             _as_bool(t.get("custom")),
-            (t.get("submitFile") or "").strip() or None,
+            _task_submit_file(t),
             files.rewrite("tasks.file", lo.SUBMISSION, t.get("file")),
             due_date,
             (t.get("createdBy") or "").strip() or None,
@@ -1455,6 +1573,18 @@ def migrate_tasks(
     )
 
 
+def apply_user_fixes(cur, path: str) -> None:
+    """Run the operator's SQL for users whose duplicate email or LFID the import cleared; an empty path means none.
+
+    It runs before seed_derived_state, which skips users without an LFID, so a fixed user gets their tuples.
+    """
+    if not path:
+        return
+    with open(path, encoding="utf-8") as f:
+        cur.execute(f.read())
+    log.info("Applied user fixes from %s", path)
+
+
 def seed_derived_state(cur) -> None:
     """Queue current-state FGA and index snapshots through the normal relays."""
     log.info("Queuing derived-state seeds ...")
@@ -1464,7 +1594,7 @@ def seed_derived_state(cur) -> None:
         FROM programs
         JOIN program_members ON program_members.program_id = programs.id
         JOIN users ON users.id = program_members.user_id
-        WHERE program_members.status = 'active'
+        WHERE program_members.status = 'approved'
           AND program_members.member_type IN ('program_admin', 'mentor')
           AND NULLIF(users.lfid, '') IS NULL
         ORDER BY programs.id, program_members.id
@@ -1537,7 +1667,7 @@ def seed_derived_state(cur) -> None:
           FROM program_members
           JOIN users ON users.id = program_members.user_id
           WHERE program_members.program_id = program.id
-            AND program_members.status = 'active'
+            AND program_members.status = 'approved'
             AND program_members.member_type IN ('program_admin', 'mentor')
             AND NULLIF(users.lfid, '') IS NULL
         )
@@ -1631,8 +1761,9 @@ def seed_derived_state(cur) -> None:
                     'slug', slug,
                     'status', status,
                     'logo_url', logo_url,
+                    'skills', COALESCE((SELECT jsonb_agg(ps.skill ORDER BY ps.skill) FROM program_skills ps WHERE ps.program_id = programs.id), '[]'::jsonb),
                     'stats', jsonb_build_object(
-                        'mentors', (SELECT COUNT(*) FROM program_members pm WHERE pm.program_id = programs.id AND pm.member_type = 'mentor' AND pm.status = 'active'),
+                        'mentors', (SELECT COUNT(*) FROM program_members pm WHERE pm.program_id = programs.id AND pm.member_type = 'mentor' AND pm.status = 'approved'),
                         'mentees', (SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE pt.program_id = programs.id AND a.role = 'mentee' AND a.status = 'accepted'),
                         'graduated', (SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE pt.program_id = programs.id AND a.role = 'mentee' AND a.status = 'graduated')
                     ),
@@ -1746,7 +1877,7 @@ def seed_derived_state(cur) -> None:
                 'name', t.name,
                 'description', t.description,
                 'category', t.category,
-                'prerequisite', t.category = 'prerequisite',
+                'prerequisite', COALESCE(t.category = 'prerequisite', false),
                 'status', t.status,
                 'application_status', t.application_status,
                 'program_term_status', t.program_term_status,
@@ -1801,7 +1932,19 @@ def seed_derived_state(cur) -> None:
 # ---------------------------------------------------------------------------
 
 
+def parse_args(argv: list) -> bool:
+    """Return whether this is a test run. The final (cutover) import takes no arguments."""
+    if argv == ["--test-run"]:
+        return True
+    if argv:
+        sys.exit("usage: migrate_dynamo_to_postgres.py [--test-run]")
+    return False
+
+
 def main() -> None:
+    test_run = parse_args(sys.argv[1:])
+    if test_run:
+        log.info("Test run: a legacy file missing from the copy manifest is logged as MANIFEST_MISS and its column set to NULL")
     log.info("Connecting to DynamoDB (region=%s) ...", LEGACY_REGION)
     dynamo = legacy_session().client("dynamodb")
 
@@ -1813,6 +1956,7 @@ def main() -> None:
         LOGOS_CDN_URL_PREFIX,
         lo.legacy_url_prefix(LEGACY_BUCKET),
         {lo.LOGO: LOGOS_S3_BUCKET, lo.SUBMISSION: ATTACHMENTS_S3_BUCKET},
+        tolerate_missing=test_run,
     )
 
     try:
@@ -1839,6 +1983,7 @@ def main() -> None:
                 application_index = migrate_mentees(cur, mentees_raw, known_term_ids, known_user_ids)
                 reconcile_term_scoped_members(cur, term_scoped_members)
                 migrate_tasks(cur, tasks_raw, application_index, known_term_ids, known_user_ids, files)
+                apply_user_fixes(cur, USER_FIXES)
                 seed_derived_state(cur)
 
         files.report()

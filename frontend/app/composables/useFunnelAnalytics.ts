@@ -28,19 +28,14 @@ export interface FunnelProperties {
   step_name?: string;
 }
 
-interface OsanoConsentMap {
-  ANALYTICS?: string;
-  analytics?: string;
-}
-
-interface OsanoConsentManager {
-  analytics?: boolean;
-  getConsent?: () => OsanoConsentMap | undefined;
+// Transcend airgap.js (loaded in setup/head.ts).
+interface TranscendAirgap {
+  getConsent?: () => { purposes?: Record<string, boolean | string> } | undefined;
 }
 
 interface AnalyticsWindow {
   dataLayer?: Record<string, unknown>[];
-  Osano?: { cm?: OsanoConsentManager };
+  airgap?: TranscendAirgap;
   Intercom?: (...args: unknown[]) => void;
 }
 
@@ -50,22 +45,19 @@ function analyticsWindow(): AnalyticsWindow | undefined {
 }
 
 const firedOnce = new Set<string>();
-const OSANO_RETRY_MS = 200;
-const OSANO_RETRY_LIMIT = 10;
+const CMP_RETRY_MS = 200;
+const CMP_RETRY_LIMIT = 10;
 
-function hasOsano(): boolean {
-  return Boolean(analyticsWindow()?.Osano?.cm);
+function hasConsentManager(): boolean {
+  return Boolean(analyticsWindow()?.airgap);
 }
 
 function hasAnalyticsConsent(): boolean {
-  const cm = analyticsWindow()?.Osano?.cm;
-  if (!cm) {
+  const airgap = analyticsWindow()?.airgap;
+  if (!airgap) {
     return useRuntimeConfig().public.appEnv !== 'production';
   }
-  if (cm.analytics === true) return true;
-  const consent = cm.getConsent?.();
-  const value = consent?.ANALYTICS ?? consent?.analytics;
-  return value === 'ACCEPT' || value === 'ACCEPT_ALL';
+  return airgap.getConsent?.()?.purposes?.Analytics === true;
 }
 
 function emit(event: FunnelEventName, properties: FunnelProperties): void {
@@ -89,8 +81,8 @@ function tryTrack(
   onceKey: string | undefined,
   attempt: number,
 ): void {
-  if (!hasOsano() && attempt < OSANO_RETRY_LIMIT) {
-    window.setTimeout(() => tryTrack(event, properties, onceKey, attempt + 1), OSANO_RETRY_MS);
+  if (!hasConsentManager() && attempt < CMP_RETRY_LIMIT) {
+    window.setTimeout(() => tryTrack(event, properties, onceKey, attempt + 1), CMP_RETRY_MS);
     return;
   }
   if (!hasAnalyticsConsent()) return;

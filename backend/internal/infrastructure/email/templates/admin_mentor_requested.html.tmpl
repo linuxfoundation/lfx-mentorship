@@ -1,0 +1,6 @@
+{{- /* Copyright The Linux Foundation and each contributor to LFX. */ -}}
+{{- /* SPDX-License-Identifier: MIT */ -}}
+{{- /* Legacy: admin-new-mentor-request */ -}}
+{{template "header" .}}<p><strong>{{.MentorName}}</strong> requested to join the <strong>{{.ProgramName}}</strong> mentorship program as a mentor.</p>
+<p>Review the request in LFX Mentorship to add them to your program{{with .MentorEmail}}, or contact them at {{.}}{{end}}. If you believe this mentor is not a good fit for your program, please let them know.</p>
+{{template "button" .ManageURL}}Review Request{{template "button_end"}}{{template "footer" .}}

@@ -14,6 +14,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/handler"
+	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/auth"
 )
 
 type stubProgramMemberSvc struct {
@@ -22,10 +23,9 @@ type stubProgramMemberSvc struct {
 	listManagement func(context.Context, string, models.ProgramMemberFilter) ([]*models.ProgramMentorManagementRow, *models.PaginationMeta, error)
 	update         func(context.Context, string, string, models.ProgramMemberUpdateInput, string) (*models.ProgramMember, error)
 	listMine       func(context.Context, string, models.ProgramMemberFilter) ([]*models.ProgramMembership, *models.PaginationMeta, error)
-	requestMentor  func(context.Context, string, string) (*models.ProgramMember, error)
+	requestMentor  func(context.Context, string, models.UserPrincipal) (*models.ProgramMember, error)
 	withdrawMine   func(context.Context, string, string) error
 	delete         func(context.Context, string, string, string) error
-	resendInvite   func(context.Context, string, string, string) error
 	search         func(context.Context, string, string) ([]*models.MentorCandidate, error)
 }
 
@@ -69,21 +69,16 @@ func (s *stubProgramMemberSvc) Delete(ctx context.Context, programID, id, actorI
 	}
 	return nil
 }
-func (s *stubProgramMemberSvc) ResendInvite(ctx context.Context, programID, id, actorID string) error {
-	if s.resendInvite != nil {
-		return s.resendInvite(ctx, programID, id, actorID)
-	}
-	return nil
-}
+
 func (s *stubProgramMemberSvc) ListMine(ctx context.Context, userID string, f models.ProgramMemberFilter) ([]*models.ProgramMembership, *models.PaginationMeta, error) {
 	if s.listMine != nil {
 		return s.listMine(ctx, userID, f)
 	}
 	return []*models.ProgramMembership{}, &models.PaginationMeta{}, nil
 }
-func (s *stubProgramMemberSvc) RequestMentorship(ctx context.Context, programID, userID string) (*models.ProgramMember, error) {
+func (s *stubProgramMemberSvc) RequestMentorship(ctx context.Context, programID string, user models.UserPrincipal) (*models.ProgramMember, error) {
 	if s.requestMentor != nil {
-		return s.requestMentor(ctx, programID, userID)
+		return s.requestMentor(ctx, programID, user)
 	}
 	return &models.ProgramMember{}, nil
 }
@@ -144,9 +139,9 @@ func TestProgramMemberHandler_SearchCandidates_Errors(t *testing.T) {
 	}
 }
 
-// The public roster is active members only, and the caller must not be able to
+// The public roster is approved members only, and the caller must not be able to
 // widen it by asking for another status.
-func TestProgramMemberHandler_List_PinsActiveStatus(t *testing.T) {
+func TestProgramMemberHandler_List_PinsApprovedStatus(t *testing.T) {
 	var captured models.ProgramMemberFilter
 	h := handler.NewProgramMemberHandler(&stubProgramMemberSvc{
 		listByProgram: func(_ context.Context, _ string, f models.ProgramMemberFilter) ([]*models.ProgramMember, *models.PaginationMeta, error) {
@@ -162,8 +157,8 @@ func TestProgramMemberHandler_List_PinsActiveStatus(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("got %d; want 200", w.Code)
 	}
-	if captured.Status != string(models.ProgramMemberStatusActive) {
-		t.Errorf("Status = %q; want %q", captured.Status, models.ProgramMemberStatusActive)
+	if captured.Status != string(models.ProgramMemberStatusApproved) {
+		t.Errorf("Status = %q; want %q", captured.Status, models.ProgramMemberStatusApproved)
 	}
 	if captured.MemberType != string(models.MemberTypeMentor) {
 		t.Errorf("MemberType = %q; want %q", captured.MemberType, models.MemberTypeMentor)
@@ -202,7 +197,7 @@ func TestProgramMemberHandler_List_HidesUnpublishedProgram(t *testing.T) {
 // member's email address, even though the service returns it.
 func TestProgramMemberHandler_List_OmitsEmail(t *testing.T) {
 	email := "admin@example.com"
-	status := models.ProgramMemberStatusActive
+	status := models.ProgramMemberStatusApproved
 	h := handler.NewProgramMemberHandler(&stubProgramMemberSvc{
 		listByProgram: func(context.Context, string, models.ProgramMemberFilter) ([]*models.ProgramMember, *models.PaginationMeta, error) {
 			return []*models.ProgramMember{{
@@ -254,7 +249,7 @@ func TestProgramMemberHandler_Update_RejectsMemberFromDifferentProgram(t *testin
 			return nil, domain.ErrProgramMemberNotFound
 		},
 	}, &stubProgramSvc{})
-	body := strings.NewReader(`{"status":"active"}`)
+	body := strings.NewReader(`{"status":"approved"}`)
 	r := httptest.NewRequest(http.MethodPatch, "/v1/programs/p1/members/m1", body)
 	r = requestWithPrincipal(r, "admin-1")
 	r = requestWithChiParam(r, "id", "p1")
@@ -309,33 +304,6 @@ func TestProgramMemberHandler_Delete_RejectsMemberFromDifferentProgram(t *testin
 
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("got %d; want 404", w.Code)
-	}
-}
-
-func TestProgramMemberHandler_ResendInvite(t *testing.T) {
-	for name, tc := range map[string]struct {
-		err  error
-		want int
-	}{
-		"sent":        {nil, http.StatusNoContent},
-		"not invited": {domain.ErrInvalidStateTransition, http.StatusConflict},
-	} {
-		var got [3]string
-		h := handler.NewProgramMemberHandler(&stubProgramMemberSvc{
-			resendInvite: func(_ context.Context, programID, id, actorID string) error {
-				got = [3]string{programID, id, actorID}
-				return tc.err
-			},
-		}, &stubProgramSvc{})
-		r := httptest.NewRequest(http.MethodPost, "/v1/programs/p1/members/m1/resend-invite", nil)
-		r = requestWithPrincipal(r, "admin-1")
-		r = requestWithChiParam(r, "id", "p1")
-		r = requestWithChiParam(r, "memberId", "m1")
-		w := httptest.NewRecorder()
-		h.ResendInvite(w, r)
-		if w.Code != tc.want || got != [3]string{"p1", "m1", "admin-1"} {
-			t.Errorf("%s: got %d %v; want %d [p1 m1 admin-1]", name, w.Code, got, tc.want)
-		}
 	}
 }
 
@@ -464,24 +432,26 @@ func TestProgramMemberHandler_ListMine_InvalidMemberType_Returns400(t *testing.T
 
 // The user comes from the principal; a user_id in the body is ignored.
 func TestProgramMemberHandler_RequestMine_UsesPrincipalNotBody(t *testing.T) {
-	var gotProgram, gotUser string
+	var gotProgram string
+	var gotUser models.UserPrincipal
 	requested := models.ProgramMemberStatusRequested
 	h := handler.NewProgramMemberHandler(&stubProgramMemberSvc{
-		requestMentor: func(_ context.Context, programID, userID string) (*models.ProgramMember, error) {
-			gotProgram, gotUser = programID, userID
-			return &models.ProgramMember{ID: "m1", ProgramID: programID, UserID: userID, MemberType: models.MemberTypeMentor, Status: &requested}, nil
+		requestMentor: func(_ context.Context, programID string, user models.UserPrincipal) (*models.ProgramMember, error) {
+			gotProgram, gotUser = programID, user
+			return &models.ProgramMember{ID: "m1", ProgramID: programID, UserID: user.UserID, MemberType: models.MemberTypeMentor, Status: &requested}, nil
 		},
 	}, &stubProgramSvc{})
 	r := httptest.NewRequest(http.MethodPost, "/v1/me/program-memberships", strings.NewReader(`{"program_id":"p1","user_id":"someone-else"}`))
-	r = requestWithPrincipal(r, "caller-user")
+	r = r.WithContext(auth.ContextWithPrincipal(r.Context(), &models.Principal{UserID: "caller-user", Username: "caller-lfid", Email: "caller@example.org"}))
 	w := httptest.NewRecorder()
 	h.RequestMine(w, r)
 
 	if w.Code != http.StatusCreated {
 		t.Fatalf("got %d; want 201: %s", w.Code, w.Body.String())
 	}
-	if gotProgram != "p1" || gotUser != "caller-user" {
-		t.Errorf("RequestMentorship(%q, %q); want (p1, caller-user)", gotProgram, gotUser)
+	want := models.UserPrincipal{UserID: "caller-user", LFID: "caller-lfid", Email: "caller@example.org"}
+	if gotProgram != "p1" || gotUser != want {
+		t.Errorf("RequestMentorship(%q, %+v); want (p1, %+v)", gotProgram, gotUser, want)
 	}
 	var body models.ProgramMember
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
@@ -503,7 +473,7 @@ func TestProgramMemberHandler_RequestMine_MapsErrors(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := handler.NewProgramMemberHandler(&stubProgramMemberSvc{
-				requestMentor: func(context.Context, string, string) (*models.ProgramMember, error) { return nil, tc.err },
+				requestMentor: func(context.Context, string, models.UserPrincipal) (*models.ProgramMember, error) { return nil, tc.err },
 			}, &stubProgramSvc{})
 			r := httptest.NewRequest(http.MethodPost, "/v1/me/program-memberships", strings.NewReader(`{"program_id":"p1"}`))
 			r = requestWithPrincipal(r, "caller-user")
@@ -518,7 +488,7 @@ func TestProgramMemberHandler_RequestMine_MapsErrors(t *testing.T) {
 
 func TestProgramMemberHandler_RequestMine_MalformedBody_Returns400(t *testing.T) {
 	h := handler.NewProgramMemberHandler(&stubProgramMemberSvc{
-		requestMentor: func(context.Context, string, string) (*models.ProgramMember, error) {
+		requestMentor: func(context.Context, string, models.UserPrincipal) (*models.ProgramMember, error) {
 			t.Fatal("service must not be called for a malformed body")
 			return nil, nil
 		},

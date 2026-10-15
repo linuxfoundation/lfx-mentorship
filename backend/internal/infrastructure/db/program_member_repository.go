@@ -110,7 +110,7 @@ func (r *ProgramMemberRepository) findActiveMembership(ctx context.Context, prog
 	defer span.End()
 	span.SetAttributes(attribute.String("db.program_id", programID), attribute.String("db.user_id", userID))
 
-	q := `SELECT ` + programMemberCols + ` FROM program_members WHERE program_id = $1 AND user_id = $2 AND status = 'active' AND ` + rolePredicate + ` ORDER BY created_on DESC LIMIT 1`
+	q := `SELECT ` + programMemberCols + ` FROM program_members WHERE program_id = $1 AND user_id = $2 AND status = 'approved' AND ` + rolePredicate + ` ORDER BY created_on DESC LIMIT 1`
 	m, err := scanProgramMember(r.pool.QueryRow(ctx, q, programID, userID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrProgramMemberNotFound
@@ -207,7 +207,7 @@ func (r *ProgramMemberRepository) ListMentorManagement(ctx context.Context, prog
 		return nil, nil, fmt.Errorf("count mentor management: %w", err)
 	}
 	args = append(args, limit, offset)
-	q := `SELECT pm.id, pm.user_id, u.name, COALESCE(pm.email, u.email), u.lfid, u.avatar_url, pm.status, pm.created_on, pm.updated_on, EXISTS(SELECT 1 FROM user_profiles up WHERE up.user_id = pm.user_id AND up.profile_type = 'mentor')` + ` FROM program_members pm JOIN users u ON u.id = pm.user_id` + where + fmt.Sprintf(` ORDER BY pm.created_on DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
+	q := `SELECT pm.id, pm.user_id, u.name, COALESCE(pm.email, u.email), u.lfid, COALESCE((SELECT NULLIF(up.logo_url, '') FROM user_profiles up WHERE up.user_id = pm.user_id AND up.profile_type = 'mentor' ORDER BY up.updated_on DESC LIMIT 1), u.avatar_url), pm.status, pm.created_on, pm.updated_on, EXISTS(SELECT 1 FROM user_profiles up WHERE up.user_id = pm.user_id AND up.profile_type = 'mentor')` + ` FROM program_members pm JOIN users u ON u.id = pm.user_id` + where + fmt.Sprintf(` ORDER BY pm.created_on DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
 	rows, err := r.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("list mentor management: %w", err)
@@ -445,7 +445,7 @@ func (r *ProgramMemberRepository) Delete(ctx context.Context, id string) error {
 }
 
 func isActiveMember(member *models.ProgramMember) bool {
-	return member != nil && member.Status != nil && *member.Status == models.ProgramMemberStatusActive
+	return member != nil && member.Status != nil && *member.Status == models.ProgramMemberStatusApproved
 }
 
 func enqueueMemberMarker(ctx context.Context, tx pgx.Tx, member *models.ProgramMember, operation string) error {

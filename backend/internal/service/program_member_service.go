@@ -19,6 +19,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/auth"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -71,24 +72,25 @@ func (s *ProgramMemberService) assertActiveProgramAdmin(ctx context.Context, pro
 // to. A mentor's request is the mentor's to make or withdraw: an admin
 // approves, declines, or deletes it, so requested/pending → withdrawn and
 // withdrawn → requested are absent here and reachable only through
-// WithdrawMine and RequestMentorship.
+// WithdrawMine and RequestMentorship. Declined and withdrawn have no admin
+// edge here, but inviting the mentor again through Create reopens them.
 var memberTransitions = map[models.ProgramMemberStatus]map[models.ProgramMemberStatus]bool{
 	models.ProgramMemberStatusInvited: {
-		models.ProgramMemberStatusActive:   true,
+		models.ProgramMemberStatusApproved: true,
 		models.ProgramMemberStatusDeclined: true,
 		models.ProgramMemberStatusPending:  true,
 	},
 	models.ProgramMemberStatusRequested: {
-		models.ProgramMemberStatusActive:   true,
+		models.ProgramMemberStatusApproved: true,
 		models.ProgramMemberStatusDeclined: true,
 		models.ProgramMemberStatusPending:  true,
 	},
-	models.ProgramMemberStatusActive: {
+	models.ProgramMemberStatusApproved: {
 		models.ProgramMemberStatusWithdrawn: true,
 		models.ProgramMemberStatusPending:   true,
 	},
 	models.ProgramMemberStatusPending: {
-		models.ProgramMemberStatusActive:   true,
+		models.ProgramMemberStatusApproved: true,
 		models.ProgramMemberStatusDeclined: true,
 	},
 	models.ProgramMemberStatusDeclined:  {},
@@ -136,8 +138,8 @@ func (s *ProgramMemberService) ListMentorManagement(ctx context.Context, program
 
 // Create validates input and adds a member to a program.
 // When member_type is "mentor" and no status is given, the member is created
-// with status "invited"; only an invited mentor is sent a time-limited invite
-// token via the notifier.
+// with status "invited" and sent an invite token via the notifier. Inviting a
+// mentor whose invite is open, declined or withdrawn reuses their row.
 func (s *ProgramMemberService) Create(ctx context.Context, programID string, input models.ProgramMemberCreateInput) (*models.ProgramMember, error) {
 	ctx, span := programMemberSvcTracer.Start(ctx, "ProgramMemberService.Create")
 	defer span.End()
@@ -175,9 +177,9 @@ func (s *ProgramMemberService) Create(ctx context.Context, programID string, inp
 		return nil, fmt.Errorf("%w: program must be published before adding members", domain.ErrInvalidInput)
 	}
 
-	// Mentors are placed in 'invited' status and notified; program_admins are 'active' immediately.
+	// Mentors are placed in 'invited' status and notified; program_admins are 'approved' immediately.
 	if input.Status == nil {
-		defaultStatus := models.ProgramMemberStatusActive
+		defaultStatus := models.ProgramMemberStatusApproved
 		if input.MemberType == models.MemberTypeMentor {
 			defaultStatus = models.ProgramMemberStatusInvited
 		}
@@ -200,6 +202,13 @@ func (s *ProgramMemberService) Create(ctx context.Context, programID string, inp
 		input.UserID = user.ID
 	}
 
+	invite := input.MemberType == models.MemberTypeMentor && *input.Status == models.ProgramMemberStatusInvited
+	if invite {
+		if m, err := s.reinvite(ctx, programID, input.UserID); m != nil || err != nil {
+			return m, err
+		}
+	}
+
 	input.ID = uuid.New().String()
 	m, err := s.repo.Create(ctx, programID, input)
 	if err != nil {
@@ -207,19 +216,54 @@ func (s *ProgramMemberService) Create(ctx context.Context, programID string, inp
 		return nil, fmt.Errorf("create program member: %w", err)
 	}
 
-	// Only an invited mentor gets an invite email; a mentor created as
-	// requested asked to join and must not be invited back.
-	if input.MemberType == models.MemberTypeMentor && *input.Status == models.ProgramMemberStatusInvited && s.inviteSecret != "" {
-		token, tokenErr := auth.GenerateInviteToken(programID, input.UserID, s.inviteSecret)
-		if tokenErr != nil {
-			span.RecordError(tokenErr)
-			// Non-fatal: log but don't fail the create.
-		} else {
-			s.notifier.NotifyMentorInvited(ctx, programID, input.UserID, token)
-		}
+	// A mentor created as requested asked to join and must not be invited back.
+	if invite {
+		s.sendInvite(ctx, programID, input.UserID)
 	}
 
 	return m, nil
+}
+
+// reinvitableStatuses are the mentor statuses an admin can invite again.
+var reinvitableStatuses = []models.ProgramMemberStatus{
+	models.ProgramMemberStatusInvited,
+	models.ProgramMemberStatusDeclined,
+	models.ProgramMemberStatusWithdrawn,
+}
+
+// reinvite sets the user's existing mentor row back to invited and emails the
+// invite again; it returns nil, nil when the user has no mentor row yet.
+func (s *ProgramMemberService) reinvite(ctx context.Context, programID, userID string) (*models.ProgramMember, error) {
+	existing, err := s.repo.FindByProgramUserAndType(ctx, programID, userID, models.MemberTypeMentor)
+	if errors.Is(err, domain.ErrProgramMemberNotFound) || (err == nil && existing == nil) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("lookup mentor for invite: %w", err)
+	}
+	if existing.Status == nil || !slices.Contains(reinvitableStatuses, *existing.Status) {
+		return nil, fmt.Errorf("%w: user is already a mentor or has asked to join this program", domain.ErrConflict)
+	}
+	invited := models.ProgramMemberStatusInvited
+	m, err := s.repo.UpdateIfStatus(ctx, existing.ID, []models.ProgramMemberStatus{*existing.Status}, models.ProgramMemberUpdateInput{Status: &invited})
+	if err != nil {
+		return nil, fmt.Errorf("re-invite mentor: %w", err)
+	}
+	s.sendInvite(ctx, programID, userID)
+	return m, nil
+}
+
+// sendInvite emails the mentor an invite link; a signing failure is not fatal to the caller.
+func (s *ProgramMemberService) sendInvite(ctx context.Context, programID, userID string) {
+	if s.inviteSecret == "" {
+		return
+	}
+	token, err := auth.GenerateInviteToken(programID, userID, s.inviteSecret)
+	if err != nil {
+		trace.SpanFromContext(ctx).RecordError(err)
+		return
+	}
+	s.notifier.NotifyMentorInvited(ctx, programID, userID, token)
 }
 
 func (s *ProgramMemberService) userByEmail(ctx context.Context, email string) (*models.User, error) {
@@ -432,13 +476,17 @@ func (s *ProgramMemberService) ListMine(ctx context.Context, userID string, filt
 // matching the applications rule (FR-030).
 //
 // No invite email is sent: the caller asked to join and needs no invitation.
-func (s *ProgramMemberService) RequestMentorship(ctx context.Context, programID, userID string) (*models.ProgramMember, error) {
+// The program's active admins are told about the request instead.
+func (s *ProgramMemberService) RequestMentorship(ctx context.Context, programID string, user models.UserPrincipal) (*models.ProgramMember, error) {
 	ctx, span := programMemberSvcTracer.Start(ctx, "ProgramMemberService.RequestMentorship")
 	defer span.End()
-	span.SetAttributes(attribute.String("program.id", programID), attribute.String("user.id", userID))
+	span.SetAttributes(attribute.String("program.id", programID), attribute.String("user.id", user.UserID), attribute.String("lfid", user.LFID))
 
-	if userID == "" {
+	if user.UserID == "" {
 		return nil, fmt.Errorf("%w: caller identity is required", domain.ErrUnauthorized)
+	}
+	if user.LFID == "" {
+		return nil, fmt.Errorf("%w: caller LFID is required", domain.ErrUnauthorized)
 	}
 	if _, err := uuid.Parse(programID); err != nil {
 		return nil, fmt.Errorf("%w: program_id must be a UUID", domain.ErrInvalidInput)
@@ -461,19 +509,28 @@ func (s *ProgramMemberService) RequestMentorship(ctx context.Context, programID,
 	}
 
 	requested := models.ProgramMemberStatusRequested
-	existing, err := s.repo.FindByProgramUserAndType(ctx, programID, userID, models.MemberTypeMentor)
+	// A blank email is never written: a new row keeps it NULL so listings fall back to the
+	// user's own address, and a reopened row keeps the address it already has.
+	var email *string
+	if user.Email != "" {
+		email = &user.Email
+	}
+	existing, err := s.repo.FindByProgramUserAndType(ctx, programID, user.UserID, models.MemberTypeMentor)
 	switch {
 	case errors.Is(err, domain.ErrProgramMemberNotFound):
 		m, err := s.repo.Create(ctx, programID, models.ProgramMemberCreateInput{
 			ID:         uuid.New().String(),
-			UserID:     userID,
+			UserID:     user.UserID,
 			MemberType: models.MemberTypeMentor,
 			Status:     &requested,
+			LFID:       user.LFID,
+			Email:      email,
 		})
 		if err != nil {
 			span.RecordError(err)
 			return nil, fmt.Errorf("create mentor request: %w", err)
 		}
+		s.notifier.NotifyAdminMentorRequested(ctx, programID, user.UserID)
 		return m, nil
 	case err != nil:
 		span.RecordError(err)
@@ -488,17 +545,18 @@ func (s *ProgramMemberService) RequestMentorship(ctx context.Context, programID,
 		return nil, fmt.Errorf("%w: a mentor membership for this program is already %q", domain.ErrConflict, current)
 	}
 
-	m, err := s.repo.UpdateIfStatus(ctx, existing.ID, []models.ProgramMemberStatus{models.ProgramMemberStatusWithdrawn}, models.ProgramMemberUpdateInput{Status: &requested})
+	m, err := s.repo.UpdateIfStatus(ctx, existing.ID, []models.ProgramMemberStatus{models.ProgramMemberStatusWithdrawn}, models.ProgramMemberUpdateInput{Status: &requested, Email: email})
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("reopen mentor request: %w", err)
 	}
+	s.notifier.NotifyAdminMentorRequested(ctx, programID, user.UserID)
 	return m, nil
 }
 
 // WithdrawMine moves the caller's own requested or pending mentor row to
-// withdrawn. A row that is not the caller's mentor row is reported as not
-// found, so member IDs cannot be probed.
+// withdrawn and tells the program's active admins. A row that is not the
+// caller's mentor row is reported as not found, so member IDs cannot be probed.
 func (s *ProgramMemberService) WithdrawMine(ctx context.Context, id, userID string) error {
 	ctx, span := programMemberSvcTracer.Start(ctx, "ProgramMemberService.WithdrawMine")
 	defer span.End()
@@ -532,6 +590,7 @@ func (s *ProgramMemberService) WithdrawMine(ctx context.Context, id, userID stri
 		span.RecordError(err)
 		return fmt.Errorf("withdraw mentor membership: %w", err)
 	}
+	s.notifier.NotifyAdminMentorWithdrew(ctx, current.ProgramID, userID)
 	return nil
 }
 
@@ -618,8 +677,8 @@ func (s *ProgramMemberService) AcceptInvite(ctx context.Context, token, actorID 
 		return nil, err
 	}
 
-	activeStatus := models.ProgramMemberStatusActive
-	m, err := s.repo.UpdateIfStatus(ctx, memberID, []models.ProgramMemberStatus{models.ProgramMemberStatusInvited}, models.ProgramMemberUpdateInput{Status: &activeStatus})
+	approvedStatus := models.ProgramMemberStatusApproved
+	m, err := s.repo.UpdateIfStatus(ctx, memberID, []models.ProgramMemberStatus{models.ProgramMemberStatusInvited}, models.ProgramMemberUpdateInput{Status: &approvedStatus})
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("accept invite: %w", err)
@@ -696,49 +755,5 @@ func (s *ProgramMemberService) Delete(ctx context.Context, programID, id, actorI
 		span.RecordError(err)
 		return fmt.Errorf("delete program member: %w", err)
 	}
-	return nil
-}
-
-// ResendInvite signs a fresh invite token for an invited mentor and emails it again.
-func (s *ProgramMemberService) ResendInvite(ctx context.Context, programID, id, actorID string) error {
-	ctx, span := programMemberSvcTracer.Start(ctx, "ProgramMemberService.ResendInvite")
-	defer span.End()
-	span.SetAttributes(attribute.String("program.id", programID), attribute.String("member.id", id), attribute.String("actor.id", actorID))
-
-	if err := s.assertActiveProgramAdmin(ctx, programID, actorID); err != nil {
-		span.RecordError(err)
-		return err
-	}
-	if s.inviteSecret == "" {
-		return fmt.Errorf("%w: mentor invites are not configured", domain.ErrUpstreamUnavailable)
-	}
-
-	member, err := s.repo.GetByID(ctx, id)
-	if err != nil {
-		span.RecordError(err)
-		return fmt.Errorf("get member for resend: %w", err)
-	}
-	if member.ProgramID != programID {
-		return domain.ErrProgramMemberNotFound
-	}
-	if member.MemberType != models.MemberTypeMentor || member.Status == nil || *member.Status != models.ProgramMemberStatusInvited {
-		return fmt.Errorf("%w: only an invited mentor can be sent the invite again", domain.ErrInvalidStateTransition)
-	}
-	// FR-018 / FR-023: invites are only for a published program.
-	prog, err := s.programRepo.GetByID(ctx, programID)
-	if err != nil {
-		span.RecordError(err)
-		return fmt.Errorf("get program for resend: %w", err)
-	}
-	if prog.Status != models.ProgramStatusPublished {
-		return fmt.Errorf("%w: program must be published to resend an invite", domain.ErrInvalidStateTransition)
-	}
-
-	token, err := auth.GenerateInviteToken(programID, member.UserID, s.inviteSecret)
-	if err != nil {
-		span.RecordError(err)
-		return fmt.Errorf("generate invite token: %w", err)
-	}
-	s.notifier.NotifyMentorInvited(ctx, programID, member.UserID, token)
 	return nil
 }

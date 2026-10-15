@@ -99,12 +99,11 @@ func approver(t *testing.T) *actor {
 	return signIn(t, "lf-approver")
 }
 
-// publishProgram takes a new program through logo upload, submission and approval.
+// publishProgram takes a new program through logo upload and approval.
 func publishProgram(t *testing.T, admin *actor, name string) *program {
 	t.Helper()
 	p := createProgram(t, admin, name)
 	uploadLogo(t, admin, p.ID).expect(http.StatusCreated)
-	admin.mustJSON(t, http.MethodPost, "/programs/"+p.ID+"/submit", nil, http.StatusOK, nil)
 	approver(t).mustJSON(t, http.MethodPost, "/programs/"+p.ID+"/decision", map[string]any{"status": "published"}, http.StatusOK, p)
 	return p
 }

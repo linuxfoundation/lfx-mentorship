@@ -46,7 +46,7 @@ const mentorEligibleCTE = `
 		FROM program_members pm
 		JOIN programs p ON p.id = pm.program_id
 		WHERE pm.member_type = 'mentor'
-		  AND pm.status = 'active'
+		  AND pm.status = 'approved'
 		  AND p.status = 'published'
 	),
 	joined AS (
@@ -59,7 +59,7 @@ const mentorEligibleCTE = `
 			j.user_id,
 			j.joined_at,
 			NULLIF(TRIM(COALESCE(NULLIF(TRIM(u.name), ''), CONCAT_WS(' ', up.first_name, up.last_name))), '') AS name,
-			COALESCE(u.avatar_url, up.logo_url) AS avatar_url,
+			COALESCE(NULLIF(up.logo_url, ''), u.avatar_url) AS avatar_url,
 			up.introduction,
 			COALESCE((
 				SELECT ARRAY_AGG(e #>> '{}' ORDER BY e #>> '{}')
@@ -272,7 +272,7 @@ const mentoredProgramsFrom = `
 			END AS status
 		FROM programs
 		JOIN program_members pm ON pm.program_id = programs.id
-		WHERE pm.user_id = $1 AND pm.member_type = 'mentor' AND pm.status = 'active'
+		WHERE pm.user_id = $1 AND pm.member_type = 'mentor' AND pm.status = 'approved'
 		  AND programs.status = 'published'
 	) mp`
 
@@ -347,7 +347,7 @@ func (r *MentorRepository) loadMentorPrograms(ctx context.Context, userID string
 		JOIN programs p ON p.id = pm.program_id
 		WHERE pm.user_id = $1
 		  AND pm.member_type = 'mentor'
-		  AND pm.status = 'active'
+		  AND pm.status = 'approved'
 		  AND p.status = 'published'
 		ORDER BY p.name, p.id`, userID)
 	if err != nil {
@@ -461,12 +461,20 @@ func (r *MentorRepository) loadMentorsByProgram(ctx context.Context, ids []strin
 		return out, nil
 	}
 	rows, err := r.pool.Query(ctx, `
-		SELECT pm.id, pm.program_id, pm.user_id, u.name, u.avatar_url
+		SELECT pm.id, pm.program_id, pm.user_id, u.name, COALESCE(NULLIF(up.logo_url, ''), u.avatar_url)
 		FROM program_members pm
 		LEFT JOIN users u ON u.id = pm.user_id
+		LEFT JOIN LATERAL (
+			SELECT logo_url
+			FROM user_profiles
+			WHERE user_id = pm.user_id
+			  AND profile_type = 'mentor'
+			ORDER BY updated_on DESC
+			LIMIT 1
+		) up ON true
 		WHERE pm.program_id = ANY($1::uuid[])
 		  AND pm.member_type = 'mentor'
-		  AND pm.status = 'active'
+		  AND pm.status = 'approved'
 		ORDER BY u.name NULLS LAST, pm.created_on`, ids)
 	if err != nil {
 		return nil, fmt.Errorf("list mentor program mentors: %w", err)
@@ -488,7 +496,7 @@ func (r *MentorRepository) loadMentorMentees(ctx context.Context, mentorUserID s
 		SELECT DISTINCT ON (a.user_id, CASE WHEN a.status = 'graduated' THEN 1 ELSE 0 END)
 			a.user_id, a.status, p.name, pt.name,
 			NULLIF(TRIM(COALESCE(NULLIF(TRIM(u.name), ''), CONCAT_WS(' ', up.first_name, up.last_name))), ''),
-			COALESCE(u.avatar_url, up.logo_url),
+			COALESCE(NULLIF(up.logo_url, ''), u.avatar_url),
 			up.introduction
 		FROM applications a
 		JOIN program_terms pt ON pt.id = a.program_term_id
@@ -496,7 +504,7 @@ func (r *MentorRepository) loadMentorMentees(ctx context.Context, mentorUserID s
 		JOIN program_members pm ON pm.program_id = p.id
 			AND pm.user_id = $1
 			AND pm.member_type = 'mentor'
-			AND pm.status = 'active'
+			AND pm.status = 'approved'
 		LEFT JOIN users u ON u.id = a.user_id
 		LEFT JOIN LATERAL (
 			SELECT introduction, logo_url, first_name, last_name

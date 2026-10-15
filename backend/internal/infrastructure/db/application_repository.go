@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -190,15 +191,14 @@ func (r *ApplicationRepository) ListByProgram(ctx context.Context, programID str
 		WHEN a.status = 'accepted' THEN 2
 		WHEN a.status = 'pending' AND ` + prerequisitesDone + ` THEN 3
 		WHEN a.status = 'pending' THEN 4
-		WHEN a.status = 'hold' THEN 5
-		WHEN a.status = 'declined' THEN 6
-		ELSE 7 END, a.created_on DESC, a.id DESC`
+		WHEN a.status = 'declined' THEN 5
+		ELSE 6 END, a.created_on DESC, a.id DESC`
 	var total int
 	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id JOIN programs p ON p.id = pt.program_id JOIN users u ON u.id = a.user_id`+where, args...).Scan(&total); err != nil {
 		return nil, nil, fmt.Errorf("count program applications: %w", err)
 	}
 	args = append(args, limit, offset)
-	q := `SELECT a.user_id, a.id, u.name, u.email, u.avatar_url, a.status, pt.id, pt.name, pt.status, pt.start_date_time, pt.end_date_time, pt.application_start_date, pt.application_end_date,
+	q := `SELECT a.user_id, a.id, u.name, u.email, COALESCE((SELECT NULLIF(up.logo_url, '') FROM user_profiles up WHERE up.user_id = a.user_id AND up.profile_type = 'mentee' ORDER BY up.updated_on DESC LIMIT 1), u.avatar_url), a.status, pt.id, pt.name, pt.status, pt.start_date_time, pt.end_date_time, pt.application_start_date, pt.application_end_date,
 		(SELECT COUNT(*) FROM tasks t WHERE t.application_id = a.id),
 		(SELECT COUNT(*) FROM tasks t WHERE t.application_id = a.id AND t.status IN ('submitted', 'complete')),
 		a.reviewer_note, a.created_on, a.updated_on,
@@ -319,14 +319,11 @@ func (r *ApplicationRepository) CreateWithTasks(ctx context.Context, programTerm
 	if err != nil {
 		return nil, fmt.Errorf("lock program term for application create: %w", err)
 	}
-	if term.Status != models.ProgramTermStatusOpen {
-		return nil, fmt.Errorf("%w: applications are not open for this term", domain.ErrIneligible)
-	}
-	if err := checkProgramPublished(ctx, tx, programTermID); err != nil {
+	if err := checkCanApply(ctx, tx, term, input); err != nil {
 		return nil, err
 	}
 
-	a, err := insertApplicationWithTasks(ctx, tx, programTermID, term.Status, input, tasks)
+	a, err := insertApplicationWithTasks(ctx, tx, term, input, tasks)
 	if err != nil {
 		span.RecordError(err)
 		return nil, err
@@ -355,18 +352,14 @@ func (r *ApplicationRepository) ReapplyWithTasks(ctx context.Context, oldID, pro
 		return nil, fmt.Errorf("begin reapply transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var termStatus models.ProgramTermStatus
-	err = tx.QueryRow(ctx, `SELECT status FROM program_terms WHERE id = $1 FOR UPDATE`, programTermID).Scan(&termStatus)
+	term, err := scanProgramTerm(tx.QueryRow(ctx, `SELECT`+programTermCols+` FROM program_terms WHERE id = $1 FOR UPDATE`, programTermID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrProgramTermNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("lock program term for reapply: %w", err)
 	}
-	if termStatus != models.ProgramTermStatusOpen {
-		return nil, fmt.Errorf("%w: applications are not open for this term", domain.ErrIneligible)
-	}
-	if err := checkProgramPublished(ctx, tx, programTermID); err != nil {
+	if err := checkCanApply(ctx, tx, term, input); err != nil {
 		return nil, err
 	}
 	// Re-check under lock that the application being reapplied from is still withdrawn in this
@@ -402,7 +395,7 @@ func (r *ApplicationRepository) ReapplyWithTasks(ctx context.Context, oldID, pro
 	}
 	// A concurrent reapply that already created the active application fails this insert on
 	// uq_applications_active, which the handler maps to 409.
-	a, err := insertApplicationWithTasks(ctx, tx, programTermID, termStatus, input, tasks)
+	a, err := insertApplicationWithTasks(ctx, tx, term, input, tasks)
 	if err != nil {
 		span.RecordError(err)
 		return nil, err
@@ -411,6 +404,55 @@ func (r *ApplicationRepository) ReapplyWithTasks(ctx context.Context, oldID, pro
 		return nil, fmt.Errorf("commit reapply transaction: %w", err)
 	}
 	return a, nil
+}
+
+// checkCanApply re-checks, under the caller's term lock, what the service checked before the
+// transaction began: the term takes applications now, its program is published, and a mentee
+// applicant holds no accepted or graduated mentee application.
+func checkCanApply(ctx context.Context, tx pgx.Tx, term *models.ProgramTerm, input models.ApplicationCreateInput) error {
+	if !term.AcceptsApplications(time.Now()) {
+		return fmt.Errorf("%w: applications are not open for this term", domain.ErrIneligible)
+	}
+	if err := checkProgramPublished(ctx, tx, term.ID); err != nil {
+		return err
+	}
+	if input.Role == models.ApplicationRoleMentee {
+		return checkMenteeAvailable(ctx, tx, input.UserID, input.ID, true)
+	}
+	return nil
+}
+
+// checkMenteeAvailable refuses while the user holds another mentee application, other than
+// excludeID, that is accepted in a term that has not ended. With refuseGraduated it also refuses
+// once the user has graduated from any mentorship. Legacy jobspring applies both on apply
+// (ProgramApply) and only the first on accept; it counted accepted rows of every term, but the
+// import also maps legacy approved, active and hold rows to accepted, and a stale enrollment in
+// an ended term must not lock a mentee out. It first takes a transaction lock on the user: two
+// acceptances of the same mentee in different terms lock different term rows, so only this lock
+// serializes them.
+func checkMenteeAvailable(ctx context.Context, tx pgx.Tx, userID, excludeID string, refuseGraduated bool) error {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('mentorship_mentee:' || $1::text, 0))`, userID); err != nil {
+		return fmt.Errorf("lock mentee for enrollment check: %w", err)
+	}
+	var status models.ApplicationStatus
+	err := tx.QueryRow(ctx, `
+		SELECT a.status FROM applications a
+		JOIN program_terms pt ON pt.id = a.program_term_id
+		WHERE a.user_id = $1 AND a.role = $2 AND a.id <> $3
+		  AND ((a.status = $4 AND (pt.end_date_time IS NULL OR pt.end_date_time > NOW()))
+		       OR (a.status = $5 AND $6))
+		ORDER BY a.status = $4 DESC LIMIT 1`,
+		userID, models.ApplicationRoleMentee, excludeID, models.ApplicationStatusAccepted, models.ApplicationStatusGraduated, refuseGraduated).Scan(&status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("check mentee enrollment: %w", err)
+	}
+	if status == models.ApplicationStatusAccepted {
+		return fmt.Errorf("%w: the mentee already holds an accepted mentorship", domain.ErrIneligible)
+	}
+	return fmt.Errorf("%w: the mentee has already graduated from a mentorship", domain.ErrIneligible)
 }
 
 // checkProgramPublished refuses a new application unless the program is published. The caller
@@ -451,16 +493,17 @@ func checkApplicationProgramNotHidden(ctx context.Context, tx pgx.Tx, applicatio
 }
 
 // insertApplicationWithTasks inserts a pending application with its prerequisite tasks and queues
-// its access, search, and parent program refreshes, all inside the caller's transaction.
-func insertApplicationWithTasks(ctx context.Context, tx pgx.Tx, programTermID string, termStatus models.ProgramTermStatus, input models.ApplicationCreateInput, tasks []models.TaskCreateInput) (*models.Application, error) {
+// its access, search, and parent program refreshes, all inside the caller's transaction. The
+// application's term status and start and end dates are copied from the term.
+func insertApplicationWithTasks(ctx context.Context, tx pgx.Tx, term *models.ProgramTerm, input models.ApplicationCreateInput, tasks []models.TaskCreateInput) (*models.Application, error) {
 	const q = `
 		INSERT INTO applications (id, program_term_id, user_id, role, status, program_term_status, start_date_time, end_date_time, attendance_type)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING ` + applicationCols
 
 	a, err := scanApplication(tx.QueryRow(ctx, q,
-		input.ID, programTermID, input.UserID, input.Role, input.Status, termStatus,
-		input.StartDateTime, input.EndDateTime, input.AttendanceType,
+		input.ID, term.ID, input.UserID, input.Role, input.Status, term.Status,
+		term.StartDateTime, term.EndDateTime, input.AttendanceType,
 	))
 	if err != nil {
 		return nil, fmt.Errorf("create application: %w", err)
@@ -471,11 +514,7 @@ func insertApplicationWithTasks(ctx context.Context, tx pgx.Tx, programTermID st
 	if err := enqueueApplicationIndex(ctx, tx, a, "created"); err != nil {
 		return nil, err
 	}
-	var programID string
-	if err := tx.QueryRow(ctx, `SELECT program_id FROM program_terms WHERE id = $1`, programTermID).Scan(&programID); err != nil {
-		return nil, fmt.Errorf("resolve application program for index refresh: %w", err)
-	}
-	if err := enqueueProgramIndexByID(ctx, tx, programID); err != nil {
+	if err := enqueueProgramIndexByID(ctx, tx, term.ProgramID); err != nil {
 		return nil, err
 	}
 	if err := insertApplicationTasks(ctx, tx, a, tasks); err != nil {
@@ -528,13 +567,22 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if input.Status != nil && *input.Status == models.ApplicationStatusAccepted {
-		var termStatus models.ProgramTermStatus
-		if err := tx.QueryRow(ctx, `SELECT pt.status FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE a.id = $1 FOR UPDATE OF pt`, id).Scan(&termStatus); errors.Is(err, pgx.ErrNoRows) {
+		var (
+			termStatus models.ProgramTermStatus
+			role       models.ApplicationRole
+			userID     string
+		)
+		if err := tx.QueryRow(ctx, `SELECT pt.status, a.role, a.user_id FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE a.id = $1 FOR UPDATE OF pt`, id).Scan(&termStatus, &role, &userID); errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrApplicationNotFound
 		} else if err != nil {
 			return nil, fmt.Errorf("lock application term for acceptance: %w", err)
 		} else if termStatus != models.ProgramTermStatusOpen {
 			return nil, fmt.Errorf("%w: applications are not open for this term", domain.ErrIneligible)
+		}
+		if role == models.ApplicationRoleMentee {
+			if err := checkMenteeAvailable(ctx, tx, userID, id, false); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if input.ExpectedStatus != nil {
@@ -557,18 +605,16 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 		UPDATE applications SET
 			status              = COALESCE($2, status),
 			program_term_status = COALESCE($3, program_term_status),
-			start_date_time     = COALESCE($4, start_date_time),
-			end_date_time       = COALESCE($5, end_date_time),
-			tasks_submitted     = COALESCE($6, tasks_submitted),
-			admin_notified      = COALESCE($7, admin_notified),
-			attendance_type     = COALESCE($8, attendance_type),
-			evaluation          = COALESCE($9, evaluation),
-			reviewer_note       = COALESCE($10, reviewer_note)
+			tasks_submitted     = COALESCE($4, tasks_submitted),
+			admin_notified      = COALESCE($5, admin_notified),
+			attendance_type     = COALESCE($6, attendance_type),
+			evaluation          = COALESCE($7, evaluation),
+			reviewer_note       = COALESCE($8, reviewer_note)
 		WHERE id = $1
 		RETURNING ` + applicationCols
 
 	a, err := scanApplication(tx.QueryRow(ctx, q,
-		id, input.Status, input.ProgramTermStatus, input.StartDateTime, input.EndDateTime,
+		id, input.Status, input.ProgramTermStatus,
 		input.TasksSubmitted, input.AdminNotified, input.AttendanceType, input.Evaluation, input.ReviewerNote,
 	))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -754,9 +800,9 @@ func ensureAcceptedMentorMembership(ctx context.Context, tx pgx.Tx, application 
 
 	const q = `
 		INSERT INTO program_members (id, program_id, user_id, member_type, status)
-		VALUES (gen_random_uuid(), $1, $2, 'mentor', 'active')
+		VALUES (gen_random_uuid(), $1, $2, 'mentor', 'approved')
 		ON CONFLICT (program_id, user_id, member_type)
-		DO UPDATE SET status = 'active', updated_on = NOW()
+		DO UPDATE SET status = 'approved', updated_on = NOW()
 		RETURNING ` + programMemberCols
 	member, err := scanProgramMember(tx.QueryRow(ctx, q, programID, application.UserID))
 	if err != nil {
@@ -972,14 +1018,14 @@ func (r *ApplicationRepository) CountWithdrawnByTermAndUser(ctx context.Context,
 	return count, nil
 }
 
-// BulkDeclineByTerm moves all pending/submitted applications in a term to declined.
-func (r *ApplicationRepository) BulkDeclineByTerm(ctx context.Context, termID string) (int, error) {
+// BulkDeclineByTerm moves all pending applications in a term to declined and returns them.
+func (r *ApplicationRepository) BulkDeclineByTerm(ctx context.Context, termID string) ([]*models.Application, error) {
 	ctx, span := applicationTracer.Start(ctx, "db.applications.BulkDeclineByTerm")
 	defer span.End()
 	span.SetAttributes(attribute.String("db.term_id", termID))
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("begin bulk decline transaction: %w", err)
+		return nil, fmt.Errorf("begin bulk decline transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
@@ -991,47 +1037,45 @@ func (r *ApplicationRepository) BulkDeclineByTerm(ctx context.Context, termID st
 	rows, err := tx.Query(ctx, q, termID)
 	if err != nil {
 		span.RecordError(err)
-		return 0, fmt.Errorf("bulk decline: %w", err)
+		return nil, fmt.Errorf("bulk decline: %w", err)
 	}
 	defer rows.Close()
 
-	var count int
 	applications := make([]*models.Application, 0)
 	for rows.Next() {
 		application, scanErr := scanApplication(rows)
 		if scanErr != nil {
-			return 0, fmt.Errorf("scan bulk-declined application: %w", scanErr)
+			return nil, fmt.Errorf("scan bulk-declined application: %w", scanErr)
 		}
 		applications = append(applications, application)
-		count++
 	}
 	if err := rows.Err(); err != nil {
 		span.RecordError(err)
-		return 0, fmt.Errorf("bulk decline rows: %w", err)
+		return nil, fmt.Errorf("bulk decline rows: %w", err)
 	}
 	rows.Close()
 	for _, application := range applications {
 		if err := syncAndEnqueueTasksWithApplicationState(ctx, tx, application); err != nil {
-			return 0, fmt.Errorf("sync bulk-declined tasks: %w", err)
+			return nil, fmt.Errorf("sync bulk-declined tasks: %w", err)
 		}
 		if err := enqueueApplicationMarker(ctx, tx, application, "update_access"); err != nil {
-			return 0, err
+			return nil, err
 		}
 		if err := enqueueApplicationIndex(ctx, tx, application, "updated"); err != nil {
-			return 0, err
+			return nil, err
 		}
 	}
 	var programID string
 	if err := tx.QueryRow(ctx, `SELECT program_id FROM program_terms WHERE id = $1`, termID).Scan(&programID); err != nil {
-		return 0, fmt.Errorf("resolve bulk-declined program for index refresh: %w", err)
+		return nil, fmt.Errorf("resolve bulk-declined program for index refresh: %w", err)
 	}
 	if err := enqueueProgramIndexByID(ctx, tx, programID); err != nil {
-		return 0, err
+		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("commit bulk decline transaction: %w", err)
+		return nil, fmt.Errorf("commit bulk decline transaction: %w", err)
 	}
-	return count, nil
+	return applications, nil
 }
 
 // ListPastMenteesByTerm returns accepted/graduated applications for a term.

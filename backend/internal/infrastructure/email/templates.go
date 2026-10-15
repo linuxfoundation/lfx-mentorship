@@ -21,33 +21,58 @@ var (
 )
 
 const (
-	templateMentorInvited       = "mentor_invited"
-	templateMentorDeclined      = "mentor_declined"
-	templateAdminMentorDeclined = "admin_mentor_declined"
-	templateAdminMentorAccepted = "admin_mentor_accepted"
-	templateAdminTasksSubmitted = "admin_tasks_submitted"
-	templateMenteeAccepted      = "mentee_accepted"
-	templateAdminMenteeAccepted = "admin_mentee_accepted"
+	templateProgramSubmitted          = "program_submitted"
+	templateProgramReview             = "program_review"
+	templateProgramApproved           = "program_approved"
+	templateProgramRejected           = "program_rejected"
+	templateMentorInvited             = "mentor_invited"
+	templateMentorDeclined            = "mentor_declined"
+	templateAdminMentorDeclined       = "admin_mentor_declined"
+	templateAdminMentorAccepted       = "admin_mentor_accepted"
+	templateAdminMentorRequested      = "admin_mentor_requested"
+	templateAdminMentorWithdrew       = "admin_mentor_withdrew"
+	templateAdminTasksSubmitted       = "admin_tasks_submitted"
+	templateMenteeApplicationReceived = "mentee_application_received"
+	templateMenteeAccepted            = "mentee_accepted"
+	templateAdminMenteeAccepted       = "admin_mentee_accepted"
+	templateMenteeDeclined            = "mentee_declined"
+	templateMenteeWithdrawn           = "mentee_withdrawn"
+	templateAdminMenteeWithdrawn      = "admin_mentee_withdrawn"
+	templateMenteeGraduated           = "mentee_graduated"
+	templateMenteeTaskAssigned        = "mentee_task_assigned"
 )
 
 // templateData is the union of fields the notification templates read.
 type templateData struct {
-	RecipientName  string
-	ProgramName    string
-	ProgramURL     string
-	ManageURL      string
-	HRNotice       bool
-	TermName       string
-	TermPeriod     string
-	MenteeName     string
-	MenteeEmail    string
-	MenteeCountry  string
-	MentorName     string
-	AttendanceType string
-	ProgramAdmins  []string
-	InviteURL      string
-	LFID           string
-	Year           int
+	// Letter drops the greeting and sign-off, for a template that is a formal letter.
+	Letter             bool
+	RecipientName      string
+	ProgramName        string
+	ProgramDescription string
+	ProgramURL         string
+	ManageURL          string
+	SupportURL         string
+	HRNotice           bool
+	TermName           string
+	TermPeriod         string
+	MenteeName         string
+	MenteeEmail        string
+	MenteeCountry      string
+	MentorName         string
+	MentorEmail        string
+	MentorNames        []string
+	SubmitterName      string
+	SubmitterEmail     string
+	AttendanceType     string
+	ProgramAdmins      []string
+	Tasks              []string
+	TaskName           string
+	TaskCreatedOn      string
+	TaskDueDate        string
+	IssuedDate         string
+	InviteURL          string
+	LFID               string
+	Year               int
 }
 
 // render builds a Message from the named template pair.

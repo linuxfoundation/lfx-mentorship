@@ -528,10 +528,10 @@ func TestProgramHandler_ResolveID_PendingResolvesForOwner(t *testing.T) {
 	}
 }
 
-func TestProgramHandler_ResolveID_SubmittedReturns404ToAnonymous(t *testing.T) {
+func TestProgramHandler_ResolveID_RejectedReturns404ToAnonymous(t *testing.T) {
 	h := handler.NewProgramHandler(&stubProgramSvc{
 		getBySlug: func(_ context.Context, id string) (*models.Program, error) {
-			return &models.Program{ID: id, Slug: id, Status: models.ProgramStatusSubmitted}, nil
+			return &models.Program{ID: id, Slug: id, Status: models.ProgramStatusRejected}, nil
 		},
 	})
 

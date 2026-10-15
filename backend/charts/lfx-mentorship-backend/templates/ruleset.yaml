@@ -124,6 +124,7 @@ spec:
         methods: [GET]
         routes:
           - path: /mentorship/v1/programs/:programID/terms/:termID
+          - path: /mentorship/v1/programs/:programID/terms/:termID/apply-target
       execute:
         - authenticator: oidc
         - authenticator: anonymous_authenticator
@@ -342,26 +343,8 @@ spec:
             values:
               aud: {{ .Values.app.audience | quote }}
 
-    - id: rule:lfx:lfx-mentorship-backend:program-submit
-      allow_encoded_slashes: "off"
-      match:
-        methods: [POST]
-        routes:
-          - path: /mentorship/v1/programs/:id/submit
-      execute:
-        - authenticator: oidc
-        - authorizer: openfga_check
-          config:
-            values:
-              object: 'mentorship_program:{{ "{{- .Request.URL.Captures.id -}}" }}'
-              relation: writer
-        - finalizer: create_jwt
-          config:
-            values:
-              aud: {{ .Values.app.audience | quote }}
-
     # Hiding and unhiding toggle a live program's public visibility, which program
-    # admins own; publishing a submitted program stays with the approver team.
+    # admins own; publishing a pending program stays with the approver team.
     - id: rule:lfx:lfx-mentorship-backend:program-visibility
       allow_encoded_slashes: "off"
       match:
@@ -459,24 +442,6 @@ spec:
         methods: [PATCH]
         routes:
           - path: /mentorship/v1/programs/:id/members/:memberId
-      execute:
-        - authenticator: oidc
-        - authorizer: openfga_check
-          config:
-            values:
-              object: 'mentorship_program:{{ "{{- .Request.URL.Captures.id -}}" }}'
-              relation: writer
-        - finalizer: create_jwt
-          config:
-            values:
-              aud: {{ .Values.app.audience | quote }}
-
-    - id: rule:lfx:lfx-mentorship-backend:program-member-resend-invite
-      allow_encoded_slashes: "off"
-      match:
-        methods: [POST]
-        routes:
-          - path: /mentorship/v1/programs/:id/members/:memberId/resend-invite
       execute:
         - authenticator: oidc
         - authorizer: openfga_check
@@ -672,24 +637,6 @@ spec:
             values:
               object: 'mentorship_application:{{ "{{- .Request.URL.Captures.id -}}" }}'
               relation: auditor
-        - finalizer: create_jwt
-          config:
-            values:
-              aud: {{ .Values.app.audience | quote }}
-
-    - id: rule:lfx:lfx-mentorship-backend:applications-writer
-      allow_encoded_slashes: "off"
-      match:
-        methods: [PATCH]
-        routes:
-          - path: /mentorship/v1/applications/:id
-      execute:
-        - authenticator: oidc
-        - authorizer: openfga_check
-          config:
-            values:
-              object: 'mentorship_application:{{ "{{- .Request.URL.Captures.id -}}" }}'
-              relation: writer
         - finalizer: create_jwt
           config:
             values:

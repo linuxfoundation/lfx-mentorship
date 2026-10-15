@@ -33,16 +33,15 @@ Authoritative entity reference. Schema source of truth: `backend/db/migrations/0
 ### Status Lifecycle
 
 ```
-pending ─submit─► submitted ──approve──► published ◄──unhide──┐
-                             └──reject──► rejected             │
-                                         rejected ──resubmit──► submitted
+pending ──approve──► published ◄──unhide──┐
+        └──reject──► rejected             │
 published ──hide──► hidden ──────────────────────────────────►─┘
 published │ hidden ──archive──► archived
 ```
 
-**Guard: hide blocked while any application on the program has status ∈ {`pending`, `accepted`, `graduated`, `hold`}**
+**Guard: hide blocked while any application on the program has status ∈ {`pending`, `accepted`, `graduated`}**
 
-**Submission guard: program must have ≥ 1 open term and all required fields present.**
+**Publication guard (`pending → published`): program must have ≥ 1 open term and all required fields present.**
 
 ---
 
@@ -102,12 +101,12 @@ open │ closed ──soft-delete──► deleted
 ### Status Lifecycle
 
 ```
-── invite ──► invited ──accept──► active
+── invite ──► invited ──accept──► approved
              invited ──decline──► declined
-── self-request ──► requested ──approve──► active
+── self-request ──► requested ──approve──► approved
                     requested ──decline──► declined
-active ──remove──► withdrawn
-invited │ requested │ active ──manual-hold──► pending
+approved ──remove──► withdrawn
+invited │ requested │ approved ──manual-hold──► pending
 ```
 
 **Program Admin records (`member_type = program_admin`) carry no status (NULL).**
@@ -166,11 +165,15 @@ invited │ requested │ active ──manual-hold──► pending
 pending ──accept (+ attendance_type)──► accepted ──graduate──► graduated
 pending ──decline──► declined
 pending ──withdraw (mentee)──► withdrawn
-pending ──hold──► hold ──resume──► pending
 ```
 
 **Application window guard**: apply only when `program_terms.status = open` AND
-`now` is within `[application_start_date, application_end_date]`.
+today's UTC date is within `[application_start_date, application_end_date]` by UTC
+calendar day, both days inclusive. A term missing either date takes no applications.
+
+**One mentorship per mentee**: a mentee application is refused, and so is its
+acceptance, while the user holds another mentee application `accepted` in a term that has
+not ended. A mentee application is also refused once the user has a `graduated` one.
 
 **Re-apply**: allowed from `withdrawn` (window still open); blocked from `declined`.
 
@@ -225,5 +228,4 @@ any state ──admin/mentor──► incomplete  (reset)
 | `ErrApplicationNotFound` | 404 | Application ID does not exist |
 | `ErrMemberNotFound` | 404 | Member ID does not exist |
 | `ErrTaskNotFound` | 404 | Task ID does not exist |
-| `ErrInviteExpired` | 410 | Mentor invitation token expired or invalid |
 | `ErrForbidden` | 403 | Caller is not permitted for this action |

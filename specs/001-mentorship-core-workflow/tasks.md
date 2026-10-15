@@ -79,7 +79,7 @@ transitions, 4-term cap, term close guard, discovery labels).
 ### Implementation for User Story 1
 
 - [x] T012 [US1] Add `validProgramTransitions` map and state-machine check to `ProgramService.Update` in `backend/internal/service/program_service.go`; return `ErrInvalidStateTransition` for illegal `(from, to)` pairs (see contracts/api.md transition table)
-- [x] T013 [US1] Add submission guard to `ProgramService.Update` in `backend/internal/service/program_service.go`: when `to = submitted`, verify all required fields (name, description, repo_link, logo_url) are non-empty and `CountOpenTermsByProgram ≥ 1`; return `ErrInvalidInput` with message on failure
+- [x] T013 [US1] Add publication guard to `ProgramService.Update` in `backend/internal/service/program_service.go`: when a `pending` program moves to `published`, verify a linked LF project, description, repo_link and logo_url are non-empty, at least one skill tag exists and `CountOpenTermsByProgram ≥ 1`; return `ErrStateLocked` (HTTP 409) with message on failure
 - [x] T014 [US1] Add hide guard to `ProgramService.Update` in `backend/internal/service/program_service.go`: when `to = hidden`, call `CountBlockingAppsForProgram` with statuses `{pending, accepted, graduated, hold}`; return `ErrStateLocked` if count > 0
 - [x] T015 [P] [US1] Add `ProgramStatusHidden` already exists — verify it is handled in all switch statements in `backend/internal/domain/models/program.go`; add `deleted` constant and `closed`/`deleted` handling to `ProgramTermService.Update` in `backend/internal/service/program_term_service.go` (accept `'deleted'` as valid status)
 - [x] T016 [US1] Add open-term cap guard to `ProgramTermService.Create` in `backend/internal/service/program_term_service.go`: call `CountOpenTermsByProgram`; if ≥ 4, return `ErrInvalidInput` with message `"a program may not have more than 4 open terms"`
@@ -100,12 +100,12 @@ self-request; all transitions are tracked correctly.
 
 ### Implementation for User Story 2
 
-- [x] T020 [US2] Create `backend/internal/infrastructure/auth/invite_token.go`: `GenerateInviteToken(programID, userID string, ttl time.Duration) (string, error)` and `ValidateInviteToken(token, secret string) (programID, userID string, error)` using the existing JWT library
+- [x] T020 [US2] Create `backend/internal/infrastructure/auth/invite_token.go`: `GenerateInviteToken(programID, userID, secret string) (string, error)` and `ValidateInviteToken(token, secret string) (programID, userID string, err error)`, an HMAC-SHA256-signed `{program_id, user_id}` with no expiry (research.md C-5)
 - [x] T021 [US2] Update `ProgramMemberService.Create` in `backend/internal/service/program_member_service.go` to call `GenerateInviteToken` and `Notifier.NotifyMentorInvited` when `status = invited`; accept `requested` as a valid initial status for self-requests
 - [x] T022 [US2] Add decline notification call in `ProgramMemberService.Update` in `backend/internal/service/program_member_service.go`: when `requested → declined`, call `Notifier.NotifyMentorDeclined` (revoking an invite, `invited → declined`, sends nothing)
-- [x] T023 [US2] Create `backend/internal/handler/mentor_invite_handler.go` with `MentorInviteHandler` struct and `Accept(w, r)` / `Decline(w, r)` methods; parse JWT token from path param, call `ProgramMemberService.AcceptInvite` / `DeclineInvite`
+- [x] T023 [US2] Create `backend/internal/handler/mentor_invite_handler.go` with `MentorInviteHandler` struct and `Accept(w, r)` / `Decline(w, r)` methods; parse the invite token from the path param, call `ProgramMemberService.AcceptInvite` / `DeclineInvite`
 - [x] T024 [US2] Add `AcceptInvite(ctx, token string)` and `DeclineInvite(ctx, token string)` to `ProgramMemberService` in `backend/internal/service/program_member_service.go`
-- [x] T025 [US2] Register routes `POST /v1/mentor-invites/{token}/accept` and `POST /v1/mentor-invites/{token}/decline` as **public** (no auth middleware) in `backend/cmd/mentorship-api/server.go`
+- [x] T025 [US2] Register routes `POST /v1/mentor-invites/{token}/accept` and `POST /v1/mentor-invites/{token}/decline` in `backend/cmd/mentorship-api/server.go`; both need the invite token and the invited user's JWT
 
 **Checkpoint**: Invite flow end-to-end functional. Scenario 3 passes.
 

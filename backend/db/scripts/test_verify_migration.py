@@ -27,6 +27,8 @@ PENDING_MENTOR = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 UNKNOWN_TERM_APPLICATION = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 UNASSIGNED_TASK = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
 LIN = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+LEGACY_TASK = "12121212-1212-4121-8121-121212121212"
+BUILT_IN_TASK = "13131313-1313-4131-8131-131313131313"
 
 SOURCES = {
     "users": [
@@ -55,6 +57,10 @@ SOURCES = {
     ],
     "tasks": [
         {"id": TASK, "programTermId": TERM, "assigneeId": MENTEE, "ownerId": ADMIN, "name": "Intro", "status": "submitted", "category": "prerequisite"},
+        # Legacy jobspring spellings that only the dev-data repair rewrote.
+        {"id": LEGACY_TASK, "programTermId": TERM, "assigneeId": MENTEE, "name": "Weekly report", "status": "inProgress", "category": "nonPrerequisite", "submitFile": "no-required"},
+        # A built-in task always required a file, whatever its stored submitFile says.
+        {"id": BUILT_IN_TASK, "programTermId": TERM, "assigneeId": MENTEE, "name": "Resume", "status": "incomplete", "category": "prerequisite", "custom": "false", "submitFile": ""},
         {"id": ORPHAN_TASK, "programTermId": TERM, "assigneeId": ADMIN, "name": "No application"},
         {"id": UNASSIGNED_TASK, "programTermId": TERM, "name": "No assignee"},
     ],
@@ -104,6 +110,34 @@ def imported(db):
 
 def run(cur) -> list:
     return v.verify(cur, SOURCES, 50, random.Random(1)).problems
+
+
+@pytest.mark.parametrize("legacy", ["submitted", "Submitted", "draft", "published", "rejected", None])
+def test_verifier_program_status_matches_the_importer(legacy):
+    assert v._program_status(legacy) == m._normalize_program_status(legacy)
+
+
+def test_legacy_submitted_program_is_expected_as_pending():
+    assert v._program_status("submitted") == "pending"
+
+
+def test_verifier_member_users_match_the_importer():
+    users = [
+        {"id": "u-alice", "email": "Alice@Example.org", "lfid": "alice"},
+        {"id": "u-shared-1", "email": "shared@example.org", "lfid": "owner"},
+        {"id": "u-shared-2", "email": "shared@example.org", "lfid": "other"},
+    ]
+    projects = [{"projectId": "p1", "lfid": "owner"}, {"projectId": "p2"}]
+    members = [
+        {"id": "m-email-wins", "projectId": "p1", "memberType": "mentor", "email": "alice@example.org", "userId": "u-shared-1"},
+        {"id": "m-creator", "projectId": "p1", "memberType": "maintainer", "email": "shared@example.org"},
+        {"id": "m-ambiguous", "projectId": "p2", "memberType": "maintainer", "email": "shared@example.org", "userId": "u-shared-2"},
+        {"id": "m-no-email", "projectId": "p2", "memberType": "mentor", "userId": "u-alice"},
+        {"id": "m-override", "projectId": "p2", "memberType": "mentor", "email": "ghost@example.org"},
+        {"id": "m-unresolved", "projectId": "p2", "memberType": "mentor"},
+    ]
+    overrides = {"m-override": "u-alice"}
+    assert v.resolve_member_users(members, users, projects, overrides) == m.resolve_member_user_ids(members, users, projects, overrides)
 
 
 def test_clean_import_passes(imported):
@@ -164,6 +198,11 @@ def test_importer_mapping_regression_is_reported(db, monkeypatch, name, broken, 
 def test_imported_skipped_row_is_reported(imported, table, row_id, insert):
     imported.execute(insert, (row_id,))
     assert f"{table} {row_id}: imported although the importer should have skipped it" in run(imported)
+
+
+def test_built_in_task_without_required_file_is_reported(imported):
+    imported.execute("UPDATE tasks SET submit_file = NULL WHERE id = %s", (BUILT_IN_TASK,))
+    assert run(imported) == [f"tasks {BUILT_IN_TASK}: submit_file is None, legacy gives 'required'"]
 
 
 def test_duplicate_email_nulled_by_the_importer_is_not_a_mismatch(imported):

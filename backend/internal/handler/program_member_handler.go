@@ -21,9 +21,8 @@ type programMemberService interface {
 	SearchCandidates(ctx context.Context, programID, query string) ([]*models.MentorCandidate, error)
 	Update(ctx context.Context, programID, id string, input models.ProgramMemberUpdateInput, actorID string) (*models.ProgramMember, error)
 	Delete(ctx context.Context, programID, id, actorID string) error
-	ResendInvite(ctx context.Context, programID, id, actorID string) error
 	ListMine(ctx context.Context, userID string, filter models.ProgramMemberFilter) ([]*models.ProgramMembership, *models.PaginationMeta, error)
-	RequestMentorship(ctx context.Context, programID, userID string) (*models.ProgramMember, error)
+	RequestMentorship(ctx context.Context, programID string, user models.UserPrincipal) (*models.ProgramMember, error)
 	WithdrawMine(ctx context.Context, id, userID string) error
 }
 
@@ -87,7 +86,7 @@ func (h *ProgramMemberHandler) List(w http.ResponseWriter, r *http.Request) {
 		Limit:      limit,
 		Offset:     offset,
 		MemberType: string(models.MemberTypeMentor),
-		Status:     string(models.ProgramMemberStatusActive),
+		Status:     string(models.ProgramMemberStatusApproved),
 	})
 	if err != nil {
 		Error(w, err)
@@ -178,21 +177,6 @@ func (h *ProgramMemberHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// ResendInvite handles POST /v1/programs/{id}/members/{memberId}/resend-invite — requires JWT.
-func (h *ProgramMemberHandler) ResendInvite(w http.ResponseWriter, r *http.Request) {
-	principal := auth.PrincipalFromContext(r.Context())
-	if principal == nil {
-		Error(w, domain.ErrUnauthorized)
-		return
-	}
-
-	if err := h.svc.ResendInvite(r.Context(), chi.URLParam(r, "id"), chi.URLParam(r, "memberId"), principal.UserID); err != nil {
-		Error(w, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
 // ListMine handles GET /v1/me/program-memberships — the caller's own rows in
 // any status, each with its program's name.
 func (h *ProgramMemberHandler) ListMine(w http.ResponseWriter, r *http.Request) {
@@ -229,7 +213,12 @@ func (h *ProgramMemberHandler) RequestMine(w http.ResponseWriter, r *http.Reques
 	if !decodeBody(w, r, &input) {
 		return
 	}
-	member, err := h.svc.RequestMentorship(r.Context(), input.ProgramID, principal.UserID)
+	user := models.UserPrincipal{
+		LFID:   principal.Username,
+		UserID: principal.UserID,
+		Email:  principal.Email,
+	}
+	member, err := h.svc.RequestMentorship(r.Context(), input.ProgramID, user)
 	if err != nil {
 		Error(w, err)
 		return

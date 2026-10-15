@@ -63,10 +63,10 @@ func seedIntegrationFixture(t *testing.T, pool *pgxpool.Pool) integrationFixture
 	if _, err := pool.Exec(ctx, `INSERT INTO programs (id, lf_project_uid, name, slug, status) VALUES ($1, '00000000-0000-0000-0000-000000000099', 'Fixture Program', 'fixture-program', 'published')`, fixture.ProgramID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES ('00000000-0000-0000-0000-000000000020', $1, $2, 'program_admin', 'active')`, fixture.ProgramID, fixture.UserID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES ('00000000-0000-0000-0000-000000000020', $1, $2, 'program_admin', 'approved')`, fixture.ProgramID, fixture.UserID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO program_terms (id, program_id, name, status) VALUES ($1, $3, 'Open', 'open'), ($2, $3, 'Closed', 'closed')`, fixture.OpenTerm, fixture.ClosedTerm, fixture.ProgramID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO program_terms (id, program_id, name, status, application_start_date, application_end_date) VALUES ($1, $3, 'Open', 'open', NOW() - interval '1 day', NOW() + interval '30 days'), ($2, $3, 'Closed', 'closed', NULL, NULL)`, fixture.OpenTerm, fixture.ClosedTerm, fixture.ProgramID); err != nil {
 		t.Fatal(err)
 	}
 	return fixture
@@ -106,6 +106,114 @@ func TestFGAOutboxIntegration_ClaimSerializesSameObject(t *testing.T) {
 	}
 	if claimed != 1 {
 		t.Fatalf("claimed %d markers; want exactly one", claimed)
+	}
+}
+
+// A bulk import leaves a backlog far larger than the lock table, which holds
+// max_locks_per_transaction * max_connections entries. Claim must take advisory
+// locks for one batch only, not for every pending marker.
+func TestFGAOutboxIntegration_ClaimLargeBacklogTakesBoundedLocks(t *testing.T) {
+	pool := integrationPool(t)
+	repo := NewFGAOutboxRepository(pool)
+	ctx := context.Background()
+
+	var maxLocks, maxConns int
+	if err := pool.QueryRow(ctx, `SELECT current_setting('max_locks_per_transaction')::int, current_setting('max_connections')::int`).Scan(&maxLocks, &maxConns); err != nil {
+		t.Fatalf("read lock settings: %v", err)
+	}
+	// Shared memory has slack beyond the nominal lock table size, so overshoot it well.
+	backlog := 10 * maxLocks * maxConns
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO fga_outbox (marker_kind, object_type, object_uid, desired_operation)
+		SELECT 'object', 'mentorship_program', 'program-' || n, 'update_access'
+		FROM generate_series(1, $1) AS n`, backlog); err != nil {
+		t.Fatalf("seed backlog: %v", err)
+	}
+
+	const batch = 50
+	markers, err := repo.Claim(ctx, batch)
+	if err != nil {
+		t.Fatalf("claim with backlog of %d: %v", backlog, err)
+	}
+	if len(markers) != batch {
+		t.Fatalf("claimed %d markers; want %d", len(markers), batch)
+	}
+	var inFlight int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM fga_outbox WHERE state = 'in_flight'`).Scan(&inFlight); err != nil {
+		t.Fatalf("count in-flight markers: %v", err)
+	}
+	if inFlight != batch {
+		t.Fatalf("in-flight markers = %d; want %d", inFlight, batch)
+	}
+}
+
+// Two relays can snapshot the same pending marker. If the first commits its
+// claim before the second reaches the advisory lock, the second acquires the
+// released lock and FOR UPDATE follows the row to its in-flight version. The
+// locking step must recheck eligibility against that version and drop it.
+//
+// A cursor pins its snapshot at DECLARE, so the interleaving is driven
+// deterministically: open the production claim CTEs while the marker is
+// pending, let a pool claim take and commit it, then FETCH to run the lock step.
+func TestFGAOutboxIntegration_ClaimRechecksEligibilityAfterConcurrentClaim(t *testing.T) {
+	pool := integrationPool(t)
+	repo := NewFGAOutboxRepository(pool)
+	ctx := context.Background()
+	if err := repo.EnqueueObject(ctx, "mentorship_program", "program-concurrent", "update_access"); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	late, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin late claim: %v", err)
+	}
+	defer func() { _ = late.Rollback(ctx) }()
+	const batch = 1
+	if _, err := late.Exec(ctx,
+		`DECLARE late_claim NO SCROLL CURSOR FOR WITH `+fgaOutboxClaimCTEs+` SELECT id FROM candidates`,
+		batch, repo.maxAttempts, batch*fgaClaimScanFactor,
+	); err != nil {
+		t.Fatalf("open late claim: %v", err)
+	}
+
+	first, err := repo.Claim(ctx, batch)
+	if err != nil || len(first) != 1 {
+		t.Fatalf("first claim markers=%d err=%v", len(first), err)
+	}
+
+	rows, err := late.Query(ctx, `FETCH ALL FROM late_claim`)
+	if err != nil {
+		t.Fatalf("resume late claim: %v", err)
+	}
+	var reclaimed []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("scan late claim: %v", err)
+		}
+		reclaimed = append(reclaimed, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate late claim: %v", err)
+	}
+	if len(reclaimed) != 0 {
+		t.Fatalf("late claim took markers %v after the first claim committed; want none", reclaimed)
+	}
+	if err := late.Commit(ctx); err != nil {
+		t.Fatalf("commit late claim: %v", err)
+	}
+
+	var claimedAt time.Time
+	var claimedGeneration int64
+	if err := pool.QueryRow(ctx, `SELECT claimed_at, claimed_generation FROM fga_outbox WHERE id = $1`, first[0].ID).Scan(&claimedAt, &claimedGeneration); err != nil {
+		t.Fatalf("read claim: %v", err)
+	}
+	if !claimedAt.Equal(*first[0].ClaimedAt) || claimedGeneration != first[0].Generation {
+		t.Fatalf("claim overwritten: claimed_at=%v generation=%d; want %v/%d", claimedAt, claimedGeneration, *first[0].ClaimedAt, first[0].Generation)
+	}
+	if acknowledged, err := repo.Acknowledge(ctx, first[0]); err != nil || !acknowledged {
+		t.Fatalf("acknowledge first claim: acknowledged=%v err=%v", acknowledged, err)
 	}
 }
 
@@ -240,7 +348,7 @@ func TestProgramIndexIntegration_RefreshesPublicStats(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name) VALUES ($1, 'fixture-graduated', 'Fixture Graduated')`, graduatedUserID); err != nil {
 		t.Fatal(err)
 	}
-	active := models.ProgramMemberStatusActive
+	active := models.ProgramMemberStatusApproved
 	if _, err := NewProgramMemberRepository(pool).Create(ctx, fixture.ProgramID, models.ProgramMemberCreateInput{
 		ID:         "00000000-0000-0000-0000-000000000021",
 		UserID:     mentorID,
@@ -586,7 +694,7 @@ func TestProgramHeaderProjectionIntegration_CountsProgramState(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name) VALUES ('00000000-0000-0000-0000-000000000002', 'fixture-user-2', 'Fixture User 2')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES ('00000000-0000-0000-0000-000000000021', $1, $2, 'mentor', 'active')`, fixture.ProgramID, fixture.UserID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES ('00000000-0000-0000-0000-000000000021', $1, $2, 'mentor', 'approved')`, fixture.ProgramID, fixture.UserID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ('00000000-0000-0000-0000-000000000030', $1, $2, 'mentee', 'accepted'), ('00000000-0000-0000-0000-000000000031', $1, '00000000-0000-0000-0000-000000000002', 'mentee', 'graduated')`, fixture.OpenTerm, fixture.UserID); err != nil {
@@ -641,7 +749,7 @@ func TestProgramListAdministeredIntegration_GroupsStatusAndScopesToActiveAdmin(t
 		`INSERT INTO users (id, lfid, name) VALUES ('` + otherUserID + `', 'fixture-user-2', 'Fixture User 2')`,
 		`INSERT INTO programs (id, name, slug, status, lf_project_name) VALUES
 			('` + completedID + `', 'Alpha', 'alpha', 'published', 'LF Energy'),
-			('` + pendingID + `', 'beta', 'beta', 'submitted', 'CNCF'),
+			('` + pendingID + `', 'beta', 'beta', 'pending', 'CNCF'),
 			('` + mentorOnlyID + `', 'Mentored', 'mentored', 'published', NULL),
 			('` + withdrawnID + `', 'Withdrawn', 'withdrawn', 'published', NULL),
 			('` + rejectedID + `', 'Gamma', 'gamma', 'rejected', NULL),
@@ -651,18 +759,18 @@ func TestProgramListAdministeredIntegration_GroupsStatusAndScopesToActiveAdmin(t
 			('` + deletedTermID + `', 'Lambda', 'lambda', 'published', NULL),
 			('` + otherAdminID + `', 'Other', 'other', 'pending', NULL)`,
 		`INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES
-			('00000000-0000-0000-0000-000000000044', '` + completedID + `', '` + fixture.UserID + `', 'program_admin', 'active'),
-			('00000000-0000-0000-0000-000000000045', '` + pendingID + `', '` + fixture.UserID + `', 'program_admin', 'active'),
-			('00000000-0000-0000-0000-000000000046', '` + mentorOnlyID + `', '` + fixture.UserID + `', 'mentor', 'active'),
+			('00000000-0000-0000-0000-000000000044', '` + completedID + `', '` + fixture.UserID + `', 'program_admin', 'approved'),
+			('00000000-0000-0000-0000-000000000045', '` + pendingID + `', '` + fixture.UserID + `', 'program_admin', 'approved'),
+			('00000000-0000-0000-0000-000000000046', '` + mentorOnlyID + `', '` + fixture.UserID + `', 'mentor', 'approved'),
 			('00000000-0000-0000-0000-000000000047', '` + withdrawnID + `', '` + fixture.UserID + `', 'program_admin', 'withdrawn'),
-			('00000000-0000-0000-0000-000000000048', '` + fixture.ProgramID + `', '` + fixture.UserID + `', 'mentor', 'active'),
+			('00000000-0000-0000-0000-000000000048', '` + fixture.ProgramID + `', '` + fixture.UserID + `', 'mentor', 'approved'),
 			('00000000-0000-0000-0000-000000000066', '` + fixture.ProgramID + `', '` + otherUserID + `', 'mentor', 'withdrawn'),
-			('00000000-0000-0000-0000-000000000067', '` + rejectedID + `', '` + fixture.UserID + `', 'program_admin', 'active'),
-			('00000000-0000-0000-0000-000000000068', '` + hiddenID + `', '` + fixture.UserID + `', 'program_admin', 'active'),
-			('00000000-0000-0000-0000-000000000069', '` + archivedID + `', '` + fixture.UserID + `', 'program_admin', 'active'),
-			('00000000-0000-0000-0000-00000000006a', '` + noTermsID + `', '` + fixture.UserID + `', 'program_admin', 'active'),
-			('00000000-0000-0000-0000-00000000006b', '` + deletedTermID + `', '` + fixture.UserID + `', 'program_admin', 'active'),
-			('00000000-0000-0000-0000-00000000006c', '` + otherAdminID + `', '` + otherUserID + `', 'program_admin', 'active')`,
+			('00000000-0000-0000-0000-000000000067', '` + rejectedID + `', '` + fixture.UserID + `', 'program_admin', 'approved'),
+			('00000000-0000-0000-0000-000000000068', '` + hiddenID + `', '` + fixture.UserID + `', 'program_admin', 'approved'),
+			('00000000-0000-0000-0000-000000000069', '` + archivedID + `', '` + fixture.UserID + `', 'program_admin', 'approved'),
+			('00000000-0000-0000-0000-00000000006a', '` + noTermsID + `', '` + fixture.UserID + `', 'program_admin', 'approved'),
+			('00000000-0000-0000-0000-00000000006b', '` + deletedTermID + `', '` + fixture.UserID + `', 'program_admin', 'approved'),
+			('00000000-0000-0000-0000-00000000006c', '` + otherAdminID + `', '` + otherUserID + `', 'program_admin', 'approved')`,
 		`INSERT INTO program_terms (id, program_id, name, status, start_date_time) VALUES
 			('00000000-0000-0000-0000-000000000049', '` + completedID + `', 'Spring 2026', 'closed', '2026-01-01'),
 			('00000000-0000-0000-0000-00000000004a', '` + completedID + `', 'Summer 2026', 'closed', '2026-05-01'),

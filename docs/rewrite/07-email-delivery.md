@@ -3,7 +3,7 @@
 
 # Mentorship Rewrite — 07: Email Delivery
 
-Status: Approved — reviewed 2026-09-22; amended 2026-10-07 (see Decision log)
+Status: Approved — reviewed 2026-09-22; amended 2026-10-13 (see Decision log)
 Related: [02-target-architecture.md](./02-target-architecture.md) (Integrations table, records the same rail), [01-current-system.md](./01-current-system.md) (legacy Mandrill setup), 08 mentor invitations (draft, [lfx-mentorship#177](https://github.com/linuxfoundation/lfx-mentorship/pull/177) — changes the invitation rows below)
 Decision ticket: [linuxfoundation/lfx-self-serve#2188](https://github.com/linuxfoundation/lfx-self-serve/issues/2188)
 
@@ -49,30 +49,30 @@ Status column: **hook** — a `Notifier` method exists but delivers nothing yet;
 | Legacy template | To | Rewrite trigger | Status |
 | --- | --- | --- | --- |
 | **Programs** | | | |
-| `admin-mentorship-submission-confirmation` | Program Admin | program `pending → submitted` | none |
-| `communitybridge-review-mentorship-submission` | LF staff review inbox | program `pending → submitted` and `rejected → submitted` — the notification-only replacement for the signed approval link ([02](./02-target-architecture.md)) | none |
-| `admin-mentorship-submission-approved` | Program Admin | program `submitted → published` | none |
-| `admin-mentorship-submission-rejected` | Program Admin | program `submitted → rejected` | none |
+| `admin-mentorship-submission-confirmation` | Program Admin | program created as `pending` | done: `NotifyProgramSubmitted` from `Create`/`CreateEnrollment` |
+| `communitybridge-review-mentorship-submission` | LF staff review inbox | program created as `pending` — the notification-only replacement for the signed approval link ([02](./02-target-architecture.md)) | done: `NotifyProgramSubmitted` — to `EMAIL_REVIEW_INBOX`, names the submitter, and links to Self Serve with no approve or reject links |
+| `admin-mentorship-submission-approved` | Program Admin | program `pending → published` | done: `NotifyProgramDecided` from `Decide`; `Unhide` (`hidden → published`) sends nothing |
+| `admin-mentorship-submission-rejected` | Program Admin | program `pending → rejected` | done: `NotifyProgramDecided` from `Decide` — links the legacy LF support desk, still to be confirmed current; a rejected program is final, so the copy does not invite a resubmission |
 | `admin-project-edited-notification` | Program Admin | Program Admin edits a program that is not `rejected` | none |
 | **Mentors** | | | |
-| `mentor-project-invite` | invited mentor | mentor added to a program (`invited`) | done: `NotifyMentorInvited` — links to Self Serve `/mentorship/mentor/invites?token=…`; signature changes with 08 |
-| `admin-mentor-accepted` | active Program Admins | mentor accepts the invite (`invited → active`) | done: `NotifyAdminMentorAccepted` from `AcceptInvite` (08 drafted this as `NotifyMentorAccepted`) |
+| `mentor-project-invite` | invited mentor | mentor added to a program (`invited`) | done: `NotifyMentorInvited` — links to Self Serve `/mentorship/mentor/invites?token=…`; the link does not expire, and inviting the same person again re-sends it |
+| `admin-mentor-accepted` | active Program Admins | mentor accepts the invite (`invited → approved`) | done: `NotifyAdminMentorAccepted` from `AcceptInvite` (08 drafted this as `NotifyMentorAccepted`) |
 | `admin-mentor-declined` | active Program Admins | mentor declines the invite (`invited → declined`) | done: `NotifyAdminMentorDeclined` from `DeclineInvite` |
-| `mentor-admin-declined` | mentor | Program Admin declines a mentor's request (`requested → declined`); revoking an invite (`invited → declined`) sends nothing | done: `NotifyMentorDeclined` from `Update`, after the write |
-| `admin-new-mentor-request` | active Program Admins | mentor applies to a program (application with role `mentor`) | none |
-| `admin-mentor-withdrew-request` | active Program Admins | mentor application `→ withdrawn` | none |
-| `admin-mentor-removed-project` | active Program Admins | active mentor leaves (member `active → withdrawn`) | none — transition missing: only a Program Admin can withdraw a member today, so mentors need a way to leave |
+| `mentor-admin-declined` | mentor | Program Admin declines a mentor's request (`requested → declined`); revoking an invite (`invited → declined`) sends nothing | done: `NotifyMentorDeclined` after the write — from the member `Update`, and from declining a `pending` mentor-role application; declining an accepted one sends nothing |
+| `admin-new-mentor-request` | active Program Admins | mentor requests to join a program | done: `NotifyAdminMentorRequested` — from `RequestMentorship` (a new `requested` member row, or a `withdrawn` one reopened). The apply route takes mentee applications only |
+| `admin-mentor-withdrew-request` | active Program Admins | mentor application `→ withdrawn` | done: `NotifyAdminMentorWithdrew` — from `WithdrawMine` (`requested`/`pending → withdrawn`) and from a mentor withdrawing their mentor-role application |
+| `admin-mentor-removed-project` | active Program Admins | active mentor leaves (member `approved → withdrawn`) | none — transition missing: only a Program Admin can withdraw a member today, so mentors need a way to leave |
 | **Mentee applications** | | | |
-| `mentee-application-received` | mentee | application created with role `mentee`; lists the prerequisite tasks | none |
+| `mentee-application-received` | mentee | application created with role `mentee`; lists the prerequisite tasks | done: `NotifyMenteeApplicationReceived` — on a new application and on a reapplication |
 | `admin-review-mentee-application` | active Program Admins | last prerequisite task submitted | done: `NotifyAdminTasksSubmitted` — counts `submitted` and `complete`, fires only when `tasks_submitted` first turns true |
 | `mentee-mentorship-accepted` | mentee | application `→ accepted` | done: `NotifyMenteeAccepted` |
 | `hr-mentee-accepted` | LF staff HR inbox and the Program Admin | application `→ accepted`; carries attendance type and term dates | done: `NotifyMenteeAccepted` — also lists the active Program Admins; the HR copy alone carries the mentee's country of residence |
-| `mentee-application-declined` | mentee | application `→ declined` | none |
-| `mentee-application-withdrawn` | mentee | application `→ withdrawn` | none |
-| `admin-mentee-application-withdrawn` | active Program Admins | application `→ withdrawn` | none |
-| `mentee-mentee-graduated-v2` | mentee | application `accepted → graduated` | none |
+| `mentee-application-declined` | mentee | application `→ declined` | done: `NotifyMenteeDeclined` — from `Update`, and for each mentee in a bulk decline or a term close |
+| `mentee-application-withdrawn` | mentee | application `→ withdrawn` | done: `NotifyMenteeWithdrawn` — on self-withdrawal and both assisted withdrawals |
+| `admin-mentee-application-withdrawn` | active Program Admins | application `→ withdrawn` | done: `NotifyMenteeWithdrawn` |
+| `mentee-mentee-graduated-v2` | mentee | application `accepted → graduated` | done: `NotifyMenteeGraduated` — a certificate letter naming the term dates and the program's active mentors |
 | **Tasks** | | | |
-| `mentee-new-task-assigned-v2` | mentee | task created for an application by a reviewer | none |
+| `mentee-new-task-assigned-v2` | mentee | task created for an application by a reviewer | done: `NotifyMenteeTaskAssigned` from `TaskService.Create`; prerequisite tasks cloned at application time are listed in the receipt instead |
 | **Profiles** | | | |
 | `mentee-new-profile-submitted` | mentee | first mentee profile saved | none |
 | `mentor-mentorship-profile-submitted` | mentor | first mentor profile saved | none |
@@ -96,7 +96,7 @@ Three rows are confirmation-only mail (`admin-project-edited-notification` and t
 - **Interface changes.** Split `NotifyMentorDeclined` in two: a Program Admin declining a mentor mails the mentor (`NotifyMentorDeclined`); a mentor declining an invite mails the Program Admins (`NotifyAdminMentorDeclined`). `NotifyAdminMentorAccepted` sends `admin-mentor-accepted`. `NotifyAdminTasksSubmitted` sends `admin-review-mentee-application`. `NotifyMenteeAccepted` sends `mentee-mentorship-accepted` and `hr-mentee-accepted`. Every other trigger adds one method when its feature ships, and that method sends all of the trigger's rows.
 - **Templates.** HTML and text per row, embedded with `//go:embed`, a shared layout, and a subject per template. Copy the adapter and loader from invite-service ([`email_sender.go`](https://github.com/linuxfoundation/lfx-v2-invite-service/blob/main/internal/infrastructure/nats/email_sender.go), [`templates.go`](https://github.com/linuxfoundation/lfx-v2-invite-service/blob/main/internal/infrastructure/smtp/templates.go)).
 - **Sends.** Run each send in a detached goroutine with a short timeout (context from `context.WithoutCancel`), log failures, and never fail the business operation. member-service makes the same best-effort send inline in its HTTP path; Mentorship detaches because one event can mail several recipients (the mentee, the HR inbox, every active Program Admin), and inline sends would add a round trip each to the response. `Server.Shutdown` waits for in-flight sends, within its existing timeout, before it closes NATS and the database pool, so a rollout does not drop them. No outbox or retry in v1.
-- **Config.** New required values, guarded in `templates/validate.yaml` and at startup when the NATS URL is set: `PUBLIC_SITE_URL` and `SELF_SERVE_URL` for links (management pages live in Self Serve, per [02](./02-target-architecture.md)), and `EMAIL_HR_INBOX`. The LF staff review inbox is added with the program-submission rows, its only consumer. The HR notice goes out once per acceptance, without legacy's once-per-program dedupe.
+- **Config.** New required values, guarded in `templates/validate.yaml` and at startup when the NATS URL is set: `PUBLIC_SITE_URL` and `SELF_SERVE_URL` for links (management pages live in Self Serve, per [02](./02-target-architecture.md)), `EMAIL_HR_INBOX`, and `EMAIL_REVIEW_INBOX`, the comma-separated LF staff inboxes told about each program submitted for review. The HR notice goes out once per acceptance, without legacy's once-per-program dedupe.
 - **Testing on real data.** Optional `EMAIL_ALLOWED_RECIPIENTS`, a comma-separated list of addresses: when set, only those addresses get mail, and every other send, the HR inbox included, is logged as suppressed. A plus-addressed variant of a listed address (`user+tag@domain`) matches too, so test accounts need no listing. Set it in prod while testing before go-live, since the email service's own recipient-domain filter is shared by every LFX service and is open in prod. Empty sends to everyone; a value with no addresses, such as `,`, fails startup rather than sending to everyone. To send nothing, list a single unused address.
 - **HR notice content.** The mentee's country of residence comes from the mentee profile address and is rendered as `Name (CODE)`, e.g. `India (IN)`; the code keeps it unambiguous where current English names differ from legacy's table. It goes only to the HR inbox: Program Admins cannot read a mentee's address anywhere else in the rewrite.
 - **Not in v1:** storing `email_id`, subscribing to `email_failed`, `reply_to`, a custom `from`, CC.
@@ -119,3 +119,4 @@ Reacting to a bounce is the sender's job, not the relay's. For v1 we accept the 
 | 2026-09-29 | Decision 3 replaced by the parity checklist. Earlier pairings of `NotifyAdminTasksSubmitted`, `NotifyMenteeAccepted`, and `NotifyMentorDeclined` with `admin-new-task-assigned-v2`, `admin-mentee-accepted`, and `mentor-admin-declined` alone withdrawn. Reuse the NATS connection, resolve recipients in the notifier, detach sends with no outbox and drain them on shutdown, keep the HR notice, defer bounce handling. |
 | 2026-10-01 | First seven checklist rows shipped. The staff review inbox is deferred to the program-submission rows. The mentee's country of residence goes to the HR inbox only, as `Name (CODE)`. |
 | 2026-10-07 | `EMAIL_ALLOWED_RECIPIENTS` added so prod can be tested on real data without mailing real users. It filters in the notifier, because the email service's recipient-domain filter is platform-wide and open in prod. |
+| 2026-10-13 | Twelve more checklist rows shipped: the program, mentor-request, mentee-application, and task-assigned rows. `EMAIL_REVIEW_INBOX` added for the staff review notice. Bulk declines, including a term close, mail each declined mentee. Mentor-role applications are a live path, so they trigger the mentor-request rows alongside `RequestMentorship`. Still open: the three confirmation-only rows, `admin-mentor-removed-project` (needs a mentor self-leave flow), and the prerequisite reminder CronJob. |

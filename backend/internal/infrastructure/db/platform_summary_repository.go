@@ -35,7 +35,7 @@ func NewPlatformSummaryRepository(pool *pgxpool.Pool) *PlatformSummaryRepository
 const platformSummaryQuery = `
 WITH
 	published_programs AS (
-		SELECT id
+		SELECT id, lf_project_uid
 		FROM programs
 		WHERE status = 'published'
 	),
@@ -43,17 +43,14 @@ WITH
 		SELECT DISTINCT pt.program_id
 		FROM program_terms pt
 		JOIN published_programs p ON p.id = pt.program_id
-		WHERE pt.status = 'open'
-		  AND pt.application_start_date IS NOT NULL
-		  AND pt.application_end_date   IS NOT NULL
-		  AND NOW() BETWEEN pt.application_start_date AND pt.application_end_date
+		WHERE ` + sqlTermAcceptsApplications + `
 	),
 	mentor_users AS (
 		SELECT DISTINCT pm.user_id
 		FROM program_members pm
 		JOIN published_programs p ON p.id = pm.program_id
 		WHERE pm.member_type = 'mentor'
-		  AND pm.status      = 'active'
+		  AND pm.status      = 'approved'
 	),
 	graduated_mentee_users AS (
 		SELECT DISTINCT ON (a.user_id)
@@ -71,7 +68,7 @@ WITH
 		SELECT
 			gmu.user_id,
 			NULLIF(TRIM(COALESCE(NULLIF(TRIM(u.name), ''), CONCAT_WS(' ', up.first_name, up.last_name))), '') AS name,
-			COALESCE(u.avatar_url, up.logo_url) AS avatar_url,
+			COALESCE(NULLIF(up.logo_url, ''), u.avatar_url) AS avatar_url,
 			gmu.graduated_on
 		FROM graduated_mentee_users gmu
 		LEFT JOIN users u ON u.id = gmu.user_id
@@ -87,6 +84,7 @@ WITH
 SELECT
 	(SELECT COUNT(*) FROM published_programs),
 	(SELECT COUNT(*) FROM accepting_programs),
+	(SELECT COUNT(DISTINCT lf_project_uid) FROM published_programs),
 	(SELECT COUNT(*) FROM mentor_users),
 	(SELECT COUNT(*) FROM graduated_mentee_users),
 	(SELECT COALESCE(SUM(pfs.amount_spent), 0)
@@ -117,6 +115,7 @@ func (r *PlatformSummaryRepository) Summary(ctx context.Context) (*models.Platfo
 	if err := r.pool.QueryRow(ctx, platformSummaryQuery, platformSummaryMenteePreviewLimit).Scan(
 		&s.ProgramCount,
 		&s.AcceptingProgramCount,
+		&s.ProjectCount,
 		&s.MentorCount,
 		&s.GraduatedMenteeCount,
 		&s.StipendsPaid,

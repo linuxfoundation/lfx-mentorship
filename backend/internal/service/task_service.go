@@ -153,7 +153,7 @@ func (s *TaskService) ListByProgramTermForActor(ctx context.Context, programTerm
 	return s.ListByProgramTerm(ctx, programTermID, filter)
 }
 
-// Create validates input and creates a task linked to an application.
+// Create validates input and creates a task linked to an application, notifying the assigned mentee.
 func (s *TaskService) Create(ctx context.Context, applicationID string, input models.TaskCreateInput) (*models.Task, error) {
 	ctx, span := taskSvcTracer.Start(ctx, "TaskService.Create")
 	defer span.End()
@@ -187,6 +187,7 @@ func (s *TaskService) Create(ctx context.Context, applicationID string, input mo
 		span.RecordError(err)
 		return nil, fmt.Errorf("create task: %w", err)
 	}
+	s.notifier.NotifyMenteeTaskAssigned(ctx, t.ID)
 	return t, nil
 }
 

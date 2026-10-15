@@ -58,7 +58,6 @@ const (
 	ApplicationStatusDeclined  ApplicationStatus = "declined"
 	ApplicationStatusWithdrawn ApplicationStatus = "withdrawn"
 	ApplicationStatusGraduated ApplicationStatus = "graduated"
-	ApplicationStatusHold      ApplicationStatus = "hold"
 )
 
 // MaxWithdrawnApplicationsPerTerm caps reapplication: each reapply keeps the withdrawn application
@@ -69,8 +68,7 @@ const MaxWithdrawnApplicationsPerTerm = 3
 func (s ApplicationStatus) IsValid() bool {
 	switch s {
 	case ApplicationStatusPending, ApplicationStatusAccepted,
-		ApplicationStatusDeclined, ApplicationStatusWithdrawn, ApplicationStatusGraduated,
-		ApplicationStatusHold:
+		ApplicationStatusDeclined, ApplicationStatusWithdrawn, ApplicationStatusGraduated:
 		return true
 	}
 	return false
@@ -164,14 +162,13 @@ type ApplicationTerm struct {
 }
 
 // ApplicationCreateInput is the request body for submitting an application.
-// Status is intentionally absent — the service always assigns "pending".
+// Status is intentionally absent — the service always assigns "pending" — and the
+// application's start and end dates are copied from its term, never read from the client.
 type ApplicationCreateInput struct {
 	ID             string            `json:"id"`
 	UserID         string            `json:"user_id"`
-	Role           ApplicationRole   `json:"role"`
-	Status         ApplicationStatus `json:"-"` // server-assigned; never read from client
-	StartDateTime  *time.Time        `json:"start_date_time,omitempty"`
-	EndDateTime    *time.Time        `json:"end_date_time,omitempty"`
+	Role           ApplicationRole   `json:"role"` // optional; the apply route takes mentee applications only
+	Status         ApplicationStatus `json:"-"`    // server-assigned; never read from client
 	AttendanceType *AttendanceType   `json:"attendance_type,omitempty"`
 }
 
@@ -179,8 +176,6 @@ type ApplicationCreateInput struct {
 type ApplicationUpdateInput struct {
 	Status            *ApplicationStatus `json:"status,omitempty"`
 	ProgramTermStatus *ProgramTermStatus `json:"program_term_status,omitempty"`
-	StartDateTime     *time.Time         `json:"start_date_time,omitempty"`
-	EndDateTime       *time.Time         `json:"end_date_time,omitempty"`
 	AttendanceType    *AttendanceType    `json:"attendance_type,omitempty"`
 	TasksSubmitted    *bool              `json:"tasks_submitted,omitempty"`
 	AdminNotified     *bool              `json:"admin_notified,omitempty"`
