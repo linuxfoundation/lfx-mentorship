@@ -232,7 +232,9 @@ export async function fetchMentees(query: {
 export async function fetchMentee(id: string): Promise<MenteeApiDetail> {
   const config = useRuntimeConfig();
   try {
-    return await $fetch<MenteeApiDetail>(`${config.apiBaseUrl}/v1/mentees/${id}`);
+    return await $fetch<MenteeApiDetail>(
+      `${config.apiBaseUrl}/v1/mentees/${encodeURIComponent(id)}`,
+    );
   } catch (error) {
     throw createError({
       statusCode: fetchErrorStatus(error),

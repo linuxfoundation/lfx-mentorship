@@ -253,7 +253,9 @@ export async function fetchMentors(query: {
 export async function fetchMentor(id: string): Promise<MentorApiDetail> {
   const config = useRuntimeConfig();
   try {
-    return await $fetch<MentorApiDetail>(`${config.apiBaseUrl}/v1/mentors/${id}`);
+    return await $fetch<MentorApiDetail>(
+      `${config.apiBaseUrl}/v1/mentors/${encodeURIComponent(id)}`,
+    );
   } catch (error) {
     throw createError({
       statusCode: fetchErrorStatus(error),
