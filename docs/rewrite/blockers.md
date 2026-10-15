@@ -246,9 +246,11 @@ across releases.
 
 ### Gateway topology
 
-Resolved: each environment runs one Mentorship deployment and one PostgreSQL
-schema, served only through the shared gateway. The service mounts only
-`/mentorship/v1`, and the interim ingress is disabled.
+Each environment runs one Mentorship deployment and one PostgreSQL schema.
+External traffic reaches it only through the shared gateway: the service mounts
+only `/mentorship/v1`, and the interim ingress is disabled. Inside the cluster,
+the Nuxt server still calls the backend Service directly, so gateway enforcement
+is not complete until §7 check 4 is done.
 
 ## 6. Seed, Repair, and Verification
 
