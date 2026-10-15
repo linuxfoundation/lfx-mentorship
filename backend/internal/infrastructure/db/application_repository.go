@@ -417,31 +417,32 @@ func checkCanApply(ctx context.Context, tx pgx.Tx, term *models.ProgramTerm, inp
 		return err
 	}
 	if input.Role == models.ApplicationRoleMentee {
-		return checkMenteeAvailable(ctx, tx, input.UserID, input.ID)
+		return checkMenteeAvailable(ctx, tx, input.UserID, input.ID, true)
 	}
 	return nil
 }
 
-// menteeOutcomeStatuses are the mentee application statuses that rule out another mentorship, as
-// in legacy: a mentee holds one accepted mentorship at a time, and none once they have graduated.
-var menteeOutcomeStatuses = []string{
-	string(models.ApplicationStatusAccepted),
-	string(models.ApplicationStatusGraduated),
-}
-
-// checkMenteeAvailable refuses when the user holds an accepted or graduated mentee application
-// other than excludeID. It first takes a transaction lock on the user: two acceptances of the same
-// mentee in different terms lock different term rows, so only this lock serializes them.
-func checkMenteeAvailable(ctx context.Context, tx pgx.Tx, userID, excludeID string) error {
+// checkMenteeAvailable refuses while the user holds another mentee application, other than
+// excludeID, that is accepted in a term that has not ended. With refuseGraduated it also refuses
+// once the user has graduated from any mentorship. Legacy jobspring applies both on apply
+// (ProgramApply) and only the first on accept; it counted accepted rows of every term, but the
+// import also maps legacy approved, active and hold rows to accepted, and a stale enrollment in
+// an ended term must not lock a mentee out. It first takes a transaction lock on the user: two
+// acceptances of the same mentee in different terms lock different term rows, so only this lock
+// serializes them.
+func checkMenteeAvailable(ctx context.Context, tx pgx.Tx, userID, excludeID string, refuseGraduated bool) error {
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('mentorship_mentee:' || $1::text, 0))`, userID); err != nil {
 		return fmt.Errorf("lock mentee for enrollment check: %w", err)
 	}
 	var status models.ApplicationStatus
 	err := tx.QueryRow(ctx, `
-		SELECT status FROM applications
-		WHERE user_id = $1 AND role = $2 AND status = ANY($3) AND id <> $4
-		ORDER BY status = $5 DESC LIMIT 1`,
-		userID, models.ApplicationRoleMentee, menteeOutcomeStatuses, excludeID, models.ApplicationStatusAccepted).Scan(&status)
+		SELECT a.status FROM applications a
+		JOIN program_terms pt ON pt.id = a.program_term_id
+		WHERE a.user_id = $1 AND a.role = $2 AND a.id <> $3
+		  AND ((a.status = $4 AND (pt.end_date_time IS NULL OR pt.end_date_time > NOW()))
+		       OR (a.status = $5 AND $6))
+		ORDER BY a.status = $4 DESC LIMIT 1`,
+		userID, models.ApplicationRoleMentee, excludeID, models.ApplicationStatusAccepted, models.ApplicationStatusGraduated, refuseGraduated).Scan(&status)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
@@ -579,7 +580,7 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 			return nil, fmt.Errorf("%w: applications are not open for this term", domain.ErrIneligible)
 		}
 		if role == models.ApplicationRoleMentee {
-			if err := checkMenteeAvailable(ctx, tx, userID, id); err != nil {
+			if err := checkMenteeAvailable(ctx, tx, userID, id, false); err != nil {
 				return nil, err
 			}
 		}

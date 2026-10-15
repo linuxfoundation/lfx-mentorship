@@ -349,12 +349,13 @@ func TestE2EMenteeJourney(t *testing.T) {
 		}
 		other := publishProgram(t, admin, "Other Graduation Program")
 		admin.call(t, http.MethodGet, "/programs/"+other.ID+"/terms/"+p.TermID+"/past-mentees", nil).expect(http.StatusNotFound)
-		// As in legacy, a graduated mentee neither applies again nor is accepted elsewhere.
+		// As in legacy, a graduated mentee cannot apply again, but an application made before
+		// graduating can still be accepted.
 		res := mentee.call(t, http.MethodPost, applicationsPath(other), map[string]any{"role": "mentee"}).expect(http.StatusUnprocessableEntity)
 		if !strings.Contains(res.errorMessage(), "graduated") {
 			t.Fatalf("got %q", res.errorMessage())
 		}
-		admin.call(t, http.MethodPatch, "/applications/"+secondApp.ID+"/status", map[string]any{"status": "accepted", "attendance_type": "full_time"}).expect(http.StatusUnprocessableEntity)
+		admin.mustJSON(t, http.MethodPatch, "/applications/"+secondApp.ID+"/status", map[string]any{"status": "accepted", "attendance_type": "full_time"}, http.StatusOK, nil)
 		var mentees struct {
 			Data []any `json:"data"`
 		}

@@ -838,34 +838,51 @@ func seedSecondOpenTerm(t *testing.T, pool *pgxpool.Pool) string {
 	return termID
 }
 
-// A mentee holds one accepted mentorship at a time and none after graduating, checked when they
-// apply and when they are accepted.
+// A mentee holds one accepted mentorship at a time, counting only terms that have not ended, and
+// cannot apply once graduated. As in legacy, graduating does not stop an earlier application from
+// being accepted.
 func TestApplicationRepositoryIntegration_MenteeHoldsOneMentorship(t *testing.T) {
-	for _, outcome := range []models.ApplicationStatus{models.ApplicationStatusAccepted, models.ApplicationStatusGraduated} {
-		t.Run(string(outcome), func(t *testing.T) {
+	for _, tc := range []struct {
+		name                         string
+		other                        models.ApplicationStatus
+		otherTermEnded               bool
+		acceptRefused, createRefused bool
+	}{
+		{name: "accepted in a running term", other: models.ApplicationStatusAccepted, acceptRefused: true, createRefused: true},
+		{name: "accepted in an ended term", other: models.ApplicationStatusAccepted, otherTermEnded: true},
+		{name: "graduated", other: models.ApplicationStatusGraduated, createRefused: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			pool := integrationPool(t)
 			fixture := seedIntegrationFixture(t, pool)
 			second := seedSecondOpenTerm(t, pool)
 			ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
 			repo := NewApplicationRepository(pool)
+			if tc.otherTermEnded {
+				if _, err := pool.Exec(ctx, `UPDATE program_terms SET end_date_time = NOW() - interval '1 day' WHERE id = $1`, second); err != nil {
+					t.Fatalf("end second term: %v", err)
+				}
+			}
 
 			pendingID := "00000000-0000-0000-0000-0000000000f1"
 			if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentee', 'pending'), ('00000000-0000-0000-0000-0000000000f2', $4, $3, 'mentee', $5)`,
-				pendingID, fixture.OpenTerm, fixture.UserID, second, outcome); err != nil {
+				pendingID, fixture.OpenTerm, fixture.UserID, second, tc.other); err != nil {
 				t.Fatalf("insert applications: %v", err)
 			}
 
 			accepted, pending := models.ApplicationStatusAccepted, models.ApplicationStatusPending
 			attendance := models.AttendanceTypeFullTime
-			if _, err := repo.Update(ctx, pendingID, models.ApplicationUpdateInput{Status: &accepted, ExpectedStatus: &pending, AttendanceType: &attendance}); !errors.Is(err, domain.ErrIneligible) {
-				t.Fatalf("accept err = %v; want ErrIneligible", err)
+			_, err := repo.Update(ctx, pendingID, models.ApplicationUpdateInput{Status: &accepted, ExpectedStatus: &pending, AttendanceType: &attendance})
+			if refused := errors.Is(err, domain.ErrIneligible); refused != tc.acceptRefused || (err != nil && !refused) {
+				t.Fatalf("accept err = %v; want refused = %v", err, tc.acceptRefused)
 			}
 			if _, err := pool.Exec(ctx, `DELETE FROM applications WHERE id = $1`, pendingID); err != nil {
-				t.Fatalf("delete pending application: %v", err)
+				t.Fatalf("delete first application: %v", err)
 			}
 			input := models.ApplicationCreateInput{ID: "00000000-0000-0000-0000-0000000000f3", UserID: fixture.UserID, Role: models.ApplicationRoleMentee, Status: models.ApplicationStatusPending}
-			if _, err := repo.Create(ctx, fixture.OpenTerm, input); !errors.Is(err, domain.ErrIneligible) {
-				t.Fatalf("create err = %v; want ErrIneligible", err)
+			_, err = repo.Create(ctx, fixture.OpenTerm, input)
+			if refused := errors.Is(err, domain.ErrIneligible); refused != tc.createRefused || (err != nil && !refused) {
+				t.Fatalf("create err = %v; want refused = %v", err, tc.createRefused)
 			}
 		})
 	}

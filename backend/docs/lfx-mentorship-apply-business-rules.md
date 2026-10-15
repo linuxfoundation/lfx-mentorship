@@ -116,7 +116,7 @@ flowchart TD
 | 13 | That application is `withdrawn` → reapply allowed while fewer than 3 are withdrawn for that term + role | service L322 + repo L393 (under lock) | ErrIneligible |
 | 14 | Under the term lock: the term still takes applications now (rules 7–8 again) | repo `checkCanApply` L412 | ErrIneligible |
 | 15 | Under the term lock: program `status = published` | repo `checkProgramPublished` L460 | ErrIneligible |
-| 16 | Under a per-mentee lock: the applicant holds no `accepted` or `graduated` mentee application in any term | repo `checkMenteeAvailable` L435 | ErrIneligible |
+| 16 | Under a per-mentee lock: the applicant holds no mentee application `accepted` in a term that hasn't ended, and none `graduated` in any term | repo `checkMenteeAvailable` L433 | ErrIneligible |
 | 17 | At most one non-withdrawn application per term + user + role | DB `uq_applications_active` | 409 |
 
 Rules 7–8 are `ProgramTerm.AcceptsApplications`. The apply-target read reports `accepting_applications` as that rule AND program `published` (rule 15). The public discovery label and the catalog and platform-summary SQL (`sqlTermAcceptsApplications`) use the same window. `TestApplicationService_Create_WindowMatchesAcceptsApplications` and `TestProgramTerm_DiscoveryLabelMatchesAcceptsApplications` keep them aligned.
@@ -158,7 +158,7 @@ stateDiagram-v2
 | Withdrawal through `withdraw` / `PATCH .../status` is applicant-only. Every other status change needs a Program Admin | service L430, L449 |
 | `accepted` requires `attendance_type` (`full_time` / `part_time`) | service L454 |
 | `accepted` requires the term to still be `open` (checked under lock) | repo L578 |
-| Accepting a mentee refuses while they hold another `accepted` or `graduated` mentee application (per-mentee lock) | repo L582 |
+| Accepting a mentee refuses while they hold another mentee application `accepted` in a term that hasn't ended (per-mentee lock). Graduating elsewhere doesn't block an acceptance, as in legacy | repo L583 |
 | Moving into a blocking status (`pending`, `accepted`, `graduated`) is refused while the program is hidden | repo L597, L934 |
 | Accepting a mentor application ensures an approved mentor membership | repo L627 |
 | Tasks' `application_status` is synced on every status change | repo L631 |
@@ -182,8 +182,8 @@ Notifications:
 | Missing window dates | treated as **not accepting** | treated as **not accepting** |
 | Program must be published | — | ✅ |
 | Mentee profile required | ✅ | ✅ |
-| One `accepted` mentorship per mentee (checked at apply and at accept) | ✅ | ✅ |
-| Block if mentee `graduated` anywhere | ✅ | ✅ (at apply and at accept) |
+| One `accepted` mentorship per mentee (checked at apply and at accept) | ✅ (every term) | ✅ (terms that haven't ended) |
+| Block if mentee `graduated` anywhere | ✅ (at apply) | ✅ (at apply) |
 | Max 3 active (`pending`+`accepted`) applications | ✅ (inconsistent) | ❌ (FR-031: no cap on concurrent `pending`) |
 | No reapply from `declined` (same term) | ✅ | ✅ |
 | Reapply from `withdrawn` | reopens same row | new row, old kept as history |
@@ -209,9 +209,9 @@ A review of the apply flow found 13 gaps. All 13 are closed: 12 by a code change
 
 | # | Gap | Status | Fix |
 |---|---|---|---|
-| 1 | One accepted mentorship per mentee wasn't enforced | ✅ Fixed | Checked at apply and at accept, under a per-mentee lock |
+| 1 | One accepted mentorship per mentee wasn't enforced | ✅ Fixed | Checked at apply and at accept, under a per-mentee lock; only terms that haven't ended count |
 | 2 | Assisted withdrawal of a `declined` application reopened reapplying | ✅ Fixed | `withdraw-for-mentee` refuses `declined` and `graduated` |
-| 3 | Graduated mentees could apply to other terms | ✅ Fixed | Blocked by the same check as gap 1 |
+| 3 | Graduated mentees could apply to other terms | ✅ Fixed | Blocked at apply by the same check as gap 1 |
 | 4 | No mentee profile or eligibility check at apply | ✅ Fixed | A mentee profile is required |
 | 5 | `role` came from the request body | ✅ Fixed | Apply route is mentee-only |
 | 6 | Missing window dates: apply and discovery label disagreed | ✅ Fixed | Missing dates mean not accepting, everywhere |
@@ -227,7 +227,9 @@ A review of the apply flow found 13 gaps. All 13 are closed: 12 by a code change
 
 **Gap 1: one accepted mentorship per mentee.**
 - **Before:** nothing stopped a mentee from holding several `accepted` applications. Legacy enforced it, and `00-current-authz-relations.md:78` depends on it.
-- **After:** a mentee application is refused, and so is its acceptance, while the user holds another `accepted` mentee application in any term. The check takes a per-mentee advisory lock: two acceptances in different terms lock different term rows, so only that lock serializes them. A partial unique index was rejected, because imported legacy data may already break the rule.
+- **After:** a mentee application is refused, and so is its acceptance, while the user holds another mentee application that is `accepted` in a term that hasn't ended. The check takes a per-mentee advisory lock: two acceptances in different terms lock different term rows, so only that lock serializes them. A partial unique index was rejected, because imported legacy data may already break the rule.
+- **Legacy:** jobspring enforces this on apply (`backend/project/service_program_term_mentees.go:139–154`, `ProgramApply`: "Mentee can only have one accepted mentorship.") and on accept (`backend/project/repository.go:5661–5696`). Both checks count the user's `accepted` rows in every term.
+- **Difference from legacy:** only terms that haven't ended count (`end_date_time` unset or in the future). Legacy matches the exact string `accepted`. The import also maps legacy `approved`, `active` and `hold` rows to `accepted`, so counting every term would block mentees that legacy never blocked, and a stale enrollment left `accepted` after its term ended would lock its user out on day one.
 - **Code:** `checkMenteeAvailable`, called from `checkCanApply` (create, reapply) and from `Update` on accept (`application_repository.go`).
 - **Tests:** `TestApplicationRepositoryIntegration_MenteeHoldsOneMentorship`, `TestApplicationRepositoryIntegration_ConcurrentAcceptancesOfOneMentee`, and e2e "a mentee holds one accepted mentorship".
 
@@ -240,8 +242,9 @@ A review of the apply flow found 13 gaps. All 13 are closed: 12 by a code change
 
 **Gap 3: graduated mentees could apply again.**
 - **Before:** `graduated` blocked only the same term.
-- **After:** as in legacy, a `graduated` mentee application in any term refuses new applications and acceptances.
-- **Code:** same check as gap 1 (`menteeOutcomeStatuses`).
+- **After:** as in legacy, a `graduated` mentee application in any term refuses new applications. It doesn't block accepting an application made before graduating.
+- **Legacy:** jobspring `ProgramApply` (`backend/project/service_program_term_mentees.go:156–168`: "You cannot apply because you have already graduated from a program"). The check covers all of the user's applications and is not limited to active terms. Legacy's accept path doesn't check graduation.
+- **Code:** same check as gap 1, with `refuseGraduated` set on the apply path only.
 - **Tests:** `TestApplicationRepositoryIntegration_MenteeHoldsOneMentorship` (`graduated` case), and e2e "graduation".
 
 **Gap 4: no mentee profile or eligibility check.**
@@ -264,6 +267,7 @@ A review of the apply flow found 13 gaps. All 13 are closed: 12 by a code change
 **Gap 7: window boundary.**
 - **Before:** exact timestamps, so an end date stored at midnight closed at 00:00 on the advertised day.
 - **After:** compared by UTC calendar day with both days inclusive. The window opens at 00:00 UTC on the start date and closes after 23:59:59 UTC on the end date, whatever time of day was stored.
+- **Writers:** Self Serve sends every term's window as UTC-aligned instants: the start date as `YYYY-MM-DDT00:00:00Z` and the end date as `YYYY-MM-DDT23:59:59.999Z` (`toMentorshipUpstreamTermDates` in `apps/lfx-one/src/server/helpers/mentorship-enroll.helper.ts`, used by program create and update and the term routes). For those dates the day comparison matches the stored instants. A date stored at local midnight in a zone west of UTC would stay open into the next UTC day.
 - **Tests:** same as gap 6.
 
 **Gap 8: apply-target ignored program status.**

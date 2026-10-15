@@ -265,9 +265,10 @@ the program_admin can manage the program's visibility and terms throughout its l
 - **FR-031**: System MUST allow a mentee to hold concurrent applications across
   different programs, and MUST surface those cross-program applications on the
   program_admin's Mentee row view. As in legacy, a mentee holds at most one `accepted`
-  mentorship at a time and none once graduated: the system MUST refuse an application,
-  and an acceptance, while the mentee holds another `accepted` or `graduated` mentee
-  application. There is no cap on concurrent `pending` applications.
+  mentorship at a time and cannot apply once graduated: the system MUST refuse an
+  application, and an acceptance, while the mentee holds another mentee application
+  `accepted` in a term that has not ended, and MUST refuse an application once the
+  mentee has a `graduated` one. There is no cap on concurrent `pending` applications.
 
 ### Functional Requirements — Prerequisite Task Evaluation
 
