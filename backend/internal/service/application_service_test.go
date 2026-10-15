@@ -1526,17 +1526,19 @@ func TestApplicationService_Update_AuthorizationFailures(t *testing.T) {
 		members *stubMemberRepo
 		input   models.ApplicationUpdateInput
 		want    error
+		// message names the check expected to refuse; several return ErrForbidden.
+		message string
 	}{
 		"application lookup fails": {
 			appRepo: &stubAppRepo{getByID: func(context.Context, string) (*models.Application, error) { return nil, repoErr }},
 			input:   models.ApplicationUpdateInput{Status: &accepted, ActorID: "admin-1"},
 			want:    repoErr,
 		},
-		"status change without an actor": {input: models.ApplicationUpdateInput{Status: &accepted}, want: domain.ErrForbidden},
-		"reviewer note without an actor": {input: models.ApplicationUpdateInput{ReviewerNote: &note}, want: domain.ErrForbidden},
+		"status change without an actor": {input: models.ApplicationUpdateInput{Status: &accepted}, want: domain.ErrForbidden, message: "actor identity is required"},
+		"reviewer note without an actor": {input: models.ApplicationUpdateInput{ReviewerNote: &note}, want: domain.ErrForbidden, message: "actor identity is required"},
 		"reviewer lookup fails":          {members: failingMembers, input: models.ApplicationUpdateInput{ReviewerNote: &note, ActorID: "mentor-1"}, want: repoErr},
 		"program admin lookup fails":     {members: failingMembers, input: models.ApplicationUpdateInput{Status: &accepted, ActorID: "admin-1"}, want: repoErr},
-		"mentor cannot decide":           {members: approvedMentor(), input: models.ApplicationUpdateInput{Status: &accepted, ActorID: "mentor-1"}, want: domain.ErrForbidden},
+		"mentor cannot decide":           {members: approvedMentor(), input: models.ApplicationUpdateInput{Status: &accepted, ActorID: "mentor-1"}, want: domain.ErrForbidden, message: "active program_admin"},
 	} {
 		t.Run(label, func(t *testing.T) {
 			if tc.appRepo == nil {
@@ -1550,8 +1552,9 @@ func TestApplicationService_Update_AuthorizationFailures(t *testing.T) {
 				tc.members = approvedProgramAdmin()
 			}
 			svc := newApplicationSvcWithMember(tc.appRepo, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{}, tc.members)
-			if _, err := svc.Update(context.Background(), "app-1", tc.input); !errors.Is(err, tc.want) {
-				t.Fatalf("err = %v; want %v", err, tc.want)
+			_, err := svc.Update(context.Background(), "app-1", tc.input)
+			if !errors.Is(err, tc.want) || !strings.Contains(err.Error(), tc.message) {
+				t.Fatalf("err = %v; want %v mentioning %q", err, tc.want, tc.message)
 			}
 		})
 	}

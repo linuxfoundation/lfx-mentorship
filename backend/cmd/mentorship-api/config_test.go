@@ -128,31 +128,45 @@ func TestLoadStorageConfig(t *testing.T) {
 }
 
 func TestLoadConfig(t *testing.T) {
+	// Every variable loadConfig reads is pinned, so a developer or CI shell cannot leak in.
 	valid := map[string]string{
-		"HEIMDALL_JWKS_URL":                 "https://heimdall.example.org/.well-known/jwks",
-		"HEIMDALL_JWT_AUDIENCE":             "lfx-mentorship",
-		"HEIMDALL_JWT_ISSUER":               "heimdall",
-		"DISABLED_MOCK_LOCAL_PRINCIPAL":     "",
-		"ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS": "",
-		"MENTOR_INVITE_SECRET":              "secret",
-		"PORT":                              "",
-		"DB_MAX_CONNS":                      "",
-		"DB_MIN_CONNS":                      "",
-		"JWT_CLOCK_SKEW":                    "",
-		"FGA_NATS_URL":                      "",
-		"FGA_RELAY_BATCH_SIZE":              "",
-		"FGA_RELAY_MAX_ATTEMPTS":            "",
-		"FGA_RELAY_INTERVAL":                "",
-		"FGA_RELAY_RETRY_DELAY":             "",
-		"INDEX_RELAY_RETRY_DELAY":           "",
-		"INDEX_RELAY_MAX_ATTEMPTS":          "",
-		"CROWDFUNDING_BASE_URL":             "https://crowdfunding.example.org/",
-		"CROWDFUNDING_TIMEOUT":              "",
-		"AWS_REGION":                        "",
-		"LOGOS_S3_BUCKET":                   "",
-		"LOGOS_CDN_URL_PREFIX":              "",
-		"ATTACHMENTS_S3_BUCKET":             "",
-		"OTEL_SERVICE_NAME":                 "",
+		"HEIMDALL_JWKS_URL":                    "https://heimdall.example.org/.well-known/jwks",
+		"HEIMDALL_JWT_AUDIENCE":                "lfx-mentorship",
+		"HEIMDALL_JWT_ISSUER":                  "heimdall",
+		"DISABLED_MOCK_LOCAL_PRINCIPAL":        "",
+		"ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS":    "",
+		"MENTOR_INVITE_SECRET":                 "secret",
+		"PORT":                                 "",
+		"DB_MAX_CONNS":                         "",
+		"DB_MIN_CONNS":                         "",
+		"JWT_CLOCK_SKEW":                       "",
+		"FGA_NATS_URL":                         "",
+		"FGA_RELAY_BATCH_SIZE":                 "",
+		"FGA_RELAY_MAX_ATTEMPTS":               "",
+		"FGA_RELAY_INTERVAL":                   "",
+		"FGA_RELAY_RETRY_DELAY":                "",
+		"INDEX_RELAY_RETRY_DELAY":              "",
+		"INDEX_RELAY_MAX_ATTEMPTS":             "",
+		"INDEXER_SERVICE_TOKEN":                "",
+		"CROWDFUNDING_BASE_URL":                "https://crowdfunding.example.org/",
+		"CROWDFUNDING_TIMEOUT":                 "",
+		"PUBLIC_SITE_URL":                      "",
+		"SELF_SERVE_URL":                       "",
+		"EMAIL_HR_INBOX":                       "",
+		"EMAIL_REVIEW_INBOX":                   "",
+		"EMAIL_ALLOWED_RECIPIENTS":             "",
+		"AWS_REGION":                           "",
+		"LOGOS_S3_BUCKET":                      "",
+		"LOGOS_S3_ENDPOINT_URL":                "",
+		"LOGOS_S3_CREATE_MISSING_BUCKET":       "",
+		"LOGOS_CDN_URL_PREFIX":                 "",
+		"ATTACHMENTS_S3_BUCKET":                "",
+		"ATTACHMENTS_S3_ENDPOINT_URL":          "",
+		"ATTACHMENTS_S3_CREATE_MISSING_BUCKET": "",
+		"ATTACHMENTS_CDN_URL_PREFIX":           "",
+		"OTEL_SERVICE_NAME":                    "",
+		"OTEL_SERVICE_VERSION":                 "",
+		"OTEL_EXPORTER_OTLP_ENDPOINT":          "",
 	}
 	for name, tc := range map[string]struct {
 		override map[string]string
@@ -177,6 +191,7 @@ func TestLoadConfig(t *testing.T) {
 		"zero relay batch":             {override: map[string]string{"FGA_RELAY_BATCH_SIZE": "0"}, wantErr: "FGA_RELAY_BATCH_SIZE"},
 		"negative relay attempts":      {override: map[string]string{"FGA_RELAY_MAX_ATTEMPTS": "-1"}, wantErr: "FGA_RELAY_MAX_ATTEMPTS"},
 		"bad relay interval":           {override: map[string]string{"FGA_RELAY_INTERVAL": "soon"}, wantErr: "FGA_RELAY_INTERVAL"},
+		"zero relay interval":          {override: map[string]string{"FGA_RELAY_INTERVAL": "0s"}, wantErr: "FGA_RELAY_INTERVAL"},
 		"zero relay retry delay":       {override: map[string]string{"FGA_RELAY_RETRY_DELAY": "0s"}, wantErr: "FGA_RELAY_RETRY_DELAY"},
 		"negative index retry delay":   {override: map[string]string{"INDEX_RELAY_RETRY_DELAY": "-1m"}, wantErr: "INDEX_RELAY_RETRY_DELAY"},
 		"zero index attempts":          {override: map[string]string{"INDEX_RELAY_MAX_ATTEMPTS": "0"}, wantErr: "INDEX_RELAY_MAX_ATTEMPTS"},
@@ -210,7 +225,9 @@ func TestLoadConfig(t *testing.T) {
 				if cfg.Server.Port != 8080 || cfg.Database.MaxConns != 10 || cfg.Database.MinConns != 2 || cfg.JWT.ClockSkew != 5*time.Second ||
 					cfg.FGA.RelayBatch != 50 || cfg.FGA.RelayMaxAttempts != 10 || cfg.FGA.RelayInterval != time.Second || cfg.FGA.RelayRetryDelay != time.Minute ||
 					cfg.Indexer.RetryDelay != time.Minute || cfg.Indexer.MaxAttempts != 10 || cfg.Crowdfunding.Timeout != 10*time.Second ||
-					cfg.OTel.ServiceName != "lfx-mentorship-api" || cfg.JWT.HeimdallAudience != "lfx-mentorship" {
+					cfg.OTel.ServiceName != "lfx-mentorship-api" || cfg.OTel.ServiceVersion != "dev" ||
+					cfg.Storage.Logos.CreateMissingBucket || cfg.Storage.Attachments.CreateMissingBucket ||
+					cfg.Email.PublicSiteURL != "" || cfg.Email.ReviewInboxes != nil || cfg.Email.AllowedRecipients != nil {
 					t.Fatalf("unexpected defaults %+v", cfg)
 				}
 			case "mock principal instead of heimdall":
