@@ -338,7 +338,7 @@ List all applications submitted by a user across all programs.
 
 | Parameter | Values | Description |
 |---|---|---|
-| `status` | `pending\|accepted\|declined\|withdrawn\|graduated\|hold` | Filter by status |
+| `status` | `pending\|accepted\|declined\|withdrawn\|graduated` | Filter by status |
 | `role` | `mentor\|mentee` | Filter by role |
 | `limit` / `offset` | — | Pagination |
 
@@ -702,7 +702,7 @@ Same catalog shape as `GET /v1/programs/catalog` for a single program (UUID or s
 
 #### `GET /v1/programs/{id}/mentees` 🔓
 
-Public list of accepted and graduated mentees for a program (UUID or slug). Hidden programs follow the same FR-009 404 rule as `GET /v1/programs/{id}`. Pending, declined, withdrawn, and hold applications are omitted.
+Public list of accepted and graduated mentees for a program (UUID or slug). Hidden programs follow the same FR-009 404 rule as `GET /v1/programs/{id}`. Pending, declined, and withdrawn applications are omitted.
 
 **Response** `200`
 ```json
@@ -729,7 +729,7 @@ Public list of accepted and graduated mentees for a program (UUID or slug). Hidd
 
 #### `GET /v1/mentees` 🔓
 
-Paginated public directory of mentees on **published** programs. Includes `accepted` and `graduated` applications only. Pending, hold, declined, and withdrawn applications are omitted, as are mentees with no enrollment. The list is one row per mentee.
+Paginated public directory of mentees on **published** programs. Includes `accepted` and `graduated` applications only. Pending, declined, and withdrawn applications are omitted, as are mentees with no enrollment. The list is one row per mentee.
 
 The response `status` is the stored application status — `accepted` or `graduated`. Note the asymmetry with the `status` **query parameter** below, which accepts `active` as a filter alias selecting `accepted` rows; `active` is never returned in a response body.
 
@@ -1818,9 +1818,9 @@ An application represents a mentee's (or mentor's) request to join a specific pr
 }
 ```
 
-**`role` values**: `mentee`, `mentor`
+**`role` values**: `mentee`, `mentor`. New applications are always `mentee`; `mentor` rows exist only as applications imported from legacy.
 
-**`status` lifecycle**: `pending → accepted → graduated | declined | withdrawn | hold`
+**`status` lifecycle**: `pending → accepted → graduated | declined | withdrawn`
 
 | Status | Set by | Meaning |
 |---|---|---|
@@ -1828,8 +1828,7 @@ An application represents a mentee's (or mentor's) request to join a specific pr
 | `accepted` | Program Admin | Mentee selected and enrolled for the term; `attendance_type` required |
 | `graduated` | Program Admin | Mentee completed the program |
 | `declined` | Program Admin / bulk-decline | Not selected |
-| `withdrawn` | Mentee (self) | Mentee voluntarily exited |
-| `hold` | Program Admin | Pending additional information |
+| `withdrawn` | Mentee (self) / Program Admin (assisted) | Exited; a Program Admin cannot withdraw a `declined` or `graduated` application |
 
 **`attendance_type` values**: `full_time`, `part_time` — **required** when `status = "accepted"`
 
@@ -1876,10 +1875,14 @@ This endpoint is authenticated and actor-scoped:
 Submit an application to a term.
 
 **Guards enforced**:
-1. Term must have `status = "open"`.
-2. Current date must fall within `application_start_date` and `application_end_date`.
-3. No existing non-withdrawn application for this user+term (reapplication from `declined` is permanently blocked; reapplication from `withdrawn` is allowed while the window is open).
-4. Fewer than 3 withdrawn applications for this user+term in the requested role — once a user has withdrawn 3, no further application to the term in that role is accepted.
+1. Only mentees apply: `role` is optional, defaults to `mentee`, and any other value is a `400`. Mentors request to join through `POST /v1/programs/{id}/members`.
+2. Term must have `status = "open"`.
+3. Today must fall within the application window: both `application_start_date` and `application_end_date` set, compared by UTC calendar day with both days inclusive. A term missing either date takes no applications.
+4. The caller must have a mentee profile, created only after confirming the eligibility criteria.
+5. No existing non-withdrawn application for this user+term (reapplication from `declined` is permanently blocked; reapplication from `withdrawn` is allowed while the window is open).
+6. Fewer than 3 withdrawn applications for this user+term — once a user has withdrawn 3, no further application to the term is accepted.
+7. The program must be `published`.
+8. The caller holds no other mentee application `accepted` in a term that has not ended, and none `graduated` in any term.
 
 **After creation**: The program's `task_templates` JSONB array is cloned as individual `prerequisite` tasks linked to the new application.
 
@@ -1891,39 +1894,16 @@ term, but at most one that is not withdrawn.
 **Request body**
 ```json
 {
-  "role": "mentee"    // required; "mentor" | "mentee"
+  "role": "mentee"    // optional; only "mentee" is accepted
 }
 ```
 
 The applicant is always the caller. `attendance_type` is ignored; a Program
-Admin sets it on acceptance.
+Admin sets it on acceptance. The application's `start_date_time` and
+`end_date_time` are copied from the term.
 
 **Response** `201` → `<Application>`  
-**Errors** `400`, `401`, `409` (duplicate / blocked reapplication), `422` (window closed, term not open, reapplication limit reached)
-
----
-
-#### `PATCH /v1/applications/{id}` 🔒
-
-Update applicant-supplied application content. The gateway admits the applicant
-and Program Admins (`writer` on the application).
-
-**Request body** (all optional)
-```json
-{
-  "start_date_time": "2026-03-01T00:00:00Z",
-  "end_date_time":   "2026-06-30T23:59:59Z"
-}
-```
-
-`status`, `attendance_type`, `program_term_status`, `tasks_submitted`,
-`admin_notified`, `evaluation` and `reviewer_note` are rejected with `400`.
-Status and attendance type change through `PATCH /v1/applications/{id}/status`;
-withdrawal, evaluation and the reviewer note have their own routes; the rest are
-maintained by the service.
-
-**Response** `200` → `<Application>`  
-**Errors** `400`, `401`, `403` (not a `writer` on the application), `404`
+**Errors** `400` (role other than `mentee`), `401`, `409` (duplicate / blocked reapplication), `422` (window closed or unset, term not open, no mentee profile, program not published, reapplication limit reached, already holds an accepted mentorship or has graduated)
 
 ---
 
@@ -2290,12 +2270,8 @@ deleted
 
 ```
 pending ──► accepted ──► graduated
-  │   │        │
-  │   │        └──► declined
-  │   │
-  │   └──► hold ──► accepted
-  │         └──► declined
-  │         └──► pending
+  │            │
+  │            └──► declined
   │
   └──► declined ──► pending
   └──► withdrawn
@@ -2308,11 +2284,7 @@ pending ──► accepted ──► graduated
 |---|---|---|---|
 | `pending` | `accepted` | Program Admin | `attendance_type` required |
 | `pending` | `declined` | Program Admin | |
-| `pending` | `hold` | Program Admin | Needs more info |
 | `pending` | `withdrawn` | **Applicant only** | Self-withdrawal |
-| `hold` | `accepted` | Program Admin | |
-| `hold` | `declined` | Program Admin | |
-| `hold` | `pending` | Program Admin | |
 | `accepted` | `graduated` | Program Admin | Manual; never automatic |
 | `accepted` | `declined` | Program Admin | |
 | `declined` | `pending` | Program Admin | Re-open a declined application |

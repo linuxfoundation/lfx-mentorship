@@ -131,7 +131,7 @@ POST /v1/mentor-invites/{token}/decline  [token + JWT]
 ### Existing endpoint — now with state guards and attendance_type
 
 ```
-PATCH /v1/applications/{id}
+PATCH /v1/applications/{id}/status
 Authorization: Bearer {token}
 Content-Type: application/json
 

@@ -1877,7 +1877,7 @@ def seed_derived_state(cur) -> None:
                 'name', t.name,
                 'description', t.description,
                 'category', t.category,
-                'prerequisite', t.category = 'prerequisite',
+                'prerequisite', COALESCE(t.category = 'prerequisite', false),
                 'status', t.status,
                 'application_status', t.application_status,
                 'program_term_status', t.program_term_status,
