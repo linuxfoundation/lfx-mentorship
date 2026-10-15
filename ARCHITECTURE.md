@@ -181,13 +181,12 @@ rather than schema:
   ([lfx-v2-project-service#127](https://github.com/linuxfoundation/lfx-v2-project-service/pull/127)).
   Mentorship only consumes the inherited `writer`, and emits tuples only on its own four
   `mentorship_*` types. `exclude_relations` was considered and is not the design (`04` AQ-4).
-- **The backend makes no FGA queries, so a list that depends on FGA relations goes through Query
-  Service** ([lfx-v2-query-service](https://github.com/linuxfoundation/lfx-v2-query-service), over
-  the index this service feeds). The service serves only lists it can answer from Postgres without
-  an access decision: fully public lists (published programs, publicly listable profiles) behind
-  `allow_all`, `/me` lists of the caller's own rows, and lists nested under an object the edge has
-  already checked (`05`, `06`). `/v1/me/programs` and `/v1/me/mentor-programs` are pending
-  platform sign-off (§6).
+- **The backend makes no FGA queries, so a caller's own programs, applications or tasks are listed
+  through Query Service** ([lfx-v2-query-service](https://github.com/linuxfoundation/lfx-v2-query-service),
+  over the index this service feeds), not through "my X" endpoints. The service serves only fully
+  public lists (published programs, publicly listable profiles) behind `allow_all`, and lists
+  nested under an object the edge has already checked (`05`, `06`). The `/me` lists it serves
+  today for those types are not settled (§6).
 
 ### 3.3 Service-side invariants the edge cannot enforce
 
@@ -205,8 +204,9 @@ and they are contracts rather than implementation details:
   `{id}` capture that may be a slug would check a nonexistent object and deny a valid URL.
   `GET /v1/programs/resolve/{id}` returns the canonical `program.ID` for this purpose (`06` rule 1).
 - **`/me/*` never addresses another subject's object.** The target is derived from `principal`,
-  never from request input. The one path-ID exception, `/v1/me/profiles/by-id/{id}`, checks in the
-  handler that the row belongs to the caller (`02`).
+  never from request input. Two routes take a row ID and check in the service that the row belongs
+  to the caller, answering `403` or `404` otherwise: `/v1/me/profiles/by-id/{id}` (`02`) and
+  `POST /v1/me/program-memberships/{id}/withdraw`. Both are `allow_all` at the edge.
 - **The raw user, profile, application and task reads are gated, not filtered.** They leave the
   public group entirely rather than having fields stripped, because a blocklist rots the first time
   a column is added (`05` GW-8). `User.email`, `User.lfid` and `UserProfile.phone`, `address`,
@@ -330,6 +330,6 @@ Listed so that nobody builds against them.
 
 | Contract | What is open |
 |---|---|
-| **`/v1/me/programs` and `/v1/me/mentor-programs`** | Served by the service as exceptions to the Query Service rule (§3.2), pending platform sign-off: they need grouping and counts the program index document does not carry (`06`) |
+| **`/me` lists of programs and applications** | `/v1/me/programs`, `/v1/me/mentor-programs` and `/v1/me/applications` are served by the service, and Self Serve reads all three, but caller-owned collections belong in Query Service (§3.2). The two program lists are exceptions pending platform sign-off, because they need grouping and counts the program index document does not carry (`06`); `/v1/me/applications` has no exception recorded |
 | **Approver-roster administration** | `/v1/admin/approver-team/members` exists but is cluster-local, behind a backend scope check, and not routed through the gateway. Exposing it needs a platform LF-staff relation that is not yet approved, and the roster has no named owner (`04` AQ-8, `06`) |
 | **Postgres full-text search** | `02` targets `tsvector` + GIN; no migration has them and in-service search uses `ILIKE`. Nothing may assume full-text semantics such as ranking or stemming |
