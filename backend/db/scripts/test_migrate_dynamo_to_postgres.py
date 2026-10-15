@@ -15,6 +15,7 @@ import types
 import psycopg2
 import pytest
 
+import legacy_objects as lo
 import migrate_dynamo_to_postgres as m
 
 PROGRAM = "11111111-1111-4111-8111-111111111111"
@@ -450,3 +451,33 @@ def test_user_fix_restores_an_lfid_before_the_tuples_are_seeded(cursor, tmp_path
     m.seed_derived_state(cursor)
     cursor.execute("SELECT object_uid FROM fga_outbox WHERE object_type = 'mentorship_application'")
     assert cursor.fetchall() == [(APPLICATION,)]
+
+
+LEGACY_PREFIX = lo.legacy_url_prefix("legacy")
+BUCKETS = {lo.LOGO: "logos", lo.SUBMISSION: "attachments"}
+
+
+def _rewriter(tmp_path, **kwargs):
+    path = tmp_path / "manifest.json"
+    lo.write_manifest(str(path), LEGACY_PREFIX, BUCKETS, [{"class": lo.LOGO, "value": LEGACY_PREFIX + "a.png", "status": lo.COPIED, "key": "a.png"}])
+    return lo.LegacyFileRewriter(str(path), "https://cdn", LEGACY_PREFIX, BUCKETS, **kwargs)
+
+
+def test_a_value_missing_from_the_manifest_stops_the_import(tmp_path):
+    with pytest.raises(RuntimeError, match="not in the copy manifest"):
+        _rewriter(tmp_path).rewrite("users.avatar_url", lo.LOGO, LEGACY_PREFIX + "new.png")
+
+
+def test_a_test_run_nulls_a_value_missing_from_the_manifest_and_reports_it(tmp_path, caplog):
+    files = _rewriter(tmp_path, tolerate_missing=True)
+    assert files.rewrite("users.avatar_url", lo.LOGO, LEGACY_PREFIX + "new.png") is None
+    assert files.rewrite("users.avatar_url", lo.LOGO, LEGACY_PREFIX + "a.png") == "https://cdn/a.png"
+    assert files.counts["users.avatar_url"] == {"manifest_miss": 1, "rewritten": 1}
+    assert "MANIFEST_MISS" in caplog.text
+
+
+def test_test_run_is_the_only_argument_accepted():
+    assert m.parse_args([]) is False
+    assert m.parse_args(["--test-run"]) is True
+    with pytest.raises(SystemExit):
+        m.parse_args(["--final"])

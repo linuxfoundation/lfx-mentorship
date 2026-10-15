@@ -46,6 +46,7 @@ QUARANTINE_PREFIX = {LOGO: "quarantine/logos/", SUBMISSION: "quarantine/attachme
 # Manifest entry statuses.
 COPIED = "copied"
 QUARANTINED = "quarantined"
+MANIFEST_MISS = "manifest_miss"  # test runs only: a value the copy never saw, nulled instead of stopping the import
 MISSING = "missing"
 
 
@@ -252,8 +253,9 @@ def write_manifest(path: str, prefix: str, buckets: dict, entries: list) -> None
 class LegacyFileRewriter:
     """Rewrites legacy file column values from the copy manifest (03 §S3 objects, step 3)."""
 
-    def __init__(self, manifest_path: str, cdn_url_prefix: str, legacy_prefix: str, buckets: dict):
+    def __init__(self, manifest_path: str, cdn_url_prefix: str, legacy_prefix: str, buckets: dict, tolerate_missing: bool = False):
         self._manifest_path = manifest_path
+        self._tolerate_missing = tolerate_missing
         self._cdn_url_prefix = cdn_url_prefix.rstrip("/")
         self._legacy_prefix = legacy_prefix
         self._buckets = buckets
@@ -276,6 +278,10 @@ class LegacyFileRewriter:
             self._entries = {(e["class"], e["value"]): e for e in manifest["entries"]}
         entry = self._entries.get((file_class, value))
         if entry is None:
+            if self._tolerate_missing:
+                # Legacy is still live during a test run: a file uploaded after the copy's scan is not worth stopping for.
+                log.warning("MANIFEST_MISS %s value %r is not in the copy manifest; column set to NULL", file_class, value)
+                return {"status": MANIFEST_MISS}
             raise RuntimeError(f"{file_class} value {value!r} is not in the copy manifest; rerun copy_legacy_objects.py")
         return entry
 
