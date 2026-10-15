@@ -92,19 +92,31 @@ func (h *ProgramTermHandler) ListManagementByProgram(w http.ResponseWriter, r *h
 	JSON(w, http.StatusOK, map[string]any{"data": rows, "meta": meta})
 }
 
-// GetByID handles GET /v1/programs/{programID}/terms/{termID}.
-func (h *ProgramTermHandler) GetByID(w http.ResponseWriter, r *http.Request) {
+// resolveVisibleTerm applies the visibility rules of every public term read: the
+// parent program must be visible to the caller (resolveVisibleProgram), the term
+// must belong to it, and a deleted term is a 404. It writes the error response
+// itself and reports false when the read must stop.
+func (h *ProgramTermHandler) resolveVisibleTerm(w http.ResponseWriter, r *http.Request) (*models.Program, *models.ProgramTerm, bool) {
 	program, ok := resolveVisibleProgram(w, r, h.programs)
 	if !ok {
-		return
+		return nil, nil, false
 	}
 	term, err := h.svc.GetByProgramAndID(r.Context(), program.ID, chi.URLParam(r, "termID"))
 	if err != nil {
 		Error(w, err)
-		return
+		return nil, nil, false
 	}
 	if term.Status == models.ProgramTermStatusDeleted {
 		Error(w, domain.ErrProgramTermNotFound)
+		return nil, nil, false
+	}
+	return program, term, true
+}
+
+// GetByID handles GET /v1/programs/{programID}/terms/{termID}.
+func (h *ProgramTermHandler) GetByID(w http.ResponseWriter, r *http.Request) {
+	_, term, ok := h.resolveVisibleTerm(w, r)
+	if !ok {
 		return
 	}
 	JSON(w, http.StatusOK, withLabel(term))
@@ -115,17 +127,8 @@ func (h *ProgramTermHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 // applications now, in one read. It applies the same visibility rules as GetByID,
 // so a hidden program or a deleted term is a 404.
 func (h *ProgramTermHandler) GetApplyTarget(w http.ResponseWriter, r *http.Request) {
-	program, ok := resolveVisibleProgram(w, r, h.programs)
+	program, term, ok := h.resolveVisibleTerm(w, r)
 	if !ok {
-		return
-	}
-	term, err := h.svc.GetByProgramAndID(r.Context(), program.ID, chi.URLParam(r, "termID"))
-	if err != nil {
-		Error(w, err)
-		return
-	}
-	if term.Status == models.ProgramTermStatusDeleted {
-		Error(w, domain.ErrProgramTermNotFound)
 		return
 	}
 	target := models.ProgramTermApplyTarget{
