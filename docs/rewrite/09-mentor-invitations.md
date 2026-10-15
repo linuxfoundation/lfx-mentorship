@@ -156,7 +156,7 @@ The token has no random part, so every invite of the same person to the same pro
 
 Both sides live in Self Serve: [02](./02-target-architecture.md) gives it the authenticated Program Admin and mentor experiences. The Nuxt site only serves the public program page behind the View link.
 
-- **Invitee page.** It already exists: `/mentorship/mentor/invites?token=` ([linuxfoundation/lfx-self-serve#3171](https://github.com/linuxfoundation/lfx-self-serve/pull/3171)), Accept and Decline on one page; both email links open it. The token format does not change, so the page stays as it is. It maps a 403 to "This invitation is for a different account" and a 400 or 409 to "expired or already answered". Accept and decline are `POST`s from the page, so mail-client link prefetchers cannot trigger them. After accept: the mentor profile setup page when the user has none, otherwise the mentor dashboard.
+- **Invitee page.** It already exists: `/mentorship/mentor/invites?token=` ([linuxfoundation/lfx-self-serve#3171](https://github.com/linuxfoundation/lfx-self-serve/pull/3171)), Accept and Decline on one page; both email links open it. The token format does not change, so the page stays as it is. It maps a 403 to "This invitation is for a different account" and a 400 or 409 to "expired or already answered". Accept and decline are `POST`s from the page, so mail-client link prefetchers cannot trigger them. After accept, the page shows a success screen linking to My Programs.
 - **Program Admin side.** Built in [linuxfoundation/lfx-self-serve#3396](https://github.com/linuxfoundation/lfx-self-serve/pull/3396). The mentors tab's picker calls `GET /v1/programs/{uid}/mentor-candidates?search=` (at least 2 characters; up to 10 results of `lfid`, name and avatar, never an email; a whole email finds the one LF account that owns it), Invite sends the picked person's `lfid`, and a 422 shows a no-LF-account message. [`backend/docs/mentor-invite-integration.md`](../../backend/docs/mentor-invite-integration.md) is the integration guide. Invited mentors appear in the tab's list from `member-management`; Revoke moves an `invited` row to `declined` and Remove an `active` one to `withdrawn`. To resend or re-invite, the Program Admin picks the person again.
 
 ### Email
@@ -198,6 +198,7 @@ Not migrated and not re-sent. The legacy email had no accept or decline link, so
 - **03**: the open question on pending mentor rows: the invitation half is settled here (see Legacy invitations); classifying genuine mentor applications stays open. The `withdrawn` row in the mapping table calls FR-022 "withdraw-not-delete"; FR-022 deletes the record.
 - **07**: `mentor-project-invite` row: three links.
 - **Self Serve**: the 409 message on Invite says the person is already invited or a mentor; an `invited`, `declined` or `withdrawn` person now gets a 201 instead, so the message covers only `active`, `requested` and `pending`.
+- **Self Serve**: the invite page's invalid-link copy says the invitation "may have expired or already been answered"; links no longer expire, so it should say the invitation is invalid or has already been answered.
 
 ## Deliberate divergences from legacy
 

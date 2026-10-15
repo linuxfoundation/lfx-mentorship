@@ -56,7 +56,7 @@ Status column: **hook** — a `Notifier` method exists but delivers nothing yet;
 | `admin-project-edited-notification` | Program Admin | Program Admin edits a program that is not `rejected` | none |
 | **Mentors** | | | |
 | `mentor-project-invite` | invited mentor | mentor added to a program (`invited`) | done: `NotifyMentorInvited` — links to Self Serve `/mentorship/mentor/invites?token=…`; the link does not expire, and inviting the same person again re-sends it |
-| `admin-mentor-accepted` | active Program Admins | mentor accepts the invite (`invited → approved`) | done: `NotifyAdminMentorAccepted` from `AcceptInvite` (09 drafted this as `NotifyMentorAccepted`) |
+| `admin-mentor-accepted` | active Program Admins | mentor accepts the invite (`invited → approved`) | done: `NotifyAdminMentorAccepted` from `AcceptInvite` |
 | `admin-mentor-declined` | active Program Admins | mentor declines the invite (`invited → declined`) | done: `NotifyAdminMentorDeclined` from `DeclineInvite` |
 | `mentor-admin-declined` | mentor | Program Admin declines a mentor's request (`requested → declined`); revoking an invite (`invited → declined`) sends nothing | done: `NotifyMentorDeclined` after the write — from the member `Update`, and from declining a `pending` mentor-role application; declining an accepted one sends nothing |
 | `admin-new-mentor-request` | active Program Admins | mentor requests to join a program | done: `NotifyAdminMentorRequested` — from `RequestMentorship` (a new `requested` member row, or a `withdrawn` one reopened). The apply route takes mentee applications only |
