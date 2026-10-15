@@ -109,6 +109,36 @@ func TestFGAOutboxIntegration_ClaimSerializesSameObject(t *testing.T) {
 	}
 }
 
+func TestFGAOutboxIntegration_ClaimStaysWithinTheLockTableOnALargeQueue(t *testing.T) {
+	pool := integrationPool(t)
+	repo := NewFGAOutboxRepository(pool)
+	ctx := context.Background()
+	// A default Postgres has about 6,400 lock slots (max_locks_per_transaction 64 × max_connections 100),
+	// shared by every session. A claim must take advisory locks on the rows it returns, not on the queue.
+	const queued = 20000
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO fga_outbox (marker_kind, object_type, object_uid, desired_operation)
+		SELECT 'object', 'mentorship_task', 'task-' || n, 'update_access' FROM generate_series(1, $1) AS n`, queued); err != nil {
+		t.Fatalf("queue markers: %v", err)
+	}
+	seen := make(map[int64]bool)
+	for round := range 2 {
+		markers, err := repo.Claim(ctx, 50)
+		if err != nil {
+			t.Fatalf("claim round %d: %v", round, err)
+		}
+		if len(markers) != 50 {
+			t.Fatalf("claim round %d: %d markers; want 50", round, len(markers))
+		}
+		for _, marker := range markers {
+			if seen[marker.ID] {
+				t.Fatalf("marker %d claimed twice", marker.ID)
+			}
+			seen[marker.ID] = true
+		}
+	}
+}
+
 func TestIndexOutboxIntegration_ClaimRetryAndSent(t *testing.T) {
 	pool := integrationPool(t)
 	seedIntegrationFixture(t, pool)

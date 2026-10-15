@@ -16,6 +16,12 @@ import (
 
 var fgaOutboxStaleDeadLettered = expvar.NewInt("fga_outbox_stale_dead_lettered")
 
+// claimWindowFactor sizes the window of claimable rows a claim inspects, per batch slot.
+// Membership markers share their object with others, so the window holds more rows than
+// the batch to still fill it with distinct objects. A crowded window shrinks a batch; it
+// never stalls one, since the first object's rows are always in it.
+const claimWindowFactor = 4
+
 // FGAOutboxRepository implements generation-guarded FGA marker delivery.
 type FGAOutboxRepository struct {
 	pool        *pgxpool.Pool
@@ -112,8 +118,13 @@ func (r *FGAOutboxRepository) Claim(ctx context.Context, limit int) ([]domain.FG
 		fgaOutboxStaleDeadLettered.Add(int64(deadLettered))
 		slog.Default().WarnContext(ctx, "dead-lettered stale FGA outbox markers", "count", deadLettered)
 	}
+	// The advisory lock is taken only on a bounded window of claimable rows. Inside the
+	// claimable scan the planner evaluates pg_try_advisory_xact_lock before the state
+	// filter, so a lock would be tried on every row of the table on every tick; with a
+	// large queue that exhausts the lock table the whole database instance shares.
+	// MATERIALIZED keeps the window from being inlined into the lockable scan.
 	const query = `
-		WITH lockable AS (
+		WITH claimable AS MATERIALIZED (
 			SELECT pending.id, pending.object_type, pending.object_uid
 			FROM fga_outbox AS pending
 			WHERE ((pending.state = 'pending' AND pending.next_attempt_at <= NOW())
@@ -127,11 +138,16 @@ func (r *FGAOutboxRepository) Claim(ctx context.Context, limit int) ([]domain.FG
 				  AND active.state = 'in_flight'
 				  AND active.id <> pending.id
 			  )
-			  AND pg_try_advisory_xact_lock(
-				hashtextextended(pending.object_type || ':' || pending.object_uid, 0)
-			  )
 			ORDER BY pending.object_type, pending.object_uid, pending.id
-			FOR UPDATE SKIP LOCKED
+			LIMIT $3
+			FOR UPDATE OF pending SKIP LOCKED
+		),
+		lockable AS (
+			SELECT claimable.id, claimable.object_type, claimable.object_uid
+			FROM claimable
+			WHERE pg_try_advisory_xact_lock(
+				hashtextextended(claimable.object_type || ':' || claimable.object_uid, 0)
+			)
 		),
 		candidates AS (
 			SELECT DISTINCT ON (lockable.object_type, lockable.object_uid) lockable.id
@@ -154,7 +170,7 @@ func (r *FGAOutboxRepository) Claim(ctx context.Context, limit int) ([]domain.FG
 			          outbox.generation, outbox.claimed_generation, outbox.claimed_at, outbox.attempts,
 		          outbox.last_error`
 
-	rows, err := r.pool.Query(ctx, query, limit, r.maxAttempts)
+	rows, err := r.pool.Query(ctx, query, limit, r.maxAttempts, limit*claimWindowFactor)
 	if err != nil {
 		return nil, fmt.Errorf("claim FGA outbox markers: %w", err)
 	}
