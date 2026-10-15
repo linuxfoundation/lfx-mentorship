@@ -12,8 +12,7 @@ import (
 type ProgramStatus string
 
 const (
-	ProgramStatusDraft     ProgramStatus = "draft"
-	ProgramStatusSubmitted ProgramStatus = "submitted"
+	ProgramStatusPending   ProgramStatus = "pending"
 	ProgramStatusPublished ProgramStatus = "published"
 	ProgramStatusRejected  ProgramStatus = "rejected"
 	ProgramStatusArchived  ProgramStatus = "archived"
@@ -23,7 +22,7 @@ const (
 // IsValid reports whether the status value is one of the allowed enum members.
 func (s ProgramStatus) IsValid() bool {
 	switch s {
-	case ProgramStatusDraft, ProgramStatusSubmitted, ProgramStatusPublished,
+	case ProgramStatusPending, ProgramStatusPublished,
 		ProgramStatusRejected, ProgramStatusArchived, ProgramStatusHidden:
 		return true
 	}
@@ -34,6 +33,9 @@ func (s ProgramStatus) IsValid() bool {
 type Program struct {
 	ID                 string             `json:"id"`
 	ProjectUID         *string            `json:"project_uid,omitempty"`
+	ProjectSlug        *string            `json:"project_slug,omitempty"`
+	ProjectName        *string            `json:"project_name,omitempty"`
+	ProjectLogoURL     *string            `json:"project_logo_url,omitempty"`
 	Name               string             `json:"name"`
 	Slug               string             `json:"slug"`
 	Status             ProgramStatus      `json:"status"`
@@ -63,6 +65,9 @@ type ProgramCreateInput struct {
 	CreatorUserID      string          `json:"-"`
 	ID                 string          `json:"id"`
 	ProjectUID         *string         `json:"project_uid,omitempty"`
+	ProjectSlug        *string         `json:"project_slug,omitempty"`
+	ProjectName        *string         `json:"project_name,omitempty"`
+	ProjectLogoURL     *string         `json:"project_logo_url,omitempty"`
 	Name               string          `json:"name"`
 	Slug               string          `json:"slug"`
 	Status             ProgramStatus   `json:"status"`
@@ -82,8 +87,25 @@ type ProgramCreateInput struct {
 	TaskTemplates      json.RawMessage `json:"task_templates,omitempty"`
 }
 
+// ProgramEnrollmentInput is the atomic enrollment payload for a new program.
+type ProgramEnrollmentInput struct {
+	Program       ProgramCreateInput       `json:"program"`
+	Terms         []ProgramTermCreateInput `json:"terms"`
+	Skills        []string                 `json:"skills"`
+	Prerequisites json.RawMessage          `json:"prerequisites,omitempty"`
+}
+
 // ProgramUpdateInput is the request body for updating a program.
 type ProgramUpdateInput struct {
+	// The project fields move the program to another LF project and are applied together:
+	// ProjectUID is required when any is set. When Project Service is configured, it supplies
+	// the slug, name, and logo and the caller's are ignored. Otherwise ProjectSlug and
+	// ProjectName are also required, and an omitted ProjectLogoURL clears the previous
+	// project's logo.
+	ProjectUID         *string            `json:"project_uid,omitempty"`
+	ProjectSlug        *string            `json:"project_slug,omitempty"`
+	ProjectName        *string            `json:"project_name,omitempty"`
+	ProjectLogoURL     *string            `json:"project_logo_url,omitempty"`
 	Name               *string            `json:"name,omitempty"`
 	Slug               *string            `json:"slug,omitempty"`
 	Status             *ProgramStatus     `json:"status,omitempty"`
@@ -103,6 +125,14 @@ type ProgramUpdateInput struct {
 	DiscoverSortRank   *int               `json:"discover_sort_rank,omitempty"`
 	MenteeNeeds        json.RawMessage    `json:"mentee_needs,omitempty"`
 	TaskTemplates      json.RawMessage    `json:"task_templates,omitempty"`
+	// Skills replaces the program's full skill set when non-nil; nil leaves it unchanged.
+	Skills []string `json:"skills,omitempty"`
+	// Terms replaces the program's open terms when non-nil: unlisted open terms are
+	// removed and closed terms are untouched. nil leaves terms unchanged.
+	Terms []ProgramOpenTermInput `json:"terms,omitempty"`
+	// ExpectedStatus, when set, makes a status change apply only from this status. The service
+	// refuses any other current status and then pins the one it validated for the repository.
+	ExpectedStatus *ProgramStatus `json:"-"`
 }
 
 // ProgramSkill maps to the public.program_skills table.

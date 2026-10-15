@@ -44,12 +44,12 @@ SPDX-License-Identifier: MIT
             />
           </div>
 
-          <template v-if="lfxHeaderCtas.length">
+          <template v-if="headerCtas.length">
             <div class="h-px w-full bg-neutral-200" />
 
             <div class="flex flex-col gap-2">
               <NuxtLink
-                v-for="cta in lfxHeaderCtas"
+                v-for="cta in headerCtas"
                 :key="cta.label"
                 :to="cta.to"
                 @click="close"
@@ -103,6 +103,11 @@ import LfxIconButton from '~/components/uikit/icon-button/icon-button.vue';
 import { lfxHeaderCtas, lfxHeaderMenu } from '~/config/menu/header';
 
 const open = defineModel<boolean>({ required: true });
+
+const {
+  public: { selfServeUrl },
+} = useRuntimeConfig();
+const headerCtas = lfxHeaderCtas(selfServeUrl);
 
 const regularMenuItems = computed(() => lfxHeaderMenu.filter((i) => !i.children));
 const moreItem = computed(() => lfxHeaderMenu.find((i) => !!i.children));

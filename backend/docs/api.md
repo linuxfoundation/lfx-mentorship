@@ -1,12 +1,14 @@
 # LFX Mentorship API — Developer Reference
 
-**Base URL**: `http(s)://<host>/v1` for the interim Auth0 deployment, or
-`https://lfx-api.<environment>/mentorship/v1` through the Heimdall gateway.
+## Status Mapping
+
+Program creation persists the canonical backend status `pending`. The BFF catalog
+mapping shows a `pending` program in its pending-review display state.
+
+**Base URL**: `https://lfx-api.<environment>/mentorship/v1` through the Heimdall gateway.
 **Content-Type**: `application/json` for all request and response bodies  
 **Module**: `github.com/linuxfoundation/lfx-v2-mentorship-service`
 
-The bare `/v1` mount is retained only during the pre-cutover deployment. It
-accepts Auth0 tokens and must be retired when the shared gateway is enabled.
 Gateway traffic uses Heimdall-signed JWTs and receives object authorization
 from the gateway RuleSet/OpenFGA model.
 
@@ -16,6 +18,11 @@ The gateway-authorized API uses canonical resource paths:
 
 - Self-service user and profile mutations use `/me` and `/me/profiles`.
 - User application reads use `/me/applications`.
+- Mentor self-service program requests use `/me/program-memberships`.
+- Program admins list their programs with `/me/programs`.
+- Mentors list the programs they mentor with `/me/mentor-programs`.
+- Program-admin collection reads use Query Service
+  `/query/resources?v=1&type=mentorship_program&filter_grants=direct`.
 - Term-scoped routes use `/programs/{programUID}/terms/{termID}`.
 - Profile records with duplicate profile types use `/me/profiles/by-id/{id}`.
 - Application lifecycle operations are split into dedicated status, withdrawal,
@@ -29,19 +36,21 @@ the gateway contract. Program slugs must first be resolved through
 
 ### Authorization roster management
 
-These platform-management routes require the corresponding OAuth scope:
+These cluster-local platform-management routes retain backend scope checks as
+defense in depth:
 
 - `GET/POST /admin/approver-team/members` requires
   `manage:mentorship:approvers`.
 - `DELETE /admin/approver-team/members/{userID}` requires the same scope.
-- `GET/POST /projects/{projectUID}/mentorship-program-admins` requires
-  `manage:mentorship:project-admins`.
-- `DELETE /projects/{projectUID}/mentorship-program-admins/{userID}` requires
-  the same scope.
 
-The service rejects self-escalation. Changes are persisted with their FGA
-membership marker transactionally, and removals are retained as tombstones for
-reconciliation.
+Global approver changes are persisted with their FGA membership marker
+transactionally. The outbox relay publishes precise membership additions and
+removals directly to the platform FGA stream.
+
+These routes are intentionally absent from the Heimdall RuleSet until platform
+owners approve an edge relation for LF-staff roster administration. A backend
+scope is not an edge authorization decision and Heimdall does not synthesize
+these scopes unless a rule explicitly configures them.
 
 For local PostgreSQL-backed outbox tests, start `docker compose up -d`, create
 an isolated `mentorship_test` database, and run:
@@ -67,9 +76,10 @@ TEST_DATABASE_DSN='postgres://mentorship:mentorship@localhost:5433/mentorship_te
 11. [Mentor Invite Tokens](#11-mentor-invite-tokens)
 12. [Applications](#12-applications)
 13. [Tasks](#13-tasks)
-14. [Domain State Machines](#14-domain-state-machines)
-15. [Business Rule Reference](#15-business-rule-reference)
-16. [Frontend Integration Guide](#16-frontend-integration-guide)
+14. [Files](#14-files)
+15. [Domain State Machines](#15-domain-state-machines)
+16. [Business Rule Reference](#16-business-rule-reference)
+17. [Frontend Integration Guide](#17-frontend-integration-guide)
 
 ---
 
@@ -111,24 +121,24 @@ tasks                          (also created directly by program admins:
 
 ### JWT Bearer Token
 
-Protected endpoints require an `Authorization: Bearer <token>` header.  
-Tokens are Auth0-issued JWTs validated against the JWKS URL configured via environment variables.
+Clients send their identity-provider bearer token to the shared gateway. After
+authorizing the request, Heimdall forwards a service-audience JWT to this
+backend. Backend consumers do not obtain or submit the Heimdall JWT directly.
 
 | Env var | Description |
 |---|---|
-| `JWT_JWKS_URL` | Auth0 JWKS endpoint |
-| `JWT_AUDIENCE` | Expected `aud` claim |
-| `JWT_ISSUER` | Expected `iss` claim |
+| `HEIMDALL_JWKS_URL` | Heimdall JWKS endpoint |
+| `HEIMDALL_JWT_AUDIENCE` | Expected `aud` claim |
+| `HEIMDALL_JWT_ISSUER` | Expected `iss` claim |
 
-The JWT must contain the LFX SSO custom claims:
-
-- `https://sso.linuxfoundation.org/claims/username` → `principal.Username` (the LF ID)
-- `https://sso.linuxfoundation.org/claims/email` → `principal.Email`
-- Standard `sub` claim → `principal.UserID`
+The JWT must contain the `principal` claim. The service resolves human
+principals to its local user record where workflow behavior needs a local ID.
 
 #### Local Development Bypass
 
-Set `ALLOW_MOCK_PRINCIPAL_BYPASS=true` and `MOCK_LOCAL_PRINCIPAL=<user-id>` to inject a static principal without a real JWT. **Never set these in production.**
+Set `ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS=true` and
+`DISABLED_MOCK_LOCAL_PRINCIPAL=<user-id>` to inject a static principal without a
+real JWT. **Never set these in production.**
 
 ### Public vs. Authenticated Endpoints
 
@@ -136,7 +146,7 @@ Set `ALLOW_MOCK_PRINCIPAL_BYPASS=true` and `MOCK_LOCAL_PRINCIPAL=<user-id>` to i
 |---|---|
 | 🔓 | No JWT required |
 | 🔒 | `Authorization: Bearer <token>` required |
-| 🪙 | Signed invite token in request body (no JWT) |
+| 🪙 | Signed invite token in the path, plus `Authorization: Bearer <token>` for the invited user |
 
 ---
 
@@ -177,6 +187,10 @@ Date-only fields use `"YYYY-MM-DD"` format.
 
 All request bodies are capped at **1 MB**.
 
+### Person Pictures
+
+Where a person is listed in a role, their `avatar_url` is the `logo_url` of their profile for that role (mentor or mentee), falling back to `users.avatar_url` when that is null or empty. This covers the mentor and mentee directories and profiles, `GET /v1/summary`, the program catalog, the program mentee list, the application list, and member management. `GET /v1/me` returns the stored `users.avatar_url`, and the mentor candidate search returns the stored `users.avatar_url`, or the auth-service avatar for an account found there.
+
 ---
 
 ## 4. Error Reference
@@ -193,9 +207,12 @@ All errors return a JSON body:
 | `401 Unauthorized` | Missing or invalid JWT |
 | `403 Forbidden` | Authenticated but not permitted (e.g. wrong actor for task submission) |
 | `404 Not Found` | Resource does not exist (or hidden program for non-owner) |
-| `409 Conflict` | Duplicate resource, invalid state transition, guard blocked transition |
+| `409 Conflict` | Duplicate resource, invalid state transition, guard blocked transition, or a concurrent write won |
+| `413 Payload Too Large` | Upload over the file class's size cap |
+| `415 Unsupported Media Type` | Upload whose bytes are not an allowed type for its file class |
+| `416 Range Not Satisfiable` | Download `Range` outside the object |
 | `422 Unprocessable Entity` | Eligibility or business constraint failure |
-| `503 Service Unavailable` | Database unavailable (`/readyz`) |
+| `503 Service Unavailable` | Database unavailable (`/readyz`), or object storage unavailable or not configured (file routes only) |
 | `500 Internal Server Error` | Unexpected server fault |
 
 ---
@@ -321,7 +338,7 @@ List all applications submitted by a user across all programs.
 
 | Parameter | Values | Description |
 |---|---|---|
-| `status` | `pending\|accepted\|declined\|withdrawn\|graduated\|hold` | Filter by status |
+| `status` | `pending\|accepted\|declined\|withdrawn\|graduated` | Filter by status |
 | `role` | `mentor\|mentee` | Filter by role |
 | `limit` / `offset` | — | Pagination |
 
@@ -373,7 +390,6 @@ User profiles represent a participant's mentorship identity. `profile_type = men
     "comments": "Eager to learn cloud-native"
   },
   "profile_links": {
-    "resumeLink":     "https://...",
     "linkedinProfileLink": "https://linkedin.com/in/alice",
     "githubProfileLink":   "https://github.com/alice"
   },
@@ -382,7 +398,7 @@ User profiles represent a participant's mentorship identity. `profile_type = men
 }
 ```
 
-The `address`, `demographics`, `socioeconomics`, `skill_set`, and `profile_links` fields are free-form JSON objects stored as JSONB.
+The `address`, `demographics`, `socioeconomics`, `skill_set`, and `profile_links` fields are free-form JSON objects stored as JSONB. `skill_set` must be an object or `null`, and `skill_set.skills` and `skill_set.improvementSkills` must each be absent, `null`, or an array of non-empty strings; any other shape is rejected with `400`.
 
 ### Endpoints
 
@@ -436,7 +452,6 @@ Create a user profile.
   "last_name":    "Smith",
   "email":        "alice@example.com",
   "phone":        "+1-555-0100",
-  "logo_url":     "https://...",
   "introduction": "...",
   "terms_and_conditions": true,
   "address":       { ... },
@@ -511,15 +526,15 @@ Programs are the top-level entity for a mentorship offering.
 }
 ```
 
-**Status lifecycle**: `draft → submitted → published ↔ hidden | rejected → archived`
+**Status lifecycle**: `pending → published | rejected`;
+`published ↔ hidden`; `published | hidden → archived`. See [§15](#15-domain-state-machines).
 
 | Status | Meaning |
 |---|---|
-| `draft` | Being configured; not visible to public |
-| `submitted` | Under reviewer inspection |
+| `pending` | Awaiting reviewer decision |
 | `published` | Live; accepts applications |
 | `hidden` | Soft-hidden; only visible to owner |
-| `rejected` | Reviewer declined; program_admin may revise and resubmit |
+| `rejected` | Reviewer declined |
 | `archived` | Completed; read-only |
 
 ### Program Skill Object
@@ -592,11 +607,12 @@ Programs are the top-level entity for a mentorship offering.
 
 #### `GET /v1/programs` 🔓
 
+Always returns `published` programs.
+
 **Query parameters**
 
 | Parameter | Values | Description |
 |---|---|---|
-| `status` | `draft\|submitted\|published\|hidden\|rejected\|archived` | Filter by status |
 | `search` | string | Case-insensitive match on program name |
 | `limit` / `offset` | — | Pagination |
 
@@ -621,7 +637,9 @@ Paginated public catalog of programs with nested skills, terms, and active mento
 | `sort_by` / `sortBy` | `accepting_first\|completed_first\|name_asc\|name_desc\|updated_oldest\|updated_newest` | Sort order. Defaults to `accepting_first`. |
 | `limit` / `offset` | — | Pagination |
 
-Always returns `status = published` programs. Draft, hidden, and other statuses are omitted.
+Always returns `status = published` programs. Pending, hidden, and other statuses are omitted.
+
+Through the gateway this is the one service-owned collection route: Heimdall authenticates optionally and applies `allow_all`, so the published pin in the service is the only filter.
 
 **Response** `200`
 ```json
@@ -667,7 +685,7 @@ Always returns `status = published` programs. Draft, hidden, and other statuses 
 }
 ```
 
-Nested `terms` omit soft-deleted terms. Nested `mentors` are `member_type = mentor` and `status = active`, joined to `users` for name and avatar, and to the mentor `user_profiles` row for `introduction`.
+Nested `terms` omit soft-deleted terms. Nested `mentors` are `member_type = mentor` and `status = approved`, joined to `users` for name and to the mentor `user_profiles` row for `introduction`. `avatar_url` follows [Person Pictures](#person-pictures).
 
 LF project / foundation is not included yet — `programs.lfid` remains the owner username.
 
@@ -684,7 +702,7 @@ Same catalog shape as `GET /v1/programs/catalog` for a single program (UUID or s
 
 #### `GET /v1/programs/{id}/mentees` 🔓
 
-Public list of accepted and graduated mentees for a program (UUID or slug). Hidden programs follow the same FR-009 404 rule as `GET /v1/programs/{id}`. Pending, declined, withdrawn, and hold applications are omitted.
+Public list of accepted and graduated mentees for a program (UUID or slug). Hidden programs follow the same FR-009 404 rule as `GET /v1/programs/{id}`. Pending, declined, and withdrawn applications are omitted.
 
 **Response** `200`
 ```json
@@ -703,7 +721,7 @@ Public list of accepted and graduated mentees for a program (UUID or slug). Hidd
 }
 ```
 
-`status` is the application status: `accepted` or `graduated`. Display fields come from `users` and the mentee `user_profiles` row. `term_name` is `program_terms.name`.
+`status` is the application status: `accepted` or `graduated`. Display fields come from `users` and the mentee `user_profiles` row; `avatar_url` follows [Person Pictures](#person-pictures). `term_name` is `program_terms.name`.
 
 **Errors** `404`
 
@@ -711,7 +729,7 @@ Public list of accepted and graduated mentees for a program (UUID or slug). Hidd
 
 #### `GET /v1/mentees` 🔓
 
-Paginated public directory of mentees on **published** programs. Includes `accepted` and `graduated` applications only. Pending, hold, declined, and withdrawn applications are omitted, as are mentees with no enrollment. The list is one row per mentee.
+Paginated public directory of mentees on **published** programs. Includes `accepted` and `graduated` applications only. Pending, declined, and withdrawn applications are omitted, as are mentees with no enrollment. The list is one row per mentee.
 
 The response `status` is the stored application status — `accepted` or `graduated`. Note the asymmetry with the `status` **query parameter** below, which accepts `active` as a filter alias selecting `accepted` rows; `active` is never returned in a response body.
 
@@ -781,6 +799,8 @@ Unfiltered directory totals for the header (“18 mentees across 7 programs”).
 
 Public mentee profile by **user ID**. Programs, skills, terms, and mentors are loaded in separate queries and returned in one response.
 
+Unlike the directory, the profile also resolves for applicants, so Program Admins and mentors can open it while reviewing an application: any user with a mentee application on a published program (non-deleted term), whatever its status. As in legacy, `status`, `program`, and `programs` still come only from `accepted` and `graduated` applications, so an applicant who was never accepted has no `status` or `program`, `programs: []`, and a `joined_at` of their first application.
+
 **Response** `200` → list item fields plus:
 ```json
 {
@@ -819,7 +839,7 @@ Public mentee profile by **user ID**. Programs, skills, terms, and mentors are l
 }
 ```
 
-**Errors** `400` when `{id}` is not a UUID. `404` when the user has no accepted or graduated mentee application on a published program.
+**Errors** `400` when `{id}` is not a UUID. `404` when the user has no mentee application on a published program in a non-deleted term.
 
 ---
 
@@ -934,7 +954,8 @@ Aggregated marketing/landing counts plus a small graduated-mentee preview. All c
 
 - `program_count` — number of published programs.
 - `accepting_program_count` — subset of published programs with at least one open term whose `application_start_date` ≤ `NOW()` ≤ `application_end_date`.
-- `mentor_count` — distinct users who are an `active` `mentor` member of any published program.
+- `project_count` — distinct LF projects (`lf_project_uid`) that own at least one published program.
+- `mentor_count` — distinct users who are an `approved` `mentor` member of any published program.
 - `graduated_mentee_count` — distinct users with at least one mentee application in status `graduated` on a non-deleted term of a published program.
 - `stipends_paid` — total amount spent by published programs.
 - `graduated_mentee_users` — up to four most recently graduated mentees (`name`, `avatar_url`) for the landing hero.
@@ -944,6 +965,7 @@ Aggregated marketing/landing counts plus a small graduated-mentee preview. All c
 {
   "program_count": 18,
   "accepting_program_count": 3,
+  "project_count": 5,
   "mentor_count": 7,
   "graduated_mentee_count": 42,
   "stipends_paid": 12500.00,
@@ -973,7 +995,7 @@ Fetch a program by UUID or slug.
 
 Resolve a program UUID or slug to the canonical program UUID.
 
-> Hidden program visibility matches `GET /v1/programs/{id}`: non-owners receive `404`.
+> Only `published` programs resolve, except for the program's LFID owner; everyone else receives `404`.
 
 **Response** `200`
 ```json
@@ -985,58 +1007,160 @@ Resolve a program UUID or slug to the canonical program UUID.
 
 #### `POST /v1/programs` 🔒
 
-Create a program. New programs start in `draft` status.
+Create a program with its first terms, skills, and prerequisites in one transaction. New programs start in `pending` status and the slug is derived from `name`.
+
+The backend reads the project's slug, name, and logo from Project Service by `projectId` and stores them with the program, where they feed its search index snapshot (`project_slug`, `project_name`, `project_logo_url`). It ignores the `projectSlug`, `projectName`, and `projectLogoUrl` the caller sends, except when `FGA_NATS_URL` is unset in local development, where it stores them as sent.
 
 **Request body**
 ```json
 {
-  "name":        "CNCF Mentorship 2026",  // required; must be unique
-  "slug":        "cncf-mentorship-2026",  // required; must be unique
-  "description": "...",
-  "logo_url":    "https://...",
-  "website_url": "https://...",
-  "repo_link":   "https://github.com/cncf/mentorship",
-  "code_of_conduct": "https://...",
-  "lfid":        "alice",
-  "cii_project_id": "12345",
-  "is_paid":     true,
-  "task_templates": [
-    { "name": "Contribution PR", "description": "...", "submitFile": null, "dueDate": null }
-  ]
+  "projectId":        "7cad5a8d-19d0-41a4-81a6-043453daf9ee", // required; Project Service UUID
+  "projectSlug":      "cncf",                                 // required only without FGA_NATS_URL
+  "projectName":      "Cloud Native Computing Foundation",   // required only without FGA_NATS_URL
+  "projectLogoUrl":   "https://...",                          // optional; http(s)
+  "name":             "CNCF Mentorship 2026",                 // required; must be unique
+  "description":      "...",
+  "repositoryUrl":    "https://github.com/cncf/mentorship",
+  "websiteUrl":       "https://...",
+  "codeOfConductUrl": "https://...",
+  "industry":         "Cloud Native",                         // optional
+  "ciiProjectId":     "12345",
+  "skills":           ["Go"],                                 // required; at least one
+  "terms": [                                                  // required; 1–4 terms
+    { "name": "Spring 2026", "startDate": "2026-03-01", "endDate": "2026-05-31",
+      "applicationStartDate": "2026-01-15", "applicationEndDate": "2026-02-15" }
+  ],
+  "prerequisites": [
+    { "name": "Contribution PR", "description": "...", "required": true, "requireFile": false, "dueDate": null }
+  ],
+  "termsAccepted":    true                                    // required; must be true
 }
 ```
 
 **Response** `201` → `<Program>`  
-**Errors** `400`, `409` (duplicate name or slug)
+**Errors** `400` (including a `projectId` with no Project Service project), `409` (duplicate name or slug), `503` (Project Service unavailable)
 
 ---
 
 #### `PATCH /v1/programs/{id}` 🔒
 
-Update program fields and/or transition status.
+Update program fields. Status cannot be changed here: a body with `status` returns
+`400`; use [`POST /v1/programs/{id}/decision`](#post-v1programsiddecision-),
+[`POST /v1/programs/{id}/hide`](#post-v1programsidhide-) and
+[`POST /v1/programs/{id}/unhide`](#post-v1programsidunhide-).
 
 **Request body** (all optional)
 ```json
 {
   "name":        "Updated Name",
   "description": "Updated description",
-  "logo_url":    "https://...",
   "repo_link":   "https://...",
   "lfid":        "alice",
-  "status":      "submitted",
+  "skills":      ["Go", "Kubernetes"],
+  "terms": [
+    {
+      "id":                     "b3c1...",
+      "name":                   "Fall 2026",
+      "application_start_date": "2026-07-01T00:00:00Z",
+      "application_end_date":   "2026-07-31T00:00:00Z",
+      "start_date_time":        "2026-09-01T00:00:00Z",
+      "end_date_time":          "2026-11-30T00:00:00Z"
+    },
+    { "name": "Spring 2027", "application_start_date": "...", "application_end_date": "...", "start_date_time": "...", "end_date_time": "..." }
+  ],
+  "project_uid":      "7cad5a8d-19d0-41a4-81a6-043453daf9ee",
+  "project_slug":     "new-project",
+  "project_name":     "New Project",
+  "project_logo_url": "https://...",
   "task_templates": [...]
 }
 ```
 
-**Status transition rules** — see [§14 State Machines](#14-domain-state-machines).
+The `project_*` fields move the program to another LF project. When any is
+present, `project_uid` (a Project Service UUID) is required, and, as on create,
+the backend reads the new project's slug, name, and logo from Project Service and
+ignores the `project_slug`, `project_name`, and `project_logo_url` sent. When
+`FGA_NATS_URL` is unset in local development it stores them as sent instead:
+`project_slug` and `project_name` are then required, and an omitted or blank
+`project_logo_url` clears the logo. Omit all four to leave the project unchanged.
+Moving a program changes who can manage it, since access is inherited from the
+project.
 
-| Transition | Guard condition |
-|---|---|
-| `draft → submitted` | `lfid`, `description`, `repo_link`, and `logo_url` must all be non-empty; at least 1 skill tag; at least 1 open term |
-| `published → hidden` | No `pending`, `accepted`, or `graduated` applications on the program |
+`skills` replaces the program's full skill set: skills not in the list are removed
+and new ones are added. Entries are trimmed and de-duplicated case-insensitively; at
+least one is required. Omit `skills` to leave them unchanged. The `<Program>`
+response does not include skills; read them from
+[`GET /v1/programs/{id}/skills`](#get-v1programsidskills-). The program's search
+index snapshot is refreshed with the new skills in the same transaction.
+
+`terms` is the program's full set of open terms, applied in the same transaction:
+an entry with an `id` updates that open term's name and four dates, an entry
+without one creates a new `open` term, and any open term not listed is deleted.
+Closed terms are never listed and are left unchanged. Every entry needs a name and
+all four dates, with the application window ending after it starts and before the
+term starts; 1 to 4 entries are allowed. Term status is not changed here; use the
+term close and reopen routes. Omit `terms` to leave them unchanged. The
+`<Program>` response does not include terms; read them from
+[`GET /v1/programs/{id}/terms`](#get-v1programsidterms-).
+
+`task_templates` replaces the program's prerequisite templates, the list each new
+mentee application clones into `prerequisite` tasks. Each entry is
+`{name, description, submitFile, dueDate, custom}`: `name` is required and trimmed,
+`submitFile` is `"required"` or blank, and `dueDate` is a `YYYY-MM-DD` date or blank.
+Blank values are stored as `null`. An entry that leaves out `custom` keeps the flag of
+the current template with the same name (ignoring case), or `false` for a new one.
+Tasks already cloned for existing applications are not changed. Omit
+`task_templates` to leave them unchanged.
 
 **Response** `200` → `<Program>`  
-**Errors** `400`, `404`, `409` (invalid transition or guard blocked)
+**Errors** `400` (including an `id` that is not an open term of the program, or a
+`project_uid` with no Project Service project), `404`, `409` (removing an open term
+that has applications), `503` (Project Service unavailable)
+
+---
+
+#### `POST /v1/programs/{id}/decision` 🔒
+
+Publish or reject a `pending` program. Approver team only.
+
+**Request body**
+```json
+{ "status": "published" }
+```
+
+`status` is required and must be `published` or `rejected`.
+
+**Response** `200` → `<Program>`  
+**Guard** (publishing only): a linked LF project, `description`, `repo_link` and
+`logo_url` are non-empty; at least 1 skill tag; at least 1 open term. Rejecting has
+no guard. `rejected` is final: no transition leaves it.
+
+**Errors** `400` (missing or other `status`), `404`, `409` (program is not `pending`, or
+the publication guard blocked)
+
+---
+
+#### `POST /v1/programs/{id}/hide` 🔒
+
+Take a `published` program out of public view (`→ hidden`). No request body.
+Program admins only (`writer` on the program).
+
+**Guard**: the program has no pending, accepted, or graduated applications.
+
+**Response** `200` → `<Program>`  
+**Errors** `401`, `404`, `409` (program is not `published`, or it has active applications)
+
+---
+
+#### `POST /v1/programs/{id}/unhide` 🔒
+
+Make a `hidden` program public again (`→ published`). No request body. Program
+admins only (`writer` on the program). Only a `hidden` program can be unhidden: an
+`archived` program stays archived, and a `pending` program is published only
+through [`POST /v1/programs/{id}/decision`](#post-v1programsiddecision-).
+
+**Response** `200` → `<Program>`  
+**Errors** `401`, `404`, `409` (program is not `hidden`)
 
 ---
 
@@ -1090,7 +1214,7 @@ Remove a skill tag.
 
 #### `GET /v1/funding-stats/total` 🔓
 
-Returns the total amount raised and spent across all program funding stats.
+Returns the total amount raised and spent across published programs.
 
 **Response** `200`
 
@@ -1200,7 +1324,7 @@ The `discovery_label` field is **computed on read** and not stored in the databa
 
 | Parameter | Values | Description |
 |---|---|---|
-| `status` | `open\|closed\|deleted` | Filter by status |
+| `status` | `open\|closed` | Filter by status; any other value returns `400`. Deleted terms are never listed |
 | `limit` / `offset` | — | Pagination |
 
 **Response** `200`
@@ -1298,27 +1422,27 @@ Tracks the relationship between a user and a program as either `program_admin` o
 
 **`member_type` values**: `program_admin`, `mentor`
 
-**`status` values**: `invited`, `requested`, `pending`, `active`, `declined`, `withdrawn`
+**`status` values**: `invited`, `requested`, `pending`, `approved`, `declined`, `withdrawn`
 
 | Status | Meaning |
 |---|---|
 | `invited` | Program Admin sent an invitation; awaiting mentor response |
 | `requested` | Mentor self-requested participation; awaiting program_admin approval |
 | `pending` | Manual hold set by program_admin |
-| `active` | Member is confirmed and participating |
+| `approved` | Member is confirmed and participating |
 | `declined` | Invitation or request was declined |
-| `withdrawn` | Removed from the program |
+| `withdrawn` | Removed from the program, or the mentor withdrew their own request |
 
 ### Endpoints
 
 #### `GET /v1/programs/{id}/members` 🔓
 
-Public roster. Returns `active` members only, with `email` omitted from every row.
+Public roster. Returns `approved` members only, with `email` omitted from every row.
 `{id}` may be a UUID or a slug. A hidden program returns `404`, matching
 `GET /v1/programs/{id}`. The owner exception described under FR-009 does not
 apply on this route yet — see the note there.
 
-There is no `status` filter: the status is pinned to `active` so an anonymous
+There is no `status` filter: the status is pinned to `approved` so an anonymous
 caller cannot widen the roster to `invited`, `requested`, `pending`, `declined`,
 or `withdrawn` members.
 
@@ -1345,25 +1469,61 @@ Add a member to a program.
 **Invitation flow** (`member_type = "mentor"`, no status supplied):
 - Record is created with `status = "invited"`.
 - A signed invite token is generated and dispatched via `NotifyMentorInvited`.
+- If the user already has a mentor row on the program that is `invited`,
+  `declined` or `withdrawn`, that row is set back to `invited` and the invite
+  email is sent again; no new row is created. This is how an invite is resent,
+  and how a declined or revoked mentor is invited again.
 
 **Self-request flow** (`member_type = "mentor"`, `status = "requested"` explicitly supplied):
 - Record is created with `status = "requested"`.
+- No invite email is sent: `NotifyMentorInvited` fires only for `invited` rows.
+  Mentors requesting for themselves should use
+  `POST /v1/me/program-memberships`.
 
 **Program Admin flow** (`member_type = "program_admin"`):
-- Record is created with `status = "active"`.
+- Record is created with `status = "approved"`.
 
-**Request body**
+**Request body** (identify the person with exactly one of `user_id`, `lfid` or, when neither is set, `email`; sending `user_id` and `lfid` together is a `400`)
 ```json
 {
-  "user_id":     "uuid",       // required
+  "lfid":        "alice",      // or "user_id": "uuid", or only "email"; surrounding whitespace is trimmed
   "member_type": "mentor",     // required; "program_admin" | "mentor"
   "status":      "requested",  // optional; if omitted, defaults per member_type above
   "email":       "mentor@example.com"
 }
 ```
 
-**Response** `201` → `<ProgramMember>`  
-**Errors** `400`, `409`
+Anyone with an LF account can be invited, whether or not they have used
+Mentorship. An `email` is resolved to its LF account through auth-service,
+matching the account's primary or linked emails. An `lfid` must match the LF
+username exactly, including case. A person who already has a Mentorship user is
+invited as that user and the invite email goes to their stored email, without
+calling auth-service; only a user with no stored email, or a blank one, gets the account's
+primary email filled in from auth-service. Otherwise a user is created from
+auth-service (LFID, name, avatar and primary email), the invite email goes to
+that primary email, and their first sign-in updates that same row.
+
+**Response** `201` → `<ProgramMember>` (the existing row when a mentor is invited again)  
+**Errors** `400`, `404` (program not found), `409` (the user already has a row of this `member_type` on the program that cannot be invited again: any program admin row, or a mentor row that is `approved`, `requested` or `pending`), `422` (no LF account has that `lfid` or `email`, or another Mentorship user already holds the account's primary email), `503` (auth-service is unreachable when it is needed)
+
+---
+
+#### `GET /v1/programs/{id}/mentor-candidates?search=` 🔒
+
+Typeahead for the invite dialog; requires program `writer`, and the program must
+be published. `search` must be at least 2 characters. A whole email is resolved
+only through auth-service and returns at most the one LF account that owns it,
+because Mentorship users can edit their stored email. Any other `search` returns
+up to 10 Mentorship users matching part of a name or an LFID prefix; when none
+is an exact LFID match and `search` is an LFID, the matching LF account from
+auth-service is listed first. If auth-service fails for a non-email `search`,
+the local matches are still returned, or `503` when there are none. Emails are never returned.
+
+**Response** `200`
+```json
+{ "data": [ { "lfid": "alice", "name": "Alice Example", "avatar_url": "https://…" } ] }
+```
+**Errors** `400` (search too short, or the program is not published), `401`, `403`, `404` (program not found), `503` (auth-service is unreachable for an email `search`, or for an LFID `search` with no local matches)
 
 ---
 
@@ -1374,66 +1534,263 @@ Update a member's status or email.
 **Request body**
 ```json
 {
-  "status": "active",
+  "status": "approved",
   "email":  "new@example.com"
 }
 ```
 
-When `status = "declined"` is set via this endpoint, `NotifyMentorDeclined` is triggered.
+When this endpoint moves a mentor's request to `declined` (`requested → declined`), `NotifyMentorDeclined` is triggered. Revoking an invite (`invited → declined`) sends no email.
+
+A mentor's request belongs to the mentor: only they can create it or withdraw
+it, through the [mentor self-service](#mentor-self-service) routes. A program
+admin approves a request (`approved`), declines it (`declined`), or deletes it.
+This endpoint therefore refuses `requested`/`pending` → `withdrawn` and
+`withdrawn` → `requested` with `409`.
 
 **Response** `200` → `<ProgramMember>`  
-**Errors** `400`, `403`, `404`
+**Errors** `400`, `403`, `404`, `409` (transition not allowed)
 
 ---
 
 #### `DELETE /v1/programs/{id}/members/{memberId}` 🔒
 
-> **FR-022**: This endpoint does **not** delete the record. It sets `status = "withdrawn"` and returns `204`.
+Deletes the member row, in any status, and returns `204`. Removing an active
+member also removes their OpenFGA relation. Deleting an invited, declined or
+withdrawn mentor frees the user to be invited again. To remove an active mentor
+but keep the record, `PATCH` the status to `withdrawn` instead.
 
 **Response** `204`  
 **Errors** `403`, `404`
 
 ---
 
+### Program admin self-service
+
+#### AdministeredProgram Object
+
+One row of the caller's programs list. `stats` counts the whole program and
+matches `GET /v1/programs/{id}/header`.
+
+```json
+{
+  "id":           "uuid",
+  "slug":         "gridflow",
+  "name":         "GridFlow: Time-Series Ingestion Pipeline",
+  "project_uid":  "uuid",
+  "project_name": "LF Energy",
+  "logo_url":     "https://...",
+  "status":       "published",
+  "admin_status": "open",
+  "stats":        { "mentors": 2, "mentees": 3, "graduated": 6 },
+  "created_on":   "2026-01-01T00:00:00Z",
+  "updated_on":   "2026-01-01T00:00:00Z"
+}
+```
+
+`admin_status` groups `status` with the program's terms:
+
+| `admin_status` | When |
+|---|---|
+| `pending_review` | `status` is `pending` |
+| `open` | `status` is `published` and the program has an open term, or no terms yet |
+| `completed` | `status` is `published` and every term is closed (deleted terms are ignored) |
+| `rejected` | `status` is `rejected` |
+| `hidden` | `status` is `archived` or `hidden` |
+
+#### `GET /v1/me/programs` 🔒
+
+Lists the programs the caller is an active `program_admin` of, ordered by
+`admin_status` (`open`, `pending_review`, `completed`, `hidden`, then
+`rejected`), then by name. The user is always the principal. The gateway requires only a signed-in user
+(`oidc`); see the [route matrix](../../docs/rewrite/06-route-matrix.md) for why
+this is not yet a Query Service collection.
+
+**Query parameters**
+
+| Parameter | Values | Description |
+|---|---|---|
+| `search` | — | Case-insensitive match on program or project name |
+| `status` | `open\|pending_review\|completed\|rejected\|hidden` | Filter by `admin_status` |
+| `limit` / `offset` | — | Pagination (default 20, max 100) |
+
+**Response** `200`
+```json
+{ "data": [<AdministeredProgram>, ...], "meta": {...} }
+```
+
+**Errors** `400` (unknown `status`, non-integer `limit`/`offset`), `401` (no principal, or a machine-to-machine client)
+
+---
+
+### Mentor programs
+
+#### MentoredProgram Object
+
+One row of the caller's mentor programs list. `project_name` and `logo_url`
+are omitted when absent.
+
+```json
+{
+  "id":           "uuid",
+  "slug":         "example-program",
+  "name":         "Example Program",
+  "project_name": "Example Project",
+  "logo_url":     "https://...",
+  "status":       "open",
+  "stats":        { "mentees": 3, "applicants": 12, "tasks_to_review": 2 }
+}
+```
+
+`status` uses the same rule as the `open` and `completed` values of
+[`admin_status`](#administeredprogram-object): `completed` once every term is
+closed (deleted terms are ignored), otherwise `open`.
+
+`stats` counts the program's `open` terms only; closed and deleted terms are
+not counted, so a `completed` program has zero `stats`:
+
+- `applicants`: mentee applications, one per user per term (a withdrawn application kept beside its reapplication is not counted twice)
+- `mentees`: mentee applications whose status is `accepted` or `graduated`. Matches `mentees` in `GET /v1/programs/{id}/management-summary`.
+- `tasks_to_review`: `submitted` tasks of `accepted` mentees. A graduated mentee's leftover submission and a mentor-role application's tasks are not counted.
+
+#### `GET /v1/me/mentor-programs` 🔒
+
+Lists the `published` programs the caller is an `approved` mentor of, ordered by
+`status` (`open`, then `completed`), then by name. The user
+is always the principal. The gateway requires only a signed-in user (`oidc`);
+see the [route matrix](../../docs/rewrite/06-route-matrix.md) for why this is
+not a Query Service collection. A caller who mentors no programs gets `200`
+with an empty `data` array.
+
+**Query parameters**
+
+| Parameter | Values | Description |
+|---|---|---|
+| `limit` | `0`–`100` | Page size; omitted or `0` means the default of 20 |
+| `offset` | `0` or more | Rows to skip |
+
+**Response** `200`
+```json
+{ "data": [<MentoredProgram>, ...], "meta": {...} }
+```
+
+**Errors** `400` (non-integer `limit`/`offset`, `limit` negative or above 100, negative `offset`), `401` (no principal, or a machine-to-machine client)
+
+---
+
+### Mentor self-service
+
+These routes let a signed-in user ask to mentor a program and track or withdraw
+that request. The gateway requires only a signed-in user (`oidc`), with no
+OpenFGA program relation: the caller usually has no role on the program yet.
+The service scopes every read and write to the caller, taking the user from the
+principal and never from the request.
+
+#### ProgramMembership Object
+
+The caller's view of one of their own `program_members` rows. `email` is omitted.
+
+```json
+{
+  "id":           "uuid",
+  "program_id":   "uuid",
+  "program_name": "Example Program",
+  "member_type":  "mentor",
+  "status":       "requested",
+  "created_on":   "2026-01-01T00:00:00Z",
+  "updated_on":   "2026-01-01T00:00:00Z"
+}
+```
+
+#### `GET /v1/me/program-memberships` 🔒
+
+Lists the caller's program memberships in any status, newest first.
+
+**Query parameters**
+
+| Parameter | Values | Description |
+|---|---|---|
+| `member_type` | `program_admin\|mentor` | Filter by type |
+| `limit` / `offset` | — | Pagination |
+
+**Response** `200`
+```json
+{ "data": [<ProgramMembership>, ...], "meta": {...} }
+```
+
+**Errors** `400` (unknown `member_type`), `401`
+
+---
+
+#### `POST /v1/me/program-memberships` 🔒
+
+Requests to mentor a program. Creates a `mentor` row for the caller with
+`status = "requested"`. If the caller already has a `withdrawn` mentor row for
+the program, that row is reset to `requested` instead. No invite email is sent.
+
+**Request body**
+```json
+{ "program_id": "uuid" }
+```
+
+**Response** `201` → `<ProgramMember>`
+
+**Errors**
+
+| Status | When |
+|---|---|
+| `400` | `program_id` is not a UUID, or the program is `pending` |
+| `401` | No signed-in user |
+| `404` | The program does not exist, or is not visible to every signed-in user (`rejected`, `archived`, `hidden`) |
+| `409` | The caller already has a mentor row in `invited`, `requested`, `pending`, `approved`, or `declined`, or the row changed concurrently |
+
+---
+
+#### `POST /v1/me/program-memberships/{id}/withdraw` 🔒
+
+Withdraws the caller's own mentor request, moving it from `requested` or
+`pending` to `withdrawn`.
+
+**Response** `204`
+
+**Errors**
+
+| Status | When |
+|---|---|
+| `401` | No signed-in user |
+| `404` | No mentor row with this ID belongs to the caller. Rows owned by other users return `404`, not `403`, so IDs cannot be probed. |
+| `409` | The row is in any status other than `requested` or `pending`, including when it changed concurrently |
+
+---
+
 ## 11. Mentor Invite Tokens
 
-These endpoints are called from the tokenised link in an invite email. The signed token acts as the credential — no JWT is required.
+These endpoints are called by the LFX Self Serve page that the invite email links to (`/mentorship/mentor/invites?token=…`). Both need the signed token **and** the invited user's JWT: the token says which program and user it was issued for, and the caller must be that user.
 
 ### Token Format
 
-Tokens are HMAC-SHA256 signed strings encoding `programID:userID`. The signing secret is set via the `INVITE_SECRET` environment variable.
+`base64url(JSON {program_id, user_id}) + "." + base64url(HMAC-SHA256 signature)`. The signing secret is set via the `MENTOR_INVITE_SECRET` environment variable. Tokens do not expire and are not stored: one works until its member row leaves `invited`, and a row invited again makes the same link work again. Only the invited user, signed in, can use it. Rotating the secret invalidates every outstanding link. Links issued while tokens carried an `exp` claim still verify; the claim is ignored.
 
 ---
 
-#### `POST /v1/mentor-invites/accept` 🪙
+#### `POST /v1/mentor-invites/{token}/accept` 🪙
 
-Accept a mentor invitation.
+Accept a mentor invitation. No request body.
 
-**Request body**
-```json
-{ "token": "<signed-invite-token>" }
-```
-
-**Effect**: Sets the matching `program_members` record's `status` from `invited` to `active`.
+**Effect**: Sets the matching `program_members` record's `status` from `invited` to `approved`, and emails the program's active Program Admins (`NotifyAdminMentorAccepted`).
 
 **Response** `200` → `<ProgramMember>`  
-**Errors** `400` (invalid/expired token or no pending invite found)
+**Errors** `400` (invalid token, or no pending invite — including one already answered), `401` (no JWT), `403` (the token belongs to another user), `409` (the row changed concurrently)
 
 ---
 
-#### `POST /v1/mentor-invites/decline` 🪙
+#### `POST /v1/mentor-invites/{token}/decline` 🪙
 
-Decline a mentor invitation.
+Decline a mentor invitation. No request body.
 
-**Request body**
-```json
-{ "token": "<signed-invite-token>" }
-```
-
-**Effect**: Sets `status` to `declined` and triggers `NotifyMentorDeclined`.
+**Effect**: Sets `status` from `invited` to `declined`, and emails the program's active Program Admins (`NotifyAdminMentorDeclined`).
 
 **Response** `204`  
-**Errors** `400`
+**Errors** as for accept
 
 ---
 
@@ -1461,9 +1818,9 @@ An application represents a mentee's (or mentor's) request to join a specific pr
 }
 ```
 
-**`role` values**: `mentee`, `mentor`
+**`role` values**: `mentee`, `mentor`. New applications are always `mentee`; `mentor` rows exist only as applications imported from legacy.
 
-**`status` lifecycle**: `pending → accepted → graduated | declined | withdrawn | hold`
+**`status` lifecycle**: `pending → accepted → graduated | declined | withdrawn`
 
 | Status | Set by | Meaning |
 |---|---|---|
@@ -1471,8 +1828,7 @@ An application represents a mentee's (or mentor's) request to join a specific pr
 | `accepted` | Program Admin | Mentee selected and enrolled for the term; `attendance_type` required |
 | `graduated` | Program Admin | Mentee completed the program |
 | `declined` | Program Admin / bulk-decline | Not selected |
-| `withdrawn` | Mentee (self) | Mentee voluntarily exited |
-| `hold` | Program Admin | Pending additional information |
+| `withdrawn` | Mentee (self) / Program Admin (assisted) | Exited; a Program Admin cannot withdraw a `declined` or `graduated` application |
 
 **`attendance_type` values**: `full_time`, `part_time` — **required** when `status = "accepted"`
 
@@ -1519,51 +1875,35 @@ This endpoint is authenticated and actor-scoped:
 Submit an application to a term.
 
 **Guards enforced**:
-1. Term must have `status = "open"`.
-2. Current date must fall within `application_start_date` and `application_end_date`.
-3. No existing non-withdrawn application for this user+term (reapplication from `declined` is permanently blocked; reapplication from `withdrawn` is allowed while the window is open).
+1. Only mentees apply: `role` is optional, defaults to `mentee`, and any other value is a `400`. Mentors request to join through `POST /v1/programs/{id}/members`.
+2. Term must have `status = "open"`.
+3. Today must fall within the application window: both `application_start_date` and `application_end_date` set, compared by UTC calendar day with both days inclusive. A term missing either date takes no applications.
+4. The caller must have a mentee profile, created only after confirming the eligibility criteria.
+5. No existing non-withdrawn application for this user+term (reapplication from `declined` is permanently blocked; reapplication from `withdrawn` is allowed while the window is open).
+6. Fewer than 3 withdrawn applications for this user+term — once a user has withdrawn 3, no further application to the term is accepted.
+7. The program must be `published`.
+8. The caller holds no other mentee application `accepted` in a term that has not ended, and none `graduated` in any term.
 
 **After creation**: The program's `task_templates` JSONB array is cloned as individual `prerequisite` tasks linked to the new application.
+
+**Reapplication** creates a new `pending` application under a new ID and keeps
+the withdrawn one, unchanged, as history — its reviewer note, evaluation, and
+tasks stay on it. A user may therefore hold several withdrawn applications for a
+term, but at most one that is not withdrawn.
 
 **Request body**
 ```json
 {
-  "user_id": "uuid",     // required
-  "role":    "mentee"    // required; "mentor" | "mentee"
+  "role": "mentee"    // optional; only "mentee" is accepted
 }
 ```
+
+The applicant is always the caller. `attendance_type` is ignored; a Program
+Admin sets it on acceptance. The application's `start_date_time` and
+`end_date_time` are copied from the term.
 
 **Response** `201` → `<Application>`  
-**Errors** `400`, `401`, `409` (duplicate / blocked reapplication), `422` (window closed, term not open)
-
----
-
-#### `PATCH /v1/applications/{id}` 🔒
-
-Transition an application's status or update fields.
-
-**Request body** (all optional)
-```json
-{
-  "status":          "accepted",
-  "attendance_type": "full_time",
-  "start_date_time": "2026-03-01T00:00:00Z",
-  "end_date_time":   "2026-06-30T23:59:59Z"
-}
-```
-
-**Key rules**:
-
-| Transition | Rule |
-|---|---|
-| Any status → `accepted` | `attendance_type` must be supplied (`full_time` or `part_time`) |
-| `pending` → `withdrawn` | Only the applicant (`actor_id == user_id`) may self-withdraw |
-| All others | Enforced by state machine; invalid transitions return `409` |
-
-When status is set to `accepted`, `NotifyMenteeAccepted` is triggered.
-
-**Response** `200` → `<Application>`  
-**Errors** `400`, `401`, `403` (wrong actor for withdrawal), `404`, `409`
+**Errors** `400` (role other than `mentee`), `401`, `409` (duplicate / blocked reapplication), `422` (window closed or unset, term not open, no mentee profile, program not published, reapplication limit reached, already holds an accepted mentorship or has graduated)
 
 ---
 
@@ -1643,7 +1983,7 @@ Tasks represent units of work assigned to a mentee. They are either:
   "program_term_status": "open",
   "custom":              false,
   "submit_file":         null,
-  "file":                null,
+  "file":                "/mentorship/v1/tasks/{id}/file-download",
   "due_date":            "2026-02-10",
   "created_by":          "alice",
   "created_on":          "2026-01-15T00:00:00Z",
@@ -1653,9 +1993,19 @@ Tasks represent units of work assigned to a mentee. They are either:
 
 **`category` values**: `prerequisite`, `non_prerequisite`
 
-**`status` lifecycle**: `incomplete → in_progress → submitted → complete`
+**`file`** is the download route of the submission, present only when one is
+uploaded. The stored object key never appears in a response or the search index,
+which carries a `has_file` flag instead. See [Files](#14-files).
 
-Backward reset to `incomplete` is always possible (by a reviewer only).
+**`status` lifecycle**: the mentee moves `incomplete → in_progress → submitted`, a
+reviewer completes; a mentor or program admin can also set any status directly.
+
+**`due_date`** is an ISO 8601 date string (`YYYY-MM-DD`) for compatibility with
+legacy task data. Writes with any other format are rejected with `400`.
+Consumers performing date arithmetic should parse it as a
+date rather than comparing it to a PostgreSQL timestamp directly.
+
+Backward moves are made by a reviewer only.
 
 ### Endpoints
 
@@ -1732,36 +2082,99 @@ Create a non-prerequisite task and assign it to an accepted mentee.
 
 #### `PATCH /v1/tasks/{id}` 🔒
 
-Update a task's status or metadata.
+A mentor's or program admin's full edit of a task: its content, its file
+requirement, and its status.
 
 **Request body** (all optional)
 ```json
 {
   "name":        "Updated task name",
   "description": "Updated description",
+  "category":    "non_prerequisite",
+  "custom":      true,
   "status":      "in_progress",
-  "due_date":    "2026-05-15",
-  "file":        "https://storage.example.com/submission.pdf"
+  "submit_file": "required",
+  "due_date":    "2026-05-15"
 }
 ```
 
-**Actor permission rules**:
+An omitted field is left unchanged. An empty string clears `submit_file` (no file
+required) or `due_date`.
 
-| Transition | Required actor |
-|---|---|
-| `incomplete → in_progress` | Task **assignee** (mentee) only |
-| `in_progress → submitted` | Task **assignee** (mentee) only |
-| `submitted → complete` | **Non-assignee** (program_admin or mentor) only |
-| Any state → `incomplete` (reset) | **Non-assignee** (program_admin or mentor) only |
+**Actor**: an active `mentor` or `program_admin` of the task's program, who is not
+the task's assignee. Every other caller gets `403`, whatever fields the body holds.
 
-Invalid forward transitions (e.g. `incomplete → complete`) return `409`.
+**Status**: the caller may set any of `incomplete`, `in_progress`, `submitted` or
+`complete`, from any current status — for example reopen a completed task, or
+complete one that was never submitted. The one refusal is a task left `submitted`
+while it requires a file and has none: setting `status: "submitted"`, or turning
+`submit_file` on for a `submitted` task, returns `400` until the mentee uploads the
+file. Moving the task to another status in the same request is allowed.
 
-**Side effect**: When the last `prerequisite` task for an application reaches `submitted` or `complete`, the system:
+`file` is rejected with `400`: the submission is written by
+`POST /v1/tasks/{id}/file-upload`. `application_status` and `program_term_status`
+are rejected with `400`: they are set through `PATCH /v1/tasks/{id}/review`.
+
+**Side effect**: when a new `status` or `category` leaves every `prerequisite` task
+on the application `submitted` or `complete`, the system:
 1. Sets `applications.tasks_submitted = true`.
 2. Fires `NotifyAdminTasksSubmitted` to notify the program admin.
 
+`tasks_submitted` records the first full submission. Moving a task back out of
+`submitted` or `complete` leaves it set; the applicants list reads the tasks
+themselves.
+
 **Response** `200` → `<Task>`  
-**Errors** `400`, `401`, `403` (wrong actor), `404`, `409` (invalid transition)
+**Errors** `400`, `401`, `403`, `404`, `409` (withdrawn application)
+
+---
+
+#### `PATCH /v1/tasks/{id}/submission` 🔒
+
+The assignee (mentee) moves their task forward.
+
+**Request body**: `{ "status": "in_progress" | "submitted" }`
+
+| Transition | Required actor |
+|---|---|
+| `incomplete → in_progress` | Task **assignee** only |
+| `in_progress → submitted` | Task **assignee** only; a required file must be uploaded first |
+
+Any other transition returns `409`. `file` is rejected with `400`. The
+`tasks_submitted` side effect above applies.
+
+**Response** `200` → `<Task>`  
+**Errors** `400`, `401`, `403`, `404`, `409`
+
+---
+
+#### `PATCH /v1/tasks/{id}/review` 🔒
+
+A reviewer's decision on a submitted task.
+
+**Request body** (at least one field)
+```json
+{
+  "status":              "complete" | "incomplete",
+  "application_status":  "accepted",
+  "program_term_status": "open"
+}
+```
+
+The caller must be an active `mentor` or `program_admin` of the task's program, and
+not its assignee, for every field.
+
+| Transition | Required actor |
+|---|---|
+| `submitted → complete` | Reviewer |
+| Any state → `incomplete` (reset) | Reviewer |
+
+Any other `status` value returns `400`: the assignee's own steps go through
+`PATCH /v1/tasks/{id}/submission`, and `PATCH /v1/tasks/{id}` sets any status.
+Completing a task that is not `submitted` returns `409`.
+
+**Response** `200` → `<Task>`  
+**Errors** `400`, `401`, `403`, `404`, `409`
 
 ---
 
@@ -1774,36 +2187,69 @@ Hard-delete a task.
 
 ---
 
-## 14. Domain State Machines
+## 14. Files
+
+File payloads live in S3-compatible storage, never in a response body or the
+search index. The design is [02 §object storage](../../docs/rewrite/02-target-architecture.md#object-storage)
+and the authorization is [06 §file routes](../../docs/rewrite/06-route-matrix.md#file-routes),
+both added by #161.
+
+- **Program logos** go to the public bucket. The column stores the full
+  CDN URL, returned as `public_url`. PNG or JPEG only (never SVG), at most 2 MB.
+- **Task submissions** go to the private bucket. The column stores the object key,
+  which responses replace with the download route. PDF, DOC, DOCX or plain text,
+  at most 20 MB.
+- The type is identified from the payload bytes, not the declared `Content-Type`.
+  An unsupported type returns `415`; an oversized body `413`.
+- Every upload writes a fresh `{uuid}-{filename}` key and never overwrites. The
+  superseded object, and any upload that never commits, are deleted through the
+  `object_deletions` queue.
+- These routes are the only writers of `programs.logo_url` and `tasks.file`. The
+  generic program and task routes reject those fields with `400`.
+- Profile logos are not stored here: another service hosts them, and the profile
+  create and update routes take its URL as `logo_url`. Profile writes drop
+  `profile_links.resumeLink` rather than reject it, since resumes are not a file
+  class and a client may echo back a migrated profile.
+- An archived program's logo cannot change (`409`); a rejected program's logo stays editable.
+
+| Route | Body | Response |
+|---|---|---|
+| `POST /v1/programs/{id}/logo-upload` 🔒 | raw image | `201` `{ public_url, filename, content_type, size }` |
+| `DELETE /v1/programs/{id}/logo` 🔒 | — | `204` |
+| `GET /v1/programs/{id}/logo-download` 🔓 | — | `200` image; a fallback to `public_url` |
+| `POST /v1/tasks/{id}/file-upload` 🔒 | `multipart/form-data`, part `file` | `201` `{ filename, content_type, size }` |
+| `GET /v1/tasks/{id}/file-download` 🔒 | — | `200`/`206` attachment, `Cache-Control: private, no-store`, `Range` supported |
+| `DELETE /v1/tasks/{id}/file` 🔒 | — | `204`; only while `incomplete` or `in_progress` |
+
+A task file can be uploaded until the task is `complete`; once `submitted` it is
+replaced through `file-upload`, never deleted, so a task that requires a file
+always keeps one. A task whose application is `withdrawn` keeps its file: upload and
+delete return `409`. A concurrent upload to the same record returns `409`, as does an
+upload that took longer than the 15-minute grace period to save. A `Range` outside
+the object returns `416`.
+
+---
+
+## 15. Domain State Machines
 
 ### Program Status
 
 ```
-draft ──────────────────────────────────► submitted
-                                              │
-                              ┌───────────────┼─────────────────┐
-                              ▼               ▼                 │
-                          rejected        published             │
-                              │           /       \             │
-                              │      hidden    archived         │
-                              │      /   \                      │
-                              │  published archived             │
-                              │                                 │
-                              └──►submitted                     │
-                                                                │
-                              (rejected → resubmit directly)
+pending ──────┬──► published ◄──► hidden
+              │          │              │
+              │          └──► archived ◄┘
+              │
+              └──► rejected
 ```
 
 | From | To | Notes |
 |---|---|---|
-| `draft` | `submitted` | All required fields present (lfid, description, repo_link, logo_url, ≥1 skill, ≥1 open term) |
-| `submitted` | `published` | Reviewer approves |
-| `submitted` | `rejected` | Reviewer declines |
-| `published` | `hidden` | No pending/accepted/graduated applications |
+| `pending` | `published` | `POST /programs/{id}/decision`; reviewer approves. Guard: a linked LF project, description, repo_link, logo_url, ≥1 skill and ≥1 open term |
+| `pending` | `rejected` | `POST /programs/{id}/decision`; reviewer declines |
+| `published` | `hidden` | `POST /programs/{id}/hide`; no pending/accepted/graduated applications |
 | `published` | `archived` | Program complete |
-| `hidden` | `published` | Unhide |
+| `hidden` | `published` | `POST /programs/{id}/unhide` |
 | `hidden` | `archived` | Program complete while hidden |
-| `rejected` | `submitted` | Program Admin resubmits |
 
 ### Program Term Status
 
@@ -1824,12 +2270,8 @@ deleted
 
 ```
 pending ──► accepted ──► graduated
-  │   │        │
-  │   │        └──► declined
-  │   │
-  │   └──► hold ──► accepted
-  │         └──► declined
-  │         └──► pending
+  │            │
+  │            └──► declined
   │
   └──► declined ──► pending
   └──► withdrawn
@@ -1842,11 +2284,7 @@ pending ──► accepted ──► graduated
 |---|---|---|---|
 | `pending` | `accepted` | Program Admin | `attendance_type` required |
 | `pending` | `declined` | Program Admin | |
-| `pending` | `hold` | Program Admin | Needs more info |
 | `pending` | `withdrawn` | **Applicant only** | Self-withdrawal |
-| `hold` | `accepted` | Program Admin | |
-| `hold` | `declined` | Program Admin | |
-| `hold` | `pending` | Program Admin | |
 | `accepted` | `graduated` | Program Admin | Manual; never automatic |
 | `accepted` | `declined` | Program Admin | |
 | `declined` | `pending` | Program Admin | Re-open a declined application |
@@ -1866,10 +2304,11 @@ incomplete ──► in_progress ──► submitted ──► complete
 | `in_progress` | `submitted` | Assignee (mentee) |
 | `submitted` | `complete` | Reviewer (non-assignee) |
 | Any | `incomplete` | Reviewer (non-assignee) — reset |
+| Any | Any | Reviewer (non-assignee) — full edit through `PATCH /v1/tasks/{id}` |
 
 ---
 
-## 15. Business Rule Reference
+## 16. Business Rule Reference
 
 | ID | Rule | Where enforced |
 |---|---|---|
@@ -1881,7 +2320,7 @@ incomplete ──► in_progress ──► submitted ──► complete
 | FR-014 | Reopen term only if end_date in the future | `ProgramTermService.Update` |
 | FR-016 | Apply only when term is open AND within window | `ApplicationService.Create` |
 | FR-017 | Discovery label derived from status + window | `ProgramTerm.DiscoveryLabel()` |
-| FR-022 | Member removal sets status=withdrawn (no hard delete) | `ProgramMemberHandler.Delete` |
+| FR-022 | Admin removal deletes the member row, in any status | `ProgramMemberHandler.Delete` |
 | FR-025 | One active mentee profile per user max | `UserProfileService.Create` |
 | FR-029 | New applications start at status=pending | `ApplicationService.Create` |
 | FR-030 | No reapplication from declined; withdrawn OK while window open | `ApplicationService.Create` |
@@ -1896,14 +2335,13 @@ incomplete ──► in_progress ──► submitted ──► complete
 
 ---
 
-## 16. Frontend Integration Guide
+## 17. Frontend Integration Guide
 
 ### Authentication Flow
 
-1. Obtain an Auth0 JWT via the LFX SSO login flow.
-2. Store the token securely (memory or secure cookie).
-3. Include `Authorization: Bearer <token>` on all 🔒 requests.
-4. On `401` response, refresh the token or redirect to login.
+1. Send API requests through the shared gateway.
+2. Include the identity-provider `Authorization: Bearer <token>` on protected requests; Heimdall replaces it before forwarding to the backend.
+3. On `401` response, refresh the session or redirect to login.
 
 ### Suggested Page Flows
 
@@ -1931,7 +2369,7 @@ GET /v1/programs/catalog?limit=20
 GET /v1/programs/{id}
 GET /v1/programs/{id}/terms
 GET /v1/programs/{id}/skills
-GET /v1/programs/{id}/members?member_type=mentor&status=active
+GET /v1/programs/{id}/members?member_type=mentor
 GET /v1/programs/{id}/transactions?categoryType=mentorship&limit=25&offset=0
 ```
 
@@ -1978,11 +2416,10 @@ Do not compose the directory from `GET /v1/user-profiles` or by calling `GET /v1
 
 ```
 GET /v1/summary
-→ Hero and stats: program_count, accepting_program_count, mentor_count,
-  graduated_mentee_count, and graduated_mentee_users (up to four avatars)
+→ Hero and stats: program_count, accepting_program_count, project_count,
+  mentor_count, graduated_mentee_count, stipends_paid, and
+  graduated_mentee_users (up to four avatars)
 ```
-
-Foundations and stipend totals are not on this endpoint yet — keep those as static marketing copy until they are modeled.
 
 #### Applying to a Term (Mentee)
 
@@ -1997,7 +2434,7 @@ Foundations and stipend totals are not on this endpoint yet — keep those as st
 3. Submit the application:
    ```
    POST /v1/program-terms/{termId}/applications
-   Body: { "user_id": "<uid>", "role": "mentee" }
+   Body: { "role": "mentee" }
    ```
 4. Poll / display the returned `status` and `tasks_submitted` flag.
 
@@ -2007,10 +2444,11 @@ Foundations and stipend totals are not on this endpoint yet — keep those as st
 GET /v1/applications/{appId}/tasks
 
 # Start work
-PATCH /v1/tasks/{taskId}  Body: { "status": "in_progress" }
+PATCH /v1/tasks/{taskId}/submission  Body: { "status": "in_progress" }
 
-# Submit
-PATCH /v1/tasks/{taskId}  Body: { "status": "submitted", "file": "<upload-url>" }
+# Submit: upload the file first when the task requires one
+POST /v1/tasks/{taskId}/file-upload  Body: multipart/form-data, part "file"
+PATCH /v1/tasks/{taskId}/submission  Body: { "status": "submitted" }
 ```
 
 When all prerequisite tasks reach `submitted`/`complete`, the application's `tasks_submitted` flag is set to `true` — poll `GET /v1/applications/{id}` to detect this change.
@@ -2022,11 +2460,11 @@ When all prerequisite tasks reach `submitted`/`complete`, the application's `tas
 GET /v1/program-terms/{termId}/applications?status=pending
 
 # Accept
-PATCH /v1/applications/{id}
+PATCH /v1/applications/{id}/status
 Body: { "status": "accepted", "attendance_type": "full_time" }
 
 # Decline
-PATCH /v1/applications/{id}
+PATCH /v1/applications/{id}/status
 Body: { "status": "declined" }
 
 # Bulk decline all pending
@@ -2040,15 +2478,15 @@ POST /v1/programs/{programId}/members
 Body: { "user_id": "<mentorUserId>", "member_type": "mentor" }
 ```
 
-The system sends an email containing a link like:
+The system sends an email containing a link to LFX Self Serve like:
 ```
-https://mentorship.lfx.linuxfoundation.org/mentor-invite?token=<signed-token>
+https://app.lfx.dev/mentorship/mentor/invites?token=<signed-token>
 ```
 
-The frontend's invite landing page calls:
+The Self Serve invite page calls, as the signed-in mentor:
 ```
-POST /v1/mentor-invites/accept   Body: { "token": "<token>" }
-POST /v1/mentor-invites/decline  Body: { "token": "<token>" }
+POST /v1/mentor-invites/{token}/accept
+POST /v1/mentor-invites/{token}/decline
 ```
 
 #### Mentor Self-Request
@@ -2061,13 +2499,13 @@ Body: { "user_id": "<uid>", "member_type": "mentor", "status": "requested" }
 The program_admin then approves or declines:
 ```
 PATCH /v1/programs/{programId}/members/{memberId}
-Body: { "status": "active" }   // approve
+Body: { "status": "approved" }   // approve
 Body: { "status": "declined" } // decline
 ```
 
-#### Program Submission Workflow (Program Admin)
+#### Program Creation Workflow (Program Admin)
 
-1. Create program in draft:
+1. Create program in pending:
    ```
    POST /v1/programs
    ```
@@ -2085,11 +2523,9 @@ Body: { "status": "declined" } // decline
    PATCH /v1/programs/{id}
    Body: { "lfid": "alice", "description": "...", "repo_link": "...", "logo_url": "..." }
    ```
-5. Submit for review:
-   ```
-   PATCH /v1/programs/{id}  Body: { "status": "submitted" }
-   ```
-   Returns `409` with a descriptive error if any required field or guard condition is not met.
+5. The program stays `pending` until an approver publishes or rejects it with
+   `POST /v1/programs/{id}/decision`. Publishing returns `409` with a descriptive error if
+   any required field or guard condition is not met.
 
 #### CSV Export
 
@@ -2151,13 +2587,32 @@ class ApiError extends Error {
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `PORT` | No | `8080` | HTTP listen port |
-| `PG_DSN` | Yes | — | PostgreSQL connection string |
+| `DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` | Yes in deployments | — | Discrete PostgreSQL connection settings |
+| `DB_PORT` | No | `5432` | PostgreSQL port |
+| `DB_SSLMODE` | No | `require` | PostgreSQL TLS mode |
+| `DATABASE_DSN` | Local/CI alternative | — | Used only when discrete `DB_*` values are absent |
 | `DB_MAX_CONNS` | No | `10` | pgxpool max connections |
 | `DB_MIN_CONNS` | No | `2` | pgxpool min connections |
-| `JWT_JWKS_URL` | Yes | — | Auth0 JWKS endpoint |
-| `JWT_AUDIENCE` | Yes | — | Expected JWT `aud` claim |
-| `JWT_ISSUER` | Yes | — | Expected JWT `iss` claim |
-| `INVITE_SECRET` | Yes | — | HMAC secret for mentor invite tokens |
-| `OTEL_ENDPOINT` | No | — | OpenTelemetry collector endpoint |
-| `ALLOW_MOCK_PRINCIPAL_BYPASS` | No | `false` | Enable local dev JWT bypass |
-| `MOCK_LOCAL_PRINCIPAL` | No | — | Static user ID for bypass mode |
+| `HEIMDALL_JWKS_URL` | Yes | — | Heimdall JWKS endpoint |
+| `HEIMDALL_JWT_AUDIENCE` | Yes | — | Expected JWT `aud` claim |
+| `HEIMDALL_JWT_ISSUER` | Yes | — | Expected JWT `iss` claim |
+| `FGA_NATS_URL` | Yes for relays | — | Shared NATS URL for FGA and index publishing, notification email via lfx-v2-email-service, and project lookups via lfx-v2-project-service |
+| `PUBLIC_SITE_URL` | When `FGA_NATS_URL` is set | — | Public Mentorship site that user-facing email links point at |
+| `SELF_SERVE_URL` | When `FGA_NATS_URL` is set | — | LFX Self Serve base URL for management links in email |
+| `EMAIL_HR_INBOX` | When `FGA_NATS_URL` is set | — | LF staff HR inbox sent every mentee acceptance |
+| `EMAIL_REVIEW_INBOX` | When `FGA_NATS_URL` is set | — | Comma-separated LF staff inboxes, each sent every program submitted for review |
+| `FGA_RELAY_BATCH_SIZE` | No | `50` | FGA/index claim batch size |
+| `FGA_RELAY_INTERVAL` | No | `1s` | Relay polling interval |
+| `FGA_RELAY_RETRY_DELAY` | No | `1m` | FGA retry delay |
+| `FGA_RELAY_MAX_ATTEMPTS` | No | `10` | FGA attempts before dead letter |
+| `INDEXER_SERVICE_TOKEN` | No | — | Service credential stamped on index messages; secret value |
+| `INDEX_RELAY_RETRY_DELAY` | No | `1m` | Index publish retry delay |
+| `INDEX_RELAY_MAX_ATTEMPTS` | No | `10` | Index attempts before dead letter |
+| `MENTOR_INVITE_SECRET` | Yes | — | HMAC secret for mentor invite tokens |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | — | OpenTelemetry collector endpoint |
+| `ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS` | No | `false` | Enable local dev JWT bypass |
+| `DISABLED_MOCK_LOCAL_PRINCIPAL` | No | — | Static user ID for bypass mode |
+
+Provision `INDEXER_SERVICE_TOKEN` in the backend Secret through Secrets Manager.
+Without it the index relay idles and leaves outbox rows pending rather than
+publishing messages the indexer would drop.

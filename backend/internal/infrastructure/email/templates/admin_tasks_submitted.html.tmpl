@@ -1,0 +1,6 @@
+{{- /* Copyright The Linux Foundation and each contributor to LFX. */ -}}
+{{- /* SPDX-License-Identifier: MIT */ -}}
+{{- /* Legacy: admin-review-mentee-application */ -}}
+{{template "header" .}}<p>You received an application from <strong>{{.MenteeName}}</strong> to become a mentee for the <strong>{{.ProgramName}}</strong> program{{with .TermName}} ({{.}} term){{end}}.</p>
+<p>The mentee has submitted all the prerequisite tasks, please review the application at your earliest convenience.</p>
+{{template "button" .ManageURL}}View Program{{template "button_end"}}{{template "footer" .}}

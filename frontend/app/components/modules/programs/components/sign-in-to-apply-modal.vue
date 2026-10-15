@@ -49,15 +49,15 @@ SPDX-License-Identifier: MIT
           icon="arrow-right-to-bracket"
           type="primary"
           button-style="rounded"
-          :loading="isLoading"
-          @click="onSignIn"
+          :disabled="!applyUrl"
+          @click="goToApply"
         />
         <lfx-button
           label="Create an Account"
           type="outline"
           button-style="rounded"
-          :disabled="isLoading"
-          @click="onCreateAccount"
+          :disabled="!applyUrl"
+          @click="goToApply"
         />
       </div>
     </section>
@@ -69,25 +69,21 @@ import { SIGN_IN_TO_APPLY_BODY, SIGN_IN_TO_APPLY_LABEL, SIGN_IN_TO_APPLY_TITLE }
 import LfxButton from '~/components/uikit/button/button.vue';
 import LfxIconButton from '~/components/uikit/icon-button/icon-button.vue';
 import LfxModal from '~/components/uikit/modal/modal.vue';
-import { useAuth } from '~/composables/useAuth';
 
 const props = defineProps<{
   modelValue: boolean;
   programName: string;
   termName?: string;
-  redirectTo?: string;
+  /** Self Serve mentee apply URL; Self Serve owns sign-in and sign-up. */
+  applyUrl: string;
 }>();
 
 const emit = defineEmits<{ (e: 'update:modelValue', value: boolean): void }>();
 
-const { login, isLoading } = useAuth();
-
-function onSignIn() {
-  void login(props.redirectTo);
-}
-
-function onCreateAccount() {
-  void login(props.redirectTo, { screenHint: 'signup' });
+function goToApply() {
+  if (!props.applyUrl || !import.meta.client) return;
+  window.open(props.applyUrl, '_blank', 'noopener,noreferrer');
+  emit('update:modelValue', false);
 }
 </script>
 

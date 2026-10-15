@@ -5,10 +5,13 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
+	"unicode"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -21,11 +24,20 @@ type programService interface {
 	GetByID(ctx context.Context, id string) (*models.Program, error)
 	GetBySlug(ctx context.Context, slug string) (*models.Program, error)
 	List(ctx context.Context, filter models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error)
+	GetEnrollmentTemplate(ctx context.Context, programID string) (*models.ProgramEnrollmentTemplate, error)
+	GetManagementSummary(ctx context.Context, programID string) (*models.ProgramManagementSummary, error)
+	GetHeaderProjection(ctx context.Context, programID string) (*models.ProgramHeaderProjection, error)
+	NameAvailable(ctx context.Context, name, excludeProgramID string) (bool, error)
 	ListCatalog(ctx context.Context, filter models.ProgramFilter) ([]*models.ProgramCatalogItem, *models.PaginationMeta, error)
 	GetCatalog(ctx context.Context, id string) (*models.ProgramCatalogItem, error)
 	ListCatalogMentees(ctx context.Context, programID string) ([]*models.ProgramCatalogMentee, error)
+	ListMine(ctx context.Context, userID string, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error)
 	Create(ctx context.Context, input models.ProgramCreateInput) (*models.Program, error)
+	CreateEnrollment(ctx context.Context, input models.ProgramEnrollmentInput) (*models.Program, error)
 	Update(ctx context.Context, id string, input models.ProgramUpdateInput) (*models.Program, error)
+	Decide(ctx context.Context, id string, status models.ProgramStatus) (*models.Program, error)
+	Hide(ctx context.Context, id string) (*models.Program, error)
+	Unhide(ctx context.Context, id string) (*models.Program, error)
 	Delete(ctx context.Context, id string) error
 	ListSkills(ctx context.Context, programID string) ([]*models.ProgramSkill, error)
 	AddSkill(ctx context.Context, programID string, input models.ProgramSkillCreateInput) (*models.ProgramSkill, error)
@@ -55,6 +67,57 @@ type ProgramHandler struct {
 	svc programService
 }
 
+type enrollmentRequest struct {
+	ProjectID        string                  `json:"projectId"`
+	ProjectSlug      *string                 `json:"projectSlug"`
+	ProjectName      *string                 `json:"projectName"`
+	ProjectLogoURL   *string                 `json:"projectLogoUrl,omitempty"`
+	Name             string                  `json:"name"`
+	Description      *string                 `json:"description,omitempty"`
+	RepositoryURL    *string                 `json:"repositoryUrl,omitempty"`
+	WebsiteURL       *string                 `json:"websiteUrl,omitempty"`
+	CodeOfConductURL *string                 `json:"codeOfConductUrl,omitempty"`
+	Industry         *string                 `json:"industry,omitempty"`
+	Skills           []string                `json:"skills"`
+	CIIProjectID     *string                 `json:"ciiProjectId,omitempty"`
+	LogoFileName     *string                 `json:"logoFileName,omitempty"`
+	Terms            []enrollmentTermRequest `json:"terms"`
+	Prerequisites    json.RawMessage         `json:"prerequisites,omitempty"`
+	TermsAccepted    bool                    `json:"termsAccepted"`
+}
+
+type enrollmentTermRequest struct {
+	ID                   string `json:"id"`
+	Name                 string `json:"name"`
+	StartDate            string `json:"startDate"`
+	EndDate              string `json:"endDate"`
+	ApplicationStartDate string `json:"applicationStartDate"`
+	ApplicationEndDate   string `json:"applicationEndDate"`
+}
+
+func enrollmentDate(value string) (*time.Time, error) {
+	parsed, err := time.Parse("2006-01-02", value)
+	if err != nil {
+		return nil, err
+	}
+	return &parsed, nil
+}
+
+func enrollmentSlug(name string) string {
+	var builder strings.Builder
+	separator := false
+	for _, value := range strings.ToLower(strings.TrimSpace(name)) {
+		if unicode.IsLetter(value) || unicode.IsDigit(value) {
+			builder.WriteRune(value)
+			separator = false
+		} else if !separator && builder.Len() > 0 {
+			builder.WriteByte('-')
+			separator = true
+		}
+	}
+	return strings.Trim(builder.String(), "-")
+}
+
 // NewProgramHandler creates a ProgramHandler.
 func NewProgramHandler(svc programService) *ProgramHandler {
 	return &ProgramHandler{svc: svc}
@@ -69,13 +132,36 @@ type programLookup interface {
 	GetBySlug(ctx context.Context, slug string) (*models.Program, error)
 }
 
-// resolveVisibleProgram loads the program named by the {id} path parameter,
-// which may be a UUID or a slug, and enforces FR-009: a hidden program is a
-// 404 for everyone but its owner. Every public read of a program or of one of
-// its sub-resources must go through this, or a hidden program stays reachable
-// to anyone holding its ID.
-func resolveVisibleProgram(w http.ResponseWriter, r *http.Request, svc programLookup, gatewayNonPublic ...bool) (*models.Program, bool) {
-	id := chi.URLParam(r, "id")
+// resolveVisibleProgram loads the program named by the {programID} path
+// parameter, or {id} on routes without one, which may be a UUID or a slug, and
+// enforces FR-009: a hidden program is a 404 for everyone but its owner. Every
+// public read of a program or of one of its sub-resources must go through
+// this, or a hidden program stays reachable to anyone holding its ID.
+func resolveVisibleProgram(w http.ResponseWriter, r *http.Request, svc programLookup) (*models.Program, bool) {
+	program, ok := lookupProgram(w, r, svc)
+	if !ok {
+		return nil, false
+	}
+	if program.Status != models.ProgramStatusPublished && program.Status != models.ProgramStatusPending {
+		principal := auth.PrincipalFromContext(r.Context())
+		if auth.IsGatewayPrincipal(r.Context()) && principal != nil && principal.UserID != "_anonymous" {
+			return program, true
+		}
+		if !isProgramOwner(r, program) {
+			Error(w, domain.ErrProgramNotFound)
+			return nil, false
+		}
+	}
+	return program, true
+}
+
+// lookupProgram loads the program named by the {programID} path parameter, or
+// {id} on routes without one, which may be a UUID or a slug.
+func lookupProgram(w http.ResponseWriter, r *http.Request, svc programLookup) (*models.Program, bool) {
+	id := chi.URLParam(r, "programID")
+	if id == "" {
+		id = chi.URLParam(r, "id")
+	}
 	var (
 		program *models.Program
 		err     error
@@ -100,19 +186,13 @@ func resolveVisibleProgram(w http.ResponseWriter, r *http.Request, svc programLo
 			return nil, false
 		}
 	}
-	if program.Status != models.ProgramStatusPublished {
-		principal := auth.PrincipalFromContext(r.Context())
-		if (len(gatewayNonPublic) == 0 || gatewayNonPublic[0]) && auth.IsGatewayPrincipal(r.Context()) && principal != nil && principal.UserID != "_anonymous" {
-			return program, true
-		}
-		isOwner := principal != nil && principal.UserID != "_anonymous" &&
-			program.LFID != nil && *program.LFID != "" && *program.LFID == principal.Username
-		if !isOwner {
-			Error(w, domain.ErrProgramNotFound)
-			return nil, false
-		}
-	}
 	return program, true
+}
+
+func isProgramOwner(r *http.Request, program *models.Program) bool {
+	principal := auth.PrincipalFromContext(r.Context())
+	return principal != nil && principal.UserID != "_anonymous" &&
+		program.LFID != nil && *program.LFID != "" && *program.LFID == principal.Username
 }
 
 // List handles GET /v1/programs.
@@ -132,6 +212,21 @@ func (h *ProgramHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	JSON(w, http.StatusOK, map[string]any{"data": programs, "meta": meta})
+}
+
+// GetEnrollmentTemplate handles GET /v1/programs/{id}/enroll-template.
+func (h *ProgramHandler) GetEnrollmentTemplate(w http.ResponseWriter, r *http.Request) {
+	principal := auth.PrincipalFromContext(r.Context())
+	if principal == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	template, err := h.svc.GetEnrollmentTemplate(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, template)
 }
 
 func catalogSortParam(r *http.Request) string {
@@ -160,6 +255,32 @@ func (h *ProgramHandler) ListCatalog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	JSON(w, http.StatusOK, map[string]any{"data": items, "meta": meta})
+}
+
+// ListMine handles GET /v1/me/programs — the programs the caller administers.
+// The user is always the principal; M2M principals have no local user and are
+// rejected.
+func (h *ProgramHandler) ListMine(w http.ResponseWriter, r *http.Request) {
+	principal := auth.PrincipalFromContext(r.Context())
+	if principal == nil || principal.IsM2M() {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	limit, offset, ok := parsePaginationParams(w, r)
+	if !ok {
+		return
+	}
+	programs, meta, err := h.svc.ListMine(r.Context(), principal.UserID, models.AdministeredProgramFilter{
+		Limit:  limit,
+		Offset: offset,
+		Search: r.URL.Query().Get("search"),
+		Status: models.AdministeredProgramStatus(r.URL.Query().Get("status")),
+	})
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]any{"data": programs, "meta": meta})
 }
 
 // GetCatalog handles GET /v1/programs/{id}/catalog.
@@ -196,22 +317,47 @@ func (h *ProgramHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, program)
 }
 
-// Submit transitions a program from draft or rejected to submitted.
-func (h *ProgramHandler) Submit(w http.ResponseWriter, r *http.Request) {
+// GetManagementSummary handles GET /v1/programs/{id}/management-summary.
+func (h *ProgramHandler) GetManagementSummary(w http.ResponseWriter, r *http.Request) {
 	if auth.PrincipalFromContext(r.Context()) == nil {
 		Error(w, domain.ErrUnauthorized)
 		return
 	}
-	status := models.ProgramStatusSubmitted
-	program, err := h.svc.Update(r.Context(), chi.URLParam(r, "id"), models.ProgramUpdateInput{Status: &status})
+	summary, err := h.svc.GetManagementSummary(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		Error(w, err)
 		return
 	}
-	JSON(w, http.StatusOK, program)
+	JSON(w, http.StatusOK, summary)
 }
 
-// Decision applies a published or rejected decision to a submitted program.
+func (h *ProgramHandler) GetHeaderProjection(w http.ResponseWriter, r *http.Request) {
+	program, ok := resolveVisibleProgram(w, r, h.svc)
+	if !ok {
+		return
+	}
+	projection, err := h.svc.GetHeaderProjection(r.Context(), program.ID)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, projection)
+}
+
+func (h *ProgramHandler) NameAvailable(w http.ResponseWriter, r *http.Request) {
+	if auth.PrincipalFromContext(r.Context()) == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	available, err := h.svc.NameAvailable(r.Context(), r.URL.Query().Get("name"), r.URL.Query().Get("exclude_program_id"))
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]bool{"available": available})
+}
+
+// Decision applies a published or rejected decision to a pending program.
 func (h *ProgramHandler) Decision(w http.ResponseWriter, r *http.Request) {
 	if auth.PrincipalFromContext(r.Context()) == nil {
 		Error(w, domain.ErrUnauthorized)
@@ -225,11 +371,30 @@ func (h *ProgramHandler) Decision(w http.ResponseWriter, r *http.Request) {
 		Error(w, fmt.Errorf("%w: status is required", domain.ErrInvalidInput))
 		return
 	}
-	if *input.Status != models.ProgramStatusPublished && *input.Status != models.ProgramStatusRejected {
-		Error(w, fmt.Errorf("%w: decision must publish or reject a submitted program", domain.ErrInvalidInput))
+	program, err := h.svc.Decide(r.Context(), chi.URLParam(r, "id"), *input.Status)
+	if err != nil {
+		Error(w, err)
 		return
 	}
-	program, err := h.svc.Update(r.Context(), chi.URLParam(r, "id"), models.ProgramUpdateInput{Status: input.Status})
+	JSON(w, http.StatusOK, program)
+}
+
+// Hide handles POST /v1/programs/{id}/hide — moves a published program to hidden.
+func (h *ProgramHandler) Hide(w http.ResponseWriter, r *http.Request) {
+	h.changeVisibility(w, r, h.svc.Hide)
+}
+
+// Unhide handles POST /v1/programs/{id}/unhide — moves a hidden program to published.
+func (h *ProgramHandler) Unhide(w http.ResponseWriter, r *http.Request) {
+	h.changeVisibility(w, r, h.svc.Unhide)
+}
+
+func (h *ProgramHandler) changeVisibility(w http.ResponseWriter, r *http.Request, change func(context.Context, string) (*models.Program, error)) {
+	if auth.PrincipalFromContext(r.Context()) == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	program, err := change(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		Error(w, err)
 		return
@@ -238,10 +403,15 @@ func (h *ProgramHandler) Decision(w http.ResponseWriter, r *http.Request) {
 }
 
 // ResolveID handles GET /v1/programs/resolve/{id}.
-// It resolves either a UUID or slug to the canonical program UUID.
+// It resolves either a UUID or slug to the canonical program UUID. The route is
+// allow_all, so only published programs resolve for anyone but the owner.
 func (h *ProgramHandler) ResolveID(w http.ResponseWriter, r *http.Request) {
-	program, ok := resolveVisibleProgram(w, r, h.svc, false)
+	program, ok := lookupProgram(w, r, h.svc)
 	if !ok {
+		return
+	}
+	if program.Status != models.ProgramStatusPublished && !isProgramOwner(r, program) {
+		Error(w, domain.ErrProgramNotFound)
 		return
 	}
 	JSON(w, http.StatusOK, map[string]string{"id": program.ID})
@@ -255,13 +425,62 @@ func (h *ProgramHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var input models.ProgramCreateInput
-	if !decodeBody(w, r, &input) {
+	var request enrollmentRequest
+	if !decodeBody(w, r, &request) {
 		return
 	}
-	input.CreatorUserID = principal.UserID
+	if !request.TermsAccepted {
+		Error(w, fmt.Errorf("%w: terms_accepted must be true", domain.ErrInvalidInput))
+		return
+	}
+	terms := make([]models.ProgramTermCreateInput, 0, len(request.Terms))
+	for _, term := range request.Terms {
+		start, err := enrollmentDate(term.StartDate)
+		if err != nil {
+			Error(w, fmt.Errorf("%w: invalid term startDate", domain.ErrInvalidInput))
+			return
+		}
+		end, err := enrollmentDate(term.EndDate)
+		if err != nil {
+			Error(w, fmt.Errorf("%w: invalid term endDate", domain.ErrInvalidInput))
+			return
+		}
+		applicationStart, err := enrollmentDate(term.ApplicationStartDate)
+		if err != nil {
+			Error(w, fmt.Errorf("%w: invalid applicationStartDate", domain.ErrInvalidInput))
+			return
+		}
+		applicationEnd, err := enrollmentDate(term.ApplicationEndDate)
+		if err != nil {
+			Error(w, fmt.Errorf("%w: invalid applicationEndDate", domain.ErrInvalidInput))
+			return
+		}
+		terms = append(terms, models.ProgramTermCreateInput{ID: term.ID, Name: term.Name, Status: models.ProgramTermStatusOpen, StartDateTime: start, EndDateTime: end, ApplicationStartDate: applicationStart, ApplicationEndDate: applicationEnd})
+	}
+	enrollment := models.ProgramEnrollmentInput{
+		Program: models.ProgramCreateInput{
+			ProjectUID:         &request.ProjectID,
+			ProjectSlug:        request.ProjectSlug,
+			ProjectName:        request.ProjectName,
+			ProjectLogoURL:     request.ProjectLogoURL,
+			Name:               request.Name,
+			Slug:               enrollmentSlug(request.Name),
+			Description:        request.Description,
+			RepoLink:           request.RepositoryURL,
+			WebsiteURL:         request.WebsiteURL,
+			CodeOfConduct:      request.CodeOfConductURL,
+			Industry:           request.Industry,
+			CIIProjectID:       request.CIIProjectID,
+			TermsAndConditions: request.TermsAccepted,
+			LFID:               &principal.Username,
+		},
+		Terms:         terms,
+		Skills:        request.Skills,
+		Prerequisites: request.Prerequisites,
+	}
+	enrollment.Program.CreatorUserID = principal.UserID
 
-	program, err := h.svc.Create(r.Context(), input)
+	program, err := h.svc.CreateEnrollment(r.Context(), enrollment)
 	if err != nil {
 		Error(w, err)
 		return
@@ -283,10 +502,9 @@ func (h *ProgramHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if input.Status != nil {
-		Error(w, fmt.Errorf("%w: status transitions are handled by dedicated submit/decision routes", domain.ErrInvalidInput))
+		Error(w, fmt.Errorf("%w: status transitions are handled by dedicated decision/hide/unhide routes", domain.ErrInvalidInput))
 		return
 	}
-
 	program, err := h.svc.Update(r.Context(), id, input)
 	if err != nil {
 		Error(w, err)
@@ -313,8 +531,11 @@ func (h *ProgramHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 // ListSkills handles GET /v1/programs/{id}/skills.
 func (h *ProgramHandler) ListSkills(w http.ResponseWriter, r *http.Request) {
-	programID := chi.URLParam(r, "id")
-	skills, err := h.svc.ListSkills(r.Context(), programID)
+	program, ok := resolveVisibleProgram(w, r, h.svc)
+	if !ok {
+		return
+	}
+	skills, err := h.svc.ListSkills(r.Context(), program.ID)
 	if err != nil {
 		Error(w, err)
 		return
@@ -335,7 +556,6 @@ func (h *ProgramHandler) AddSkill(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &input) {
 		return
 	}
-
 	skill, err := h.svc.AddSkill(r.Context(), programID, input)
 	if err != nil {
 		Error(w, err)
@@ -363,8 +583,11 @@ func (h *ProgramHandler) DeleteSkill(w http.ResponseWriter, r *http.Request) {
 
 // GetFundingStats handles GET /v1/programs/{id}/funding-stats.
 func (h *ProgramHandler) GetFundingStats(w http.ResponseWriter, r *http.Request) {
-	programID := chi.URLParam(r, "id")
-	stats, err := h.svc.GetFundingStats(r.Context(), programID)
+	program, ok := resolveVisibleProgram(w, r, h.svc)
+	if !ok {
+		return
+	}
+	stats, err := h.svc.GetFundingStats(r.Context(), program.ID)
 	if err != nil {
 		Error(w, err)
 		return

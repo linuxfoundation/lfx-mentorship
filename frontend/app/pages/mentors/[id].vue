@@ -26,7 +26,8 @@ if (error.value) {
 
 usePublicSeo({
   title: computed(() => mentor.value?.name ?? 'Mentor'),
-  description: computed(() => mentor.value?.bio ?? 'Explore this mentor profile on LFX Mentorship.'),
+  description: computed(() => mentor.value?.bio ?? ''),
+  descriptionFallback: 'Explore this mentor profile on LFX Mentorship.',
   type: 'profile',
 });
 </script>

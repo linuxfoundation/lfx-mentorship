@@ -28,12 +28,13 @@ if (error.value) {
 }
 
 const title = computed(() => program.value?.name ?? 'Program');
-const description = computed(() => program.value?.description ?? 'Explore this mentorship program on LFX Mentorship.');
+const descriptionFallback = 'Explore this mentorship program on LFX Mentorship.';
 const canonicalPath = computed(() => programPath(program.value?.slug || program.value?.id || programId.value));
 
 const { canonical, image } = usePublicSeo({
   title,
-  description,
+  description: computed(() => program.value?.description ?? ''),
+  descriptionFallback,
   path: canonicalPath,
   image: computed(() => program.value?.logoUrl),
 });
@@ -43,10 +44,7 @@ useJsonLd(
     if (!program.value || !canonical.value) return null;
     return courseJsonLd({
       name: program.value.name,
-      description: truncateMetaDescription(
-        program.value.description,
-        'Explore this mentorship program on LFX Mentorship.',
-      ),
+      description: truncateMetaDescription(program.value.description, descriptionFallback),
       url: canonical.value,
       image: image.value,
     });

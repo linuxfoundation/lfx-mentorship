@@ -1,0 +1,6 @@
+{{- /* Copyright The Linux Foundation and each contributor to LFX. */ -}}
+{{- /* SPDX-License-Identifier: MIT */ -}}
+{{- /* Legacy: communitybridge-review-mentorship-submission, without the signed approve and reject links */ -}}
+{{template "header" .}}<p>The <strong>{{.ProgramName}}</strong> mentorship program was submitted for review{{with .SubmitterName}} by <strong>{{.}}</strong>{{with $.SubmitterEmail}} ({{.}}){{end}}{{end}}.</p>
+<p>Review the program in LFX Self Serve to publish or reject it. The program admins will be notified of your decision.</p>
+{{template "button" .ManageURL}}Review in Self Serve{{template "button_end"}}{{template "footer" .}}

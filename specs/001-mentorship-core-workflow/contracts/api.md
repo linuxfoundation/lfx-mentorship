@@ -12,32 +12,35 @@ Auth required unless marked **public**.
 
 The existing `PATCH /v1/programs/{id}` is extended with state-machine validation.
 
-### Existing endpoint — now with state guards
+### Status transitions — dedicated routes
+
+`PATCH /v1/programs/{id}` does not change status; a body with `status` returns `400`.
 
 ```
-PATCH /v1/programs/{id}
+POST /v1/programs/{id}/decision
 Authorization: Bearer {token}
 Content-Type: application/json
 
-{ "status": "submitted" | "published" | "rejected" | "hidden" | "archived" | "draft" }
+{ "status": "published" | "rejected" }
 ```
 
-**Valid transitions** (all others → 409):
+Approver team only; moves a `pending` program to `published` or `rejected`.
 
-| From | To | Notes |
-|------|----|-------|
-| `draft` | `submitted` | Requires ≥1 open term and all required fields |
-| `submitted` | `published` | Reviewer only |
-| `submitted` | `rejected` | Reviewer only |
-| `rejected` | `submitted` | Program Admin resubmit |
-| `published` | `hidden` | Guard: no blocking apps (pending/accepted/graduated/hold) |
-| `hidden` | `published` | |
-| `published` \| `hidden` | `archived` | |
+```
+POST /v1/programs/{id}/hide
+POST /v1/programs/{id}/unhide
+Authorization: Bearer {token}
+```
+
+Program admins only; no request body. `hide` moves a `published` program to
+`hidden` and is refused while the program has pending, accepted, or graduated
+applications. `unhide` moves a `hidden` program back to `published`; any other
+source status, including `archived`, is an invalid transition.
 
 **Responses**:
 - `200 OK` — updated program object
-- `409 Conflict` — invalid transition or guard blocks
-- `422 Unprocessable Entity` — submission guard (missing required fields or no open terms)
+- `400 Bad Request` — decision `status` missing or not `published`/`rejected`
+- `409 Conflict` — invalid transition, or a submission or hide guard blocks
 
 ---
 
@@ -92,30 +95,30 @@ Same field also present in items returned by `GET /v1/programs/{id}/terms`.
 
 ## Mentor Invitation Token Endpoints
 
-Two public, token-authenticated endpoints for email link redemption.
+Two token endpoints for email link redemption; each also needs the invited user's JWT.
 
 ### Accept invitation
 
 ```
-POST /v1/mentor-invites/{token}/accept   [public]
+POST /v1/mentor-invites/{token}/accept   [token + JWT]
 ```
 
-- Validates JWT `token` (issued at invite time, 7-day TTL, contains `program_id` + `user_id`)
-- Sets `program_members.status = active` for the matching record
+- Validates the signed `token` (issued at invite time, no expiry, contains `program_id` + `user_id`); the caller must be signed in as that user
+- Sets `program_members.status = approved` for the matching record
 - Notifies the program program_admin (in-process hook)
 
 **Responses**:
-- `200 OK` — `{ "status": "active", "program_id": "..." }`
-- `410 Gone` — token expired or already redeemed
-- `404 Not Found` — no matching `program_members` record
+- `200 OK` — `{ "status": "approved", "program_id": "..." }`
+- `400 Bad Request` — invalid token, or no pending invite (already answered or revoked)
+- `403 Forbidden` — the token belongs to another user
 
 ### Decline invitation
 
 ```
-POST /v1/mentor-invites/{token}/decline  [public]
+POST /v1/mentor-invites/{token}/decline  [token + JWT]
 ```
 
-- Validates JWT token
+- Validates the signed token; the caller must be signed in as the invited user
 - Sets `program_members.status = declined`
 - Notifies the program admin (in-process hook)
 
@@ -128,12 +131,12 @@ POST /v1/mentor-invites/{token}/decline  [public]
 ### Existing endpoint — now with state guards and attendance_type
 
 ```
-PATCH /v1/applications/{id}
+PATCH /v1/applications/{id}/status
 Authorization: Bearer {token}
 Content-Type: application/json
 
 {
-  "status": "accepted" | "declined" | "graduated" | "withdrawn" | "hold" | "pending",
+  "status": "accepted" | "declined" | "graduated" | "withdrawn" | "pending",
   "attendance_type": "full_time" | "part_time"   // required when status = "accepted"
 }
 ```
@@ -212,7 +215,7 @@ Content-Type: application/json
 - **Mentee** (caller is the task's `assignee_id`): may transition `incomplete → in_progress`
   and `in_progress → submitted` only.
 - **Program Admin / Mentor** (caller is the program's member with `member_type = program_admin |
-  mentor` and `status = active`): may transition `submitted → complete` or reset any state
+  mentor` and `status = approved`): may transition `submitted → complete` or reset any state
   to `incomplete`.
 
 **Side effect when `submitted` or `complete`**: if all `prerequisite` tasks on the same

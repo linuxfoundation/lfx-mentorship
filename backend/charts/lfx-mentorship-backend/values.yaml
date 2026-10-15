@@ -67,6 +67,20 @@ heimdall:
 openfga:
   enabled: false
 
+# Gateway limits for the file upload routes. The cap sits above the 20 MB file
+# ceiling to leave room for multipart boundaries and part headers.
+uploads:
+  maxRequestBodyBytes: 22020096
+  timeout: 120s
+
+# Opt-in: restricts backend ingress to the shared gateway so in-cluster callers cannot bypass the RuleSet.
+networkPolicy:
+  enabled: false
+  # Namespace of the Traefik pods that forward gateway traffic; defaults to traefik.gateway.namespace.
+  gatewayNamespace: ""
+  # Extra NetworkPolicyPeer entries, e.g. the BFF or the /internal/metrics scraper.
+  extraIngressFrom: []
+
 ingress:
   enabled: false
   className: ""
@@ -126,9 +140,6 @@ migrationJob:
 # ── Non-secret environment variables ────────────────────────────────────────
 # These are rendered into a ConfigMap and mounted via envFrom.
 config:
-  JWKS_URL: ""
-  JWT_AUDIENCE: ""
-  JWT_ISSUER: ""
   HEIMDALL_JWKS_URL: ""
   HEIMDALL_JWT_AUDIENCE: ""
   HEIMDALL_JWT_ISSUER: ""
@@ -137,11 +148,41 @@ config:
   FGA_RELAY_INTERVAL: "1s"
   FGA_RELAY_RETRY_DELAY: "1m"
   FGA_RELAY_MAX_ATTEMPTS: "10"
+  INDEX_RELAY_RETRY_DELAY: "1m"
+  INDEX_RELAY_MAX_ATTEMPTS: "10"
+  # Notification email goes out via lfx-v2-email-service whenever FGA_NATS_URL is set; these are then required.
+  # Public Mentorship site, e.g. https://mentorship.lfx.linuxfoundation.org
+  PUBLIC_SITE_URL: ""
+  # LFX Self Serve, where management pages live, e.g. https://app.lfx.dev
+  SELF_SERVE_URL: ""
+  # LF staff HR inbox that receives every mentee acceptance.
+  EMAIL_HR_INBOX: ""
+  # Comma-separated LF staff inboxes, each told about every program submitted for review.
+  EMAIL_REVIEW_INBOX: ""
+  # Comma-separated addresses that are the only ones to receive email; set while
+  # testing on real data so real users get nothing. user+tag@ variants of a
+  # listed address match too. Empty sends to everyone.
+  EMAIL_ALLOWED_RECIPIENTS: ""
   LEDGER_BASE_URL: ""
+  # Crowdfunding is reached through the LFX v2 gateway at
+  # https://lfx-api.<domain>/crowdfunding; the transactions route is public.
   CROWDFUNDING_BASE_URL: ""
-  CROWDFUNDING_TOKEN_URL: ""
-  CROWDFUNDING_AUDIENCE: ""
-  CROWDFUNDING_SCOPE: "access:manage"
+  # ── Object storage ─────────────────────────────────────────────────────────
+  # One public (CDN-fronted) bucket for logos and one private bucket for task
+  # submissions; an unset bucket disables its file routes. Credentials come from
+  # IRSA when deployed. Static AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY are for
+  # the local nats-s3 sidecar only and belong in the Secret, never here.
+  AWS_REGION: ""
+  LOGOS_S3_BUCKET: ""
+  # Empty means AWS S3. Local: http://localhost:5222 (nats-s3 sidecar).
+  LOGOS_S3_ENDPOINT_URL: ""
+  # "true" in local values only; deployed buckets are provisioned ahead of time.
+  LOGOS_S3_CREATE_MISSING_BUCKET: "false"
+  # Browser-reachable CDN base URL; required when LOGOS_S3_BUCKET is set.
+  LOGOS_CDN_URL_PREFIX: ""
+  ATTACHMENTS_S3_BUCKET: ""
+  ATTACHMENTS_S3_ENDPOINT_URL: ""
+  ATTACHMENTS_S3_CREATE_MISSING_BUCKET: "false"
   OTEL_EXPORTER_OTLP_ENDPOINT: ""
   OTEL_SERVICE_NAME: "lfx-mentorship-backend"
 
@@ -164,8 +205,8 @@ env: []
 #   assembling a DSN string, so a password containing a backslash or a space is
 #   not altered in transit.
 #   LEDGER_API_KEY — bearer token for Ledger service API
-#   CROWDFUNDING_CLIENT_ID — Auth0 M2M client ID for crowdfunding API
-#   CROWDFUNDING_CLIENT_SECRET — Auth0 M2M client secret for crowdfunding API
+#   INDEXER_SERVICE_TOKEN — service credential stamped on index messages.
+#     Optional: without it the index relay idles and outbox rows stay pending.
 #   MENTOR_INVITE_SECRET — HMAC secret for signing mentor invite tokens.
 #     Required: the service exits at startup if it is not set.
 secretName: lfx-mentorship-backend-secrets
@@ -210,23 +251,3 @@ fundingStatsSyncCronJob:
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 1
   concurrencyPolicy: Forbid
-
-# ── CronJob: fga-reconcile ───────────────────────────────────────────────────
-# Re-dirties current PostgreSQL authorization state for the outbox relay.
-# Keep disabled until the FGA model, roster authority, and gateway rollout are
-# approved in the target environment.
-fgaReconcileCronJob:
-  enabled: false
-  schedule: "17 2 * * *"
-  activeDeadlineSeconds: 1800
-  backoffLimit: 2
-  successfulJobsHistoryLimit: 3
-  failedJobsHistoryLimit: 3
-  concurrencyPolicy: Forbid
-  resources:
-    requests:
-      cpu: 50m
-      memory: 64Mi
-    limits:
-      cpu: 200m
-      memory: 128Mi

@@ -13,7 +13,7 @@ Authoritative entity reference. Schema source of truth: `backend/db/migrations/0
 | `id` | UUID | PK | |
 | `name` | TEXT | NOT NULL | unique enforced in application layer |
 | `slug` | TEXT | NOT NULL UNIQUE | URL-safe identifier |
-| `status` | VARCHAR(20) | NOT NULL DEFAULT `draft` | see lifecycle below |
+| `status` | VARCHAR(20) | NOT NULL DEFAULT `pending` | see lifecycle below |
 | `is_paid` | BOOLEAN | NOT NULL DEFAULT false | stipend flag |
 | `description` | TEXT | nullable | required before submission |
 | `logo_url` | TEXT | nullable | required before submission |
@@ -33,16 +33,15 @@ Authoritative entity reference. Schema source of truth: `backend/db/migrations/0
 ### Status Lifecycle
 
 ```
-draft ──submit──► submitted ──approve──► published ◄──unhide──┐
-                             └──reject──► rejected             │
-                                         rejected ──resubmit──► submitted
+pending ──approve──► published ◄──unhide──┐
+        └──reject──► rejected             │
 published ──hide──► hidden ──────────────────────────────────►─┘
 published │ hidden ──archive──► archived
 ```
 
-**Guard: hide blocked while any application on the program has status ∈ {`pending`, `accepted`, `graduated`, `hold`}**
+**Guard: hide blocked while any application on the program has status ∈ {`pending`, `accepted`, `graduated`}**
 
-**Submission guard: program must have ≥ 1 open term and all required fields present.**
+**Publication guard (`pending → published`): program must have ≥ 1 open term and all required fields present.**
 
 ---
 
@@ -102,12 +101,12 @@ open │ closed ──soft-delete──► deleted
 ### Status Lifecycle
 
 ```
-── invite ──► invited ──accept──► active
+── invite ──► invited ──accept──► approved
              invited ──decline──► declined
-── self-request ──► requested ──approve──► active
+── self-request ──► requested ──approve──► approved
                     requested ──decline──► declined
-active ──remove──► withdrawn
-invited │ requested │ active ──manual-hold──► pending
+approved ──remove──► withdrawn
+invited │ requested │ approved ──manual-hold──► pending
 ```
 
 **Program Admin records (`member_type = program_admin`) carry no status (NULL).**
@@ -155,8 +154,10 @@ invited │ requested │ active ──manual-hold──► pending
 | `attendance_type` | VARCHAR(20) | nullable | **required on accept**: `full_time \| part_time` |
 | `tasks_submitted` | BOOLEAN | DEFAULT false | set when all prerequisite tasks submitted |
 | `admin_notified` | BOOLEAN | DEFAULT false | notification sent flag |
+| `created_on` | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | orders a reapplication after its withdrawn history |
+| `updated_on` | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | |
 
-**Unique**: `(program_term_id, user_id, role)`
+**Unique**: `(program_term_id, user_id, role)` among applications that are not `withdrawn` (partial index `uq_applications_active`); withdrawn applications are kept as history when the user reapplies.
 
 ### Status Lifecycle
 
@@ -164,11 +165,15 @@ invited │ requested │ active ──manual-hold──► pending
 pending ──accept (+ attendance_type)──► accepted ──graduate──► graduated
 pending ──decline──► declined
 pending ──withdraw (mentee)──► withdrawn
-pending ──hold──► hold ──resume──► pending
 ```
 
 **Application window guard**: apply only when `program_terms.status = open` AND
-`now` is within `[application_start_date, application_end_date]`.
+today's UTC date is within `[application_start_date, application_end_date]` by UTC
+calendar day, both days inclusive. A term missing either date takes no applications.
+
+**One mentorship per mentee**: a mentee application is refused, and so is its
+acceptance, while the user holds another mentee application `accepted` in a term that has
+not ended. A mentee application is also refused once the user has a `graduated` one.
 
 **Re-apply**: allowed from `withdrawn` (window still open); blocked from `declined`.
 
@@ -193,8 +198,8 @@ pending ──hold──► hold ──resume──► pending
 | `application_status` | VARCHAR(20) | nullable | denormalised |
 | `program_term_status` | VARCHAR(20) | nullable | denormalised |
 | `custom` | BOOLEAN | DEFAULT false | |
-| `submit_file` | TEXT | nullable | `null \| 'required' \| URL` |
-| `file` | TEXT | nullable | uploaded file URL |
+| `submit_file` | TEXT | nullable | template flag: `null \| 'required'` (never a file reference) |
+| `file` | TEXT | nullable | private-bucket object key of the submission |
 | `due_date` | DATE | nullable | |
 | `created_by` | TEXT | nullable | creator LFID |
 
@@ -223,5 +228,4 @@ any state ──admin/mentor──► incomplete  (reset)
 | `ErrApplicationNotFound` | 404 | Application ID does not exist |
 | `ErrMemberNotFound` | 404 | Member ID does not exist |
 | `ErrTaskNotFound` | 404 | Task ID does not exist |
-| `ErrInviteExpired` | 410 | Mentor invitation token expired or invalid |
 | `ErrForbidden` | 403 | Caller is not permitted for this action |

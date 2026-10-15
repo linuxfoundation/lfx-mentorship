@@ -16,14 +16,13 @@ type DatabaseBuilder struct {
 	members      domain.ProgramMemberRepository
 	users        domain.UserRepository
 	approvers    domain.ApproverRepository
-	rosters      domain.RosterRepository
 	terms        domain.ProgramTermRepository
 	applications domain.ApplicationRepository
 	tasks        domain.TaskRepository
 }
 
-func NewDatabaseBuilder(programs domain.ProgramRepository, members domain.ProgramMemberRepository, users domain.UserRepository, terms domain.ProgramTermRepository, applications domain.ApplicationRepository, tasks domain.TaskRepository, approvers domain.ApproverRepository, rosters domain.RosterRepository) *DatabaseBuilder {
-	return &DatabaseBuilder{programs: programs, members: members, users: users, approvers: approvers, rosters: rosters, terms: terms, applications: applications, tasks: tasks}
+func NewDatabaseBuilder(programs domain.ProgramRepository, members domain.ProgramMemberRepository, users domain.UserRepository, terms domain.ProgramTermRepository, applications domain.ApplicationRepository, tasks domain.TaskRepository, approvers domain.ApproverRepository) *DatabaseBuilder {
+	return &DatabaseBuilder{programs: programs, members: members, users: users, approvers: approvers, terms: terms, applications: applications, tasks: tasks}
 }
 
 func (b *DatabaseBuilder) Build(ctx context.Context, marker domain.FGAOutboxMarker) (Message, error) {
@@ -33,6 +32,9 @@ func (b *DatabaseBuilder) Build(ctx context.Context, marker domain.FGAOutboxMark
 	if marker.MarkerKind == "membership" {
 		if marker.Relation == nil || marker.Username == nil {
 			return Message{}, fmt.Errorf("membership marker %d is missing relation or username", marker.ID)
+		}
+		if marker.ObjectType == "project" {
+			return Message{}, fmt.Errorf("project membership markers are owned by project-service")
 		}
 		if marker.DesiredOperation == "remove" {
 			return MemberRemove(marker.ObjectType, marker.ObjectUID, *marker.Username, *marker.Relation)
@@ -78,18 +80,18 @@ func (b *DatabaseBuilder) buildProgram(ctx context.Context, id string) (Message,
 	}
 	writers, mentors := []string{}, []string{}
 	for _, member := range members {
-		if member.Status == nil || *member.Status != models.ProgramMemberStatusActive {
+		if member.Status == nil || *member.Status != models.ProgramMemberStatusApproved {
 			continue
 		}
-		user, err := b.users.GetByID(ctx, member.UserID)
-		if err != nil || user.LFID == nil || *user.LFID == "" {
-			return Message{}, fmt.Errorf("resolve program member LFID: %w", err)
+		lfid, err := b.requireLFID(ctx, member.UserID)
+		if err != nil {
+			return Message{}, fmt.Errorf("resolve program member: %w", err)
 		}
 		if member.MemberType == models.MemberTypeProgramAdmin {
-			writers = append(writers, *user.LFID)
+			writers = append(writers, lfid)
 		}
 		if member.MemberType == models.MemberTypeMentor {
-			mentors = append(mentors, *user.LFID)
+			mentors = append(mentors, lfid)
 		}
 	}
 	return ProgramAccess(program, writers, mentors)
@@ -104,11 +106,11 @@ func (b *DatabaseBuilder) buildApplication(ctx context.Context, id string) (Mess
 	if err != nil {
 		return Message{}, err
 	}
-	user, err := b.users.GetByID(ctx, application.UserID)
-	if err != nil || user.LFID == nil || *user.LFID == "" {
-		return Message{}, fmt.Errorf("resolve application user LFID: %w", err)
+	lfid, err := b.requireLFID(ctx, application.UserID)
+	if err != nil {
+		return Message{}, fmt.Errorf("resolve application user: %w", err)
 	}
-	return ApplicationAccess(application, term.ProgramID, *user.LFID)
+	return ApplicationAccess(application, term.ProgramID, lfid)
 }
 
 func (b *DatabaseBuilder) buildTask(ctx context.Context, id string) (Message, error) {
@@ -117,28 +119,28 @@ func (b *DatabaseBuilder) buildTask(ctx context.Context, id string) (Message, er
 		return Message{}, err
 	}
 	if task.ApplicationID == nil || *task.ApplicationID == "" {
-		return Message{}, fmt.Errorf("task %s has no application parent", task.ID)
+		return DeleteAccess(taskObject, task.ID)
 	}
-	user, err := b.users.GetByID(ctx, task.AssigneeID)
-	if err != nil || user.LFID == nil || *user.LFID == "" {
-		return Message{}, fmt.Errorf("resolve task assignee LFID: %w", err)
+	lfid, err := b.requireLFID(ctx, task.AssigneeID)
+	if err != nil {
+		return Message{}, fmt.Errorf("resolve task assignee: %w", err)
 	}
-	return TaskAccess(task, *task.ApplicationID, *user.LFID)
+	return TaskAccess(task, *task.ApplicationID, lfid)
+}
+
+// requireLFID returns the user's LFID; a user without one cannot be represented in a tuple.
+func (b *DatabaseBuilder) requireLFID(ctx context.Context, userID string) (string, error) {
+	user, err := b.users.GetByID(ctx, userID)
+	if err != nil {
+		return "", fmt.Errorf("get user %s: %w", userID, err)
+	}
+	if user.LFID == nil || *user.LFID == "" {
+		return "", fmt.Errorf("user %s has no LFID", userID)
+	}
+	return *user.LFID, nil
 }
 
 func (b *DatabaseBuilder) buildMembership(ctx context.Context, marker domain.FGAOutboxMarker) (Message, error) {
-	if marker.ObjectType == "project" {
-		members, err := b.rosters.ListProjectAdmins(ctx, marker.ObjectUID)
-		if err != nil {
-			return Message{}, err
-		}
-		for _, member := range members {
-			if member.LFID == *marker.Username {
-				return MemberPut("project", marker.ObjectUID, *marker.Username, []string{*marker.Relation})
-			}
-		}
-		return MemberRemove("project", marker.ObjectUID, *marker.Username, *marker.Relation)
-	}
 	members, err := b.listAllMembers(ctx, marker.ObjectUID)
 	if err != nil {
 		return Message{}, err
@@ -147,11 +149,11 @@ func (b *DatabaseBuilder) buildMembership(ctx context.Context, marker domain.FGA
 		if !isActiveMembership(member, *marker.Relation) {
 			continue
 		}
-		user, err := b.users.GetByID(ctx, member.UserID)
-		if err != nil || user.LFID == nil || *user.LFID == "" {
-			return Message{}, fmt.Errorf("resolve membership user %s: %w", member.UserID, err)
+		lfid, err := b.requireLFID(ctx, member.UserID)
+		if err != nil {
+			return Message{}, fmt.Errorf("resolve membership user: %w", err)
 		}
-		if *user.LFID == *marker.Username {
+		if lfid == *marker.Username {
 			return MemberPut("mentorship_program", marker.ObjectUID, *marker.Username, []string{*marker.Relation})
 		}
 	}
@@ -174,7 +176,7 @@ func (b *DatabaseBuilder) listAllMembers(ctx context.Context, programID string) 
 }
 
 func isActiveMembership(member *models.ProgramMember, relation string) bool {
-	if member.Status == nil || *member.Status != models.ProgramMemberStatusActive {
+	if member.Status == nil || *member.Status != models.ProgramMemberStatusApproved {
 		return false
 	}
 	return (relation == "writer" && member.MemberType == models.MemberTypeProgramAdmin) || (relation == "mentor" && member.MemberType == models.MemberTypeMentor)

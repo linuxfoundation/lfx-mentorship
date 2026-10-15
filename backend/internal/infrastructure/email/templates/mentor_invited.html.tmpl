@@ -1,0 +1,7 @@
+{{- /* Copyright The Linux Foundation and each contributor to LFX. */ -}}
+{{- /* SPDX-License-Identifier: MIT */ -}}
+{{- /* Legacy: mentor-project-invite */ -}}
+{{template "header" .}}<p>You have been added as a mentor for the <strong>{{.ProgramName}}</strong> mentorship on LFX Mentorship, a free platform that enables open source projects to run mentorships and get matched with mentees.</p>
+<p>Use the button below to accept or decline the invitation.</p>
+{{with .LFID}}<p><strong>Important:</strong> please log in with the username <strong>{{.}}</strong> to respond to this invitation. Using a different account will prevent your invitation from being connected.</p>
+{{end}}{{template "button" .InviteURL}}Respond to Invitation{{template "button_end"}}{{template "footer" .}}

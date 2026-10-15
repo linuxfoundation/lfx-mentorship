@@ -5,7 +5,9 @@ package service_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -16,45 +18,408 @@ import (
 )
 
 func newProgramSvc(progRepo *stubProgRepo, termRepo *stubTermRepo, appRepo *stubAppRepo) *service.ProgramService {
-	return service.NewProgramService(progRepo, termRepo, appRepo, &stubMemberRepo{})
+	return newProgramSvcWithNotifier(progRepo, termRepo, appRepo, &stubNotifier{})
+}
+
+func newProgramSvcWithNotifier(progRepo *stubProgRepo, termRepo *stubTermRepo, appRepo *stubAppRepo, n *stubNotifier) *service.ProgramService {
+	return service.NewProgramService(progRepo, termRepo, appRepo, &stubMemberRepo{}, n)
 }
 
 func newProgramSvcWithMember(progRepo *stubProgRepo, termRepo *stubTermRepo, appRepo *stubAppRepo, memberRepo *stubMemberRepo) *service.ProgramService {
-	return service.NewProgramService(progRepo, termRepo, appRepo, memberRepo)
+	return service.NewProgramService(progRepo, termRepo, appRepo, memberRepo, &stubNotifier{})
 }
 
 // ── state machine ────────────────────────────────────────────────────────────
 
-func TestProgramService_Create_AlwaysDraft(t *testing.T) {
+func TestProgramService_Create_AlwaysPending(t *testing.T) {
 	var capturedStatus models.ProgramStatus
 	repo := &stubProgRepo{
 		create: func(_ context.Context, in models.ProgramCreateInput) (*models.Program, error) {
 			capturedStatus = in.Status
-			return &models.Program{Status: in.Status}, nil
+			return &models.Program{ID: in.ID, Status: in.Status}, nil
 		},
 	}
-	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	n := &stubNotifier{}
+	svc := newProgramSvcWithNotifier(repo, &stubTermRepo{}, &stubAppRepo{}, n)
 	projectUID := "00000000-0000-0000-0000-000000000001"
-	_, err := svc.Create(context.Background(), models.ProgramCreateInput{Name: "Test", Slug: "test", ProjectUID: &projectUID})
+	projectSlug, projectName := "test-project", "Test Project"
+	_, err := svc.Create(context.Background(), models.ProgramCreateInput{CreatorUserID: "creator-1", Name: "Test", Slug: "test", ProjectUID: &projectUID, ProjectSlug: &projectSlug, ProjectName: &projectName})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if capturedStatus != models.ProgramStatusDraft {
-		t.Errorf("status = %q; want %q", capturedStatus, models.ProgramStatusDraft)
+	if capturedStatus != models.ProgramStatusPending {
+		t.Errorf("status = %q; want %q", capturedStatus, models.ProgramStatusPending)
+	}
+	// A new program is submitted for review: its admins and the review inbox are told.
+	if n.programSubmittedCalls != 1 || n.programSubmitters[0] != "creator-1" {
+		t.Errorf("submission notifications = %d %v; want one from creator-1", n.programSubmittedCalls, n.programSubmitters)
+	}
+}
+
+func TestProgramService_Create_RepoErrorSendsNothing(t *testing.T) {
+	repo := &stubProgRepo{create: func(context.Context, models.ProgramCreateInput) (*models.Program, error) {
+		return nil, errors.New("db down")
+	}}
+	n := &stubNotifier{}
+	svc := newProgramSvcWithNotifier(repo, &stubTermRepo{}, &stubAppRepo{}, n)
+	projectUID := "00000000-0000-0000-0000-000000000001"
+	projectSlug, projectName := "test-project", "Test Project"
+	if _, err := svc.Create(context.Background(), models.ProgramCreateInput{CreatorUserID: "creator-1", Name: "Test", Slug: "test", ProjectUID: &projectUID, ProjectSlug: &projectSlug, ProjectName: &projectName}); err == nil {
+		t.Fatal("Create succeeded despite the repository error")
+	}
+	if n.programSubmittedCalls != 0 {
+		t.Errorf("submission notifications = %d; want 0", n.programSubmittedCalls)
+	}
+}
+
+func TestProgramService_Create_RequiresProjectMetadata(t *testing.T) {
+	projectUID := "00000000-0000-0000-0000-000000000001"
+	blank, name, slug := "  ", "Test Project", "test-project"
+	for label, input := range map[string]models.ProgramCreateInput{
+		"missing slug": {Name: "Test", Slug: "test", ProjectUID: &projectUID, ProjectName: &name},
+		"blank slug":   {Name: "Test", Slug: "test", ProjectUID: &projectUID, ProjectSlug: &blank, ProjectName: &name},
+		"missing name": {Name: "Test", Slug: "test", ProjectUID: &projectUID, ProjectSlug: &slug},
+	} {
+		svc := newProgramSvc(&stubProgRepo{create: func(context.Context, models.ProgramCreateInput) (*models.Program, error) {
+			t.Fatalf("%s: repository must not be called", label)
+			return nil, nil
+		}}, &stubTermRepo{}, &stubAppRepo{})
+		if _, err := svc.Create(context.Background(), input); !errors.Is(err, domain.ErrInvalidInput) {
+			t.Errorf("%s: expected invalid input, got %v", label, err)
+		}
+	}
+}
+
+func TestProgramService_CreateEnrollment_RejectsMissingTerms(t *testing.T) {
+	svc := newProgramSvc(&stubProgRepo{}, &stubTermRepo{}, &stubAppRepo{})
+	projectUID := "00000000-0000-0000-0000-000000000001"
+	_, err := svc.CreateEnrollment(context.Background(), models.ProgramEnrollmentInput{Program: models.ProgramCreateInput{ProjectUID: &projectUID, Name: "Program", Slug: "program"}, Skills: []string{"Go"}})
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("expected invalid input, got %v", err)
+	}
+}
+
+func TestProgramService_CreateEnrollment_NormalizesSkills(t *testing.T) {
+	projectUID := "00000000-0000-0000-0000-000000000001"
+	start := time.Now().Add(24 * time.Hour)
+	termEnd := start.Add(24 * time.Hour)
+	applicationStart := time.Now()
+	applicationEnd := start.Add(-time.Hour)
+	var captured models.ProgramEnrollmentInput
+	repo := &stubProgRepo{createEnrollment: func(_ context.Context, input models.ProgramEnrollmentInput) (*models.Program, error) {
+		captured = input
+		return &models.Program{ID: "p1"}, nil
+	}}
+	n := &stubNotifier{}
+	svc := newProgramSvcWithNotifier(repo, &stubTermRepo{}, &stubAppRepo{}, n)
+	projectSlug, projectName, projectLogo := " program-project ", "Program Project", " "
+	_, err := svc.CreateEnrollment(context.Background(), models.ProgramEnrollmentInput{
+		Program: models.ProgramCreateInput{CreatorUserID: "creator-1", ProjectUID: &projectUID, ProjectSlug: &projectSlug, ProjectName: &projectName, ProjectLogoURL: &projectLogo, Name: "Program", Slug: "program"},
+		Skills:  []string{" Go ", "go", "Kubernetes"},
+		Terms:   []models.ProgramTermCreateInput{{Name: "Term", StartDateTime: &start, EndDateTime: &termEnd, ApplicationStartDate: &applicationStart, ApplicationEndDate: &applicationEnd}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(captured.Skills) != 2 || captured.Skills[0] != "Go" || captured.Skills[1] != "Kubernetes" {
+		t.Fatalf("skills=%v", captured.Skills)
+	}
+	if captured.Program.ProjectSlug == nil || *captured.Program.ProjectSlug != "program-project" || captured.Program.ProjectName == nil || *captured.Program.ProjectName != "Program Project" || captured.Program.ProjectLogoURL != nil {
+		t.Fatalf("project metadata=%v %v %v", captured.Program.ProjectSlug, captured.Program.ProjectName, captured.Program.ProjectLogoURL)
+	}
+	if n.programSubmittedCalls != 1 || n.programSubmitters[0] != "creator-1" {
+		t.Fatalf("submission notifications = %d %v; want one from creator-1", n.programSubmittedCalls, n.programSubmitters)
+	}
+}
+
+func TestProgramService_CreateEnrollment_RejectsNonISOPrerequisiteDueDate(t *testing.T) {
+	projectUID := "00000000-0000-0000-0000-000000000001"
+	start := time.Now().Add(24 * time.Hour)
+	termEnd := start.Add(24 * time.Hour)
+	applicationStart := time.Now()
+	applicationEnd := start.Add(-time.Hour)
+	svc := newProgramSvc(&stubProgRepo{createEnrollment: func(context.Context, models.ProgramEnrollmentInput) (*models.Program, error) {
+		t.Fatal("repository must not be called")
+		return nil, nil
+	}}, &stubTermRepo{}, &stubAppRepo{})
+	_, err := svc.CreateEnrollment(context.Background(), models.ProgramEnrollmentInput{
+		Program:       models.ProgramCreateInput{ProjectUID: &projectUID, Name: "Program", Slug: "program"},
+		Skills:        []string{"Go"},
+		Terms:         []models.ProgramTermCreateInput{{Name: "Term", StartDateTime: &start, EndDateTime: &termEnd, ApplicationStartDate: &applicationStart, ApplicationEndDate: &applicationEnd}},
+		Prerequisites: json.RawMessage(`[{"name":"PR","description":"Open a PR","required":true,"dueDate":"tomorrow"}]`),
+	})
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("expected invalid due date input, got %v", err)
+	}
+}
+
+func TestProgramService_CreateEnrollment_RejectsUnsafeURL(t *testing.T) {
+	projectUID := "00000000-0000-0000-0000-000000000001"
+	unsafe := "javascript:alert(1)"
+	svc := newProgramSvc(&stubProgRepo{}, &stubTermRepo{}, &stubAppRepo{})
+	_, err := svc.CreateEnrollment(context.Background(), models.ProgramEnrollmentInput{Program: models.ProgramCreateInput{ProjectUID: &projectUID, Name: "Program", Slug: "program", WebsiteURL: &unsafe}, Skills: []string{"Go"}, Terms: []models.ProgramTermCreateInput{{Name: "Term"}}})
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("expected invalid URL input, got %v", err)
+	}
+}
+
+// ── project metadata from Project Service ────────────────────────────────────
+
+type stubProjectLookup struct {
+	project *models.ProjectMetadata
+	err     error
+	gotUID  string
+}
+
+func (s *stubProjectLookup) GetProject(_ context.Context, uid string) (*models.ProjectMetadata, error) {
+	s.gotUID = uid
+	return s.project, s.err
+}
+
+// enrollmentWithProjectMetadata is a valid enrollment whose project slug and
+// name belong to a different project than projectUID, and whose logo is unsafe,
+// so a test passes only if Project Service's values replace all three.
+func enrollmentWithProjectMetadata(projectUID string) models.ProgramEnrollmentInput {
+	start := time.Now().Add(24 * time.Hour)
+	termEnd := start.Add(24 * time.Hour)
+	applicationStart := time.Now()
+	applicationEnd := start.Add(-time.Hour)
+	slug, name, logo := "other-project", "Other Project", "javascript:alert(1)"
+	return models.ProgramEnrollmentInput{
+		Program: models.ProgramCreateInput{ProjectUID: &projectUID, ProjectSlug: &slug, ProjectName: &name, ProjectLogoURL: &logo, Name: "Program", Slug: "program"},
+		Skills:  []string{"Go"},
+		Terms:   []models.ProgramTermCreateInput{{Name: "Term", StartDateTime: &start, EndDateTime: &termEnd, ApplicationStartDate: &applicationStart, ApplicationEndDate: &applicationEnd}},
+	}
+}
+
+func TestProgramService_CreateEnrollment_StoresProjectServiceMetadata(t *testing.T) {
+	var captured models.ProgramEnrollmentInput
+	repo := &stubProgRepo{createEnrollment: func(_ context.Context, input models.ProgramEnrollmentInput) (*models.Program, error) {
+		captured = input
+		return &models.Program{ID: "p1"}, nil
+	}}
+	lookup := &stubProjectLookup{project: &models.ProjectMetadata{Slug: "cncf", Name: "Cloud Native Computing Foundation"}}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	svc.SetProjectLookup(lookup)
+
+	if _, err := svc.CreateEnrollment(context.Background(), enrollmentWithProjectMetadata("7CAD5A8D-19D0-41A4-81A6-043453DAF9EE")); err != nil {
+		t.Fatal(err)
+	}
+	if lookup.gotUID != "7cad5a8d-19d0-41a4-81a6-043453daf9ee" {
+		t.Errorf("lookup uid = %q; want the canonical UUID", lookup.gotUID)
+	}
+	program := captured.Program
+	if program.ProjectSlug == nil || *program.ProjectSlug != "cncf" || program.ProjectName == nil || *program.ProjectName != "Cloud Native Computing Foundation" || program.ProjectLogoURL != nil {
+		t.Fatalf("project metadata = %v %v %v; want Project Service's, with no logo", program.ProjectSlug, program.ProjectName, program.ProjectLogoURL)
+	}
+}
+
+func TestProgramService_CreateEnrollment_ProjectLookupErrors(t *testing.T) {
+	for label, tc := range map[string]struct {
+		err  error
+		want error
+	}{
+		"unknown project":     {err: domain.ErrProjectNotFound, want: domain.ErrInvalidInput},
+		"service unavailable": {err: domain.ErrUpstreamUnavailable, want: domain.ErrUpstreamUnavailable},
+	} {
+		t.Run(label, func(t *testing.T) {
+			svc := newProgramSvc(&stubProgRepo{createEnrollment: func(context.Context, models.ProgramEnrollmentInput) (*models.Program, error) {
+				t.Fatal("repository must not be called")
+				return nil, nil
+			}}, &stubTermRepo{}, &stubAppRepo{})
+			svc.SetProjectLookup(&stubProjectLookup{err: tc.err})
+
+			_, err := svc.CreateEnrollment(context.Background(), enrollmentWithProjectMetadata("00000000-0000-0000-0000-000000000001"))
+			if !errors.Is(err, tc.want) || errors.Is(err, domain.ErrProjectNotFound) {
+				t.Fatalf("err = %v; want %v", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestProgramService_Create_StoresProjectServiceMetadata(t *testing.T) {
+	var captured models.ProgramCreateInput
+	repo := &stubProgRepo{create: func(_ context.Context, in models.ProgramCreateInput) (*models.Program, error) {
+		captured = in
+		return &models.Program{}, nil
+	}}
+	logo := "https://example.org/cncf.png"
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	svc.SetProjectLookup(&stubProjectLookup{project: &models.ProjectMetadata{Slug: "cncf", Name: "CNCF", LogoURL: &logo}})
+
+	if _, err := svc.Create(context.Background(), enrollmentWithProjectMetadata("00000000-0000-0000-0000-000000000001").Program); err != nil {
+		t.Fatal(err)
+	}
+	if *captured.ProjectSlug != "cncf" || *captured.ProjectName != "CNCF" || captured.ProjectLogoURL == nil || *captured.ProjectLogoURL != logo {
+		t.Fatalf("project metadata = %v %v %v; want Project Service's", *captured.ProjectSlug, *captured.ProjectName, captured.ProjectLogoURL)
 	}
 }
 
 func TestProgramService_Update_InvalidTransition(t *testing.T) {
 	repo := &stubProgRepo{
 		getByID: func(_ context.Context, id string) (*models.Program, error) {
-			return &models.Program{ID: id, Status: models.ProgramStatusDraft}, nil
+			return &models.Program{ID: id, Status: models.ProgramStatusPending}, nil
 		},
 	}
 	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
 	next := models.ProgramStatusArchived
 	_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Status: &next})
 	if !errors.Is(err, domain.ErrInvalidStateTransition) {
-		t.Errorf("expected ErrInvalidStateTransition for draft→archived, got %v", err)
+		t.Errorf("expected ErrInvalidStateTransition for pending→archived, got %v", err)
+	}
+}
+
+func TestProgramService_Decide(t *testing.T) {
+	for _, tc := range []struct {
+		current, next models.ProgramStatus
+		want          error
+	}{
+		{models.ProgramStatusPending, models.ProgramStatusPublished, nil},
+		{models.ProgramStatusPending, models.ProgramStatusRejected, nil},
+		{models.ProgramStatusHidden, models.ProgramStatusPublished, domain.ErrInvalidStateTransition},
+		{models.ProgramStatusRejected, models.ProgramStatusPublished, domain.ErrInvalidStateTransition},
+		{models.ProgramStatusPending, models.ProgramStatusHidden, domain.ErrInvalidInput},
+	} {
+		repo := &stubProgRepo{
+			getByID: func(_ context.Context, _ string) (*models.Program, error) {
+				prog := fullProgram()
+				prog.Status = tc.current
+				return prog, nil
+			},
+			listSkills: func(context.Context, string) ([]*models.ProgramSkill, error) {
+				return []*models.ProgramSkill{{ID: "s1"}}, nil
+			},
+		}
+		termRepo := &stubTermRepo{countOpenByProgram: func(context.Context, string) (int, error) { return 1, nil }}
+		n := &stubNotifier{}
+		svc := newProgramSvcWithNotifier(repo, termRepo, &stubAppRepo{}, n)
+		_, err := svc.Decide(context.Background(), "prog-1", tc.next)
+		if tc.want == nil && err != nil || tc.want != nil && !errors.Is(err, tc.want) {
+			t.Errorf("%s→%s: got %v; want %v", tc.current, tc.next, err, tc.want)
+		}
+		var wantDecisions []models.ProgramStatus
+		if tc.want == nil {
+			wantDecisions = []models.ProgramStatus{tc.next}
+		}
+		if !reflect.DeepEqual(n.programDecisions, wantDecisions) {
+			t.Errorf("%s→%s: decision notifications = %v; want %v", tc.current, tc.next, n.programDecisions, wantDecisions)
+		}
+	}
+}
+
+// Decide publishes only a complete program, but rejects any pending one.
+func TestProgramService_Decide_IncompleteProgram(t *testing.T) {
+	for _, tc := range []struct {
+		next models.ProgramStatus
+		want error
+	}{
+		{models.ProgramStatusPublished, domain.ErrStateLocked},
+		{models.ProgramStatusRejected, nil},
+	} {
+		repo := &stubProgRepo{
+			getByID: func(_ context.Context, _ string) (*models.Program, error) {
+				prog := fullProgram()
+				prog.LogoURL = nil
+				return prog, nil
+			},
+		}
+		n := &stubNotifier{}
+		svc := newProgramSvcWithNotifier(repo, &stubTermRepo{}, &stubAppRepo{}, n)
+		_, err := svc.Decide(context.Background(), "prog-1", tc.next)
+		if tc.want == nil && err != nil || tc.want != nil && !errors.Is(err, tc.want) {
+			t.Errorf("incomplete program → %s: got %v; want %v", tc.next, err, tc.want)
+		}
+		var wantDecisions []models.ProgramStatus
+		if tc.want == nil {
+			wantDecisions = []models.ProgramStatus{tc.next}
+		}
+		if !reflect.DeepEqual(n.programDecisions, wantDecisions) {
+			t.Errorf("incomplete program → %s: decision notifications = %v; want %v", tc.next, n.programDecisions, wantDecisions)
+		}
+	}
+}
+
+func TestProgramService_HideUnhide(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		unhide   bool
+		current  models.ProgramStatus
+		blocking int
+		want     error
+		stored   models.ProgramStatus
+	}{
+		{name: "hide published", current: models.ProgramStatusPublished, stored: models.ProgramStatusHidden},
+		{name: "hide blocked by active applications", current: models.ProgramStatusPublished, blocking: 2, want: domain.ErrStateLocked},
+		{name: "hide hidden", current: models.ProgramStatusHidden, want: domain.ErrInvalidStateTransition},
+		{name: "hide pending", current: models.ProgramStatusPending, want: domain.ErrInvalidStateTransition},
+		{name: "hide archived", current: models.ProgramStatusArchived, want: domain.ErrInvalidStateTransition},
+		{name: "unhide hidden", unhide: true, current: models.ProgramStatusHidden, stored: models.ProgramStatusPublished},
+		{name: "unhide archived", unhide: true, current: models.ProgramStatusArchived, want: domain.ErrInvalidStateTransition},
+		// programTransitions allows pending → published; only Decide may apply it.
+		{name: "unhide pending", unhide: true, current: models.ProgramStatusPending, want: domain.ErrInvalidStateTransition},
+		{name: "unhide published", unhide: true, current: models.ProgramStatusPublished, want: domain.ErrInvalidStateTransition},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stored, expected *models.ProgramStatus
+			reads := 0
+			repo := &stubProgRepo{
+				getByID: func(_ context.Context, id string) (*models.Program, error) {
+					reads++
+					return &models.Program{ID: id, Status: tc.current}, nil
+				},
+				update: func(_ context.Context, id string, in models.ProgramUpdateInput) (*models.Program, error) {
+					stored, expected = in.Status, in.ExpectedStatus
+					return &models.Program{ID: id, Status: *in.Status}, nil
+				},
+			}
+			appRepo := &stubAppRepo{countBlocking: func(context.Context, string) (int, error) { return tc.blocking, nil }}
+			n := &stubNotifier{}
+			svc := newProgramSvcWithNotifier(repo, &stubTermRepo{}, appRepo, n)
+			change := svc.Hide
+			if tc.unhide {
+				change = svc.Unhide
+			}
+			program, err := change(context.Background(), "prog-1")
+			// Unhiding republishes the program but is not an approval decision.
+			if n.programDecisions != nil || n.programSubmittedCalls != 0 {
+				t.Fatalf("notified %v / %d submissions; want nothing", n.programDecisions, n.programSubmittedCalls)
+			}
+			if reads != 1 {
+				t.Fatalf("program read %d times; want once", reads)
+			}
+			if tc.want != nil {
+				if !errors.Is(err, tc.want) {
+					t.Fatalf("got %v; want %v", err, tc.want)
+				}
+				if stored != nil {
+					t.Fatalf("status %q was stored despite the error", *stored)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if stored == nil || *stored != tc.stored || program.Status != tc.stored {
+				t.Fatalf("stored %v, returned %q; want %q", stored, program.Status, tc.stored)
+			}
+			// The repository must apply the change only while the row is still in the status that was validated.
+			if expected == nil || *expected != tc.current {
+				t.Fatalf("ExpectedStatus = %v; want %q", expected, tc.current)
+			}
+		})
+	}
+}
+
+func TestProgramService_HideUnhide_NotFound(t *testing.T) {
+	repo := &stubProgRepo{getByID: func(context.Context, string) (*models.Program, error) {
+		return nil, domain.ErrProgramNotFound
+	}}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	if _, err := svc.Hide(context.Background(), "missing"); !errors.Is(err, domain.ErrProgramNotFound) {
+		t.Errorf("Hide: got %v; want ErrProgramNotFound", err)
+	}
+	if _, err := svc.Unhide(context.Background(), "missing"); !errors.Is(err, domain.ErrProgramNotFound) {
+		t.Errorf("Unhide: got %v; want ErrProgramNotFound", err)
 	}
 }
 
@@ -65,14 +430,14 @@ func TestProgramService_Update_ArchivedTerminal(t *testing.T) {
 		},
 	}
 	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
-	next := models.ProgramStatusDraft
+	next := models.ProgramStatusPending
 	_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Status: &next})
 	if !errors.Is(err, domain.ErrInvalidStateTransition) {
 		t.Errorf("expected ErrInvalidStateTransition from archived, got %v", err)
 	}
 }
 
-// ── submission guard ──────────────────────────────────────────────────────────
+// ── publication guard ──────────────────────────────────────────────────────────
 
 func fullProgram() *models.Program {
 	lfid := "lf-123"
@@ -82,7 +447,7 @@ func fullProgram() *models.Program {
 	logo := "https://example.com/logo.png"
 	return &models.Program{
 		ID:          "prog-1",
-		Status:      models.ProgramStatusDraft,
+		Status:      models.ProgramStatusPending,
 		ProjectUID:  &projectUID,
 		LFID:        &lfid,
 		Description: &desc,
@@ -91,45 +456,45 @@ func fullProgram() *models.Program {
 	}
 }
 
-func TestProgramService_Update_Submit_NoLFID(t *testing.T) {
+func TestProgramService_Update_Publish_NoLFID(t *testing.T) {
 	prog := fullProgram()
 	prog.LFID = nil
 	repo := &stubProgRepo{getByID: func(_ context.Context, _ string) (*models.Program, error) { return prog, nil }, listSkills: func(context.Context, string) ([]*models.ProgramSkill, error) {
 		return []*models.ProgramSkill{{ID: "s1"}}, nil
 	}}
 	svc := newProgramSvc(repo, &stubTermRepo{countOpenByProgram: func(context.Context, string) (int, error) { return 1, nil }}, &stubAppRepo{})
-	next := models.ProgramStatusSubmitted
+	next := models.ProgramStatusPublished
 	_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Status: &next})
 	if err != nil {
-		t.Errorf("expected submission to ignore legacy LFID, got %v", err)
+		t.Errorf("expected publication to ignore legacy LFID, got %v", err)
 	}
 }
 
-func TestProgramService_Update_Submit_NoProjectUID(t *testing.T) {
+func TestProgramService_Update_Publish_NoProjectUID(t *testing.T) {
 	prog := fullProgram()
 	prog.ProjectUID = nil
 	repo := &stubProgRepo{getByID: func(_ context.Context, _ string) (*models.Program, error) { return prog, nil }}
 	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
-	next := models.ProgramStatusSubmitted
+	next := models.ProgramStatusPublished
 	_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Status: &next})
 	if !errors.Is(err, domain.ErrStateLocked) {
 		t.Errorf("expected ErrStateLocked for missing project_uid, got %v", err)
 	}
 }
 
-func TestProgramService_Update_Submit_NoDescription(t *testing.T) {
+func TestProgramService_Update_Publish_NoDescription(t *testing.T) {
 	prog := fullProgram()
 	prog.Description = nil
 	repo := &stubProgRepo{getByID: func(_ context.Context, _ string) (*models.Program, error) { return prog, nil }}
 	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
-	next := models.ProgramStatusSubmitted
+	next := models.ProgramStatusPublished
 	_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Status: &next})
 	if !errors.Is(err, domain.ErrStateLocked) {
 		t.Errorf("expected ErrStateLocked for missing description, got %v", err)
 	}
 }
 
-func TestProgramService_Update_Submit_NoSkills(t *testing.T) {
+func TestProgramService_Update_Publish_NoSkills(t *testing.T) {
 	prog := fullProgram()
 	repo := &stubProgRepo{
 		getByID:    func(_ context.Context, _ string) (*models.Program, error) { return prog, nil },
@@ -137,14 +502,14 @@ func TestProgramService_Update_Submit_NoSkills(t *testing.T) {
 	}
 	termRepo := &stubTermRepo{countOpenByProgram: func(_ context.Context, _ string) (int, error) { return 1, nil }}
 	svc := newProgramSvc(repo, termRepo, &stubAppRepo{})
-	next := models.ProgramStatusSubmitted
+	next := models.ProgramStatusPublished
 	_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Status: &next})
 	if !errors.Is(err, domain.ErrStateLocked) {
 		t.Errorf("expected ErrStateLocked for no skills, got %v", err)
 	}
 }
 
-func TestProgramService_Update_Submit_NoOpenTerms(t *testing.T) {
+func TestProgramService_Update_Publish_NoOpenTerms(t *testing.T) {
 	prog := fullProgram()
 	repo := &stubProgRepo{
 		getByID: func(_ context.Context, _ string) (*models.Program, error) { return prog, nil },
@@ -154,14 +519,14 @@ func TestProgramService_Update_Submit_NoOpenTerms(t *testing.T) {
 	}
 	termRepo := &stubTermRepo{countOpenByProgram: func(_ context.Context, _ string) (int, error) { return 0, nil }}
 	svc := newProgramSvc(repo, termRepo, &stubAppRepo{})
-	next := models.ProgramStatusSubmitted
+	next := models.ProgramStatusPublished
 	_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Status: &next})
 	if !errors.Is(err, domain.ErrStateLocked) {
 		t.Errorf("expected ErrStateLocked for no open terms, got %v", err)
 	}
 }
 
-func TestProgramService_Update_Submit_AllPresent_OK(t *testing.T) {
+func TestProgramService_Update_Publish_AllPresent_OK(t *testing.T) {
 	prog := fullProgram()
 	repo := &stubProgRepo{
 		getByID: func(_ context.Context, _ string) (*models.Program, error) { return prog, nil },
@@ -170,11 +535,16 @@ func TestProgramService_Update_Submit_AllPresent_OK(t *testing.T) {
 		},
 	}
 	termRepo := &stubTermRepo{countOpenByProgram: func(_ context.Context, _ string) (int, error) { return 1, nil }}
-	svc := newProgramSvc(repo, termRepo, &stubAppRepo{})
-	next := models.ProgramStatusSubmitted
+	n := &stubNotifier{}
+	svc := newProgramSvcWithNotifier(repo, termRepo, &stubAppRepo{}, n)
+	next := models.ProgramStatusPublished
 	_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Status: &next})
 	if err != nil {
-		t.Errorf("submit with all required fields should succeed, got %v", err)
+		t.Errorf("publish with all required fields should succeed, got %v", err)
+	}
+	// Only Decide sends the approval email; a status change through Update sends nothing.
+	if n.programSubmittedCalls != 0 || n.programDecisions != nil {
+		t.Errorf("notified %d submissions / %v decisions; want nothing", n.programSubmittedCalls, n.programDecisions)
 	}
 }
 
@@ -263,6 +633,7 @@ func TestProgramService_ListCatalog_PassesSkillFilter(t *testing.T) {
 	}
 	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
 	if _, _, err := svc.ListCatalog(context.Background(), models.ProgramFilter{
+		Status:          string(models.ProgramStatusPending),
 		Skill:           "  Go  ",
 		DiscoveryStatus: "acceptance",
 		SortBy:          "name_desc",
@@ -296,13 +667,27 @@ func TestProgramService_GetCatalog_NotFound(t *testing.T) {
 	}
 }
 
+func TestProgramService_GetCatalog_PendingReturnsOK(t *testing.T) {
+	repo := &stubProgRepo{
+		getCatalog: func(_ context.Context, id string) (*models.ProgramCatalogItem, error) {
+			return &models.ProgramCatalogItem{Program: models.Program{ID: id, Status: models.ProgramStatusPending}}, nil
+		},
+	}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	item, err := svc.GetCatalog(context.Background(), "p1")
+	if err != nil {
+		t.Fatalf("expected nil error for pending, got %v", err)
+	}
+	if item.ID != "p1" {
+		t.Errorf("id = %q; want p1", item.ID)
+	}
+}
+
 func TestProgramService_GetCatalog_Unpublished(t *testing.T) {
 	for _, status := range []models.ProgramStatus{
-		models.ProgramStatusDraft,
 		models.ProgramStatusRejected,
 		models.ProgramStatusHidden,
 		models.ProgramStatusArchived,
-		models.ProgramStatusSubmitted,
 	} {
 		t.Run(string(status), func(t *testing.T) {
 			repo := &stubProgRepo{
@@ -343,6 +728,326 @@ func TestProgramService_Update_InvalidProgramTermStatus_Rejected(t *testing.T) {
 	_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{ProgramTermStatus: &bad})
 	if !errors.Is(err, domain.ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for unknown program_term_status, got %v", err)
+	}
+}
+
+func TestProgramService_Update_NormalizesSkills(t *testing.T) {
+	var captured models.ProgramUpdateInput
+	repo := &stubProgRepo{update: func(_ context.Context, _ string, input models.ProgramUpdateInput) (*models.Program, error) {
+		captured = input
+		return &models.Program{ID: "prog-1"}, nil
+	}}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	if _, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Skills: []string{" Go ", "go", "", "Kubernetes"}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(captured.Skills) != 2 || captured.Skills[0] != "Go" || captured.Skills[1] != "Kubernetes" {
+		t.Fatalf("skills=%v", captured.Skills)
+	}
+}
+
+func TestProgramService_Update_RejectsEmptySkills(t *testing.T) {
+	repo := &stubProgRepo{update: func(context.Context, string, models.ProgramUpdateInput) (*models.Program, error) {
+		t.Fatal("repository must not be called for an empty skill set")
+		return nil, nil
+	}}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Skills: []string{" ", ""}})
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput, got %v", err)
+	}
+}
+
+func TestProgramService_Update_OmittedSkillsLeftUnchanged(t *testing.T) {
+	var captured models.ProgramUpdateInput
+	repo := &stubProgRepo{update: func(_ context.Context, _ string, input models.ProgramUpdateInput) (*models.Program, error) {
+		captured = input
+		return &models.Program{ID: "prog-1"}, nil
+	}}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	name := "Renamed"
+	if _, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Name: &name}); err != nil {
+		t.Fatal(err)
+	}
+	if captured.Skills != nil {
+		t.Fatalf("skills=%v; want nil", captured.Skills)
+	}
+}
+
+func TestProgramService_Update_NormalizesTaskTemplates(t *testing.T) {
+	var captured models.ProgramUpdateInput
+	repo := &stubProgRepo{
+		getByID: func(context.Context, string) (*models.Program, error) {
+			return &models.Program{ID: "prog-1", TaskTemplates: json.RawMessage(`[{"name":"Resume","custom":false},{"name":"Essay","custom":true}]`)}, nil
+		},
+		update: func(_ context.Context, _ string, input models.ProgramUpdateInput) (*models.Program, error) {
+			captured = input
+			return &models.Program{ID: "prog-1"}, nil
+		},
+	}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	templates := json.RawMessage(`[
+		{"name":" resume ","description":" Upload it ","submitFile":"required","dueDate":"2026-05-01"},
+		{"name":"Essay","description":"","submitFile":"","dueDate":""},
+		{"name":"New task","description":"Do it","submitFile":null,"dueDate":null,"custom":true}
+	]`)
+	if _, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{TaskTemplates: templates}); err != nil {
+		t.Fatal(err)
+	}
+	type template struct {
+		Name        string  `json:"name"`
+		Description *string `json:"description"`
+		SubmitFile  *string `json:"submitFile"`
+		DueDate     *string `json:"dueDate"`
+		Custom      bool    `json:"custom"`
+	}
+	var got []template
+	if err := json.Unmarshal(captured.TaskTemplates, &got); err != nil {
+		t.Fatal(err)
+	}
+	description, required, dueDate, doIt := "Upload it", "required", "2026-05-01", "Do it"
+	want := []template{
+		{Name: "resume", Description: &description, SubmitFile: &required, DueDate: &dueDate, Custom: false},
+		{Name: "Essay", Custom: true},
+		{Name: "New task", Description: &doIt, Custom: true},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("task templates = %s; want blank values cleared and custom kept by name", captured.TaskTemplates)
+	}
+}
+
+func TestProgramService_Update_KeepsLegacyStringCustom(t *testing.T) {
+	var captured models.ProgramUpdateInput
+	repo := &stubProgRepo{
+		getByID: func(context.Context, string) (*models.Program, error) {
+			// Imported before the migration normalized templates, so custom is a string.
+			return &models.Program{ID: "prog-1", TaskTemplates: json.RawMessage(`[{"name":"Essay","custom":"true"},{"name":"Resume","custom":"false"}]`)}, nil
+		},
+		update: func(_ context.Context, _ string, input models.ProgramUpdateInput) (*models.Program, error) {
+			captured = input
+			return &models.Program{ID: "prog-1"}, nil
+		},
+	}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	if _, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{TaskTemplates: json.RawMessage(`[{"name":"Essay"},{"name":"Resume"}]`)}); err != nil {
+		t.Fatal(err)
+	}
+	want := `[{"name":"Essay","description":null,"submitFile":null,"dueDate":null,"custom":true},{"name":"Resume","description":null,"submitFile":null,"dueDate":null,"custom":false}]`
+	if string(captured.TaskTemplates) != want {
+		t.Fatalf("task templates = %s; want %s", captured.TaskTemplates, want)
+	}
+}
+
+func TestProgramService_Update_EmptyTaskTemplatesClear(t *testing.T) {
+	var captured models.ProgramUpdateInput
+	repo := &stubProgRepo{
+		getByID: func(context.Context, string) (*models.Program, error) {
+			return &models.Program{ID: "prog-1", TaskTemplates: json.RawMessage(`[{"name":"Resume"}]`)}, nil
+		},
+		update: func(_ context.Context, _ string, input models.ProgramUpdateInput) (*models.Program, error) {
+			captured = input
+			return &models.Program{ID: "prog-1"}, nil
+		},
+	}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	if _, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{TaskTemplates: json.RawMessage(`[]`)}); err != nil {
+		t.Fatal(err)
+	}
+	if string(captured.TaskTemplates) != "[]" {
+		t.Fatalf("task templates = %s; want []", captured.TaskTemplates)
+	}
+}
+
+func TestProgramService_Update_RejectsInvalidTaskTemplates(t *testing.T) {
+	cases := map[string]string{
+		"not an array":   `{"name":"Resume"}`,
+		"null":           `null`,
+		"blank name":     `[{"name":" "}]`,
+		"unknown submit": `[{"name":"Resume","submitFile":"yes"}]`,
+		"bad due date":   `[{"name":"Resume","dueDate":"05/01/2026"}]`,
+	}
+	for name, templates := range cases {
+		t.Run(name, func(t *testing.T) {
+			repo := &stubProgRepo{
+				getByID: func(context.Context, string) (*models.Program, error) { return &models.Program{ID: "prog-1"}, nil },
+				update: func(context.Context, string, models.ProgramUpdateInput) (*models.Program, error) {
+					t.Fatal("repository must not be called for invalid task templates")
+					return nil, nil
+				},
+			}
+			svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+			_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{TaskTemplates: json.RawMessage(templates)})
+			if !errors.Is(err, domain.ErrInvalidInput) {
+				t.Fatalf("expected ErrInvalidInput, got %v", err)
+			}
+		})
+	}
+}
+
+// openTermEntry returns an open-term entry with a valid application window and term dates.
+func openTermEntry(id, name string) models.ProgramOpenTermInput {
+	appStart := time.Now().Add(24 * time.Hour)
+	appEnd, start, end := appStart.Add(24*time.Hour), appStart.Add(48*time.Hour), appStart.Add(30*24*time.Hour)
+	return models.ProgramOpenTermInput{ID: id, Name: name, ApplicationStartDate: &appStart, ApplicationEndDate: &appEnd, StartDateTime: &start, EndDateTime: &end}
+}
+
+func TestProgramService_Update_PassesOpenTerms(t *testing.T) {
+	var captured models.ProgramUpdateInput
+	repo := &stubProgRepo{update: func(_ context.Context, _ string, input models.ProgramUpdateInput) (*models.Program, error) {
+		captured = input
+		return &models.Program{ID: "prog-1"}, nil
+	}}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	input := models.ProgramUpdateInput{Terms: []models.ProgramOpenTermInput{
+		openTermEntry("7CAD5A8D-19D0-41A4-81A6-043453DAF9EE", " Fall 2026 "),
+		openTermEntry("", "Spring 2027"),
+	}}
+	if _, err := svc.Update(context.Background(), "prog-1", input); err != nil {
+		t.Fatal(err)
+	}
+	if len(captured.Terms) != 2 || captured.Terms[0].ID != "7cad5a8d-19d0-41a4-81a6-043453daf9ee" || captured.Terms[0].Name != "Fall 2026" || captured.Terms[1].ID != "" {
+		t.Fatalf("terms=%+v", captured.Terms)
+	}
+}
+
+func TestProgramService_Update_RejectsInvalidOpenTerms(t *testing.T) {
+	const id = "7cad5a8d-19d0-41a4-81a6-043453daf9ee"
+	badDates := openTermEntry("", "Bad")
+	badDates.EndDateTime = badDates.StartDateTime
+	missingDates := models.ProgramOpenTermInput{Name: "No dates"}
+
+	tests := []struct {
+		name  string
+		terms []models.ProgramOpenTermInput
+	}{
+		{"empty set", []models.ProgramOpenTermInput{}},
+		{"over the open-term cap", []models.ProgramOpenTermInput{openTermEntry("", "A"), openTermEntry("", "B"), openTermEntry("", "C"), openTermEntry("", "D"), openTermEntry("", "E")}},
+		{"blank name", []models.ProgramOpenTermInput{openTermEntry("", "  ")}},
+		{"invalid dates", []models.ProgramOpenTermInput{badDates}},
+		{"missing dates", []models.ProgramOpenTermInput{missingDates}},
+		{"malformed id", []models.ProgramOpenTermInput{openTermEntry("term-1", "Fall")}},
+		{"duplicate id", []models.ProgramOpenTermInput{openTermEntry(id, "Fall"), openTermEntry(id, "Fall again")}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &stubProgRepo{update: func(context.Context, string, models.ProgramUpdateInput) (*models.Program, error) {
+				t.Fatal("repository must not be called for an invalid open-term set")
+				return nil, nil
+			}}
+			svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+			_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Terms: tt.terms})
+			if !errors.Is(err, domain.ErrInvalidInput) {
+				t.Fatalf("expected ErrInvalidInput, got %v", err)
+			}
+		})
+	}
+}
+
+func TestProgramService_Update_OmittedTermsLeftUnchanged(t *testing.T) {
+	var captured models.ProgramUpdateInput
+	repo := &stubProgRepo{update: func(_ context.Context, _ string, input models.ProgramUpdateInput) (*models.Program, error) {
+		captured = input
+		return &models.Program{ID: "prog-1"}, nil
+	}}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	name := "Renamed"
+	if _, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Name: &name}); err != nil {
+		t.Fatal(err)
+	}
+	if captured.Terms != nil {
+		t.Fatalf("terms=%v; want nil", captured.Terms)
+	}
+}
+
+func TestProgramService_Update_ChangesProject(t *testing.T) {
+	var captured models.ProgramUpdateInput
+	repo := &stubProgRepo{update: func(_ context.Context, _ string, input models.ProgramUpdateInput) (*models.Program, error) {
+		captured = input
+		return &models.Program{ID: "prog-1"}, nil
+	}}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	uid, slug, name, logo := " 7CAD5A8D-19D0-41A4-81A6-043453DAF9EE ", " new-project ", " New Project ", " "
+	_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{ProjectUID: &uid, ProjectSlug: &slug, ProjectName: &name, ProjectLogoURL: &logo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if captured.ProjectUID == nil || *captured.ProjectUID != "7cad5a8d-19d0-41a4-81a6-043453daf9ee" {
+		t.Fatalf("project_uid = %v; want canonical UUID", captured.ProjectUID)
+	}
+	if captured.ProjectSlug == nil || *captured.ProjectSlug != "new-project" || captured.ProjectName == nil || *captured.ProjectName != "New Project" {
+		t.Fatalf("project slug/name = %v %v", captured.ProjectSlug, captured.ProjectName)
+	}
+	if captured.ProjectLogoURL != nil {
+		t.Fatalf("project_logo_url = %q; want nil for a blank logo", *captured.ProjectLogoURL)
+	}
+}
+
+func TestProgramService_Update_RejectsInvalidProject(t *testing.T) {
+	uid, slug, name, badLogo, notUUID := "7cad5a8d-19d0-41a4-81a6-043453daf9ee", "new-project", "New Project", "ftp://example.com/logo.svg", "not-a-uuid"
+	cases := map[string]models.ProgramUpdateInput{
+		"missing uid":  {ProjectSlug: &slug, ProjectName: &name},
+		"invalid uid":  {ProjectUID: &notUUID, ProjectSlug: &slug, ProjectName: &name},
+		"missing slug": {ProjectUID: &uid, ProjectName: &name},
+		"missing name": {ProjectUID: &uid, ProjectSlug: &slug},
+		"bad logo":     {ProjectUID: &uid, ProjectSlug: &slug, ProjectName: &name, ProjectLogoURL: &badLogo},
+	}
+	for label, input := range cases {
+		t.Run(label, func(t *testing.T) {
+			repo := &stubProgRepo{update: func(context.Context, string, models.ProgramUpdateInput) (*models.Program, error) {
+				t.Fatal("repository must not be called for an invalid project")
+				return nil, nil
+			}}
+			svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+			if _, err := svc.Update(context.Background(), "prog-1", input); !errors.Is(err, domain.ErrInvalidInput) {
+				t.Fatalf("expected ErrInvalidInput, got %v", err)
+			}
+		})
+	}
+}
+
+func TestProgramService_Update_ChangesProjectFromProjectService(t *testing.T) {
+	var captured models.ProgramUpdateInput
+	repo := &stubProgRepo{update: func(_ context.Context, _ string, input models.ProgramUpdateInput) (*models.Program, error) {
+		captured = input
+		return &models.Program{ID: "prog-1"}, nil
+	}}
+	lookup := &stubProjectLookup{project: &models.ProjectMetadata{Slug: "cncf", Name: "CNCF"}}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	svc.SetProjectLookup(lookup)
+	uid, slug, name, logo := "7CAD5A8D-19D0-41A4-81A6-043453DAF9EE", "other-project", "Other Project", "javascript:alert(1)"
+
+	if _, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{ProjectUID: &uid, ProjectSlug: &slug, ProjectName: &name, ProjectLogoURL: &logo}); err != nil {
+		t.Fatal(err)
+	}
+	if lookup.gotUID != "7cad5a8d-19d0-41a4-81a6-043453daf9ee" {
+		t.Errorf("lookup uid = %q; want the canonical UUID", lookup.gotUID)
+	}
+	if captured.ProjectSlug == nil || *captured.ProjectSlug != "cncf" || captured.ProjectName == nil || *captured.ProjectName != "CNCF" || captured.ProjectLogoURL != nil {
+		t.Fatalf("project metadata = %v %v %v; want Project Service's, with no logo", captured.ProjectSlug, captured.ProjectName, captured.ProjectLogoURL)
+	}
+}
+
+func TestProgramService_Update_ProjectLookupErrors(t *testing.T) {
+	for label, tc := range map[string]struct {
+		err  error
+		want error
+	}{
+		"unknown project":     {err: domain.ErrProjectNotFound, want: domain.ErrInvalidInput},
+		"service unavailable": {err: domain.ErrUpstreamUnavailable, want: domain.ErrUpstreamUnavailable},
+	} {
+		t.Run(label, func(t *testing.T) {
+			svc := newProgramSvc(&stubProgRepo{update: func(context.Context, string, models.ProgramUpdateInput) (*models.Program, error) {
+				t.Fatal("repository must not be called")
+				return nil, nil
+			}}, &stubTermRepo{}, &stubAppRepo{})
+			svc.SetProjectLookup(&stubProjectLookup{err: tc.err})
+			uid := "00000000-0000-0000-0000-000000000001"
+
+			_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{ProjectUID: &uid})
+			if !errors.Is(err, tc.want) || errors.Is(err, domain.ErrProjectNotFound) {
+				t.Fatalf("err = %v; want %v", err, tc.want)
+			}
+		})
 	}
 }
 
@@ -678,7 +1383,7 @@ func TestProgramService_GetCategorizedTransactions_DefaultCategoryAndArgs(t *tes
 }
 
 func TestProgramService_DeleteSkill_ActiveAdmin_ScopesDeleteByProgramAndSkillID(t *testing.T) {
-	active := models.ProgramMemberStatusActive
+	active := models.ProgramMemberStatusApproved
 	called := false
 	var gotProgramID, gotSkillID string
 
@@ -740,7 +1445,7 @@ func TestProgramService_DeleteSkill_NonMemberForbidden(t *testing.T) {
 }
 
 func TestProgramService_DeleteSkill_WrongRoleForbidden(t *testing.T) {
-	active := models.ProgramMemberStatusActive
+	active := models.ProgramMemberStatusApproved
 	svc := newProgramSvcWithMember(&stubProgRepo{}, &stubTermRepo{}, &stubAppRepo{}, &stubMemberRepo{
 		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
 			return &models.ProgramMember{MemberType: models.MemberTypeMentor, Status: &active}, nil
@@ -764,5 +1469,68 @@ func TestProgramService_DeleteSkill_InactiveAdminForbidden(t *testing.T) {
 	err := svc.DeleteSkill(context.Background(), "prog-1", "skill-1", "admin-1")
 	if !errors.Is(err, domain.ErrForbidden) {
 		t.Fatalf("expected ErrForbidden, got %v", err)
+	}
+}
+
+func TestProgramService_ListMine_ScopesToCaller(t *testing.T) {
+	var gotUser string
+	var gotFilter models.AdministeredProgramFilter
+	repo := &stubProgRepo{
+		listAdministered: func(_ context.Context, userID string, f models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+			gotUser, gotFilter = userID, f
+			return []*models.AdministeredProgram{{ID: "p1"}}, &models.PaginationMeta{Total: 1}, nil
+		},
+	}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	got, meta, err := svc.ListMine(context.Background(), "user-1", models.AdministeredProgramFilter{
+		Limit:  5,
+		Search: "  grid  ",
+		Status: models.AdministeredProgramStatusPendingReview,
+	})
+	if err != nil {
+		t.Fatalf("ListMine: %v", err)
+	}
+	if gotUser != "user-1" {
+		t.Errorf("user = %q; want user-1", gotUser)
+	}
+	want := models.AdministeredProgramFilter{Limit: 5, Search: "grid", Status: models.AdministeredProgramStatusPendingReview}
+	if gotFilter != want {
+		t.Errorf("filter = %+v; want %+v", gotFilter, want)
+	}
+	if len(got) != 1 || meta.Total != 1 {
+		t.Errorf("got %d programs, total %d; want 1, 1", len(got), meta.Total)
+	}
+}
+
+func TestProgramService_ListMine_RejectsBadInput(t *testing.T) {
+	repo := &stubProgRepo{
+		listAdministered: func(context.Context, string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+			t.Fatal("repo must not be called for invalid input")
+			return nil, nil, nil
+		},
+	}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+
+	if _, _, err := svc.ListMine(context.Background(), "", models.AdministeredProgramFilter{}); !errors.Is(err, domain.ErrUnauthorized) {
+		t.Errorf("empty user: got %v; want ErrUnauthorized", err)
+	}
+	// The BFF's display value uses a hyphen; the API value is pending_review.
+	for _, status := range []models.AdministeredProgramStatus{"pending-review", "published", "pending"} {
+		if _, _, err := svc.ListMine(context.Background(), "user-1", models.AdministeredProgramFilter{Status: status}); !errors.Is(err, domain.ErrInvalidInput) {
+			t.Errorf("status %q: got %v; want ErrInvalidInput", status, err)
+		}
+	}
+}
+
+func TestProgramService_ListMine_WrapsRepoError(t *testing.T) {
+	repoErr := errors.New("db down")
+	repo := &stubProgRepo{
+		listAdministered: func(context.Context, string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+			return nil, nil, repoErr
+		},
+	}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	if _, _, err := svc.ListMine(context.Background(), "user-1", models.AdministeredProgramFilter{}); !errors.Is(err, repoErr) {
+		t.Errorf("got %v; want wrapped repo error", err)
 	}
 }

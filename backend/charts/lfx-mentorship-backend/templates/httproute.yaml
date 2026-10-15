@@ -9,12 +9,44 @@ metadata:
   labels:
     {{- include "lfx-v2-mentorship-service.labels" . | nindent 4 }}
 spec:
+  # Defaulted fields are spelled out so ArgoCD does not report drift against the live object.
   parentRefs:
-    - name: {{ .Values.traefik.gateway.name }}
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ .Values.traefik.gateway.name }}
       namespace: {{ .Values.traefik.gateway.namespace }}
   hostnames:
     - {{ printf "lfx-api.%s" .Values.lfx.domain | quote }}
   rules:
+    # Uploads get the body cap and upload timeout. Buffering is attached to this rule
+    # only: Traefik's Buffering also buffers responses, which would break download
+    # streaming and Range requests.
+    - matches:
+        {{- range $path := list "/mentorship/v1/programs/[^/]+/logo-upload" "/mentorship/v1/tasks/[^/]+/file-upload" }}
+        - path:
+            type: RegularExpression
+            value: {{ $path | quote }}
+          method: POST
+        {{- end }}
+      filters:
+        - type: ExtensionRef
+          extensionRef:
+            group: traefik.io
+            kind: Middleware
+            name: {{ include "lfx-v2-mentorship-service.fullname" . }}-heimdall
+        - type: ExtensionRef
+          extensionRef:
+            group: traefik.io
+            kind: Middleware
+            name: {{ include "lfx-v2-mentorship-service.fullname" . }}-upload-buffering
+      timeouts:
+        request: {{ .Values.uploads.timeout | quote }}
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: {{ include "lfx-v2-mentorship-service.fullname" . }}
+          port: {{ .Values.service.port }}
+          weight: 1
     - matches:
         - path:
             type: PathPrefix
@@ -26,6 +58,9 @@ spec:
             kind: Middleware
             name: {{ include "lfx-v2-mentorship-service.fullname" . }}-heimdall
       backendRefs:
-        - name: {{ include "lfx-v2-mentorship-service.fullname" . }}
+        - group: ""
+          kind: Service
+          name: {{ include "lfx-v2-mentorship-service.fullname" . }}
           port: {{ .Values.service.port }}
+          weight: 1
 {{- end }}

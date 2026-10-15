@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/handler"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/auth"
@@ -22,6 +21,7 @@ type stubUserProfileSvc struct {
 	list    func(context.Context, models.UserProfileFilter) ([]*models.UserProfile, *models.PaginationMeta, error)
 	getByID func(context.Context, string) (*models.UserProfile, error)
 	create  func(context.Context, models.UserProfileCreateInput) (*models.UserProfile, error)
+	upsert  func(context.Context, models.UserProfileCreateInput) (*models.UserProfile, bool, error)
 	update  func(context.Context, string, models.UserProfileUpdateInput) (*models.UserProfile, error)
 	delete  func(context.Context, string) error
 }
@@ -31,10 +31,6 @@ func (s *stubUserProfileSvc) GetByID(ctx context.Context, id string) (*models.Us
 		return s.getByID(ctx, id)
 	}
 	return &models.UserProfile{ID: id}, nil
-}
-
-func (s *stubUserProfileSvc) GetBySlug(ctx context.Context, slug string) (*models.UserProfile, error) {
-	return &models.UserProfile{Slug: &slug}, nil
 }
 
 func (s *stubUserProfileSvc) List(ctx context.Context, filter models.UserProfileFilter) ([]*models.UserProfile, *models.PaginationMeta, error) {
@@ -49,6 +45,13 @@ func (s *stubUserProfileSvc) Create(ctx context.Context, input models.UserProfil
 		return s.create(ctx, input)
 	}
 	return &models.UserProfile{ID: input.ID, UserID: input.UserID, ProfileType: input.ProfileType}, nil
+}
+
+func (s *stubUserProfileSvc) Upsert(ctx context.Context, input models.UserProfileCreateInput) (*models.UserProfile, bool, error) {
+	if s.upsert != nil {
+		return s.upsert(ctx, input)
+	}
+	return &models.UserProfile{ID: input.ID, UserID: input.UserID, ProfileType: input.ProfileType}, true, nil
 }
 
 func (s *stubUserProfileSvc) Update(ctx context.Context, id string, input models.UserProfileUpdateInput) (*models.UserProfile, error) {
@@ -136,8 +139,8 @@ func TestUserProfileHandler_GetMeByType_UsesPrincipalAndType(t *testing.T) {
 	if got.ProfileType != "mentee" {
 		t.Fatalf("got.ProfileType = %q; want mentee", got.ProfileType)
 	}
-	if got.Limit != 0 {
-		t.Fatalf("got.Limit = %d; want 0 when no limit param is provided", got.Limit)
+	if got.Limit != 100 {
+		t.Fatalf("got.Limit = %d; want 100 to detect duplicate profiles", got.Limit)
 	}
 	if got.Offset != 0 {
 		t.Fatalf("got.Offset = %d; want 0", got.Offset)
@@ -147,8 +150,8 @@ func TestUserProfileHandler_GetMeByType_UsesPrincipalAndType(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp["data"] == nil {
-		t.Fatal("expected data payload")
+	if resp["id"] != "p1" {
+		t.Fatalf("got id %#v; want p1", resp["id"])
 	}
 }
 
@@ -176,70 +179,31 @@ func TestUserProfileHandler_Create_BindsUserToPrincipal(t *testing.T) {
 	}
 }
 
-func TestUserProfileHandler_Update_RejectsCrossUserMutation(t *testing.T) {
+func TestUserProfileHandler_PutMeByType_CreatesForPrincipal(t *testing.T) {
+	var got models.UserProfileCreateInput
 	h := handler.NewUserProfileHandler(&stubUserProfileSvc{
-		getByID: func(context.Context, string) (*models.UserProfile, error) {
-			return &models.UserProfile{ID: "profile-1", UserID: "owner-user"}, nil
+		list: func(context.Context, models.UserProfileFilter) ([]*models.UserProfile, *models.PaginationMeta, error) {
+			return []*models.UserProfile{}, &models.PaginationMeta{}, nil
 		},
-		update: func(context.Context, string, models.UserProfileUpdateInput) (*models.UserProfile, error) {
-			t.Fatal("update should not be called")
-			return nil, nil
+		upsert: func(_ context.Context, input models.UserProfileCreateInput) (*models.UserProfile, bool, error) {
+			got = input
+			return &models.UserProfile{ID: "p1", UserID: input.UserID, ProfileType: input.ProfileType}, true, nil
 		},
 	})
-	r := httptest.NewRequest(http.MethodPatch, "/v1/user-profiles/profile-1", bytes.NewBufferString(`{"about":"x"}`))
+	r := httptest.NewRequest(http.MethodPut, "/v1/me/profiles/mentee", bytes.NewBufferString(`{"user_id":"victim","profile_type":"mentor","age_eligible":true,"work_eligible":true}`))
 	r.Header.Set("Content-Type", "application/json")
 	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "profile-1")
+	rctx.URLParams.Add("profileType", "mentee")
 	r = r.WithContext(context.WithValue(auth.ContextWithPrincipal(r.Context(), &models.Principal{UserID: "caller-user"}), chi.RouteCtxKey, rctx))
 	w := httptest.NewRecorder()
 
-	h.Update(w, r)
+	h.PutMeByType(w, r)
 
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("got %d; want 403", w.Code)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("got %d; want 201", w.Code)
 	}
-}
-
-func TestUserProfileHandler_Delete_RejectsCrossUserMutation(t *testing.T) {
-	h := handler.NewUserProfileHandler(&stubUserProfileSvc{
-		getByID: func(context.Context, string) (*models.UserProfile, error) {
-			return &models.UserProfile{ID: "profile-1", UserID: "owner-user"}, nil
-		},
-		delete: func(context.Context, string) error {
-			t.Fatal("delete should not be called")
-			return nil
-		},
-	})
-	r := httptest.NewRequest(http.MethodDelete, "/v1/user-profiles/profile-1", nil)
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "profile-1")
-	r = r.WithContext(context.WithValue(auth.ContextWithPrincipal(r.Context(), &models.Principal{UserID: "caller-user"}), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	h.Delete(w, r)
-
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("got %d; want 403", w.Code)
-	}
-}
-
-func TestUserProfileHandler_Update_PropagatesNotFoundFromLookup(t *testing.T) {
-	h := handler.NewUserProfileHandler(&stubUserProfileSvc{
-		getByID: func(context.Context, string) (*models.UserProfile, error) {
-			return nil, domain.ErrUserProfileNotFound
-		},
-	})
-	r := httptest.NewRequest(http.MethodPatch, "/v1/user-profiles/missing", bytes.NewBufferString(`{"about":"x"}`))
-	r.Header.Set("Content-Type", "application/json")
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "missing")
-	r = r.WithContext(context.WithValue(auth.ContextWithPrincipal(r.Context(), &models.Principal{UserID: "caller-user"}), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	h.Update(w, r)
-
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("got %d; want 404", w.Code)
+	if got.UserID != "caller-user" || got.ProfileType != "mentee" {
+		t.Fatalf("got owner/type %q/%q; want caller-user/mentee", got.UserID, got.ProfileType)
 	}
 }
 

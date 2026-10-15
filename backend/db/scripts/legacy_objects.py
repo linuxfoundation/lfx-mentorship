@@ -1,0 +1,316 @@
+# Copyright The Linux Foundation and each contributor to LFX.
+# SPDX-License-Identifier: MIT
+
+"""
+Legacy file migration contract shared by copy_legacy_objects.py and the ETL
+(docs/rewrite/03-migration-plan.md §S3 objects, steps 2–3).
+
+Legacy stored every file as an absolute URL into the world-readable uploads
+bucket. The copy script moves each referenced object into the bucket its class
+dictates and records the outcome in a copy manifest; the ETL rewrites the file
+columns from that manifest. The upload allowlists here mirror
+backend/internal/service/file_type.go and must stay in sync with it, with one
+migration-only addition: inert legacy SVG logos (see _ALLOWED).
+"""
+
+import io
+import json
+import logging
+import os
+import struct
+import xml.etree.ElementTree as ET
+import zipfile
+from urllib.parse import quote
+
+import pyexpat
+
+log = logging.getLogger(__name__)
+
+# File classes.
+LOGO = "logo"
+SUBMISSION = "submission"
+
+# Dynamo table suffix, item field, Postgres column, class. quarantined_tasks.file
+# comes from the same tasks field, so it shares the tasks.file mapping.
+FILE_FIELDS = (
+    ("users", "avatarUrl", "users.avatar_url", LOGO),
+    ("user-profiles", "logoUrl", "user_profiles.logo_url", LOGO),
+    ("projects", "logoUrl", "programs.logo_url", LOGO),
+    ("tasks", "file", "tasks.file", SUBMISSION),
+)
+
+MAX_BYTES = {LOGO: 2 << 20, SUBMISSION: 20 << 20}
+CACHE_CONTROL = {LOGO: "public, max-age=86400", SUBMISSION: "private, no-store"}
+QUARANTINE_PREFIX = {LOGO: "quarantine/logos/", SUBMISSION: "quarantine/attachments/"}
+
+# Manifest entry statuses.
+COPIED = "copied"
+QUARANTINED = "quarantined"
+MANIFEST_MISS = "manifest_miss"  # test runs only: a value the copy never saw, nulled instead of stopping the import
+MISSING = "missing"
+
+
+def legacy_url_prefix(bucket: str) -> str:
+    return f"https://{bucket}.s3.amazonaws.com/"
+
+
+# ---------------------------------------------------------------------------
+# Upload allowlists (mirror of backend/internal/service/file_type.go)
+# ---------------------------------------------------------------------------
+
+_COMPOUND_SIGNATURE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+_COMPOUND_DIR_ENTRY_SIZE = 128
+_COMPOUND_STREAM = 2
+_WORD_DOCUMENT_NAME = "WordDocument\x00".encode("utf-16-le")
+_MAX_DOCX_ENTRIES = 1000
+
+
+def _is_doc(data: bytes) -> bool:
+    if not data.startswith(_COMPOUND_SIGNATURE):
+        return False
+    for off in range(512, len(data) - _COMPOUND_DIR_ENTRY_SIZE + 1, _COMPOUND_DIR_ENTRY_SIZE):
+        entry = data[off : off + _COMPOUND_DIR_ENTRY_SIZE]
+        (name_length,) = struct.unpack_from("<H", entry, 64)
+        if name_length == len(_WORD_DOCUMENT_NAME) and entry[66] == _COMPOUND_STREAM and entry.startswith(_WORD_DOCUMENT_NAME):
+            return True
+    return False
+
+
+def _is_docx(data: bytes) -> bool:
+    if not data.startswith(b"PK\x03\x04") or data.count(b"PK\x01\x02") > _MAX_DOCX_ENTRIES:
+        return False
+    try:
+        names = set(zipfile.ZipFile(io.BytesIO(data)).namelist())
+    except zipfile.BadZipFile:
+        return False
+    return "[Content_Types].xml" in names and "word/document.xml" in names
+
+
+def _is_plain_text(data: bytes) -> bool:
+    if b"\x00" in data:
+        return False
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
+
+
+_SVG_NS = "http://www.w3.org/2000/svg"
+# Namespaces whose elements a browser makes active inside an SVG document.
+_ACTIVE_NAMESPACES = frozenset(
+    {
+        "http://www.w3.org/1999/xhtml",
+        "http://www.w3.org/1998/Math/MathML",
+        "http://www.w3.org/1999/XSL/Transform",
+        "http://www.mozilla.org/xbl",
+    }
+)
+# Element local names refused in any namespace, compared case-insensitively.
+_ACTIVE_ELEMENTS = frozenset({"script", "foreignobject", "iframe", "embed", "object", "handler", "listener"})
+_ANIMATION_ELEMENTS = frozenset({"set", "animate", "animatemotion", "animatetransform"})
+_SCRIPT_SCHEMES = ("javascript:", "vbscript:")
+_INERT_DATA_URLS = ("data:image/png", "data:image/jpeg", "data:image/gif", "data:image/webp")
+# Expat 2.4.1 bounds entity amplification; an older one gets no entity declarations at all.
+_EXPAT_BOUNDS_ENTITIES = pyexpat.version_info >= (2, 4, 1)
+
+
+def _local(name: str) -> tuple[str, str]:
+    """Split an ElementTree "{namespace}local" name into (namespace, lowercased local name)."""
+    if name.startswith("{"):
+        namespace, _, local = name[1:].partition("}")
+        return namespace, local.lower()
+    return "", name.lower()
+
+
+def _url(value: str) -> str:
+    # Browsers ignore whitespace and control characters inside a URL scheme.
+    return "".join(c for c in value if c > " ").lower()
+
+
+class _SVGTreeBuilder(ET.TreeBuilder):
+    """Records processing instructions anywhere in the document, which a plain TreeBuilder drops before the root."""
+
+    def __init__(self):
+        super().__init__()
+        self.processing_instructions = 0
+
+    def pi(self, target, data=None):
+        self.processing_instructions += 1
+
+
+def _svg_element_is_inert(element: ET.Element) -> bool:
+    namespace, name = _local(element.tag)
+    if namespace in _ACTIVE_NAMESPACES or name in _ACTIVE_ELEMENTS:
+        return False
+    for attribute, value in element.attrib.items():
+        _, attribute_name = _local(attribute)
+        url = _url(value)
+        if attribute_name.startswith("on") or any(scheme in url for scheme in _SCRIPT_SCHEMES):
+            return False
+        if attribute_name == "href" and url.startswith("data:") and not url.startswith(_INERT_DATA_URLS):
+            return False
+    if name in _ANIMATION_ELEMENTS:
+        target = element.get("attributeName", "").strip().lower().rpartition(":")[2]
+        if target == "href" or target.startswith("on"):
+            return False
+    if name == "style" and any(scheme in _url(element.text or "") for scheme in _SCRIPT_SCHEMES):
+        return False
+    return True
+
+
+def _declares_parameter_entities(data: bytes) -> bool:
+    """Whether the document's DTD declares a parameter entity.
+
+    Expat reports the declaration but never expands the entity, so markup it wraps
+    — an <!ATTLIST svg onload ...> default, say — is absent from the tree checked
+    below yet applied by a browser. Legacy exports declare general entities only.
+    """
+    found = False
+
+    def entity_decl(name, is_parameter_entity, *_):
+        nonlocal found
+        found = found or bool(is_parameter_entity)
+
+    parser = pyexpat.ParserCreate()
+    parser.EntityDeclHandler = entity_decl
+    try:
+        parser.Parse(data, True)
+    except (pyexpat.ExpatError, LookupError, ValueError):
+        pass  # the tree parse below reports the error
+    return found
+
+
+def _is_inert_svg(data: bytes) -> bool:
+    """A UTF-8 SVG document whose parsed tree carries no active content.
+
+    Legacy logos were presigned PUTs of whatever the browser held, so the bytes are
+    checked as the upload route would, not trusted from the stored Content-Type. The
+    check runs on the namespace-aware parse a browser sees — prefixes resolved,
+    character references decoded — and refuses script elements, embedded HTML,
+    event-handler attributes, script URLs anywhere, non-image data: links, animation
+    of links or handlers, processing instructions (an xml-stylesheet can run XSLT),
+    and parameter entities (the parse cannot see what they wrap). UTF-8 is required
+    so the parse and the browser agree on the encoding.
+    """
+    if not _is_plain_text(data):
+        return False
+    if not _EXPAT_BOUNDS_ENTITIES and b"<!ENTITY" in data:
+        return False
+    if _declares_parameter_entities(data):
+        return False
+    builder = _SVGTreeBuilder()
+    parser = ET.XMLParser(target=builder)
+    try:
+        parser.feed(data)
+        root = parser.close()
+    except (ET.ParseError, LookupError, ValueError):
+        return False
+    if root.tag != f"{{{_SVG_NS}}}svg" or builder.processing_instructions:
+        return False
+    return all(_svg_element_is_inert(element) for element in root.iter())
+
+
+# (content type, matcher) per class, in match order; text last since it has no signature.
+# SVG is a migration-only allowance: legacy logos were reviewed and certified free of
+# scripts, and quarantining them would leave many programs without a logo. The upload
+# route (file_type.go logoFileTypes) still refuses SVG, so no new one enters the system.
+_ALLOWED = {
+    LOGO: (
+        ("image/png", lambda d: d.startswith(b"\x89PNG\r\n\x1a\n")),
+        ("image/jpeg", lambda d: d.startswith(b"\xff\xd8\xff")),
+        ("image/svg+xml", _is_inert_svg),
+    ),
+    SUBMISSION: (
+        ("application/pdf", lambda d: d.startswith(b"%PDF-")),
+        ("application/msword", _is_doc),
+        ("application/vnd.openxmlformats-officedocument.wordprocessingml.document", _is_docx),
+        ("text/plain; charset=utf-8", _is_plain_text),
+    ),
+}
+
+
+def identify(file_class: str, data: bytes) -> str | None:
+    """Return the allowed Content-Type the bytes match for the class, or None."""
+    for content_type, matches in _ALLOWED[file_class]:
+        if matches(data):
+            return content_type
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Copy manifest
+# ---------------------------------------------------------------------------
+
+
+def write_manifest(path: str, prefix: str, buckets: dict, entries: list) -> None:
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"legacy_url_prefix": prefix, "buckets": buckets, "entries": entries}, f, indent=1, sort_keys=True)
+    os.replace(tmp, path)
+
+
+class LegacyFileRewriter:
+    """Rewrites legacy file column values from the copy manifest (03 §S3 objects, step 3)."""
+
+    def __init__(self, manifest_path: str, cdn_url_prefix: str, legacy_prefix: str, buckets: dict, tolerate_missing: bool = False):
+        self._manifest_path = manifest_path
+        self._tolerate_missing = tolerate_missing
+        self._cdn_url_prefix = cdn_url_prefix.rstrip("/")
+        self._legacy_prefix = legacy_prefix
+        self._buckets = buckets
+        self._entries: dict | None = None
+        self.counts: dict = {}
+
+    def _lookup(self, file_class: str, value: str) -> dict:
+        if self._entries is None:
+            if not os.path.exists(self._manifest_path):
+                raise RuntimeError(f"copy manifest {self._manifest_path} not found; run copy_legacy_objects.py first")
+            with open(self._manifest_path, encoding="utf-8") as f:
+                manifest = json.load(f)
+            if manifest.get("legacy_url_prefix") != self._legacy_prefix:
+                raise RuntimeError(f"copy manifest was written for {manifest.get('legacy_url_prefix')}, not {self._legacy_prefix}")
+            # Keys are only valid in the buckets they were copied to.
+            if not all(self._buckets.get(c) for c in (LOGO, SUBMISSION)):
+                raise RuntimeError("LOGOS_S3_BUCKET and ATTACHMENTS_S3_BUCKET are required to rewrite legacy file values")
+            if manifest.get("buckets") != self._buckets:
+                raise RuntimeError(f"copy manifest was written for buckets {manifest.get('buckets')}, not {self._buckets}")
+            self._entries = {(e["class"], e["value"]): e for e in manifest["entries"]}
+        entry = self._entries.get((file_class, value))
+        if entry is None:
+            if self._tolerate_missing:
+                # Legacy is still live during a test run: a file uploaded after the copy's scan is not worth stopping for.
+                log.warning("MANIFEST_MISS %s value %r is not in the copy manifest; column set to NULL", file_class, value)
+                return {"status": MANIFEST_MISS}
+            raise RuntimeError(f"{file_class} value {value!r} is not in the copy manifest; rerun copy_legacy_objects.py")
+        return entry
+
+    def _count(self, column: str, outcome: str) -> None:
+        per_column = self.counts.setdefault(column, {})
+        per_column[outcome] = per_column.get(outcome, 0) + 1
+
+    def rewrite(self, column: str, file_class: str, value: str | None) -> str | None:
+        value = (value or "").strip() or None
+        if value is None:
+            return None
+        if not value.startswith(self._legacy_prefix):
+            if file_class == SUBMISSION:
+                # A foreign tasks.file value is not a key, and fetching it would be an SSRF path.
+                self._count(column, "nulled_foreign")
+                return None
+            self._count(column, "carried_through")
+            return value
+        entry = self._lookup(file_class, value)
+        if entry["status"] != COPIED:
+            self._count(column, entry["status"])
+            return None
+        self._count(column, "rewritten")
+        if file_class == SUBMISSION:
+            return entry["key"]
+        if not self._cdn_url_prefix:
+            raise RuntimeError("LOGOS_CDN_URL_PREFIX is required to rewrite legacy logo URLs")
+        return f"{self._cdn_url_prefix}/{quote(entry['key'], safe='')}"
+
+    def report(self) -> None:
+        for column, outcomes in sorted(self.counts.items()):
+            log.info("  file rewrite %-24s %s", column, ", ".join(f"{k}={v}" for k, v in sorted(outcomes.items())))

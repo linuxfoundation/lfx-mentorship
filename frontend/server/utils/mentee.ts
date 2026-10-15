@@ -137,7 +137,7 @@ function mapMentor(mentor: MenteeMentor): DirectoryMentorRef {
   return {
     id: mentor.user_id,
     name: mentor.name?.trim() || 'Mentor',
-    title: mentor.introduction?.trim() || undefined,
+    introduction: mentor.introduction?.trim() || undefined,
     avatarUrl: mentor.avatar_url,
   };
 }

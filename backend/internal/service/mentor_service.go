@@ -98,6 +98,30 @@ func (s *MentorService) Summary(ctx context.Context) (*models.MentorSummary, err
 	return summary, nil
 }
 
+// ListMine returns the published programs the caller is an active mentor of.
+func (s *MentorService) ListMine(ctx context.Context, userID string, filter models.MentoredProgramFilter) ([]*models.MentoredProgram, *models.PaginationMeta, error) {
+	ctx, span := mentorSvcTracer.Start(ctx, "MentorService.ListMine")
+	defer span.End()
+	span.SetAttributes(attribute.String("user.id", userID))
+
+	if userID == "" {
+		return nil, nil, fmt.Errorf("%w: caller identity is required", domain.ErrUnauthorized)
+	}
+	if filter.Limit < 0 || filter.Limit > models.MentoredProgramMaxLimit {
+		return nil, nil, fmt.Errorf("%w: limit must be between 0 (the default page size) and %d", domain.ErrInvalidInput, models.MentoredProgramMaxLimit)
+	}
+	if filter.Offset < 0 {
+		return nil, nil, fmt.Errorf("%w: offset must not be negative", domain.ErrInvalidInput)
+	}
+
+	programs, meta, err := s.repo.ListMentoredByUser(ctx, userID, filter)
+	if err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("list my mentor programs: %w", err)
+	}
+	return programs, meta, nil
+}
+
 // GetByUserID returns one public mentor profile by user ID.
 func (s *MentorService) GetByUserID(ctx context.Context, userID string) (*models.MentorDetail, error) {
 	ctx, span := mentorSvcTracer.Start(ctx, "MentorService.GetByUserID")

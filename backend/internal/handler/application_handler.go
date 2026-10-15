@@ -20,15 +20,33 @@ type applicationService interface {
 	GetByID(ctx context.Context, id string) (*models.Application, error)
 	GetByIDForActor(ctx context.Context, id, actorID string) (*models.Application, error)
 	ListByProgramTerm(ctx context.Context, programTermID string, filter models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error)
+	ListByProgram(ctx context.Context, programID string, filter models.ProgramApplicationFilter) ([]*models.ProgramApplicationRow, *models.PaginationMeta, error)
 	ListByProgramTermForActor(ctx context.Context, programTermID string, filter models.ApplicationFilter, actorID string) ([]*models.Application, *models.PaginationMeta, error)
 	ListByUser(ctx context.Context, userID string, filter models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error)
 	Create(ctx context.Context, programTermID string, input models.ApplicationCreateInput) (*models.Application, error)
 	Update(ctx context.Context, id string, input models.ApplicationUpdateInput) (*models.Application, error)
-	Delete(ctx context.Context, id string) error
+	Delete(ctx context.Context, id, actorID string) error
 	WithdrawForMentee(ctx context.Context, id, actorID string) (*models.Application, error)
 	WithdrawForMenteeAfterGatewayAuthorization(ctx context.Context, id string) (*models.Application, error)
-	BulkDeclineByTerm(ctx context.Context, termID string) (int, error)
+	BulkDeclineByTerm(ctx context.Context, termID, actorID string) (int, error)
 	ListPastMenteesByTerm(ctx context.Context, termID string) ([]*models.Application, error)
+}
+
+func (h *ApplicationHandler) ListByProgram(w http.ResponseWriter, r *http.Request) {
+	if auth.PrincipalFromContext(r.Context()) == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	limit, offset, ok := parsePaginationParams(w, r)
+	if !ok {
+		return
+	}
+	rows, meta, err := h.svc.ListByProgram(r.Context(), chi.URLParam(r, "id"), models.ProgramApplicationFilter{Limit: limit, Offset: offset, Type: models.ProgramApplicationType(r.URL.Query().Get("type")), Search: r.URL.Query().Get("search"), Status: models.ProgramApplicationStatus(r.URL.Query().Get("status")), TermID: r.URL.Query().Get("term")})
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]any{"data": rows, "meta": meta})
 }
 
 type applicationTermScopeService interface {
@@ -89,37 +107,6 @@ func (h *ApplicationHandler) ListByProgramTerm(w http.ResponseWriter, r *http.Re
 		Role:   r.URL.Query().Get("role"),
 		UserID: r.URL.Query().Get("user_id"),
 	}, principal.UserID)
-	if err != nil {
-		Error(w, err)
-		return
-	}
-	JSON(w, http.StatusOK, map[string]any{"data": apps, "meta": meta})
-}
-
-// ListByUser handles GET /v1/users/{userId}/applications — requires JWT.
-func (h *ApplicationHandler) ListByUser(w http.ResponseWriter, r *http.Request) {
-	principal := auth.PrincipalFromContext(r.Context())
-	if principal == nil {
-		Error(w, domain.ErrUnauthorized)
-		return
-	}
-
-	userID := chi.URLParam(r, "userId")
-	// Principle VII-1: reject IDOR — callers may only list their own applications.
-	if userID != principal.UserID {
-		Error(w, domain.ErrForbidden)
-		return
-	}
-	limit, offset, ok := parsePaginationParams(w, r)
-	if !ok {
-		return
-	}
-	apps, meta, err := h.svc.ListByUser(r.Context(), userID, models.ApplicationFilter{
-		Limit:  limit,
-		Offset: offset,
-		Status: r.URL.Query().Get("status"),
-		Role:   r.URL.Query().Get("role"),
-	})
 	if err != nil {
 		Error(w, err)
 		return
@@ -213,6 +200,7 @@ func (h *ApplicationHandler) UpdateEvaluation(w http.ResponseWriter, r *http.Req
 	}
 	app, err := h.svc.Update(r.Context(), chi.URLParam(r, "id"), models.ApplicationUpdateInput{
 		Evaluation: input.Evaluation,
+		ActorID:    auth.PrincipalFromContext(r.Context()).UserID,
 	})
 	if err != nil {
 		Error(w, err)
@@ -251,6 +239,7 @@ func (h *ApplicationHandler) UpdateNote(w http.ResponseWriter, r *http.Request) 
 	}
 	app, err := h.svc.Update(r.Context(), chi.URLParam(r, "id"), models.ApplicationUpdateInput{
 		ReviewerNote: input.ReviewerNote,
+		ActorID:      auth.PrincipalFromContext(r.Context()).UserID,
 	})
 	if err != nil {
 		Error(w, err)
@@ -342,6 +331,8 @@ func (h *ApplicationHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	// Principle VII-2: bind ownership to the authenticated principal, not the request body.
 	input.UserID = principal.UserID
+	// Attendance type is an admin decision made on acceptance.
+	input.AttendanceType = nil
 
 	app, err := h.svc.Create(r.Context(), programTermID, input)
 	if err != nil {
@@ -349,34 +340,6 @@ func (h *ApplicationHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	JSON(w, http.StatusCreated, app)
-}
-
-// Update handles PATCH /v1/applications/{id} — requires JWT.
-func (h *ApplicationHandler) Update(w http.ResponseWriter, r *http.Request) {
-	principal := auth.PrincipalFromContext(r.Context())
-	if principal == nil {
-		Error(w, domain.ErrUnauthorized)
-		return
-	}
-
-	id := chi.URLParam(r, "id")
-	var input models.ApplicationUpdateInput
-	if !decodeBody(w, r, &input) {
-		return
-	}
-	if input.Status != nil || input.TasksSubmitted != nil || input.AdminNotified != nil || input.Evaluation != nil || input.ReviewerNote != nil {
-		Error(w, fmt.Errorf("%w: protected application fields are handled by dedicated routes", domain.ErrInvalidInput))
-		return
-	}
-	// Propagate caller identity for withdrawal guard.
-	input.ActorID = principal.UserID
-
-	app, err := h.svc.Update(r.Context(), id, input)
-	if err != nil {
-		Error(w, err)
-		return
-	}
-	JSON(w, http.StatusOK, app)
 }
 
 // Delete handles DELETE /v1/applications/{id} — requires JWT.
@@ -388,7 +351,7 @@ func (h *ApplicationHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := chi.URLParam(r, "id")
-	if err := h.svc.Delete(r.Context(), id); err != nil {
+	if err := h.svc.Delete(r.Context(), id, principal.UserID); err != nil {
 		Error(w, err)
 		return
 	}
@@ -408,7 +371,7 @@ func (h *ApplicationHandler) BulkDeclineByTerm(w http.ResponseWriter, r *http.Re
 		Error(w, err)
 		return
 	}
-	count, err := h.svc.BulkDeclineByTerm(r.Context(), termID)
+	count, err := h.svc.BulkDeclineByTerm(r.Context(), termID, principal.UserID)
 	if err != nil {
 		Error(w, err)
 		return

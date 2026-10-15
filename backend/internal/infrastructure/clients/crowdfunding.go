@@ -12,24 +12,16 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
 )
 
-const defaultCrowdfundingScope = "access:manage"
-
-// CrowdfundingConfig holds outbound crowdfunding API and M2M auth settings.
+// CrowdfundingConfig holds outbound crowdfunding API settings.
 type CrowdfundingConfig struct {
-	BaseURL      string
-	TokenURL     string
-	ClientID     string
-	ClientSecret string
-	Audience     string
-	Scope        string
-	Timeout      time.Duration
+	BaseURL string
+	Timeout time.Duration
 }
 
 // CrowdfundingClient fetches categorized transactions from crowdfunding.
@@ -38,46 +30,23 @@ type CrowdfundingClient interface {
 }
 
 type crowdfundingHTTPClient struct {
-	baseURL      string
-	tokenURL     string
-	clientID     string
-	clientSecret string
-	audience     string
-	scope        string
-	httpClient   *http.Client
-
-	tokenMu     sync.Mutex
-	accessToken string
-	expiresAt   time.Time
+	baseURL    string
+	httpClient *http.Client
 }
 
 // NewCrowdfundingClient creates an HTTP client for crowdfunding endpoints.
 func NewCrowdfundingClient(cfg CrowdfundingConfig) CrowdfundingClient {
-	scope := strings.TrimSpace(cfg.Scope)
-	if scope == "" {
-		scope = defaultCrowdfundingScope
-	}
 	return &crowdfundingHTTPClient{
-		baseURL:      strings.TrimRight(cfg.BaseURL, "/"),
-		tokenURL:     cfg.TokenURL,
-		clientID:     cfg.ClientID,
-		clientSecret: cfg.ClientSecret,
-		audience:     cfg.Audience,
-		scope:        scope,
-		httpClient: &http.Client{
-			Timeout: cfg.Timeout,
-		},
+		baseURL:    strings.TrimRight(cfg.BaseURL, "/"),
+		httpClient: &http.Client{Timeout: cfg.Timeout},
 	}
 }
 
 func (c *crowdfundingHTTPClient) GetCategorizedTransactions(ctx context.Context, initiativeID, categoryType string, subscriptionOnly bool, limit, offset int) (*models.ProgramCategorizedTransactions, error) {
-	token, err := c.getAccessToken(ctx)
-	if err != nil {
-		return nil, err
-	}
-
 	q := url.Values{}
 	if strings.TrimSpace(categoryType) != "" {
+		// Crowdfunding rejects categoryType unless the query is scoped to donations.
+		q.Set("type", "donations")
 		q.Set("categoryType", categoryType)
 	}
 	if subscriptionOnly {
@@ -90,12 +59,13 @@ func (c *crowdfundingHTTPClient) GetCategorizedTransactions(ctx context.Context,
 		q.Set("offset", fmt.Sprintf("%d", offset))
 	}
 
-	endpoint := fmt.Sprintf("%s/v1/initiatives/%s/transactions?%s", c.baseURL, url.PathEscape(initiativeID), q.Encode())
+	// BaseURL is the gateway prefix, e.g. https://lfx-api.<domain>/crowdfunding; the gateway routes carry no version segment.
+	endpoint := fmt.Sprintf("%s/initiatives/%s/transactions?%s", c.baseURL, url.PathEscape(initiativeID), q.Encode())
+	// Crowdfunding serves initiative transactions on its public (anonymous) gateway rule, so no token is sent.
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create crowdfunding transactions request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -147,63 +117,4 @@ func (c *crowdfundingHTTPClient) GetCategorizedTransactions(ctx context.Context,
 		out.OrganizationTransactions = []models.ProgramTransaction{}
 	}
 	return &out, nil
-}
-
-func (c *crowdfundingHTTPClient) getAccessToken(ctx context.Context) (string, error) {
-	c.tokenMu.Lock()
-	defer c.tokenMu.Unlock()
-
-	now := time.Now()
-	if c.accessToken != "" && now.Before(c.expiresAt) {
-		return c.accessToken, nil
-	}
-
-	form := url.Values{}
-	form.Set("grant_type", "client_credentials")
-	form.Set("client_id", c.clientID)
-	form.Set("client_secret", c.clientSecret)
-	form.Set("audience", c.audience)
-	if c.scope != "" {
-		form.Set("scope", c.scope)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.tokenURL, strings.NewReader(form.Encode()))
-	if err != nil {
-		return "", fmt.Errorf("create token request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("request m2m token: %w: %w", err, domain.ErrUpstreamUnavailable)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", fmt.Errorf("m2m token status %d: %s: %w", resp.StatusCode, strings.TrimSpace(string(body)), domain.ErrUpstreamUnavailable)
-	}
-
-	var tokenResp struct {
-		AccessToken string `json:"access_token"`
-		ExpiresIn   int    `json:"expires_in"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
-		return "", fmt.Errorf("decode m2m token response: %w: %w", err, domain.ErrUpstreamUnavailable)
-	}
-	if tokenResp.AccessToken == "" {
-		return "", fmt.Errorf("m2m token response missing access_token: %w", domain.ErrUpstreamUnavailable)
-	}
-
-	expiresIn := tokenResp.ExpiresIn
-	if expiresIn <= 0 {
-		expiresIn = 60
-	}
-	refreshSkew := 30
-	if expiresIn <= refreshSkew {
-		refreshSkew = 1
-	}
-	c.accessToken = tokenResp.AccessToken
-	c.expiresAt = now.Add(time.Duration(expiresIn-refreshSkew) * time.Second)
-	return c.accessToken, nil
 }

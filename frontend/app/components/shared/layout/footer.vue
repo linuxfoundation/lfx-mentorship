@@ -23,7 +23,7 @@ SPDX-License-Identifier: MIT
         <!-- Nav sections -->
         <div class="flex flex-col gap-8 md:flex-row md:gap-16">
           <section
-            v-for="section in lfxFooterMenu"
+            v-for="section in footerMenu"
             :key="section.title"
             class="flex flex-col gap-2"
           >
@@ -79,11 +79,11 @@ SPDX-License-Identifier: MIT
       <!-- Divider -->
       <div class="my-8 h-px bg-white/10" />
 
-      <!-- LFX footer web component (copyright, cookie prefs, legal links) -->
+      <!-- LFX footer web component (copyright, legal links). No cookie-tracking:
+           it loads Osano; consent is Transcend now (setup/head.ts + "Cookie settings" link). -->
       <ClientOnly>
         <lfx-footer
           ref="lfxFooterRef"
-          cookie-tracking
           class="lfx-footer-wc !p-0 !text-left"
         />
       </ClientOnly>
@@ -97,6 +97,11 @@ import { useIntercom } from '~/composables/useIntercom';
 import { lfxFooterMenu } from '~/config/menu/footer';
 import { AppRoute } from '~/config/routes';
 import LfxMentorshipLogo from '~/components/shared/layout/components/lfx-mentorship-logo.vue';
+
+const {
+  public: { selfServeUrl },
+} = useRuntimeConfig();
+const footerMenu = lfxFooterMenu(selfServeUrl);
 
 const lfxFooterRef = ref<HTMLElement | null>(null);
 

@@ -8,6 +8,17 @@ import (
 	"time"
 )
 
+type UserProfileType string
+
+const (
+	UserProfileTypeMentor UserProfileType = "mentor"
+	UserProfileTypeMentee UserProfileType = "mentee"
+)
+
+func (t UserProfileType) IsValid() bool {
+	return t == UserProfileTypeMentor || t == UserProfileTypeMentee
+}
+
 // UserProfile maps to the public.user_profiles table.
 type UserProfile struct {
 	ID                 string          `json:"id"`

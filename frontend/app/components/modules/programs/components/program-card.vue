@@ -163,13 +163,11 @@ import LfxIcon from '~/components/uikit/icon/icon.vue';
 import LfxPopover from '~/components/uikit/popover/popover.vue';
 import LfxTag from '~/components/uikit/tag/tag.vue';
 import LfxTooltip from '~/components/uikit/tooltip/tooltip.vue';
-import { useSanitize } from '~/composables/useSanitize';
+import { plainTextFromHtml } from '~/utils/html-text';
 
 const props = defineProps<{ program: Program }>();
 
-const { stripHtml } = useSanitize();
-
-const plainDescription = computed(() => stripHtml(props.program.description ?? ''));
+const plainDescription = computed(() => plainTextFromHtml(props.program.description ?? ''));
 const statusConfig = computed(() => PROGRAM_STATUS_CONFIG[props.program.status]);
 const foundationLine = computed(() => {
   const names = (props.program.activeTerms.length ? props.program.activeTerms : props.program.terms.slice(-1))

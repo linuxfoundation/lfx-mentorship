@@ -11,7 +11,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/handler"
@@ -29,14 +28,6 @@ func (s *stubUserSvc) GetByID(ctx context.Context, id string) (*models.User, err
 		return s.getByID(ctx, id)
 	}
 	return &models.User{ID: id}, nil
-}
-
-func (s *stubUserSvc) List(ctx context.Context, filter models.UserFilter) ([]*models.User, *models.PaginationMeta, error) {
-	return []*models.User{}, &models.PaginationMeta{}, nil
-}
-
-func (s *stubUserSvc) Create(ctx context.Context, input models.UserCreateInput) (*models.User, error) {
-	return &models.User{ID: input.ID}, nil
 }
 
 func (s *stubUserSvc) Bootstrap(ctx context.Context, lfid string, input models.UserUpdateInput) (*models.User, error) {
@@ -141,30 +132,6 @@ func TestUserHandler_DeleteMe_RequiresPrincipalAndUsesSelf(t *testing.T) {
 	}
 	if gotActor != "caller-user" {
 		t.Fatalf("gotActor = %q; want caller-user", gotActor)
-	}
-}
-
-func TestUserHandler_Update_RejectsCrossUserMutation(t *testing.T) {
-	svc := &stubUserSvc{
-		update: func(context.Context, string, models.UserUpdateInput) (*models.User, error) {
-			t.Fatal("update should not be called")
-			return nil, nil
-		},
-	}
-	h := handler.NewUserHandler(svc)
-	body, _ := json.Marshal(map[string]string{"name": "Nope"})
-	r := httptest.NewRequest(http.MethodPatch, "/v1/users/target-user", bytes.NewReader(body))
-	r.Header.Set("Content-Type", "application/json")
-	r = r.WithContext(auth.ContextWithPrincipal(r.Context(), &models.Principal{UserID: "caller-user"}))
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "target-user")
-	r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	h.Update(w, r)
-
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("got %d; want 403", w.Code)
 	}
 }
 

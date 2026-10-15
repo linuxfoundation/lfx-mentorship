@@ -6,13 +6,6 @@ export const useSanitize = () => {
   const sanitize = (dirty: string) => DOMPurify.sanitize(dirty);
 
   /**
-   * Strips all HTML tags from a string, returning plain text suitable for
-   * display in contexts where no markup should appear (e.g. card previews).
-   */
-  const stripHtml = (html: string): string =>
-    DOMPurify.sanitize(html, { ALLOWED_TAGS: [], ALLOWED_ATTR: [] });
-
-  /**
    * Sanitizes a description and returns a safe HTML string for use with v-html.
    * If the input is plain text (no HTML tags), converts newlines to paragraph
    * and line-break elements so whitespace is preserved when rendered.
@@ -37,5 +30,5 @@ export const useSanitize = () => {
     return DOMPurify.sanitize(html || raw);
   };
 
-  return { sanitize, stripHtml, renderDescription };
+  return { sanitize, renderDescription };
 };

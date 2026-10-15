@@ -5,6 +5,19 @@ package models
 
 import "time"
 
+type ProgramMentorManagementRow struct {
+	ID             string               `json:"id"`
+	UserID         string               `json:"user_id"`
+	Name           *string              `json:"name,omitempty"`
+	Email          *string              `json:"email,omitempty"`
+	Username       *string              `json:"username,omitempty"`
+	AvatarURL      *string              `json:"avatar_url,omitempty"`
+	Status         *ProgramMemberStatus `json:"status,omitempty"`
+	CreatedOn      time.Time            `json:"created_on"`
+	UpdatedOn      time.Time            `json:"updated_on"`
+	ProfileCreated bool                 `json:"profile_created"`
+}
+
 // ProgramMemberStatus enumerates valid values for program_members.status.
 // A turned-down mentor invite is "declined", matching ApplicationStatusDeclined;
 // "rejected" is reserved for ProgramStatus (program moderation).
@@ -14,7 +27,7 @@ const (
 	ProgramMemberStatusInvited   ProgramMemberStatus = "invited"
 	ProgramMemberStatusRequested ProgramMemberStatus = "requested"
 	ProgramMemberStatusPending   ProgramMemberStatus = "pending"
-	ProgramMemberStatusActive    ProgramMemberStatus = "active"
+	ProgramMemberStatusApproved  ProgramMemberStatus = "approved"
 	ProgramMemberStatusDeclined  ProgramMemberStatus = "declined"
 	ProgramMemberStatusWithdrawn ProgramMemberStatus = "withdrawn"
 )
@@ -23,7 +36,7 @@ const (
 func (s ProgramMemberStatus) IsValid() bool {
 	switch s {
 	case ProgramMemberStatusInvited, ProgramMemberStatusRequested, ProgramMemberStatusPending,
-		ProgramMemberStatusActive, ProgramMemberStatusDeclined, ProgramMemberStatusWithdrawn:
+		ProgramMemberStatusApproved, ProgramMemberStatusDeclined, ProgramMemberStatusWithdrawn:
 		return true
 	}
 	return false
@@ -60,15 +73,44 @@ type ProgramMember struct {
 
 // ProgramMemberCreateInput is the request body for adding a program member.
 type ProgramMemberCreateInput struct {
-	ID         string               `json:"id"`
-	UserID     string               `json:"user_id"`
+	ID     string `json:"id"`
+	UserID string `json:"user_id"`
+	// LFID identifies the user instead of UserID; a person who has never signed in
+	// gets a user created from their LF account.
+	LFID       string               `json:"lfid,omitempty"`
 	MemberType MemberType           `json:"member_type"`
 	Status     *ProgramMemberStatus `json:"status,omitempty"`
-	Email      *string              `json:"email,omitempty"`
+	// Email is stored on the member and, when neither UserID nor LFID is set, identifies the invitee's LF account.
+	Email *string `json:"email,omitempty"`
+}
+
+// ProgramMembership is one of the caller's own program_members rows, joined to
+// the program's name. It omits user_id and email: the caller already knows both.
+type ProgramMembership struct {
+	ID          string               `json:"id"`
+	ProgramID   string               `json:"program_id"`
+	ProgramName string               `json:"program_name"`
+	MemberType  MemberType           `json:"member_type"`
+	Status      *ProgramMemberStatus `json:"status,omitempty"`
+	CreatedOn   time.Time            `json:"created_on"`
+	UpdatedOn   time.Time            `json:"updated_on"`
+}
+
+// ProgramMembershipRequestInput is the request body for a mentor's own request
+// to join a program. The user is always the principal, never the body.
+type ProgramMembershipRequestInput struct {
+	ProgramID string `json:"program_id"`
 }
 
 // ProgramMemberUpdateInput is the request body for updating a program member.
 type ProgramMemberUpdateInput struct {
 	Status *ProgramMemberStatus `json:"status,omitempty"`
 	Email  *string              `json:"email,omitempty"`
+}
+
+// UserPrincipal is the signed-in caller who asks to mentor a program.
+type UserPrincipal struct {
+	LFID   string `json:"lfid"`
+	UserID string `json:"user_id"`
+	Email  string `json:"email"`
 }

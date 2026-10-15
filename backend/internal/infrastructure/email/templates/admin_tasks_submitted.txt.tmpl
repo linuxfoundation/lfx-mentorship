@@ -1,0 +1,8 @@
+{{- /* Copyright The Linux Foundation and each contributor to LFX. */ -}}
+{{- /* SPDX-License-Identifier: MIT */ -}}
+{{template "header" .}}You received an application from {{.MenteeName}} to become a mentee for the {{.ProgramName}} program{{with .TermName}} ({{.}} term){{end}}.
+
+The mentee has submitted all the prerequisite tasks, please review the application at your earliest convenience.
+
+Manage your program: {{.ManageURL}}
+{{template "footer" .}}

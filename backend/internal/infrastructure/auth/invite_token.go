@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 )
 
 // ErrInvalidInviteToken is returned when the token signature or payload is invalid.
@@ -27,13 +26,11 @@ var ErrInvalidInviteToken = errors.New("invalid invite token")
 // is ever relaxed.
 var ErrNoInviteSecret = errors.New("invite secret is not configured")
 
-// inviteTokenTTL is how long mentor invite tokens remain valid.
-const inviteTokenTTL = 7 * 24 * time.Hour
-
+// Invite tokens do not expire: accepting or declining needs the invitee signed in
+// and their mentor row still invited, so an old link is harmless.
 type inviteClaims struct {
 	ProgramID string `json:"program_id"`
 	UserID    string `json:"user_id"`
-	ExpiresAt int64  `json:"exp"`
 }
 
 // GenerateInviteToken creates a signed HMAC-SHA256 invite token for the given mentor.
@@ -44,7 +41,6 @@ func GenerateInviteToken(programID, userID, secret string) (string, error) {
 	claims := inviteClaims{
 		ProgramID: programID,
 		UserID:    userID,
-		ExpiresAt: time.Now().Add(inviteTokenTTL).Unix(),
 	}
 	payload, err := json.Marshal(claims)
 	if err != nil {
@@ -80,9 +76,6 @@ func ValidateInviteToken(token, secret string) (programID, userID string, err er
 	var claims inviteClaims
 	if err := json.Unmarshal(payload, &claims); err != nil {
 		return "", "", ErrInvalidInviteToken
-	}
-	if time.Now().Unix() > claims.ExpiresAt {
-		return "", "", fmt.Errorf("%w: token expired", ErrInvalidInviteToken)
 	}
 	return claims.ProgramID, claims.UserID, nil
 }

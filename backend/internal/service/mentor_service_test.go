@@ -17,6 +17,14 @@ type stubMentorRepo struct {
 	list        func(context.Context, models.MentorFilter) (*models.MentorPage, error)
 	summary     func(context.Context) (*models.MentorSummary, error)
 	getByUserID func(context.Context, string) (*models.MentorDetail, error)
+	listMine    func(context.Context, string, models.MentoredProgramFilter) ([]*models.MentoredProgram, *models.PaginationMeta, error)
+}
+
+func (s *stubMentorRepo) ListMentoredByUser(ctx context.Context, userID string, f models.MentoredProgramFilter) ([]*models.MentoredProgram, *models.PaginationMeta, error) {
+	if s.listMine != nil {
+		return s.listMine(ctx, userID, f)
+	}
+	return []*models.MentoredProgram{}, &models.PaginationMeta{}, nil
 }
 
 func (s *stubMentorRepo) List(ctx context.Context, f models.MentorFilter) (*models.MentorPage, error) {
@@ -147,5 +155,84 @@ func TestMentorService_GetByUserID_FillsEmptySlices(t *testing.T) {
 	if detail.Skills == nil || detail.CurrentMentees == nil || detail.GraduatedMentees == nil ||
 		detail.Programs[0].Skills == nil || detail.Programs[0].Mentors == nil {
 		t.Errorf("expected empty slices, got %+v", detail)
+	}
+}
+
+func TestMentorService_ListMine_ScopesToCaller(t *testing.T) {
+	var gotUser string
+	var gotFilter models.MentoredProgramFilter
+	svc := service.NewMentorService(&stubMentorRepo{
+		listMine: func(_ context.Context, userID string, f models.MentoredProgramFilter) ([]*models.MentoredProgram, *models.PaginationMeta, error) {
+			gotUser, gotFilter = userID, f
+			return []*models.MentoredProgram{{ID: "p1"}}, &models.PaginationMeta{Total: 1, Limit: 5, Offset: 10}, nil
+		},
+	})
+	got, meta, err := svc.ListMine(context.Background(), "user-1", models.MentoredProgramFilter{Limit: 5, Offset: 10})
+	if err != nil {
+		t.Fatalf("ListMine: %v", err)
+	}
+	if gotUser != "user-1" || gotFilter != (models.MentoredProgramFilter{Limit: 5, Offset: 10}) {
+		t.Errorf("repo called with user %q filter %+v; want user-1 and the caller's paging", gotUser, gotFilter)
+	}
+	if len(got) != 1 || got[0].ID != "p1" || meta.Total != 1 {
+		t.Errorf("got %+v meta %+v; want the repository's page", got, meta)
+	}
+}
+
+func TestMentorService_ListMine_RequiresCaller(t *testing.T) {
+	svc := service.NewMentorService(&stubMentorRepo{
+		listMine: func(context.Context, string, models.MentoredProgramFilter) ([]*models.MentoredProgram, *models.PaginationMeta, error) {
+			t.Fatal("repository must not be called without a caller")
+			return nil, nil, nil
+		},
+	})
+	if _, _, err := svc.ListMine(context.Background(), "", models.MentoredProgramFilter{}); !errors.Is(err, domain.ErrUnauthorized) {
+		t.Errorf("got %v; want ErrUnauthorized", err)
+	}
+}
+
+func TestMentorService_ListMine_WrapsRepositoryError(t *testing.T) {
+	boom := errors.New("boom")
+	svc := service.NewMentorService(&stubMentorRepo{
+		listMine: func(context.Context, string, models.MentoredProgramFilter) ([]*models.MentoredProgram, *models.PaginationMeta, error) {
+			return nil, nil, boom
+		},
+	})
+	if _, _, err := svc.ListMine(context.Background(), "user-1", models.MentoredProgramFilter{}); !errors.Is(err, boom) {
+		t.Errorf("got %v; want the repository error wrapped", err)
+	}
+}
+
+func TestMentorService_ListMine_RejectsOutOfRangePaging(t *testing.T) {
+	svc := service.NewMentorService(&stubMentorRepo{
+		listMine: func(context.Context, string, models.MentoredProgramFilter) ([]*models.MentoredProgram, *models.PaginationMeta, error) {
+			t.Fatal("repository must not be called with out-of-range paging")
+			return nil, nil, nil
+		},
+	})
+	for name, f := range map[string]models.MentoredProgramFilter{
+		"negative limit":  {Limit: -1},
+		"limit above max": {Limit: models.MentoredProgramMaxLimit + 1},
+		"negative offset": {Offset: -1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := svc.ListMine(context.Background(), "user-1", f); !errors.Is(err, domain.ErrInvalidInput) {
+				t.Errorf("got %v; want ErrInvalidInput", err)
+			}
+		})
+	}
+}
+
+func TestMentorService_ListMine_AcceptsPagingBounds(t *testing.T) {
+	svc := service.NewMentorService(&stubMentorRepo{})
+	for name, f := range map[string]models.MentoredProgramFilter{
+		"default limit": {Limit: 0},
+		"max limit":     {Limit: models.MentoredProgramMaxLimit, Offset: 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := svc.ListMine(context.Background(), "user-1", f); err != nil {
+				t.Errorf("got %v; want no error", err)
+			}
+		})
 	}
 }

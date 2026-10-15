@@ -5,84 +5,46 @@ package auth
 
 import (
 	"context"
-	"encoding/base64"
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
-	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
+	"gopkg.in/go-jose/go-jose.v2"
 )
 
-func TestAuth0MiddlewareRejectsHeimdallTokenOnInterimPath(t *testing.T) {
-	authenticator := &JWTAuthenticator{
-		cfg: JWTAuthConfig{
-			Issuer:   "https://auth.example/",
-			Audience: "mentorship-api",
-		},
-		logger: slog.Default(),
-	}
-	received := false
-	handler := authenticator.Auth0Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		received = true
-	}))
-
-	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
-	req.Header.Set("Authorization", "Bearer "+heimdallShapedToken())
-	response := httptest.NewRecorder()
-
-	handler.ServeHTTP(response, req)
-
-	if response.Code != http.StatusUnauthorized {
-		t.Fatalf("got status %d; want 401", response.Code)
-	}
-	if received {
-		t.Fatal("interim Auth0 middleware accepted a Heimdall token")
-	}
-}
-
-func TestOptionalMiddlewareDoesNotResolveHeimdallToken(t *testing.T) {
-	authenticator := &JWTAuthenticator{
-		cfg: JWTAuthConfig{
-			Issuer:   "https://auth.example/",
-			Audience: "mentorship-api",
-		},
-		logger: slog.Default(),
-	}
-	var gotPrincipal bool
-	handler := authenticator.OptionalMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) {
-		gotPrincipal = PrincipalFromContext(req.Context()) != nil
-	}))
-
-	req := httptest.NewRequest(http.MethodGet, "/v1/programs/p1", nil)
-	req.Header.Set("Authorization", "Bearer "+heimdallShapedToken())
-	handler.ServeHTTP(httptest.NewRecorder(), req)
-
-	if gotPrincipal {
-		t.Fatal("optional interim middleware resolved a Heimdall token")
-	}
-}
-
-func TestAuth0MiddlewarePreservesValidatedGatewayPrincipal(t *testing.T) {
+func TestGatewayMiddlewareMarksAnonymousRequests(t *testing.T) {
 	authenticator := &JWTAuthenticator{logger: slog.Default()}
 	called := false
-	handler := authenticator.Auth0Middleware(http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) {
-		called = PrincipalFromContext(req.Context()) != nil && IsGatewayPrincipal(req.Context())
+	handler := authenticator.GatewayMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) {
+		called = PrincipalFromContext(req.Context()).UserID == "_anonymous" && IsGatewayPrincipal(req.Context())
 	}))
-	ctx := context.WithValue(context.Background(), gatewayPrincipalKey, true)
-	ctx = ContextWithPrincipal(ctx, &models.Principal{UserID: "local-user"})
-	req := httptest.NewRequest(http.MethodGet, "/mentorship/v1/me", nil).WithContext(ctx)
-	handler.ServeHTTP(httptest.NewRecorder(), req)
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/mentorship/v1/programs", nil))
 	if !called {
-		t.Fatal("validated gateway principal was not preserved")
+		t.Fatal("gateway middleware did not mark anonymous request")
 	}
+}
+
+func TestGatewayMiddlewareUsesConfiguredMockPrincipal(t *testing.T) {
+	authenticator := &JWTAuthenticator{
+		cfg:    JWTAuthConfig{DisabledMockLocalPrincipal: "local-user"},
+		logger: slog.Default(),
+	}
+	handler := authenticator.GatewayMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) {
+		principal := PrincipalFromContext(req.Context())
+		if principal == nil || principal.UserID != "local-user" || principal.Scope != ScopeMe {
+			t.Fatalf("got principal %#v; want local mock principal", principal)
+		}
+	}))
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/mentorship/v1/me", nil))
 }
 
 func TestNewJWTAuthenticator_RequiresCompleteHeimdallConfig(t *testing.T) {
 	_, err := NewJWTAuthenticator(context.Background(), JWTAuthConfig{
-		JWKSURL:          "https://auth.example/.well-known/jwks.json",
-		Audience:         "mentorship-api",
-		Issuer:           "https://auth.example/",
 		HeimdallJWKSURL:  "http://heimdall.local/jwks",
 		HeimdallAudience: "lfx-mentorship-backend",
 	}, slog.Default())
@@ -97,9 +59,111 @@ func TestHeimdallClaimsRequirePrincipal(t *testing.T) {
 	}
 }
 
-func heimdallShapedToken() string {
-	encode := func(value string) string {
-		return base64.RawURLEncoding.EncodeToString([]byte(value))
+func TestGatewayMiddlewareValidatesPS256HeimdallToken(t *testing.T) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate RSA key: %v", err)
 	}
-	return encode(`{"alg":"none"}`) + "." + encode(`{"iss":"heimdall","principal":"alice"}`) + "."
+	jwksServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{
+			Key:       &privateKey.PublicKey,
+			KeyID:     "test-key",
+			Algorithm: string(jose.PS256),
+			Use:       "sig",
+		}}})
+	}))
+	defer jwksServer.Close()
+
+	claims := heimdallTokenClaims{
+		Issuer:    "heimdall",
+		Audience:  "lfx-mentorship-backend",
+		ExpiresAt: time.Now().Add(time.Hour).Unix(),
+		Principal: "alice",
+	}
+	tests := []struct {
+		name      string
+		claims    heimdallTokenClaims
+		algorithm jose.SignatureAlgorithm
+		wantCode  int
+	}{
+		{name: "valid", claims: claims, algorithm: jose.PS256, wantCode: http.StatusOK},
+		{name: "wrong issuer", claims: withIssuer(claims, "other"), algorithm: jose.PS256, wantCode: http.StatusUnauthorized},
+		{name: "wrong audience", claims: withAudience(claims, "other"), algorithm: jose.PS256, wantCode: http.StatusUnauthorized},
+		{name: "expired", claims: withExpiry(claims, time.Now().Add(-time.Hour)), algorithm: jose.PS256, wantCode: http.StatusUnauthorized},
+		{name: "wrong algorithm", claims: claims, algorithm: jose.RS256, wantCode: http.StatusUnauthorized},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			token := signedHeimdallToken(t, privateKey, test.algorithm, test.claims)
+			authenticator, err := NewJWTAuthenticator(context.Background(), JWTAuthConfig{
+				HeimdallJWKSURL:  jwksServer.URL,
+				HeimdallAudience: "lfx-mentorship-backend",
+				HeimdallIssuer:   "heimdall",
+			}, slog.Default())
+			if err != nil {
+				t.Fatalf("new authenticator: %v", err)
+			}
+			handler := authenticator.GatewayMiddleware(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				principal := PrincipalFromContext(req.Context())
+				if principal == nil || principal.UserID != "alice" {
+					t.Fatalf("got principal %#v; want alice", principal)
+				}
+				w.WriteHeader(http.StatusOK)
+			}))
+			request := httptest.NewRequest(http.MethodGet, "/mentorship/v1/me", nil)
+			request.Header.Set("Authorization", "Bearer "+token)
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, request)
+
+			if response.Code != test.wantCode {
+				t.Fatalf("got status %d; want %d", response.Code, test.wantCode)
+			}
+		})
+	}
+}
+
+type heimdallTokenClaims struct {
+	Issuer    string `json:"iss"`
+	Audience  string `json:"aud"`
+	ExpiresAt int64  `json:"exp"`
+	Principal string `json:"principal"`
+}
+
+func signedHeimdallToken(t *testing.T, privateKey *rsa.PrivateKey, algorithm jose.SignatureAlgorithm, claims heimdallTokenClaims) string {
+	t.Helper()
+	options := (&jose.SignerOptions{}).WithHeader(jose.HeaderKey("kid"), "test-key")
+	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: algorithm, Key: privateKey}, options)
+	if err != nil {
+		t.Fatalf("new signer: %v", err)
+	}
+	payload, err := json.Marshal(claims)
+	if err != nil {
+		t.Fatalf("marshal claims: %v", err)
+	}
+	serialized, err := signer.Sign(payload)
+	if err != nil {
+		t.Fatalf("sign token: %v", err)
+	}
+	token, err := serialized.CompactSerialize()
+	if err != nil {
+		t.Fatalf("serialize token: %v", err)
+	}
+	return token
+}
+
+func withIssuer(claims heimdallTokenClaims, issuer string) heimdallTokenClaims {
+	claims.Issuer = issuer
+	return claims
+}
+
+func withAudience(claims heimdallTokenClaims, audience string) heimdallTokenClaims {
+	claims.Audience = audience
+	return claims
+}
+
+func withExpiry(claims heimdallTokenClaims, expiry time.Time) heimdallTokenClaims {
+	claims.ExpiresAt = expiry.Unix()
+	return claims
 }

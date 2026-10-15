@@ -1,7 +1,7 @@
 // Copyright The Linux Foundation and each contributor to LFX.
 // SPDX-License-Identifier: MIT
 
-import { AppRoute } from '~/config/routes';
+import { AppRoute, selfServeMentorUrl, selfServeMenteeUrl } from '~/config/routes';
 
 export interface HeaderMenuChild {
   label: string;
@@ -22,11 +22,14 @@ export interface HeaderCtaItem {
   type: 'primary' | 'outline';
 }
 
-export const lfxHeaderCtas: HeaderCtaItem[] = [
-  { label: 'Enroll a Program', to: AppRoute.EnrollProgram, type: 'outline' },
-  { label: 'Become a Mentor', to: AppRoute.Mentors, type: 'outline' },
-  { label: 'My Mentorship', to: AppRoute.Mentees, type: 'primary' },
-];
+export function lfxHeaderCtas(selfServeUrl: string): HeaderCtaItem[] {
+  return [
+    { label: 'Enroll a Program', to: AppRoute.EnrollProgram, type: 'outline' },
+    { label: 'Become a Mentor', to: selfServeMentorUrl(selfServeUrl), type: 'outline' },
+    { label: 'My Mentorship', to: selfServeMenteeUrl(selfServeUrl), type: 'primary' },
+  ];
+}
+
 export const lfxHeaderMenu: HeaderMenuItem[] = [
   { label: 'Find a Program', icon: 'magnifying-glass', to: AppRoute.FindProgram },
   { label: 'Mentees', icon: 'user-graduate', to: AppRoute.Mentees },

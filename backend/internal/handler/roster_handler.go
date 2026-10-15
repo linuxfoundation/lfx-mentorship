@@ -17,9 +17,6 @@ type rosterService interface {
 	ListApprovers(context.Context) ([]*models.RosterMember, error)
 	AddApprover(context.Context, string, string) (*models.RosterMember, error)
 	RemoveApprover(context.Context, string, string) error
-	ListProjectAdmins(context.Context, string) ([]*models.RosterMember, error)
-	AddProjectAdmin(context.Context, string, string, string) (*models.RosterMember, error)
-	RemoveProjectAdmin(context.Context, string, string, string) error
 }
 
 type RosterHandler struct{ svc rosterService }
@@ -74,61 +71,6 @@ func (h *RosterHandler) RemoveApprover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.svc.RemoveApprover(r.Context(), p.UserID, chi.URLParam(r, "userID")); err != nil {
-		Error(w, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-func (h *RosterHandler) ListProjectAdmins(w http.ResponseWriter, r *http.Request) {
-	if auth.PrincipalFromContext(r.Context()) == nil {
-		Error(w, domain.ErrUnauthorized)
-		return
-	}
-	if !auth.HasProjectManagementScope(r.Context(), chi.URLParam(r, "projectUID")) {
-		Error(w, domain.ErrForbidden)
-		return
-	}
-	items, err := h.svc.ListProjectAdmins(r.Context(), chi.URLParam(r, "projectUID"))
-	if err != nil {
-		Error(w, err)
-		return
-	}
-	JSON(w, http.StatusOK, map[string]any{"data": items})
-}
-func (h *RosterHandler) AddProjectAdmin(w http.ResponseWriter, r *http.Request) {
-	p := auth.PrincipalFromContext(r.Context())
-	if p == nil {
-		Error(w, domain.ErrUnauthorized)
-		return
-	}
-	if !auth.HasProjectManagementScope(r.Context(), chi.URLParam(r, "projectUID")) {
-		Error(w, domain.ErrForbidden)
-		return
-	}
-	var input struct {
-		UserID string `json:"user_id"`
-	}
-	if !decodeBody(w, r, &input) {
-		return
-	}
-	item, err := h.svc.AddProjectAdmin(r.Context(), p.UserID, chi.URLParam(r, "projectUID"), input.UserID)
-	if err != nil {
-		Error(w, err)
-		return
-	}
-	JSON(w, http.StatusCreated, item)
-}
-func (h *RosterHandler) RemoveProjectAdmin(w http.ResponseWriter, r *http.Request) {
-	p := auth.PrincipalFromContext(r.Context())
-	if p == nil {
-		Error(w, domain.ErrUnauthorized)
-		return
-	}
-	if !auth.HasProjectManagementScope(r.Context(), chi.URLParam(r, "projectUID")) {
-		Error(w, domain.ErrForbidden)
-		return
-	}
-	if err := h.svc.RemoveProjectAdmin(r.Context(), p.UserID, chi.URLParam(r, "projectUID"), chi.URLParam(r, "userID")); err != nil {
 		Error(w, err)
 		return
 	}

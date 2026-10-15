@@ -1,0 +1,7 @@
+{{- /* Copyright The Linux Foundation and each contributor to LFX. */ -}}
+{{- /* SPDX-License-Identifier: MIT */ -}}
+{{- /* Legacy: admin-mentor-accepted */ -}}
+{{template "header" .}}<p>Congratulations!</p>
+<p><strong>{{.MentorName}}</strong> accepted your invitation to participate as a mentor for the <strong>{{.ProgramName}}</strong> mentorship program.</p>
+<p>Log in to LFX Mentorship at your earliest convenience to view your new mentor's profile.</p>
+{{template "button" .ManageURL}}View Program{{template "button_end"}}{{template "footer" .}}

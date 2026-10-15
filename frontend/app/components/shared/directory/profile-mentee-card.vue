@@ -24,18 +24,22 @@ SPDX-License-Identifier: MIT
         </div>
       </div>
       <p class="text-xs text-neutral-600 leading-4 line-clamp-3 mt-1">
-        {{ mentee.bio }}
+        {{ plainBio }}
       </p>
     </div>
   </NuxtLink>
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue';
 import ProfileInitialsAvatar from '~/components/shared/directory/profile-initials-avatar.vue';
 import { menteePath } from '~/config/routes';
 import type { MentorMenteeSummary } from '~/types/mentor.types';
+import { plainTextFromHtml } from '~/utils/html-text';
 
-defineProps<{ mentee: MentorMenteeSummary }>();
+const props = defineProps<{ mentee: MentorMenteeSummary }>();
+
+const plainBio = computed(() => plainTextFromHtml(props.mentee.bio ?? ''));
 </script>
 
 <script lang="ts">

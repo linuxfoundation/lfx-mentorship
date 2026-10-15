@@ -44,7 +44,7 @@ SPDX-License-Identifier: MIT
           v-if="member.intro"
           class="text-xs text-neutral-500 line-clamp-3"
         >
-          {{ member.intro }}
+          {{ plainTextFromHtml(member.intro) }}
         </p>
       </li>
     </ul>
@@ -55,6 +55,7 @@ SPDX-License-Identifier: MIT
 import type { ProgramMember } from '~/types/program.types';
 import { mentorPath } from '~/config/routes';
 import LfxAvatar from '~/components/uikit/avatar/avatar.vue';
+import { plainTextFromHtml } from '~/utils/html-text';
 
 defineProps<{
   mentors: ProgramMember[];

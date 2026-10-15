@@ -28,9 +28,12 @@ SPDX-License-Identifier: MIT
             </div>
           </div>
 
-          <p class="text-sm text-neutral-600 leading-5 max-w-[80%]">
-            {{ mentor.bio }}
-          </p>
+          <!-- eslint-disable vue/no-v-html -- content is sanitized via useSanitize() -->
+          <div
+            class="lfx-rich-text text-neutral-600 max-w-[80%]"
+            v-html="bioHtml"
+          />
+          <!-- eslint-enable vue/no-v-html -->
 
           <div class="flex flex-wrap items-center gap-3 pt-1">
             <lfx-button
@@ -104,14 +107,19 @@ SPDX-License-Identifier: MIT
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue';
 import { AppRoute } from '~/config/routes';
 import ProfileInitialsAvatar from '~/components/shared/directory/profile-initials-avatar.vue';
 import DetailBackLink from '~/components/shared/detail-back-link.vue';
 import type { MentorDetail } from '~/types/mentor.types';
 import LfxButton from '~/components/uikit/button/button.vue';
 import LfxTag from '~/components/uikit/tag/tag.vue';
+import { useSanitize } from '~/composables/useSanitize';
 
-defineProps<{ mentor: MentorDetail }>();
+const props = defineProps<{ mentor: MentorDetail }>();
+const { renderDescription } = useSanitize();
+
+const bioHtml = computed(() => renderDescription(props.mentor.bio ?? ''));
 
 function openExternal(url: string) {
   if (!import.meta.client) return;

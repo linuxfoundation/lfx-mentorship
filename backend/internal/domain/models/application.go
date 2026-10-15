@@ -3,7 +3,48 @@
 
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
+
+type ProgramApplicationType string
+
+const (
+	ProgramApplicationTypeCurrent ProgramApplicationType = "current"
+	ProgramApplicationTypePast    ProgramApplicationType = "past"
+	ProgramApplicationTypeAll     ProgramApplicationType = "all"
+)
+
+func (t ProgramApplicationType) IsValid() bool {
+	return t == ProgramApplicationTypeCurrent || t == ProgramApplicationTypePast || t == ProgramApplicationTypeAll
+}
+
+type ProgramApplicationTerm struct {
+	ID                   string            `json:"id"`
+	Name                 string            `json:"name"`
+	Status               ProgramTermStatus `json:"status"`
+	StartDate            *time.Time        `json:"start_date,omitempty"`
+	EndDate              *time.Time        `json:"end_date,omitempty"`
+	ApplicationStartDate *time.Time        `json:"application_start_date,omitempty"`
+	ApplicationEndDate   *time.Time        `json:"application_end_date,omitempty"`
+}
+
+type ProgramApplicationRow struct {
+	UserID            string                 `json:"user_id"`
+	ApplicationID     string                 `json:"application_id"`
+	Name              *string                `json:"name,omitempty"`
+	Email             *string                `json:"email,omitempty"`
+	AvatarURL         *string                `json:"avatar_url,omitempty"`
+	Status            ApplicationStatus      `json:"status"`
+	Term              ProgramApplicationTerm `json:"term"`
+	TasksSubmitted    int                    `json:"tasks_submitted"`
+	TasksTotal        int                    `json:"tasks_total"`
+	Note              *string                `json:"note,omitempty"`
+	CreatedOn         time.Time              `json:"created_on"`
+	UpdatedOn         time.Time              `json:"updated_on"`
+	OtherApplications json.RawMessage        `json:"other_applications,omitempty"`
+}
 
 // ApplicationStatus enumerates valid values for applications.status.
 // "declined" is the shared vocabulary for a turned-down application of either
@@ -17,18 +58,35 @@ const (
 	ApplicationStatusDeclined  ApplicationStatus = "declined"
 	ApplicationStatusWithdrawn ApplicationStatus = "withdrawn"
 	ApplicationStatusGraduated ApplicationStatus = "graduated"
-	ApplicationStatusHold      ApplicationStatus = "hold"
 )
+
+// MaxWithdrawnApplicationsPerTerm caps reapplication: each reapply keeps the withdrawn application
+// as history, so once a user has withdrawn this many for a term they cannot apply to it again.
+const MaxWithdrawnApplicationsPerTerm = 3
 
 // IsValid reports whether the status value is one of the allowed enum members.
 func (s ApplicationStatus) IsValid() bool {
 	switch s {
 	case ApplicationStatusPending, ApplicationStatusAccepted,
-		ApplicationStatusDeclined, ApplicationStatusWithdrawn, ApplicationStatusGraduated,
-		ApplicationStatusHold:
+		ApplicationStatusDeclined, ApplicationStatusWithdrawn, ApplicationStatusGraduated:
 		return true
 	}
 	return false
+}
+
+// ProgramApplicationStatus is the applicants-list status filter. It accepts every ApplicationStatus
+// and adds two that split pending on the prerequisite tasks' current statuses: applied (one is
+// outstanding) and tasks_submitted (every one is submitted or complete, or there are none).
+type ProgramApplicationStatus string
+
+const (
+	ProgramApplicationStatusApplied        ProgramApplicationStatus = "applied"
+	ProgramApplicationStatusTasksSubmitted ProgramApplicationStatus = "tasks_submitted"
+)
+
+// IsValid reports whether the filter is applied, tasks_submitted, or an ApplicationStatus.
+func (s ProgramApplicationStatus) IsValid() bool {
+	return s == ProgramApplicationStatusApplied || s == ProgramApplicationStatusTasksSubmitted || ApplicationStatus(s).IsValid()
 }
 
 // ApplicationRole enumerates valid values for applications.role.
@@ -67,42 +125,57 @@ func (a AttendanceType) IsValid() bool {
 
 // Application maps to the public.applications table.
 type Application struct {
-	ID                string             `json:"id"`
-	ProgramTermID     string             `json:"program_term_id"`
-	UserID            string             `json:"user_id"`
-	Role              ApplicationRole    `json:"role"`
-	Status            ApplicationStatus  `json:"status"`
-	ProgramTermStatus *ProgramTermStatus `json:"program_term_status,omitempty"`
-	StartDateTime     *time.Time         `json:"start_date_time,omitempty"`
-	EndDateTime       *time.Time         `json:"end_date_time,omitempty"`
-	AttendanceType    *AttendanceType    `json:"attendance_type,omitempty"` // set on accept
-	TasksSubmitted    bool               `json:"tasks_submitted"`
-	AdminNotified     bool               `json:"admin_notified"`
-	Evaluation        *string            `json:"-"`
-	ReviewerNote      *string            `json:"-"`
-	CreatedOn         time.Time          `json:"created_on"`
-	UpdatedOn         time.Time          `json:"updated_on"`
+	ID                string              `json:"id"`
+	ProgramTermID     string              `json:"program_term_id"`
+	UserID            string              `json:"user_id"`
+	Role              ApplicationRole     `json:"role"`
+	Status            ApplicationStatus   `json:"status"`
+	ProgramTermStatus *ProgramTermStatus  `json:"program_term_status,omitempty"`
+	StartDateTime     *time.Time          `json:"start_date_time,omitempty"`
+	EndDateTime       *time.Time          `json:"end_date_time,omitempty"`
+	AttendanceType    *AttendanceType     `json:"attendance_type,omitempty"` // set on accept
+	TasksSubmitted    bool                `json:"tasks_submitted"`
+	AdminNotified     bool                `json:"admin_notified"`
+	Evaluation        *string             `json:"-"`
+	ReviewerNote      *string             `json:"-"`
+	CreatedOn         time.Time           `json:"created_on"`
+	UpdatedOn         time.Time           `json:"updated_on"`
+	Program           *ApplicationProgram `json:"program,omitempty"`
+	Term              *ApplicationTerm    `json:"term,omitempty"`
+}
+
+type ApplicationProgram struct {
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	Slug        string  `json:"slug"`
+	LogoURL     *string `json:"logo_url,omitempty"`
+	ProjectName *string `json:"project_name,omitempty"`
+}
+type ApplicationTerm struct {
+	ID                   string            `json:"id"`
+	Name                 string            `json:"name"`
+	Status               ProgramTermStatus `json:"status"`
+	StartDate            *time.Time        `json:"start_date,omitempty"`
+	EndDate              *time.Time        `json:"end_date,omitempty"`
+	ApplicationStartDate *time.Time        `json:"application_start_date,omitempty"`
+	ApplicationEndDate   *time.Time        `json:"application_end_date,omitempty"`
 }
 
 // ApplicationCreateInput is the request body for submitting an application.
-// Status is intentionally absent — the service always assigns "pending".
+// Status is intentionally absent — the service always assigns "pending" — and the
+// application's start and end dates are copied from its term, never read from the client.
 type ApplicationCreateInput struct {
-	ID                string             `json:"id"`
-	UserID            string             `json:"user_id"`
-	Role              ApplicationRole    `json:"role"`
-	Status            ApplicationStatus  `json:"-"` // server-assigned; never read from client
-	ProgramTermStatus *ProgramTermStatus `json:"program_term_status,omitempty"`
-	StartDateTime     *time.Time         `json:"start_date_time,omitempty"`
-	EndDateTime       *time.Time         `json:"end_date_time,omitempty"`
-	AttendanceType    *AttendanceType    `json:"attendance_type,omitempty"`
+	ID             string            `json:"id"`
+	UserID         string            `json:"user_id"`
+	Role           ApplicationRole   `json:"role"` // optional; the apply route takes mentee applications only
+	Status         ApplicationStatus `json:"-"`    // server-assigned; never read from client
+	AttendanceType *AttendanceType   `json:"attendance_type,omitempty"`
 }
 
 // ApplicationUpdateInput is the request body for updating an application's status.
 type ApplicationUpdateInput struct {
 	Status            *ApplicationStatus `json:"status,omitempty"`
 	ProgramTermStatus *ProgramTermStatus `json:"program_term_status,omitempty"`
-	StartDateTime     *time.Time         `json:"start_date_time,omitempty"`
-	EndDateTime       *time.Time         `json:"end_date_time,omitempty"`
 	AttendanceType    *AttendanceType    `json:"attendance_type,omitempty"`
 	TasksSubmitted    *bool              `json:"tasks_submitted,omitempty"`
 	AdminNotified     *bool              `json:"admin_notified,omitempty"`
@@ -110,4 +183,6 @@ type ApplicationUpdateInput struct {
 	ReviewerNote      *string            `json:"reviewer_note,omitempty"`
 	// ActorID is the caller's user ID for permission checks; not persisted.
 	ActorID string `json:"-"`
+	// ExpectedStatus, when set, makes a status change apply only if the row still has this status.
+	ExpectedStatus *ApplicationStatus `json:"-"`
 }

@@ -6,6 +6,8 @@ package main
 
 import (
 	"fmt"
+	"net/mail"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -20,9 +22,31 @@ type Config struct {
 	Database     DatabaseConfig
 	JWT          JWTConfig
 	FGA          FGAConfig
+	Indexer      IndexerConfig
+	Email        EmailConfig
 	Crowdfunding CrowdfundingConfig
+	Storage      StorageConfig
 	OTel         OTelConfig
 	Local        LocalConfig
+}
+
+// StorageConfig holds the per-class buckets. A bucket left unset disables its upload
+// and download routes; the env names follow the platform's multi-bucket namespacing.
+type StorageConfig struct {
+	Region string
+	// Logos is the public, CDN-fronted bucket for program and profile logos.
+	Logos BucketConfig
+	// Attachments is the private bucket for task submissions.
+	Attachments BucketConfig
+}
+
+// BucketConfig holds one bucket's settings.
+type BucketConfig struct {
+	Bucket              string
+	EndpointURL         string
+	CreateMissingBucket bool
+	// CDNURLPrefix is set for the public bucket only.
+	CDNURLPrefix string
 }
 
 // ServerConfig holds HTTP server settings.
@@ -42,11 +66,8 @@ type DatabaseConfig struct {
 	ConnMaxLifetime time.Duration
 }
 
-// JWTConfig holds Auth0 / JWKS settings.
+// JWTConfig holds Heimdall JWKS settings.
 type JWTConfig struct {
-	JWKSURL          string
-	Audience         string
-	Issuer           string
 	ClockSkew        time.Duration
 	HeimdallJWKSURL  string
 	HeimdallAudience string
@@ -62,20 +83,37 @@ type FGAConfig struct {
 	RelayMaxAttempts int
 }
 
-// CrowdfundingConfig holds outbound crowdfunding API and M2M auth settings.
-type CrowdfundingConfig struct {
-	BaseURL      string
-	TokenURL     string
-	ClientID     string
-	ClientSecret string
-	Audience     string
-	Scope        string
-	Timeout      time.Duration
+// IndexerConfig configures authenticated index publishing and retry behavior.
+type IndexerConfig struct {
+	// ServiceToken is stamped on every index message; without it the relay idles.
+	ServiceToken string
+	RetryDelay   time.Duration
+	MaxAttempts  int
 }
 
-// IsConfigured reports whether all required crowdfunding client settings are present.
+// EmailConfig configures notification email, which is sent over the FGA NATS connection whenever it is set.
+type EmailConfig struct {
+	// PublicSiteURL is the public Mentorship site that user-facing links point at.
+	PublicSiteURL string
+	// SelfServeURL is LFX Self Serve, where program management pages live.
+	SelfServeURL string
+	// HRInbox is the LF staff HR inbox copied on every mentee acceptance.
+	HRInbox string
+	// ReviewInboxes are the LF staff inboxes told about every program submitted for review.
+	ReviewInboxes []string
+	// AllowedRecipients, when set, are the only addresses mail goes to, so testing on real data cannot reach real users.
+	AllowedRecipients []string
+}
+
+// CrowdfundingConfig holds outbound crowdfunding API settings.
+type CrowdfundingConfig struct {
+	BaseURL string
+	Timeout time.Duration
+}
+
+// IsConfigured reports whether the crowdfunding client has a base URL.
 func (c CrowdfundingConfig) IsConfigured() bool {
-	return c.BaseURL != "" && c.TokenURL != "" && c.ClientID != "" && c.ClientSecret != "" && c.Audience != ""
+	return c.BaseURL != ""
 }
 
 // OTelConfig holds OpenTelemetry settings.
@@ -104,10 +142,9 @@ func loadConfig() (*Config, error) {
 	if heimdallConfigured && (heimdallJWKSURL == "" || heimdallAudience == "" || heimdallIssuer == "") {
 		return nil, fmt.Errorf("HEIMDALL_JWKS_URL, HEIMDALL_JWT_AUDIENCE, and HEIMDALL_JWT_ISSUER must be set together")
 	}
-	if heimdallConfigured && heimdallIssuer == os.Getenv("JWT_ISSUER") {
-		return nil, fmt.Errorf("HEIMDALL_JWT_ISSUER must differ from JWT_ISSUER")
+	if !heimdallConfigured && os.Getenv("DISABLED_MOCK_LOCAL_PRINCIPAL") == "" {
+		return nil, fmt.Errorf("HEIMDALL_JWKS_URL, HEIMDALL_JWT_AUDIENCE, and HEIMDALL_JWT_ISSUER are required")
 	}
-
 	serverPort, err := parseInt(getEnv("PORT", "8080"))
 	if err != nil {
 		return nil, fmt.Errorf("PORT: %w", err)
@@ -152,7 +189,17 @@ func loadConfig() (*Config, error) {
 			return nil, fmt.Errorf("FGA_RELAY_RETRY_DELAY: must be a positive duration")
 		}
 	}
-
+	indexRetryDelay := time.Minute
+	if v := os.Getenv("INDEX_RELAY_RETRY_DELAY"); v != "" {
+		indexRetryDelay, err = time.ParseDuration(v)
+		if err != nil || indexRetryDelay <= 0 {
+			return nil, fmt.Errorf("INDEX_RELAY_RETRY_DELAY: must be a positive duration")
+		}
+	}
+	indexMaxAttempts, err := parseInt(getEnv("INDEX_RELAY_MAX_ATTEMPTS", "10"))
+	if err != nil || indexMaxAttempts <= 0 {
+		return nil, fmt.Errorf("INDEX_RELAY_MAX_ATTEMPTS: must be a positive integer")
+	}
 	crowdfundingTimeout := 10 * time.Second
 	if v := os.Getenv("CROWDFUNDING_TIMEOUT"); v != "" {
 		d, err := time.ParseDuration(v)
@@ -163,6 +210,14 @@ func loadConfig() (*Config, error) {
 			return nil, fmt.Errorf("CROWDFUNDING_TIMEOUT: must be greater than 0")
 		}
 		crowdfundingTimeout = d
+	}
+	emailCfg, err := loadEmailConfig(os.Getenv("FGA_NATS_URL") != "")
+	if err != nil {
+		return nil, err
+	}
+	storageCfg, err := loadStorageConfig()
+	if err != nil {
+		return nil, err
 	}
 
 	return &Config{
@@ -179,9 +234,6 @@ func loadConfig() (*Config, error) {
 			ConnMaxLifetime: 30 * time.Minute,
 		},
 		JWT: JWTConfig{
-			JWKSURL:          os.Getenv("JWKS_URL"),
-			Audience:         os.Getenv("JWT_AUDIENCE"),
-			Issuer:           os.Getenv("JWT_ISSUER"),
 			ClockSkew:        clockSkew,
 			HeimdallJWKSURL:  heimdallJWKSURL,
 			HeimdallAudience: heimdallAudience,
@@ -194,15 +246,17 @@ func loadConfig() (*Config, error) {
 			RelayRetryDelay:  relayRetryDelay,
 			RelayMaxAttempts: relayMaxAttempts,
 		},
-		Crowdfunding: CrowdfundingConfig{
-			BaseURL:      strings.TrimRight(os.Getenv("CROWDFUNDING_BASE_URL"), "/"),
-			TokenURL:     os.Getenv("CROWDFUNDING_TOKEN_URL"),
-			ClientID:     os.Getenv("CROWDFUNDING_CLIENT_ID"),
-			ClientSecret: os.Getenv("CROWDFUNDING_CLIENT_SECRET"),
-			Audience:     os.Getenv("CROWDFUNDING_AUDIENCE"),
-			Scope:        getEnv("CROWDFUNDING_SCOPE", "access:manage"),
-			Timeout:      crowdfundingTimeout,
+		Indexer: IndexerConfig{
+			ServiceToken: os.Getenv("INDEXER_SERVICE_TOKEN"),
+			RetryDelay:   indexRetryDelay,
+			MaxAttempts:  indexMaxAttempts,
 		},
+		Email: emailCfg,
+		Crowdfunding: CrowdfundingConfig{
+			BaseURL: strings.TrimRight(os.Getenv("CROWDFUNDING_BASE_URL"), "/"),
+			Timeout: crowdfundingTimeout,
+		},
+		Storage: storageCfg,
 		OTel: OTelConfig{
 			ServiceName:    getEnv("OTEL_SERVICE_NAME", "lfx-mentorship-api"),
 			ServiceVersion: getEnv("OTEL_SERVICE_VERSION", "dev"),
@@ -216,12 +270,102 @@ func loadConfig() (*Config, error) {
 	}, nil
 }
 
+// loadEmailConfig reads notification email settings, which are required once NATS is configured.
+func loadEmailConfig(natsConfigured bool) (EmailConfig, error) {
+	cfg := EmailConfig{
+		PublicSiteURL: strings.TrimRight(os.Getenv("PUBLIC_SITE_URL"), "/"),
+		SelfServeURL:  strings.TrimRight(os.Getenv("SELF_SERVE_URL"), "/"),
+		HRInbox:       strings.TrimSpace(os.Getenv("EMAIL_HR_INBOX")),
+	}
+	if !natsConfigured {
+		return cfg, nil
+	}
+	for _, kv := range [][2]string{{"PUBLIC_SITE_URL", cfg.PublicSiteURL}, {"SELF_SERVE_URL", cfg.SelfServeURL}} {
+		if u, err := url.Parse(kv[1]); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+			return EmailConfig{}, fmt.Errorf("%s must be an absolute http(s) URL with no query or fragment when FGA_NATS_URL is set", kv[0])
+		}
+	}
+	if addr, err := mail.ParseAddress(cfg.HRInbox); err != nil || addr.Address != cfg.HRInbox {
+		return EmailConfig{}, fmt.Errorf("EMAIL_HR_INBOX must be a bare email address when FGA_NATS_URL is set")
+	}
+	var err error
+	if cfg.ReviewInboxes, err = addressList("EMAIL_REVIEW_INBOX"); err != nil {
+		return EmailConfig{}, err
+	}
+	if len(cfg.ReviewInboxes) == 0 {
+		return EmailConfig{}, fmt.Errorf("EMAIL_REVIEW_INBOX must list at least one email address when FGA_NATS_URL is set")
+	}
+	if cfg.AllowedRecipients, err = addressList("EMAIL_ALLOWED_RECIPIENTS"); err != nil {
+		return EmailConfig{}, err
+	}
+	// A set value with no addresses would mean "send to everyone"; fail closed instead.
+	if os.Getenv("EMAIL_ALLOWED_RECIPIENTS") != "" && len(cfg.AllowedRecipients) == 0 {
+		return EmailConfig{}, fmt.Errorf("EMAIL_ALLOWED_RECIPIENTS is set but lists no addresses")
+	}
+	return cfg, nil
+}
+
+// addressList reads key as comma-separated bare email addresses, skipping blank entries.
+func addressList(key string) ([]string, error) {
+	var addrs []string
+	for r := range strings.SplitSeq(os.Getenv(key), ",") {
+		if r = strings.TrimSpace(r); r == "" {
+			continue
+		}
+		if addr, err := mail.ParseAddress(r); err != nil || addr.Address != r {
+			return nil, fmt.Errorf("%s must be a comma-separated list of bare email addresses", key)
+		}
+		addrs = append(addrs, r)
+	}
+	return addrs, nil
+}
+
+// loadStorageConfig reads the logos and attachments buckets.
+func loadStorageConfig() (StorageConfig, error) {
+	cfg := StorageConfig{Region: strings.TrimSpace(os.Getenv("AWS_REGION"))}
+	var err error
+	if cfg.Logos, err = loadBucketConfig("LOGOS"); err != nil {
+		return StorageConfig{}, err
+	}
+	if cfg.Attachments, err = loadBucketConfig("ATTACHMENTS"); err != nil {
+		return StorageConfig{}, err
+	}
+	if (cfg.Logos.Bucket != "" || cfg.Attachments.Bucket != "") && cfg.Region == "" {
+		return StorageConfig{}, fmt.Errorf("AWS_REGION is required when an S3 bucket is configured")
+	}
+	// The logos bucket is CDN-fronted, so sharing it would make private attachments public.
+	if cfg.Logos.Bucket != "" && cfg.Logos.Bucket == cfg.Attachments.Bucket {
+		return StorageConfig{}, fmt.Errorf("ATTACHMENTS_S3_BUCKET must differ from LOGOS_S3_BUCKET")
+	}
+	if cfg.Logos.Bucket != "" {
+		// Stored logo columns hold the full CDN URL, so the prefix is required, not optional.
+		if u, err := url.Parse(cfg.Logos.CDNURLPrefix); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+			return StorageConfig{}, fmt.Errorf("LOGOS_CDN_URL_PREFIX must be an absolute http(s) URL with no query or fragment when LOGOS_S3_BUCKET is set")
+		}
+	}
+	return cfg, nil
+}
+
+// loadBucketConfig reads the {PREFIX}_S3_* and {PREFIX}_CDN_URL_PREFIX variables.
+func loadBucketConfig(prefix string) (BucketConfig, error) {
+	cfg := BucketConfig{
+		Bucket:       strings.TrimSpace(os.Getenv(prefix + "_S3_BUCKET")),
+		EndpointURL:  strings.TrimSpace(os.Getenv(prefix + "_S3_ENDPOINT_URL")),
+		CDNURLPrefix: strings.TrimRight(strings.TrimSpace(os.Getenv(prefix+"_CDN_URL_PREFIX")), "/"),
+	}
+	if v := os.Getenv(prefix + "_S3_CREATE_MISSING_BUCKET"); v != "" {
+		create, err := strconv.ParseBool(v)
+		if err != nil {
+			return BucketConfig{}, fmt.Errorf("%s_S3_CREATE_MISSING_BUCKET: must be a boolean", prefix)
+		}
+		cfg.CreateMissingBucket = create
+	}
+	return cfg, nil
+}
+
 // jwtAuthConfig converts JWTConfig into an auth.JWTAuthConfig.
 func (c *Config) jwtAuthConfig() auth.JWTAuthConfig {
 	return auth.JWTAuthConfig{
-		JWKSURL:                    c.JWT.JWKSURL,
-		Audience:                   c.JWT.Audience,
-		Issuer:                     c.JWT.Issuer,
 		ClockSkew:                  c.JWT.ClockSkew,
 		HeimdallJWKSURL:            c.JWT.HeimdallJWKSURL,
 		HeimdallAudience:           c.JWT.HeimdallAudience,

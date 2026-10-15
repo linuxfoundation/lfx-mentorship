@@ -8,7 +8,10 @@ export type PublicOgType = 'website' | 'profile' | 'article';
 
 export interface PublicSeoOptions {
   title: MaybeRefOrGetter<string>;
+  /** Rich text or plain text; converted to plain text and truncated once, here. */
   description: MaybeRefOrGetter<string>;
+  /** Used when `description` has no text content (e.g. an empty editor's `<p><br></p>`). */
+  descriptionFallback?: string;
   /** Override the global canonical from `plugins/canonical.ts` (e.g. program slug). */
   path?: MaybeRefOrGetter<string>;
   /** Override the site-wide OG image (program logo only). */
@@ -24,7 +27,9 @@ export function usePublicSeo(options: PublicSeoOptions) {
   const origin = computed(() => siteOrigin(String(config.public.appUrl)));
 
   const title = computed(() => toValue(options.title));
-  const description = computed(() => truncateMetaDescription(toValue(options.description), ''));
+  const description = computed(() =>
+    truncateMetaDescription(toValue(options.description), options.descriptionFallback ?? ''),
+  );
   const brandedTitle = computed(() => {
     if (options.appendSiteName === false || title.value === SITE_NAME) {
       return title.value;

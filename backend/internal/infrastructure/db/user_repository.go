@@ -7,8 +7,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
@@ -17,6 +19,11 @@ import (
 )
 
 var userTracer = otel.Tracer("users-db")
+
+const (
+	uniqueViolation = "23505"
+	usersEmailKey   = "users_email_key"
+)
 
 // UserRepository implements domain.UserRepository against PostgreSQL.
 type UserRepository struct {
@@ -85,10 +92,50 @@ func (r *UserRepository) UpsertByLFID(ctx context.Context, input models.UserCrea
 		RETURNING id, email, lfid, name, given_name, family_name, avatar_url, created_on, updated_on`,
 		input.Email, input.LFID, input.Name, input.GivenName, input.FamilyName, input.AvatarURL,
 	).Scan(&u.ID, &u.Email, &u.LFID, &u.Name, &u.GivenName, &u.FamilyName, &u.AvatarURL, &u.CreatedOn, &u.UpdatedOn)
+	if pgErr := (*pgconn.PgError)(nil); errors.As(err, &pgErr) && pgErr.Code == uniqueViolation && pgErr.ConstraintName == usersEmailKey {
+		return nil, domain.ErrEmailInUse
+	}
 	if err != nil {
 		return nil, fmt.Errorf("upsert user by LFID: %w", err)
 	}
 	return &u, nil
+}
+
+// SearchCandidates returns up to limit users for the invite typeahead.
+func (r *UserRepository) SearchCandidates(ctx context.Context, query string, limit int) ([]*models.User, error) {
+	ctx, span := userTracer.Start(ctx, "db.users.SearchCandidates")
+	defer span.End()
+
+	pattern := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(query)
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, email, lfid, name, given_name, family_name, avatar_url, created_on, updated_on
+		FROM users
+		WHERE lfid IS NOT NULL
+		  AND (name ILIKE '%' || $1 || '%' OR lfid ILIKE $1 || '%')
+		ORDER BY lower(lfid) = lower($2) DESC, name NULLS LAST, lfid
+		LIMIT $3`, pattern, query, limit)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("search candidate users: %w", err)
+	}
+	defer rows.Close()
+
+	users := []*models.User{}
+	for rows.Next() {
+		var u models.User
+		if err := rows.Scan(
+			&u.ID, &u.Email, &u.LFID, &u.Name, &u.GivenName, &u.FamilyName, &u.AvatarURL, &u.CreatedOn, &u.UpdatedOn,
+		); err != nil {
+			span.RecordError(err)
+			return nil, fmt.Errorf("scan candidate user: %w", err)
+		}
+		users = append(users, &u)
+	}
+	if err := rows.Err(); err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("search candidate users: %w", err)
+	}
+	return users, nil
 }
 
 // List returns a paginated slice of users, optionally filtered by a search string.

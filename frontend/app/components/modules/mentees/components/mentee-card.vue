@@ -34,7 +34,7 @@ SPDX-License-Identifier: MIT
       </div>
 
       <p class="text-sm text-neutral-600 leading-5 line-clamp-4">
-        {{ mentee.introduction }}
+        {{ plainIntroduction }}
       </p>
 
       <div
@@ -143,8 +143,11 @@ import ProfileInitialsAvatar from '~/components/shared/directory/profile-initial
 import LfxButton from '~/components/uikit/button/button.vue';
 import LfxTag from '~/components/uikit/tag/tag.vue';
 import LfxTooltip from '~/components/uikit/tooltip/tooltip.vue';
+import { plainTextFromHtml } from '~/utils/html-text';
 
 const props = defineProps<{ mentee: Mentee }>();
+
+const plainIntroduction = computed(() => plainTextFromHtml(props.mentee.introduction ?? ''));
 
 const statusConfig = computed(() => (props.mentee.status ? MENTEE_STATUS_CONFIG[props.mentee.status] : undefined));
 const programLabel = computed(() => {

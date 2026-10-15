@@ -17,11 +17,18 @@ var (
 	ErrProgramMemberNotFound = errors.New("program member not found")
 	ErrApplicationNotFound   = errors.New("application not found")
 	ErrTaskNotFound          = errors.New("task not found")
+	ErrFileNotFound          = errors.New("file not found")
+	ErrAccountNotFound       = errors.New("LF account not found")
+	ErrProjectNotFound       = errors.New("project not found")
 
 	ErrInvalidInput        = errors.New("invalid input")
+	ErrPayloadTooLarge     = errors.New("payload too large")
+	ErrUnsupportedMedia    = errors.New("unsupported media type")
+	ErrRangeNotSatisfiable = errors.New("range not satisfiable")
 	ErrUnauthorized        = errors.New("unauthorized")
 	ErrForbidden           = errors.New("forbidden")
 	ErrConflict            = errors.New("resource conflict")
+	ErrEmailInUse          = errors.New("email already belongs to another user")
 	ErrUpstreamUnavailable = errors.New("upstream service unavailable")
 
 	ErrInvalidStateTransition = errors.New("invalid state transition")
