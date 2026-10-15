@@ -65,7 +65,7 @@ flowchart TB
     API -- "outbox → NATS" --> SYNC
     SYNC --> FGA
     CRONS --> PG
-    CRONS -- "M2M: funding stats" --> LEDGER
+    CRONS -- "API key: funding stats" --> LEDGER
     API -- "transactions · sponsors" --> CFAPI
     PG -- "Fivetran (Postgres connector)" --> SF
     SF --> DASH
@@ -160,7 +160,7 @@ Notes:
 
 - **Search**: PostgreSQL full-text search (`tsvector` + GIN indexes) over programs, skills, and profiles replaces the Elasticsearch cluster and its 8 sync jobs. Data volume (thousands of rows) is far below where a dedicated search engine pays for itself.
 - **Denormalization jobs eliminated**: mentor lists, skill mappings, and counts become queries/views instead of cron-materialized copies.
-- **Funding stats**: `program_funding_stats` is an hourly-refreshed local cache of mentorship-credit transactions read **directly from the Ledger API** (see Integrations) — the same pattern Crowdfunding uses for Ledger stats. *(As implemented: the job talks to the Ledger, not to Crowdfunding.)*
+- **Funding stats**: `program_funding_stats` is an hourly-refreshed local cache of mentorship-credit transactions read **directly from the Ledger API** (see Integrations) — the same pattern Crowdfunding uses for Ledger stats.
 - **No enrollment entity, and no mentor assignment.** The application *is* the lifecycle object — one row per user per term, whose status runs `pending → accepted → graduated` (there is no `active` application status; AQ-10 in [04](./04-authorization-model.md) resolved it as dropped). This matches legacy, where acceptance and graduation are status changes on a single `program-term-mentees` row — the term-keyed mentee source ([00](./00-current-authz-relations.md)); `project-members` is the program-level membership table and carries no term identity — and mentors relate to the **program**, not to individual mentees (the legacy per-mentee "mentors" list is a cron-denormalized copy of the program's approved mentors). Tasks therefore hang off the application, with `category` distinguishing `prerequisite` from `non_prerequisite` tasks. Introducing `enrollments` + `enrollment_mentors` would add a parity feature nobody asked for; see "No enrollment entity" and decision 2 in [04](./04-authorization-model.md).
 - **`hold` is not a valid application status.** It describes a *paused accepted mentorship*, not an application outcome, and does not belong in this enum. `backend/db/migrations/003_drop_hold_status.up.sql` drops it from `applications_status_check`. It rewrites a mentee `hold` row to `accepted`, which is also how the import maps legacy `hold`, and a mentor `hold` row, which could only come from `pending`, back to `pending`. It then queues refreshed search documents for the rows it changed. The ERD above omits it accordingly.
 - Exact column-level schema is an implementation-phase deliverable; this ERD fixes the entity boundaries.
