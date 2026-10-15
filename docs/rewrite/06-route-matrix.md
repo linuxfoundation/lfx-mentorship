@@ -106,6 +106,7 @@ Terms are not an FGA type and the current paths expose no program UID, so all of
 | --- | --- | --- | --- | --- |
 | `GET /v1/program-terms/{id}` → **`/v1/programs/{uid}/terms/{id}`** | anonymous | `mentorship_program:{uid}` | `viewer` | Parent-child invariant (rule 2) |
 | `POST /v1/programs/{uid}/terms` | required | `mentorship_program:{uid}` | `writer` | — |
+| `GET /v1/programs/{uid}/terms/{id}/apply-target` | anonymous | `mentorship_program:{uid}` | `viewer` | Parent-child invariant (rule 2); same visibility as the term read. Names and `accepting_applications` for the mentee apply page |
 | `PATCH`/`DELETE /v1/program-terms/{id}` → **`/v1/programs/{uid}/terms/{id}`** | required | `mentorship_program:{uid}` | `writer` | Parent-child invariant (rule 2) |
 | `GET /v1/program-terms/{id}/applications` → **nested** | required | `mentorship_program:{uid}` | `manager` | **The program's `manager`** (`writer or mentor`) — admins and mentors, deliberately not `auditor`, which the applicant holds |
 | `GET /v1/program-terms/{id}/applications/export` → **nested** | required | `mentorship_program:{uid}` | `manager` | As above |

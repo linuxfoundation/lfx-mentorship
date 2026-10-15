@@ -527,6 +527,37 @@ func TestApplicationService_Create_WindowClosed(t *testing.T) {
 	}
 }
 
+// TestApplicationService_Create_WindowMatchesAcceptsApplications pins Create to
+// ProgramTerm.AcceptsApplications, which backs the apply-target read: the apply
+// page must never say a term takes applications when submitting would reject it.
+func TestApplicationService_Create_WindowMatchesAcceptsApplications(t *testing.T) {
+	now := time.Now()
+	past := now.Add(-48 * time.Hour)
+	future := now.Add(48 * time.Hour)
+	cases := map[string]*models.ProgramTerm{
+		"open inside window":    {ID: "t1", Status: models.ProgramTermStatusOpen, ApplicationStartDate: &past, ApplicationEndDate: &future},
+		"open before window":    {ID: "t1", Status: models.ProgramTermStatusOpen, ApplicationStartDate: &future, ApplicationEndDate: &future},
+		"open after window":     {ID: "t1", Status: models.ProgramTermStatusOpen, ApplicationStartDate: &past, ApplicationEndDate: &past},
+		"open without window":   {ID: "t1", Status: models.ProgramTermStatusOpen},
+		"open without start":    {ID: "t1", Status: models.ProgramTermStatusOpen, ApplicationEndDate: &future},
+		"open without end":      {ID: "t1", Status: models.ProgramTermStatusOpen, ApplicationStartDate: &past},
+		"closed inside window":  {ID: "t1", Status: models.ProgramTermStatusClosed, ApplicationStartDate: &past, ApplicationEndDate: &future},
+		"deleted without dates": {ID: "t1", Status: models.ProgramTermStatusDeleted},
+	}
+	for name, term := range cases {
+		t.Run(name, func(t *testing.T) {
+			termRepo := &stubTermRepo{
+				getByID: func(_ context.Context, _ string) (*models.ProgramTerm, error) { return term, nil },
+			}
+			svc := newApplicationSvc(&stubAppRepo{}, &stubTaskRepo{}, termRepo, &stubProgRepo{})
+			_, err := svc.Create(context.Background(), "t1", models.ApplicationCreateInput{UserID: "u1", Role: "mentee"})
+			if rejected := errors.Is(err, domain.ErrIneligible); rejected == term.AcceptsApplications(now) {
+				t.Fatalf("Create rejected = %v but AcceptsApplications = %v (err %v)", rejected, term.AcceptsApplications(now), err)
+			}
+		})
+	}
+}
+
 func TestApplicationService_Create_DuplicateActive_Blocked(t *testing.T) {
 	termRepo := &stubTermRepo{getByID: func(_ context.Context, _ string) (*models.ProgramTerm, error) {
 		return openTerm(time.Now()), nil
