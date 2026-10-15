@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -1684,26 +1685,34 @@ func TestProgramService_Update_RejectsUnknownStatus(t *testing.T) {
 
 func TestProgramService_Update_Publish_RequiresRepoAndLogo(t *testing.T) {
 	blank := "  "
-	for label, mutate := range map[string]func(*models.Program){
-		"no repository URL":    func(p *models.Program) { p.RepoLink = nil },
-		"blank repository URL": func(p *models.Program) { p.RepoLink = &blank },
-		"no logo":              func(p *models.Program) { p.LogoURL = nil },
-		"blank logo":           func(p *models.Program) { p.LogoURL = &blank },
+	for label, tc := range map[string]struct {
+		mutate func(*models.Program)
+		want   string
+	}{
+		"no repository URL":    {func(p *models.Program) { p.RepoLink = nil }, "repository URL is required"},
+		"blank repository URL": {func(p *models.Program) { p.RepoLink = &blank }, "repository URL is required"},
+		"no logo":              {func(p *models.Program) { p.LogoURL = nil }, "logo is required"},
+		"blank logo":           {func(p *models.Program) { p.LogoURL = &blank }, "logo is required"},
 	} {
 		t.Run(label, func(t *testing.T) {
 			prog := fullProgram()
-			mutate(prog)
+			tc.mutate(prog)
+			// Every other publication prerequisite holds, so only the guard under test can refuse.
 			repo := &stubProgRepo{
 				getByID: func(context.Context, string) (*models.Program, error) { return prog, nil },
+				listSkills: func(context.Context, string) ([]*models.ProgramSkill, error) {
+					return []*models.ProgramSkill{{ID: "s1"}}, nil
+				},
 				update: func(context.Context, string, models.ProgramUpdateInput) (*models.Program, error) {
 					t.Fatal("an incomplete program must not be published")
 					return nil, nil
 				},
 			}
+			termRepo := &stubTermRepo{countOpenByProgram: func(context.Context, string) (int, error) { return 1, nil }}
 			next := models.ProgramStatusPublished
-			_, err := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{}).Update(context.Background(), "prog-1", models.ProgramUpdateInput{Status: &next})
-			if !errors.Is(err, domain.ErrStateLocked) {
-				t.Fatalf("err = %v; want ErrStateLocked", err)
+			_, err := newProgramSvc(repo, termRepo, &stubAppRepo{}).Update(context.Background(), "prog-1", models.ProgramUpdateInput{Status: &next})
+			if !errors.Is(err, domain.ErrStateLocked) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v; want ErrStateLocked mentioning %q", err, tc.want)
 			}
 		})
 	}
