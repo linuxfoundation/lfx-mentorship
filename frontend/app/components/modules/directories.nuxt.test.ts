@@ -132,18 +132,29 @@ describe.each(directories)('$name directory', ({ name, view, label }) => {
     );
   });
 
-  it('keeps the loaded items and offers a retry when a later page fails', async () => {
+  it('keeps the loaded items when a later page fails, and the retry loads it', async () => {
     mode = 'fail-next';
+    const search = `retry-${name}`;
+    const forSearch = () => requests[name]!.filter((q) => q.search === search);
     const wrapper = await mountSuspended(view);
-    await wrapper.get('input').setValue(`retry-${name}`);
-    await vi.waitFor(() => expect(wrapper.text()).toContain(`${label} 2`), { timeout: 2000 });
+    await wrapper.get('input').setValue(search);
+    // Wait for the searched first page, not the unfiltered one rendered on mount.
+    await vi.waitFor(() => expect(forSearch()).toHaveLength(1), { timeout: 2000 });
+    await vi.waitFor(() => expect(loadMore(wrapper)).toBeDefined());
+
     await loadMore(wrapper)!.trigger('click');
-    await vi.waitFor(
-      () => expect(requests[name]!.filter((q) => q.offset === '2').length).toBeGreaterThan(0),
-      { timeout: 4000 },
-    );
+    await vi.waitFor(() => expect(forSearch().some((q) => q.offset === '2')).toBe(true));
+    // While a page loads the button shows a spinner instead of its label, so the
+    // label returning means the failed request (and the app's one retry) settled.
     await vi.waitFor(() => expect(loadMore(wrapper)).toBeDefined(), { timeout: 4000 });
     expect(wrapper.text()).toContain(`${label} 1`);
+    expect(wrapper.text()).toContain(`${label} 2`);
+    expect(wrapper.text()).not.toContain(`${label} 3`);
+
+    mode = 'ok';
+    await loadMore(wrapper)!.trigger('click');
+    await vi.waitFor(() => expect(wrapper.text()).toContain(`${label} 3`));
+    await vi.waitFor(() => expect(loadMore(wrapper)).toBeUndefined());
   });
 });
 
