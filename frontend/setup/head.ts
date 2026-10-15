@@ -40,6 +40,12 @@ export default {
     },
   ],
   script: [
+    // Transcend cookie consent manager (replaces Osano — lfx-self-serve-ops#516)
+    {
+      src: 'https://transcend-cdn.com/cm/f484e2d0-ad2e-43a9-9d64-d07f6fa20966/airgap.js',
+      'data-cfasync': 'false',
+      'data-prompt': 'auto',
+    },
     { src: 'https://kit.fontawesome.com/e4b2c26195.js', crossorigin: 'anonymous', async: true },
   ],
 };

@@ -14,6 +14,7 @@ export function lfxFooterMenu(selfServeUrl: string): FooterMenuSection[] {
         { name: 'Mentees', link: selfServeMenteeUrl(selfServeUrl) },
         { name: 'Mentors', link: selfServeMentorUrl(selfServeUrl) },
         { name: 'Contact support', intercom: true },
+        { name: 'Cookie settings', action: () => window.transcend?.showConsentManager?.() },
       ],
     },
     {
