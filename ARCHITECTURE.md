@@ -225,9 +225,10 @@ and they are contracts rather than implementation details:
 - **The API accepts only Heimdall-issued JWTs**, validated against the cluster-internal Heimdall
   JWKS. The caller's Auth0 token terminates at Heimdall and never reaches this service. Identity is
   the `principal` claim, which is also the key for `user:{lfid}` tuples (`02`, `05`).
-- **A caller needs a local `users` row.** The service resolves `principal` to `users.lfid` and
-  answers `401` when there is none, except on `PUT /v1/me`, which creates it. Self Serve calls
-  `PUT /v1/me` on that `401` and retries.
+- **A human caller on an authenticated route needs a local `users` row.** The service resolves
+  `principal` to `users.lfid` and answers `401` when there is none, except on `PUT /v1/me`, which
+  creates it. Self Serve calls `PUT /v1/me` on that `401` and retries. Anonymous public routes and
+  M2M principals skip the lookup (`05`).
 - Self Serve obtains a token for the **shared gateway audience**
   (`https://lfx-api.{lfx.domain}/`) by silent secondary auth and forwards it — the mechanism it
   already uses for Crowdfunding. Behind Heimdall there is no per-service Auth0 audience to acquire:
