@@ -16,6 +16,11 @@ import (
 
 var fgaOutboxStaleDeadLettered = expvar.NewInt("fga_outbox_stale_dead_lettered")
 
+// fgaClaimScanFactor sizes the window of eligible markers Claim considers
+// relative to the batch size. The headroom covers membership markers that share
+// an object and markers another relay instance already holds.
+const fgaClaimScanFactor = 4
+
 // FGAOutboxRepository implements generation-guarded FGA marker delivery.
 type FGAOutboxRepository struct {
 	pool        *pgxpool.Pool
@@ -112,8 +117,12 @@ func (r *FGAOutboxRepository) Claim(ctx context.Context, limit int) ([]domain.FG
 		fgaOutboxStaleDeadLettered.Add(int64(deadLettered))
 		slog.Default().WarnContext(ctx, "dead-lettered stale FGA outbox markers", "count", deadLettered)
 	}
+	// Each advisory lock holds a shared lock-table slot until commit, so the
+	// lock is taken only within a bounded window of eligible markers. The lock
+	// key reads from that window rather than the table so the planner cannot
+	// push the call down onto an unbounded scan of the backlog.
 	const query = `
-		WITH lockable AS (
+		WITH eligible AS MATERIALIZED (
 			SELECT pending.id, pending.object_type, pending.object_uid
 			FROM fga_outbox AS pending
 			WHERE ((pending.state = 'pending' AND pending.next_attempt_at <= NOW())
@@ -127,11 +136,18 @@ func (r *FGAOutboxRepository) Claim(ctx context.Context, limit int) ([]domain.FG
 				  AND active.state = 'in_flight'
 				  AND active.id <> pending.id
 			  )
-			  AND pg_try_advisory_xact_lock(
-				hashtextextended(pending.object_type || ':' || pending.object_uid, 0)
-			  )
 			ORDER BY pending.object_type, pending.object_uid, pending.id
-			FOR UPDATE SKIP LOCKED
+			LIMIT $3
+		),
+		lockable AS (
+			SELECT pending.id, pending.object_type, pending.object_uid
+			FROM eligible
+			JOIN fga_outbox AS pending ON pending.id = eligible.id
+			WHERE pg_try_advisory_xact_lock(
+				hashtextextended(eligible.object_type || ':' || eligible.object_uid, 0)
+			)
+			ORDER BY pending.object_type, pending.object_uid, pending.id
+			FOR UPDATE OF pending SKIP LOCKED
 		),
 		candidates AS (
 			SELECT DISTINCT ON (lockable.object_type, lockable.object_uid) lockable.id
@@ -154,7 +170,7 @@ func (r *FGAOutboxRepository) Claim(ctx context.Context, limit int) ([]domain.FG
 			          outbox.generation, outbox.claimed_generation, outbox.claimed_at, outbox.attempts,
 		          outbox.last_error`
 
-	rows, err := r.pool.Query(ctx, query, limit, r.maxAttempts)
+	rows, err := r.pool.Query(ctx, query, limit, r.maxAttempts, limit*fgaClaimScanFactor)
 	if err != nil {
 		return nil, fmt.Errorf("claim FGA outbox markers: %w", err)
 	}

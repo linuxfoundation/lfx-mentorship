@@ -109,6 +109,44 @@ func TestFGAOutboxIntegration_ClaimSerializesSameObject(t *testing.T) {
 	}
 }
 
+// A bulk import leaves a backlog far larger than the lock table, which holds
+// max_locks_per_transaction * max_connections entries. Claim must take advisory
+// locks for one batch only, not for every pending marker.
+func TestFGAOutboxIntegration_ClaimLargeBacklogTakesBoundedLocks(t *testing.T) {
+	pool := integrationPool(t)
+	repo := NewFGAOutboxRepository(pool)
+	ctx := context.Background()
+
+	var maxLocks, maxConns int
+	if err := pool.QueryRow(ctx, `SELECT current_setting('max_locks_per_transaction')::int, current_setting('max_connections')::int`).Scan(&maxLocks, &maxConns); err != nil {
+		t.Fatalf("read lock settings: %v", err)
+	}
+	// Shared memory has slack beyond the nominal lock table size, so overshoot it well.
+	backlog := 10 * maxLocks * maxConns
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO fga_outbox (marker_kind, object_type, object_uid, desired_operation)
+		SELECT 'object', 'mentorship_program', 'program-' || n, 'update_access'
+		FROM generate_series(1, $1) AS n`, backlog); err != nil {
+		t.Fatalf("seed backlog: %v", err)
+	}
+
+	const batch = 50
+	markers, err := repo.Claim(ctx, batch)
+	if err != nil {
+		t.Fatalf("claim with backlog of %d: %v", backlog, err)
+	}
+	if len(markers) != batch {
+		t.Fatalf("claimed %d markers; want %d", len(markers), batch)
+	}
+	var inFlight int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM fga_outbox WHERE state = 'in_flight'`).Scan(&inFlight); err != nil {
+		t.Fatalf("count in-flight markers: %v", err)
+	}
+	if inFlight != batch {
+		t.Fatalf("in-flight markers = %d; want %d", inFlight, batch)
+	}
+}
+
 func TestIndexOutboxIntegration_ClaimRetryAndSent(t *testing.T) {
 	pool := integrationPool(t)
 	seedIntegrationFixture(t, pool)
