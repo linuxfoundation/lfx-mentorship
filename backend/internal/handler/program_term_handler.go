@@ -110,6 +110,35 @@ func (h *ProgramTermHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, withLabel(term))
 }
 
+// GetApplyTarget handles GET /v1/programs/{programID}/terms/{termID}/apply-target:
+// the program and term names for the mentee apply page and whether the term takes
+// applications now, in one read. It applies the same visibility rules as GetByID,
+// so a hidden program or a deleted term is a 404.
+func (h *ProgramTermHandler) GetApplyTarget(w http.ResponseWriter, r *http.Request) {
+	program, ok := resolveVisibleProgram(w, r, h.programs)
+	if !ok {
+		return
+	}
+	term, err := h.svc.GetByProgramAndID(r.Context(), program.ID, chi.URLParam(r, "termID"))
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	if term.Status == models.ProgramTermStatusDeleted {
+		Error(w, domain.ErrProgramTermNotFound)
+		return
+	}
+	target := models.ProgramTermApplyTarget{
+		ProgramName:           program.Name,
+		TermName:              term.Name,
+		AcceptingApplications: term.AcceptsApplications(time.Now()),
+	}
+	if program.ProjectName != nil {
+		target.ProjectName = *program.ProjectName
+	}
+	JSON(w, http.StatusOK, target)
+}
+
 // Create handles POST /v1/programs/{id}/terms — requires JWT.
 func (h *ProgramTermHandler) Create(w http.ResponseWriter, r *http.Request) {
 	principal := auth.PrincipalFromContext(r.Context())

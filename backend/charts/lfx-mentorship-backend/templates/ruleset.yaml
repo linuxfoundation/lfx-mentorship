@@ -124,6 +124,7 @@ spec:
         methods: [GET]
         routes:
           - path: /mentorship/v1/programs/:programID/terms/:termID
+          - path: /mentorship/v1/programs/:programID/terms/:termID/apply-target
       execute:
         - authenticator: oidc
         - authenticator: anonymous_authenticator

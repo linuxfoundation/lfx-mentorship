@@ -298,6 +298,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		r.Get("/programs/{id}/members", programMemberH.List)
 
 		r.Get("/programs/{programID}/terms/{termID}", programTermH.GetByID)
+		r.Get("/programs/{programID}/terms/{termID}/apply-target", programTermH.GetApplyTarget)
 
 		// ── Authenticated endpoints ────────────────────────────────────────
 		r.Group(func(r chi.Router) {

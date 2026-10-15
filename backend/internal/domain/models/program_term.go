@@ -65,6 +65,31 @@ func (t *ProgramTerm) DiscoveryLabel(now time.Time) string {
 	return "Apply Now"
 }
 
+// AcceptsApplications reports whether the term takes applications at now: it is
+// open and now is inside its application window. A missing window date leaves
+// that side open. ApplicationService.Create enforces the same rule on submit.
+func (t *ProgramTerm) AcceptsApplications(now time.Time) bool {
+	if t.Status != ProgramTermStatusOpen {
+		return false
+	}
+	if t.ApplicationStartDate != nil && now.Before(*t.ApplicationStartDate) {
+		return false
+	}
+	if t.ApplicationEndDate != nil && now.After(*t.ApplicationEndDate) {
+		return false
+	}
+	return true
+}
+
+// ProgramTermApplyTarget is the header of the mentee apply page: the names the
+// page shows and whether the term takes applications now.
+type ProgramTermApplyTarget struct {
+	ProgramName           string `json:"program_name"`
+	ProjectName           string `json:"project_name,omitempty"`
+	TermName              string `json:"term_name"`
+	AcceptingApplications bool   `json:"accepting_applications"`
+}
+
 // ProgramTermCreateInput is the request body for creating a program term.
 type ProgramTermCreateInput struct {
 	ID                   string            `json:"id"`
