@@ -244,20 +244,11 @@ across releases.
    Query Service; caller-owned views use `filter_grants=direct` with an explicit
    resource `type`.
 
-### Dual-gateway topology decision
+### Gateway topology
 
-Before enabling the shared gateway, document and verify the interim topology:
-
-- whether both gateways route to one Mentorship deployment or to separate
-   deployments;
-- which gateway-to-Service path is used in each environment;
-- whether the deployments share the same PostgreSQL instance and schema;
-- how cross-account traffic reaches the gateway, Service, and database; and
-- how the interim hostname is disabled so it cannot bypass Heimdall.
-
-The current code supports two URL prefixes on one backend deployment. That is a
-temporary migration shape, not evidence that cross-account routing or database
-ownership has been solved.
+Resolved: each environment runs one Mentorship deployment and one PostgreSQL
+schema, served only through the shared gateway. The service mounts only
+`/mentorship/v1`, and the interim ingress is disabled.
 
 ## 6. Seed, Repair, and Verification
 

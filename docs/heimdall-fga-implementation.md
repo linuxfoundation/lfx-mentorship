@@ -173,7 +173,7 @@ The service publishes the standard fga-sync operations:
 
 Caller-owned collections — a user's programs, applications, and tasks — are
 served by Query Service. Query Service must hold all Mentorship resource objects
-before cutover.
+before consumers move to it.
 
 Nested views such as a program's terms or members may remain service-owned when
 every returned item shares the path parent's permission; Heimdall checks that
@@ -316,8 +316,7 @@ before their collections or caller-owned views move to Query Service.
 The importer is idempotent. Re-running it coalesces markers and increments their
 generation rather than creating duplicate outbox rows.
 
-Before enabling Heimdall, operators must resolve or explicitly quarantine every
-reported row. Reports include:
+Operators must resolve or explicitly quarantine every reported row. Reports include:
 
 - `UNMAPPED_PROGRAM`;
 - `UNMAPPED_PROGRAM_MEMBER`;
