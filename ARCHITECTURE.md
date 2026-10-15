@@ -29,6 +29,7 @@ Companion documents, all narrower than this one:
 | [`docs/rewrite/07-email-delivery.md`](docs/rewrite/07-email-delivery.md) | The transactional email rail |
 | [`docs/rewrite/08-prod-migration-runbook.md`](docs/rewrite/08-prod-migration-runbook.md) | Production data migration runbook |
 | [`docs/fga-contract.md`](docs/fga-contract.md) | The messages this service publishes to fga-sync |
+| [`backend/docs/indexer-contract.md`](backend/docs/indexer-contract.md) | The documents this service publishes to the indexer |
 | [`CLAUDE.md`](CLAUDE.md) | Conventions for working in this repo |
 
 Where the code, the spec directory, or `docs/rewrite/` contradict the *contract* stated here, that is
@@ -183,7 +184,8 @@ rather than schema:
   collections (a user's programs, applications or tasks) are served by
   [lfx-v2-query-service](https://github.com/linuxfoundation/lfx-v2-query-service) from the index
   this service feeds. Only the fully public lists — published programs and publicly listable
-  profiles — stay service-owned, behind `allow_all` rules (`05`, `06`).
+  profiles — stay service-owned, behind `allow_all` rules (`05`, `06`). Two caller-owned lists are
+  exceptions pending platform sign-off (§6).
 
 ### 3.3 Service-side invariants the edge cannot enforce
 
@@ -257,7 +259,7 @@ and they are contracts rather than implementation details:
 |---|---|---|---|
 | **Auth0** | inbound | OAuth2 PKCE user login. The Auth0 token terminates at Heimdall (§3.4) | Requests rejected 401 at Heimdall |
 | **lfx-v2-fga-sync** | Mentorship → NATS JetStream `lfx.fga-sync.*` | Transactional `fga_outbox`; the relay re-derives the payload from current Postgres state at send time ([`docs/fga-contract.md`](docs/fga-contract.md)) | Retried; failed markers are kept as dead letters and requeued by exact key (`outbox-repair`) |
-| **lfx-v2-indexer-service** | Mentorship → NATS JetStream `lfx.index.*` | Transactional `index_outbox`, relayed with a service token; feeds Query Service (§3.2) | Retried |
+| **lfx-v2-indexer-service** | Mentorship → NATS JetStream `lfx.index.*` | Transactional `index_outbox` of document snapshots, relayed with a service token ([`backend/docs/indexer-contract.md`](backend/docs/indexer-contract.md)); feeds Query Service (§3.2) | Retried |
 | **lfx-v2-project-service** | Mentorship → NATS request/reply | Project slug, name and logo for a program's `lf_project_uid`. Also the owner of `project#mentorship_program_admin` (§3.2) | Program create fails; an unknown project is `400` |
 | **lfx-v2-auth-service** | Mentorship → NATS request/reply | LF account lookup by email or username, for mentor invitations | `ErrUpstreamUnavailable` |
 | **lfx-v2-email-service** | Mentorship → NATS `lfx.email-service.send_email` | The platform rail for all transactional email: a request/reply relay over Amazon SES, imported as `lfx-v2-email-service/pkg/api`. It accepts **pre-rendered** `html`/`text` only — no templating — so Mentorship owns and renders its own templates (`07`). Not Mandrill: that is the legacy rail and is out of scope ([linuxfoundation/lfx-self-serve#2188](https://github.com/linuxfoundation/lfx-self-serve/issues/2188)) | Log and continue — a failed send must not fail the business operation |
@@ -305,12 +307,15 @@ Cross-component notes:
 - **`program_funding_stats`** is a cache, never authoritative. It may be stale.
 - **Search.** Elasticsearch is dropped from scope. Platform-wide search is Query Service over the
   index this service feeds; in-service filtering is Postgres (§6).
-- **FGA tuples and index documents are emitted through transactional outboxes.** A Postgres commit
-  and a NATS publish cannot be made atomic, so each state change records a dirty-object marker in
-  the same transaction and a relay re-derives the payload from current Postgres state at send time.
-  It never replays a stored one: the `GenericFGAMessage` envelope carries no object version, so a
-  stale full-state payload retried after a newer revocation would restore exactly the tuple that
-  was revoked.
+- **FGA tuples and index documents are emitted through transactional outboxes**, because a
+  Postgres commit and a NATS publish cannot be made atomic. The two differ on retry:
+  - The **FGA** outbox stores a dirty-object marker, and the relay re-derives the payload from
+    current Postgres state at send time. It never replays a stored payload: the `GenericFGAMessage`
+    envelope carries no object version, so a stale full-state payload retried after a newer
+    revocation would restore exactly the tuple that was revoked.
+  - The **index** outbox stores a document snapshot built in the enqueueing transaction, and the
+    relay publishes that snapshot. A retry does not rebuild it from current rows; a later change
+    enqueues a newer snapshot.
 
 ---
 
@@ -320,6 +325,7 @@ Listed so that nobody builds against them.
 
 | Contract | What is open |
 |---|---|
+| **`/v1/me/programs` and `/v1/me/mentor-programs`** | Served by the service as exceptions to the Query Service rule (§3.2), pending platform sign-off: they need grouping and counts the program index document does not carry (`06`) |
 | **Approver-roster administration** | `/v1/admin/approver-team/members` exists but is cluster-local, behind a backend scope check, and not routed through the gateway. Exposing it needs a platform LF-staff relation that is not yet approved, and the roster has no named owner (`04` AQ-8, `06`) |
 | **Crowdfunding join key** | The implementation passes the mentorship program id through as the CF initiative id. `02`'s ERD still carries a `programs.cf_initiative_id` column that no migration creates. Either adopt the pass-through and drop the column from `02`, or add the column and migrate the client |
 | **Postgres full-text search** | `02` targets `tsvector` + GIN; no migration has them and in-service search uses `ILIKE`. Nothing may assume full-text semantics such as ranking or stemming |
