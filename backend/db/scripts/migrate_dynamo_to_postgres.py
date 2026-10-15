@@ -95,7 +95,8 @@ Usage
 
   pip install boto3 psycopg2-binary nats-py
   python3 backend/db/scripts/copy_legacy_objects.py
-  python3 backend/db/scripts/migrate_dynamo_to_postgres.py
+  python3 backend/db/scripts/migrate_dynamo_to_postgres.py            # final run: stops on a file missing from the manifest
+  python3 backend/db/scripts/migrate_dynamo_to_postgres.py --test-run # legacy still live: such a file is nulled (MANIFEST_MISS)
 """
 
 import csv
@@ -1922,7 +1923,19 @@ def seed_derived_state(cur) -> None:
 # ---------------------------------------------------------------------------
 
 
+def parse_args(argv: list) -> bool:
+    """Return whether this is a test run. The final (cutover) import takes no arguments."""
+    if argv == ["--test-run"]:
+        return True
+    if argv:
+        sys.exit("usage: migrate_dynamo_to_postgres.py [--test-run]")
+    return False
+
+
 def main() -> None:
+    test_run = parse_args(sys.argv[1:])
+    if test_run:
+        log.info("Test run: a legacy file missing from the copy manifest is logged as MANIFEST_MISS and its column set to NULL")
     log.info("Connecting to DynamoDB (region=%s) ...", LEGACY_REGION)
     dynamo = legacy_session().client("dynamodb")
 
@@ -1934,6 +1947,7 @@ def main() -> None:
         LOGOS_CDN_URL_PREFIX,
         lo.legacy_url_prefix(LEGACY_BUCKET),
         {lo.LOGO: LOGOS_S3_BUCKET, lo.SUBMISSION: ATTACHMENTS_S3_BUCKET},
+        tolerate_missing=test_run,
     )
 
     try:

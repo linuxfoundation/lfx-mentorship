@@ -48,7 +48,7 @@ A full run in-cluster, with NATS, against prod. It does the slow bulk file copy 
 
 The import queues about 330,000 permission (OpenFGA) and 330,000 search-index updates through fga-sync. Run it off-hours, and give the platform team a heads-up first.
 
-1. Do Phase 2 (runner pod), Phase 3 (copy), Phase 4 step 6 (import) and Phase 5 (verify).
+1. Do Phase 2 (runner pod), Phase 3 (copy), Phase 4 step 6 (import) and Phase 5 (verify). Run the import as `python migrate_dynamo_to_postgres.py --test-run`: legacy is still live, so a file uploaded after the copy's scan is logged as `MANIFEST_MISS` and its column set to NULL instead of stopping the import. The cutover run (Phase 4) takes no flag: inside the freeze, a missing file means the freeze leaked.
 2. **Record the timings:** the copy, the import (from `import.log`; the smoke import took about 16 minutes, 14 of them scanning DynamoDB) and how long both outboxes take to drain (Phase 5, step 3). The final run is reserved from these.
 3. **Count the duplicate users.** The import keeps a shared email or LFID on one user and clears it on the others, and a user left without one cannot use Mentorship. This lists how many there are, and how many of them hold memberships, applications or tasks:
    ```bash
