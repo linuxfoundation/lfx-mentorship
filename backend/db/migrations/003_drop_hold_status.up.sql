@@ -11,6 +11,15 @@ SET LOCAL search_path TO mentorship, public;
 -- in the rewrite, so it goes back to pending: an admin accepting it then grants
 -- the approved mentor membership as any acceptance does. The constraint is
 -- dropped before its rows are rewritten.
+--
+-- The migration runs while the old pods still serve writes, so it locks the
+-- tables first: a decision committed between the snapshot and the rewrite would
+-- otherwise be overwritten, and a row moved to hold meanwhile would fail the
+-- new constraint. ALTER TABLE needs ACCESS EXCLUSIVE on applications anyway, and
+-- taking it up front avoids upgrading the lock later.
+LOCK TABLE applications IN ACCESS EXCLUSIVE MODE;
+LOCK TABLE tasks, quarantined_tasks IN SHARE ROW EXCLUSIVE MODE;
+
 CREATE TEMP TABLE held_applications ON COMMIT DROP AS
   SELECT id, CASE WHEN role = 'mentor' THEN 'pending' ELSE 'accepted' END AS status
   FROM applications
@@ -23,11 +32,20 @@ FROM held_applications h
 WHERE a.id = h.id;
 
 -- Tasks carry a denormalised copy of their application's status, and so do
--- quarantined tasks, which a repair can move back into tasks. A quarantined
--- task without an application is a legacy mentee task.
-UPDATE tasks t SET application_status = a.status
-FROM applications a
-WHERE a.id = t.application_id AND t.application_status = 'hold';
+-- quarantined tasks, which a repair can move back into tasks. An import copied
+-- that copy independently, so a task can hold "hold" under an application that
+-- does not; every such task takes its application's status, and the ones
+-- rewritten are kept for the search refresh. A quarantined task without an
+-- application is a legacy mentee task.
+CREATE TEMP TABLE rewritten_tasks (id UUID PRIMARY KEY) ON COMMIT DROP;
+
+WITH rewritten AS (
+  UPDATE tasks t SET application_status = a.status
+  FROM applications a
+  WHERE a.id = t.application_id AND t.application_status = 'hold'
+  RETURNING t.id
+)
+INSERT INTO rewritten_tasks SELECT id FROM rewritten;
 
 UPDATE quarantined_tasks q SET application_status = COALESCE(
   (SELECT a.status FROM applications a WHERE a.id = q.application_id), 'accepted')
@@ -36,9 +54,10 @@ WHERE q.application_status = 'hold';
 ALTER TABLE applications ADD CONSTRAINT applications_status_check
   CHECK (status IN ('pending', 'accepted', 'declined', 'withdrawn', 'graduated'));
 
--- Refresh the search documents the rewrite changed: the applications, their
--- tasks, and their programs, whose accepted-mentee counts move. The documents
--- match those the import seeds (db/scripts/migrate_dynamo_to_postgres.py).
+-- Refresh the search documents the rewrite changed: the applications, the
+-- rewritten tasks, and the applications' programs, whose accepted-mentee counts
+-- move. The documents match those the API writes (program_index.go,
+-- application_task_index.go; docs/indexer-contract.md).
 INSERT INTO index_outbox (object_type, object_uid, action, headers, data, indexing_config)
 SELECT
   'mentorship_application',
@@ -130,7 +149,7 @@ SELECT
     'parent_refs', jsonb_build_array('mentorship_application:' || t.application_id::text)
   )
 FROM tasks t
-JOIN held_applications h ON h.id = t.application_id
+JOIN rewritten_tasks r ON r.id = t.id
 JOIN users u ON u.id = t.assignee_id
 WHERE NULLIF(u.lfid, '') IS NOT NULL
 ON CONFLICT (object_type, object_uid) DO UPDATE SET
@@ -162,6 +181,7 @@ SELECT
     'slug', programs.slug,
     'status', programs.status,
     'logo_url', programs.logo_url,
+    'skills', COALESCE((SELECT jsonb_agg(ps.skill ORDER BY ps.skill) FROM program_skills ps WHERE ps.program_id = programs.id), '[]'::jsonb),
     'stats', jsonb_build_object(
       'mentors', (SELECT COUNT(*) FROM program_members pm WHERE pm.program_id = programs.id AND pm.member_type = 'mentor' AND pm.status = 'approved'),
       'mentees', (SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE pt.program_id = programs.id AND a.role = 'mentee' AND a.status = 'accepted'),
