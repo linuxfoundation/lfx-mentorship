@@ -288,20 +288,21 @@ expected tuple set.
 5. Operators monitor oldest pending outbox age, retry exhaustion, publication
    failures, derived-state verification mismatches, and revocation lag.
 
-## 7. Cutover Gate
+## 7. Acceptance Checks
 
-Gateway enforcement must remain disabled until all blockers above have evidence.
-The cutover is not just a Helm flag:
+Gateway enforcement is live in dev and prod. Do not set `heimdall.enabled=false`
+to run these checks: that removes the HTTPRoute, so the API is no longer
+reachable through the gateway.
 
-1. Deploy the shared model and verify its live ID.
-2. Deploy backend dual JWT acceptance, outbox relays, and exact dead-letter
-   repair tooling.
-3. Seed and verify FGA coverage.
-4. Deploy Middleware, HTTPRoute, and RuleSet without traffic first.
-5. Run authenticated, anonymous, denied, cross-program, and stale-tuple smoke
-   tests.
-6. Point the frontend/BFF at the shared gateway.
-7. Enable gateway traffic and retire the interim bypass path in the same change
-   window.
+Done: the Middleware, HTTPRoute and RuleSet serve traffic, the backend accepts
+only Heimdall JWTs, the FGA and index relays and `outbox-repair` are deployed,
+and the interim ingress is disabled.
 
-Until then, keep `heimdall.enabled=false` in environment values. 
+Still to check against the live deployment:
+
+1. The live OpenFGA model ID includes every Mentorship type and relation.
+2. FGA coverage after the seed matches PostgreSQL-derived expectations.
+3. Authenticated, anonymous, denied, cross-program, and stale-tuple smoke tests
+   pass through the gateway.
+4. The Nuxt server calls the gateway's cluster-internal address instead of the
+   backend Service (§5).
