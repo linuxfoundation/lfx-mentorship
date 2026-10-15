@@ -9,22 +9,28 @@ export const PROGRAM_TERM_DISPLAY_STATUSES = ['opens-soon', 'accepting', 'comple
 export type ProgramTermDisplayStatus = (typeof PROGRAM_TERM_DISPLAY_STATUSES)[number];
 
 /**
- * Terms currently accepting applications: status is open and now is
- * inside the application window, inclusive on both ends (same as
- * Postgres `NOW() BETWEEN application_start_date AND application_end_date`).
+ * Where `now` falls against a term's application window. As in the backend
+ * (`ProgramTerm.ApplicationWindow`), the window is compared by UTC calendar
+ * day with both days inclusive, and a term missing either date has no window.
  */
+type ApplicationWindow = 'unset' | 'upcoming' | 'open' | 'closed';
+
+function getApplicationWindow(term: ProgramTerm, now: Date): ApplicationWindow {
+  const startMs = parseTime(term.applicationsStartAt);
+  const closeMs = parseTime(term.applicationsCloseAt);
+  if (startMs === null || closeMs === null) return 'unset';
+
+  const today = utcDay(now.getTime());
+  if (today < utcDay(startMs)) return 'upcoming';
+  if (today > utcDay(closeMs)) return 'closed';
+  return 'open';
+}
+
+/** Terms currently accepting applications: status is open and today is inside the application window. */
 export function getActiveTerms(terms: ProgramTerm[], now: Date = new Date()): ProgramTerm[] {
-  const nowMs = now.getTime();
-
-  return terms.filter((term) => {
-    if (term.status !== 'open') return false;
-
-    const startMs = parseTime(term.applicationsStartAt);
-    const closeMs = parseTime(term.applicationsCloseAt);
-    if (startMs === null || closeMs === null) return false;
-
-    return startMs <= nowMs && nowMs <= closeMs;
-  });
+  return terms.filter(
+    (term) => term.status === 'open' && getApplicationWindow(term, now) === 'open',
+  );
 }
 
 export function withActiveTerms(program: Omit<Program, 'activeTerms'> | Program): Program {
@@ -50,30 +56,15 @@ export function getProgramTermDisplayStatus(
     return 'completed';
   }
 
-  const nowMs = now.getTime();
-  const applicationsStartMs = parseTime(term.applicationsStartAt);
-  const applicationsCloseMs = parseTime(term.applicationsCloseAt);
-  const termEndMs = parseTime(term.endsAt);
-
-  if (applicationsStartMs !== null && nowMs < applicationsStartMs) {
-    return 'opens-soon';
+  switch (getApplicationWindow(term, now)) {
+    case 'upcoming':
+      return 'opens-soon';
+    case 'open':
+      return 'accepting';
+    default:
+      // Application window passed or unset — treat as completed for listing.
+      return 'completed';
   }
-
-  if (
-    applicationsStartMs !== null &&
-    applicationsCloseMs !== null &&
-    applicationsStartMs <= nowMs &&
-    nowMs <= applicationsCloseMs
-  ) {
-    return 'accepting';
-  }
-
-  if (termEndMs !== null && nowMs > termEndMs) {
-    return 'completed';
-  }
-
-  // Application window passed but term not finished — treat as completed for listing.
-  return 'completed';
 }
 
 /**
@@ -93,6 +84,12 @@ export function toProgramCardStatus(terms: ProgramTerm[]): Exclude<ProgramStatus
 /** Newest term first for the Terms tab table. */
 export function sortTermsNewestFirst(terms: ProgramTerm[]): ProgramTerm[] {
   return [...terms].sort((a, b) => (parseTime(b.startsAt) ?? 0) - (parseTime(a.startsAt) ?? 0));
+}
+
+/** Midnight UTC of the instant's UTC calendar day, in ms. */
+function utcDay(ms: number): number {
+  const day = new Date(ms);
+  return Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate());
 }
 
 function parseTime(iso: string | undefined): number | null {

@@ -113,17 +113,16 @@ Terms are not an FGA type and the current paths expose no program UID, so all of
 | `POST /v1/program-terms/{id}/applications/bulk-decline` → **nested** | required | `mentorship_program:{uid}` | `writer` | Admins only — a bulk status change, so `writer`, not the wider `manager` |
 | `GET /v1/program-terms/{id}/past-mentees` → **nested** | required | `mentorship_program:{uid}` | `manager` | — |
 | `GET /v1/program-terms/{id}/tasks` → **nested** | required | `mentorship_program:{uid}` | `manager` | — |
-| `POST /v1/program-terms/{id}/applications` → **nested** | required | `mentorship_program:{uid}` | `viewer` | **The apply route.** Authorized by authentication plus program visibility, not by a grant — the applicant is not yet related to the program. Bind the applicant to `principal` (rule 3); the application window is a Postgres rule |
+| `POST /v1/program-terms/{id}/applications` → **nested** | required | `mentorship_program:{uid}` | `viewer` | **The apply route.** Authorized by authentication plus program visibility, not by a grant — the applicant is not yet related to the program. Bind the applicant to `principal` (rule 3); the application window is a Postgres rule. Mentee applications only — mentors join through `POST /v1/programs/{uid}/members` |
 
 ## Application routes
 
 | Route | Auth | Object | Relation | Service must also |
 | --- | --- | --- | --- | --- |
 | `GET /v1/applications/{uid}` | required | `mentorship_application:{uid}` | `auditor` | Admits the applicant — which is why the reviewer note is its own route |
-| `PATCH /v1/applications/{uid}` | required | `mentorship_application:{uid}` | `writer` | **Content only — must reject `status`.** Split per decision 6 |
 | `PATCH /v1/applications/{uid}/status` | required | `mentorship_application:{uid}` | `manager` | New route. **The application's `manager`** = `writer from mentorship_program` — admins only, excluding mentors |
 | `POST /v1/applications/{uid}/withdraw` | required | `mentorship_application:{uid}` | `mentee` | New route. The `pending`-only limit is a workflow rule in the service |
-| `POST /v1/applications/{uid}/withdraw-for-mentee` | required | `mentorship_application:{uid}` | `manager` | New route. Staff-assisted, permitted in any state |
+| `POST /v1/applications/{uid}/withdraw-for-mentee` | required | `mentorship_application:{uid}` | `manager` | New route. Staff-assisted, permitted in any state except `declined` and `graduated` |
 | `POST /v1/applications/{uid}/reapply` | required | `mentorship_application:{uid}` | `mentee` | New route |
 | `PUT /v1/applications/{uid}/evaluation` | required | `mentorship_application:{uid}` | `reviewer` | New route. Mentors and admins, **not** the applicant |
 | `GET`/`PUT /v1/applications/{uid}/note` | required | `mentorship_application:{uid}` | `reviewer` | New route. Its own route precisely because `auditor` (which the applicant holds) may fetch the application |

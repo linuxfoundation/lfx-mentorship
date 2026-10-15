@@ -48,6 +48,9 @@ transitions human-readable and testable.
 
 ### C-3 — `hold` status blocking program hide
 
+**Superseded**: `hold` is no longer an application status (spec FR-040, migration 003),
+so the question is moot. The record below is kept as history.
+
 **Decision**: YES — `hold` also blocks hiding a program. Blocking states for hide are:
 `pending`, `accepted`, `graduated`, **`hold`**.
 

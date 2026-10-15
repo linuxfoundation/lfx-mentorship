@@ -21,7 +21,8 @@ Source → Target mapping
   jobspring-prod-program-terms        → program_terms
   jobspring-prod-project-members      → program_members
   jobspring-prod-program-term-mentees → applications     (full lifecycle;
-                                        graduated|hold map directly)
+                                        graduated maps directly,
+                                        hold maps to accepted)
   jobspring-prod-tasks                → tasks
                                         (application_id resolved via
                                         (program_term_id, assignee_id) lookup)
@@ -508,10 +509,11 @@ def _normalize_program_status(status: str | None) -> str:
     return m.get(status.lower(), "pending")
 
 
-_VALID_APP_STATUSES = {"pending", "accepted", "declined", "withdrawn", "graduated", "hold"}
+_VALID_APP_STATUSES = {"pending", "accepted", "declined", "withdrawn", "graduated"}
 # DynamoDB used "approved" and "active" for an enrolled mentee; applications.status
-# has no "active" value — "accepted" is the enrolled state until graduation.
-_APP_STATUS_MAP = {"approved": "accepted", "active": "accepted"}
+# has no "active" value — "accepted" is the enrolled state until graduation. Nor has
+# it "hold", which in legacy marks a paused accepted mentorship (migration 003).
+_APP_STATUS_MAP = {"approved": "accepted", "active": "accepted", "hold": "accepted"}
 
 
 def _map_application_status(dynamo_status: str | None) -> str:
@@ -519,6 +521,12 @@ def _map_application_status(dynamo_status: str | None) -> str:
     s = (dynamo_status or "pending").lower()
     s = _APP_STATUS_MAP.get(s, s)
     return s if s in _VALID_APP_STATUSES else "pending"
+
+
+def _task_application_status(value: str | None) -> str | None:
+    """Map a task's denormalised legacy application status as its application's is mapped; absent stays NULL."""
+    s = (value or "").strip()
+    return _map_application_status(s) if s else None
 
 
 def _map_profile_type(dynamo_type: str | None) -> str:
@@ -1297,7 +1305,7 @@ def migrate_mentees(
     # break ties by newest updated_on so scan-order cannot change the outcome.
     _STATUS_PRIORITY = {
         "graduated": 5, "accepted": 4,
-        "hold": 3, "pending": 2, "declined": 1, "withdrawn": 0,
+        "pending": 2, "declined": 1, "withdrawn": 0,
     }
     best: dict = {}
     for row in app_rows:
@@ -1457,7 +1465,7 @@ def migrate_tasks(
             (t.get("description") or "").strip() or None,
             category,
             status,
-            (t.get("applicationStatus") or "").strip() or None,
+            _task_application_status(t.get("applicationStatus")),
             _map_program_term_status(known_term_ids.get(resolved_term_id), t.get("programTermStatus")),
             _as_bool(t.get("custom")),
             _task_submit_file(t),
@@ -1753,6 +1761,7 @@ def seed_derived_state(cur) -> None:
                     'slug', slug,
                     'status', status,
                     'logo_url', logo_url,
+                    'skills', COALESCE((SELECT jsonb_agg(ps.skill ORDER BY ps.skill) FROM program_skills ps WHERE ps.program_id = programs.id), '[]'::jsonb),
                     'stats', jsonb_build_object(
                         'mentors', (SELECT COUNT(*) FROM program_members pm WHERE pm.program_id = programs.id AND pm.member_type = 'mentor' AND pm.status = 'approved'),
                         'mentees', (SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE pt.program_id = programs.id AND a.role = 'mentee' AND a.status = 'accepted'),
@@ -1868,7 +1877,7 @@ def seed_derived_state(cur) -> None:
                 'name', t.name,
                 'description', t.description,
                 'category', t.category,
-                'prerequisite', t.category = 'prerequisite',
+                'prerequisite', COALESCE(t.category = 'prerequisite', false),
                 'status', t.status,
                 'application_status', t.application_status,
                 'program_term_status', t.program_term_status,

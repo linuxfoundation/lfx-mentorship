@@ -384,7 +384,7 @@ func TestApplicationRepositoryIntegration_StatusChangeWaitsForHide(t *testing.T)
 	fixture := seedIntegrationFixture(t, pool)
 	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
 	applicationID := "00000000-0000-0000-0000-000000000081"
-	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentee', 'hold')`, applicationID, fixture.OpenTerm, fixture.UserID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentee', 'declined')`, applicationID, fixture.OpenTerm, fixture.UserID); err != nil {
 		t.Fatalf("insert application: %v", err)
 	}
 
@@ -405,25 +405,22 @@ func TestApplicationRepositoryIntegration_StatusChangeWaitsForHide(t *testing.T)
 	}
 
 	repo := NewApplicationRepository(pool)
-	hold, accepted, pending := models.ApplicationStatusHold, models.ApplicationStatusAccepted, models.ApplicationStatusPending
-	acceptErr := make(chan error, 1)
+	declined, pending := models.ApplicationStatusDeclined, models.ApplicationStatusPending
+	reopenErr := make(chan error, 1)
 	go func() {
-		_, err := repo.Update(ctx, applicationID, models.ApplicationUpdateInput{Status: &accepted, ExpectedStatus: &hold})
-		acceptErr <- err
+		_, err := repo.Update(ctx, applicationID, models.ApplicationUpdateInput{Status: &pending, ExpectedStatus: &declined})
+		reopenErr <- err
 	}()
-	waitForLockWait(t, pool, acceptErr)
+	waitForLockWait(t, pool, reopenErr)
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatalf("commit hide: %v", err)
 	}
-	if err := <-acceptErr; !errors.Is(err, domain.ErrIneligible) {
-		t.Fatalf("accept err = %v; want ErrIneligible", err)
-	}
-	if _, err := repo.Update(ctx, applicationID, models.ApplicationUpdateInput{Status: &pending, ExpectedStatus: &hold}); !errors.Is(err, domain.ErrIneligible) {
+	if err := <-reopenErr; !errors.Is(err, domain.ErrIneligible) {
 		t.Fatalf("reopen err = %v; want ErrIneligible", err)
 	}
 	var status models.ApplicationStatus
-	if err := pool.QueryRow(ctx, `SELECT status FROM applications WHERE id = $1`, applicationID).Scan(&status); err != nil || status != hold {
-		t.Fatalf("status = %q, err = %v; want hold", status, err)
+	if err := pool.QueryRow(ctx, `SELECT status FROM applications WHERE id = $1`, applicationID).Scan(&status); err != nil || status != declined {
+		t.Fatalf("status = %q, err = %v; want declined", status, err)
 	}
 }
 
@@ -774,7 +771,6 @@ func TestApplicationRepositoryIntegration_ListByProgramStatusFilterAndOrder(t *t
 		{"00000000-0000-0000-0000-0000000000c4", "pending", false, "", 2},          // tasks_submitted: none to submit
 		{"00000000-0000-0000-0000-0000000000c5", "pending", true, "incomplete", 5}, // applied: flagged, then reset by a reviewer
 		{"00000000-0000-0000-0000-0000000000c6", "pending", false, "in_progress", 4},
-		{"00000000-0000-0000-0000-0000000000c7", "hold", false, "", 6},
 		{"00000000-0000-0000-0000-0000000000c8", "declined", false, "", 7},
 		{"00000000-0000-0000-0000-0000000000c9", "withdrawn", false, "", 8},
 	}
@@ -828,4 +824,139 @@ func TestApplicationRepositoryIntegration_ListByProgramStatusFilterAndOrder(t *t
 
 func indexOutboxFixtureRecord(objectType, objectUID string) domain.IndexOutboxRecord {
 	return domain.IndexOutboxRecord{ObjectType: objectType, ObjectUID: objectUID, Action: "updated", Headers: []byte(`{}`), Data: []byte(`{}`), IndexingConfig: []byte(`{}`)}
+}
+
+// seedSecondOpenTerm adds another open, in-window term to the fixture program and returns its id.
+func seedSecondOpenTerm(t *testing.T, pool *pgxpool.Pool) string {
+	t.Helper()
+	termID := "00000000-0000-0000-0000-000000000013"
+	if _, err := pool.Exec(context.Background(), `INSERT INTO program_terms (id, program_id, name, status, application_start_date, application_end_date, start_date_time, end_date_time)
+		SELECT $1, program_id, 'Second', 'open', NOW() - interval '1 day', NOW() + interval '30 days', NOW() + interval '40 days', NOW() + interval '120 days'
+		FROM program_terms WHERE id = '00000000-0000-0000-0000-000000000011'`, termID); err != nil {
+		t.Fatalf("insert second term: %v", err)
+	}
+	return termID
+}
+
+// A mentee holds one accepted mentorship at a time, counting only terms that have not ended, and
+// cannot apply once graduated. As in legacy, graduating does not stop an earlier application from
+// being accepted.
+func TestApplicationRepositoryIntegration_MenteeHoldsOneMentorship(t *testing.T) {
+	for _, tc := range []struct {
+		name                         string
+		other                        models.ApplicationStatus
+		otherTermEnded               bool
+		acceptRefused, createRefused bool
+	}{
+		{name: "accepted in a running term", other: models.ApplicationStatusAccepted, acceptRefused: true, createRefused: true},
+		{name: "accepted in an ended term", other: models.ApplicationStatusAccepted, otherTermEnded: true},
+		{name: "graduated", other: models.ApplicationStatusGraduated, createRefused: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pool := integrationPool(t)
+			fixture := seedIntegrationFixture(t, pool)
+			second := seedSecondOpenTerm(t, pool)
+			ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+			repo := NewApplicationRepository(pool)
+			if tc.otherTermEnded {
+				if _, err := pool.Exec(ctx, `UPDATE program_terms SET end_date_time = NOW() - interval '1 day' WHERE id = $1`, second); err != nil {
+					t.Fatalf("end second term: %v", err)
+				}
+			}
+
+			pendingID := "00000000-0000-0000-0000-0000000000f1"
+			if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentee', 'pending'), ('00000000-0000-0000-0000-0000000000f2', $4, $3, 'mentee', $5)`,
+				pendingID, fixture.OpenTerm, fixture.UserID, second, tc.other); err != nil {
+				t.Fatalf("insert applications: %v", err)
+			}
+
+			accepted, pending := models.ApplicationStatusAccepted, models.ApplicationStatusPending
+			attendance := models.AttendanceTypeFullTime
+			_, err := repo.Update(ctx, pendingID, models.ApplicationUpdateInput{Status: &accepted, ExpectedStatus: &pending, AttendanceType: &attendance})
+			if refused := errors.Is(err, domain.ErrIneligible); refused != tc.acceptRefused || (err != nil && !refused) {
+				t.Fatalf("accept err = %v; want refused = %v", err, tc.acceptRefused)
+			}
+			if _, err := pool.Exec(ctx, `DELETE FROM applications WHERE id = $1`, pendingID); err != nil {
+				t.Fatalf("delete first application: %v", err)
+			}
+			input := models.ApplicationCreateInput{ID: "00000000-0000-0000-0000-0000000000f3", UserID: fixture.UserID, Role: models.ApplicationRoleMentee, Status: models.ApplicationStatusPending}
+			_, err = repo.Create(ctx, fixture.OpenTerm, input)
+			if refused := errors.Is(err, domain.ErrIneligible); refused != tc.createRefused || (err != nil && !refused) {
+				t.Fatalf("create err = %v; want refused = %v", err, tc.createRefused)
+			}
+		})
+	}
+}
+
+// Two acceptances of the same mentee in different terms lock different term rows; the per-mentee
+// lock still lets only one of them through.
+func TestApplicationRepositoryIntegration_ConcurrentAcceptancesOfOneMentee(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	second := seedSecondOpenTerm(t, pool)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+	ids := []string{"00000000-0000-0000-0000-0000000000f4", "00000000-0000-0000-0000-0000000000f5"}
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $3, $5, 'mentee', 'pending'), ($2, $4, $5, 'mentee', 'pending')`,
+		ids[0], ids[1], fixture.OpenTerm, second, fixture.UserID); err != nil {
+		t.Fatalf("insert applications: %v", err)
+	}
+
+	repo := NewApplicationRepository(pool)
+	accepted, pending := models.ApplicationStatusAccepted, models.ApplicationStatusPending
+	attendance := models.AttendanceTypeFullTime
+	start := make(chan struct{})
+	errs := make(chan error, len(ids))
+	for _, id := range ids {
+		go func() {
+			<-start
+			_, err := repo.Update(ctx, id, models.ApplicationUpdateInput{Status: &accepted, ExpectedStatus: &pending, AttendanceType: &attendance})
+			errs <- err
+		}()
+	}
+	close(start)
+	succeeded, refused := 0, 0
+	for range ids {
+		switch err := <-errs; {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, domain.ErrIneligible):
+			refused++
+		default:
+			t.Fatalf("accept: %v", err)
+		}
+	}
+	if succeeded != 1 || refused != 1 {
+		t.Fatalf("succeeded %d, refused %d; want exactly one acceptance", succeeded, refused)
+	}
+}
+
+// The window is re-checked under the term lock, and the application's dates come from its term.
+func TestApplicationRepositoryIntegration_CreateUsesTermWindowAndDates(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+	repo := NewApplicationRepository(pool)
+	if _, err := pool.Exec(ctx, `UPDATE program_terms SET start_date_time = '2027-01-10T00:00:00Z', end_date_time = '2027-04-10T00:00:00Z' WHERE id = $1`, fixture.OpenTerm); err != nil {
+		t.Fatalf("set term dates: %v", err)
+	}
+
+	input := models.ApplicationCreateInput{ID: "00000000-0000-0000-0000-0000000000f6", UserID: fixture.UserID, Role: models.ApplicationRoleMentee, Status: models.ApplicationStatusPending}
+	a, err := repo.Create(ctx, fixture.OpenTerm, input)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if a.StartDateTime == nil || !a.StartDateTime.Equal(time.Date(2027, 1, 10, 0, 0, 0, 0, time.UTC)) ||
+		a.EndDateTime == nil || !a.EndDateTime.Equal(time.Date(2027, 4, 10, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("application dates %v - %v; want the term's", a.StartDateTime, a.EndDateTime)
+	}
+
+	if _, err := pool.Exec(ctx, `DELETE FROM applications WHERE id = $1`, input.ID); err != nil {
+		t.Fatalf("delete application: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE program_terms SET application_end_date = NOW() - interval '2 days' WHERE id = $1`, fixture.OpenTerm); err != nil {
+		t.Fatalf("close window: %v", err)
+	}
+	if _, err := repo.Create(ctx, fixture.OpenTerm, input); !errors.Is(err, domain.ErrIneligible) {
+		t.Fatalf("create after the window err = %v; want ErrIneligible", err)
+	}
 }

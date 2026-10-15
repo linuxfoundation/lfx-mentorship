@@ -25,10 +25,10 @@ type applicationService interface {
 	ListByUser(ctx context.Context, userID string, filter models.ApplicationFilter) ([]*models.Application, *models.PaginationMeta, error)
 	Create(ctx context.Context, programTermID string, input models.ApplicationCreateInput) (*models.Application, error)
 	Update(ctx context.Context, id string, input models.ApplicationUpdateInput) (*models.Application, error)
-	Delete(ctx context.Context, id string) error
+	Delete(ctx context.Context, id, actorID string) error
 	WithdrawForMentee(ctx context.Context, id, actorID string) (*models.Application, error)
 	WithdrawForMenteeAfterGatewayAuthorization(ctx context.Context, id string) (*models.Application, error)
-	BulkDeclineByTerm(ctx context.Context, termID string) (int, error)
+	BulkDeclineByTerm(ctx context.Context, termID, actorID string) (int, error)
 	ListPastMenteesByTerm(ctx context.Context, termID string) ([]*models.Application, error)
 }
 
@@ -342,36 +342,6 @@ func (h *ApplicationHandler) Create(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusCreated, app)
 }
 
-// Update handles PATCH /v1/applications/{id} — requires JWT.
-func (h *ApplicationHandler) Update(w http.ResponseWriter, r *http.Request) {
-	principal := auth.PrincipalFromContext(r.Context())
-	if principal == nil {
-		Error(w, domain.ErrUnauthorized)
-		return
-	}
-
-	id := chi.URLParam(r, "id")
-	var input models.ApplicationUpdateInput
-	if !decodeBody(w, r, &input) {
-		return
-	}
-	// The route admits the applicant, so it carries applicant-supplied content only.
-	if input.Status != nil || input.TasksSubmitted != nil || input.AdminNotified != nil || input.Evaluation != nil || input.ReviewerNote != nil ||
-		input.AttendanceType != nil || input.ProgramTermStatus != nil {
-		Error(w, fmt.Errorf("%w: protected application fields are handled by dedicated routes", domain.ErrInvalidInput))
-		return
-	}
-	// Propagate caller identity for withdrawal guard.
-	input.ActorID = principal.UserID
-
-	app, err := h.svc.Update(r.Context(), id, input)
-	if err != nil {
-		Error(w, err)
-		return
-	}
-	JSON(w, http.StatusOK, app)
-}
-
 // Delete handles DELETE /v1/applications/{id} — requires JWT.
 func (h *ApplicationHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	principal := auth.PrincipalFromContext(r.Context())
@@ -381,7 +351,7 @@ func (h *ApplicationHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := chi.URLParam(r, "id")
-	if err := h.svc.Delete(r.Context(), id); err != nil {
+	if err := h.svc.Delete(r.Context(), id, principal.UserID); err != nil {
 		Error(w, err)
 		return
 	}
@@ -401,7 +371,7 @@ func (h *ApplicationHandler) BulkDeclineByTerm(w http.ResponseWriter, r *http.Re
 		Error(w, err)
 		return
 	}
-	count, err := h.svc.BulkDeclineByTerm(r.Context(), termID)
+	count, err := h.svc.BulkDeclineByTerm(r.Context(), termID, principal.UserID)
 	if err != nil {
 		Error(w, err)
 		return

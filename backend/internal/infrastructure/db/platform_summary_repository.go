@@ -43,10 +43,7 @@ WITH
 		SELECT DISTINCT pt.program_id
 		FROM program_terms pt
 		JOIN published_programs p ON p.id = pt.program_id
-		WHERE pt.status = 'open'
-		  AND pt.application_start_date IS NOT NULL
-		  AND pt.application_end_date   IS NOT NULL
-		  AND NOW() BETWEEN pt.application_start_date AND pt.application_end_date
+		WHERE ` + sqlTermAcceptsApplications + `
 	),
 	mentor_users AS (
 		SELECT DISTINCT pm.user_id

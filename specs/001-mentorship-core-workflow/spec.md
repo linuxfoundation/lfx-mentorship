@@ -12,7 +12,7 @@
 3. Program Admin invites mentors, or mentors self-request; each is approved or declined
 4. Mentee creates a profile (subject to an eligibility gate) and applies to an open term
 5. Prerequisite tasks are cloned onto the application; mentee completes them
-6. Program Admin reviews submitted tasks and accepts, declines, or holds the application
+6. Program Admin reviews submitted tasks and accepts or declines the application
 7. Accepted mentees begin the program, are later graduated, or withdraw
 8. Program Admin manages terms and program visibility throughout
 ```
@@ -25,8 +25,8 @@
 A program_admin stands up a mentorship program, defines one or more terms, and awaits
 review. Once published, mentors join by invitation or self-request, and
 prospective mentees create a profile, apply to an open term, and complete prerequisite
-tasks. The program_admin reviews completed tasks and decides whether to accept, decline,
-or hold each applicant. Accepted mentees move through the program to graduation, and
+tasks. The program_admin reviews completed tasks and decides whether to accept or
+decline each applicant. Accepted mentees move through the program to graduation, and
 the program_admin can manage the program's visibility and terms throughout its lifecycle.
 
 ### Acceptance Scenarios
@@ -125,8 +125,7 @@ the program_admin can manage the program's visibility and terms throughout its l
 21. **Given** a `pending` application, **When** the mentee voluntarily exits,
     **Then** `status` transitions to `withdrawn`.
 
-22. **Given** an application under review, **When** the program_admin needs more
-    information before deciding, **Then** `status` transitions to `hold`.
+22. *(Removed: `hold` is not an application status — see FR-040.)*
 
 23. **Given** an `accepted` application whose program period has begun, **Then** the
     mentee stays `accepted` for the whole period, and **When** the program_admin
@@ -156,9 +155,7 @@ the program_admin can manage the program's visibility and terms throughout its l
   `pending` state? → Out of scope for this spec; assumed blocked by state guard.
   [NEEDS CLARIFICATION: no explicit rule given]
 - What happens if a program_admin tries to hide a program while an application is
-  `hold`? → Not addressed by source document; only `pending`, `accepted`, and
-  `graduated` are named as blockers. [NEEDS CLARIFICATION: confirm `hold` should or
-  should not also block hide]
+  `hold`? → Moot: `hold` is not an application status (FR-040).
 - What happens when a mentee applies to a term where the window is open but the term
   itself has been soft-deleted? → Assumed blocked, since a deleted term cannot be
   `open`. [NEEDS CLARIFICATION: confirm deleted terms are excluded from open-term
@@ -213,7 +210,10 @@ the program_admin can manage the program's visibility and terms throughout its l
 - **FR-015**: System MUST store `application_start_date` and `application_end_date`
   on each term.
 - **FR-016**: System MUST permit a mentee to apply only when the term `status = open`
-  AND the current date falls within the application window.
+  AND the current date falls within the application window. As in legacy, the window
+  is compared by UTC calendar day with both days inclusive, and a term missing either
+  window date takes no applications. Submit, the apply page and the discovery label
+  (FR-017) apply this one rule.
 - **FR-017**: System MUST derive a public discovery label from term status and
   application window per the following mapping: open + window in future → "Coming
   Soon"; open + within window → "Apply Now"; open + window closed → "In Progress";
@@ -257,12 +257,18 @@ the program_admin can manage the program's visibility and terms throughout its l
 - **FR-029**: System MUST allow a mentee to submit an `application` against a
   specific `program_term` only while that term is `open` and the current date is
   within the application window; new applications MUST start with `status = pending`.
+  The applicant MUST hold a mentee profile (FR-025, FR-028). Only mentees apply;
+  mentors join a program through a membership request (FR-023).
 - **FR-030**: System MUST allow reapplication from a `withdrawn` application only
   while the application window remains open, and MUST NOT allow reapplication from a
   `declined` application.
 - **FR-031**: System MUST allow a mentee to hold concurrent applications across
   different programs, and MUST surface those cross-program applications on the
-  program_admin's Mentee row view.
+  program_admin's Mentee row view. As in legacy, a mentee holds at most one `accepted`
+  mentorship at a time and cannot apply once graduated: the system MUST refuse an
+  application, and an acceptance, while the mentee holds another mentee application
+  `accepted` in a term that has not ended, and MUST refuse an application once the
+  mentee has a `graduated` one. There is no cap on concurrent `pending` applications.
 
 ### Functional Requirements — Prerequisite Task Evaluation
 
@@ -291,8 +297,11 @@ the program_admin can manage the program's visibility and terms throughout its l
   `declined` when the mentee does not qualify.
 - **FR-039**: System MUST allow a mentee to voluntarily transition their own
   `pending` application to `withdrawn`.
-- **FR-040**: System MUST allow a program_admin to transition an application to `hold`
-  pending additional information.
+- **FR-040**: ~~System MUST allow a program_admin to transition an application to `hold`
+  pending additional information.~~ Removed: `hold` is not an application status
+  ([02-target-architecture](../../docs/rewrite/02-target-architecture.md)). Migration 003
+  drops it from `applications_status_check`. Legacy `hold` rows, which mark a paused
+  accepted mentorship, import as `accepted`; a mentor `hold` row returns to `pending`.
 - **FR-041**: System MUST treat `accepted` as the enrolled state for the whole program
   period; there is no separate `active` application status.
 - **FR-042**: System MUST allow a program_admin to manually transition an `accepted`
@@ -328,7 +337,7 @@ the program_admin can manage the program's visibility and terms throughout its l
 - **Application**: A mentee's request to join a specific ProgramTerm. Key attributes:
   `tasks_submitted` (boolean), `attendance_type` (`full_time` | `part_time`, set on
   acceptance). Status lifecycle: `pending` → `accepted` → `graduated` |
-  `declined` | `withdrawn` | `hold`. Belongs to one ProgramTerm; linked to one
+  `declined` | `withdrawn`. Belongs to one ProgramTerm; linked to one
   UserProfile/mentee.
 - **Task**: A unit of work cloned onto or assigned to a mentee. Key attributes:
   `category` (`prerequisite` | `non_prerequisite`). Status lifecycle: `incomplete` →
@@ -386,7 +395,7 @@ the program_admin can manage the program's visibility and terms throughout its l
 |---|---|---|
 | 1 | Edge Cases | What error/message is shown when program creation fails due to zero terms or exceeding the 4-open-term cap? |
 | 2 | Edge Cases | Should reviewer actions be blocked on programs not in `pending` status, and if so, how should that be surfaced? |
-| 3 | Edge Cases | Does an application in `hold` also block hiding a program, alongside `pending`, `accepted`, and `graduated`? |
+| 3 | Edge Cases | ~~Does an application in `hold` also block hiding a program, alongside `pending`, `accepted`, and `graduated`?~~ Moot: `hold` is not an application status (FR-040). |
 | 4 | Edge Cases | Are `deleted` terms excluded from both the 4-open-term cap and mentee application eligibility? |
 | 5 | Mentor Invitation | ~~What happens when an invitation token expires before the mentor responds — is re-invitation automatic or manual?~~ Answered: tokens do not expire; a Program Admin re-invites by inviting the same person again (research.md C-5). |
 | 6 | Mentee Application | What happens to a mentee's other concurrent applications if one of their programs is later hidden or archived? |

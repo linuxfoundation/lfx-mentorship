@@ -135,7 +135,7 @@ func TestE2ETaskFiles(t *testing.T) {
 	reset(t)
 	admin := signIn(t, "admin")
 	p := publishProgram(t, admin, "Task File Program")
-	mentee := signIn(t, "mentee")
+	mentee := signInMentee(t, "mentee")
 	app := apply(t, mentee, p)
 	prereq := tasksOf(t, mentee, app.ID)[0]
 	filePath := "/tasks/" + prereq.ID

@@ -131,12 +131,12 @@ POST /v1/mentor-invites/{token}/decline  [token + JWT]
 ### Existing endpoint — now with state guards and attendance_type
 
 ```
-PATCH /v1/applications/{id}
+PATCH /v1/applications/{id}/status
 Authorization: Bearer {token}
 Content-Type: application/json
 
 {
-  "status": "accepted" | "declined" | "graduated" | "withdrawn" | "hold" | "pending",
+  "status": "accepted" | "declined" | "graduated" | "withdrawn" | "pending",
   "attendance_type": "full_time" | "part_time"   // required when status = "accepted"
 }
 ```
