@@ -15,7 +15,6 @@ vi.mock('~/composables/useIntercom', () => ({ useIntercom: () => intercom }));
 
 afterEach(() => {
   vi.restoreAllMocks();
-  document.body.innerHTML = '';
 });
 
 const drawer = () => document.body.querySelector<HTMLElement>('[aria-label="Main menu"]');

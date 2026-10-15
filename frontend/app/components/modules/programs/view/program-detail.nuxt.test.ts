@@ -61,7 +61,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
-  document.body.innerHTML = '';
 });
 
 async function mountProgram(id: string) {

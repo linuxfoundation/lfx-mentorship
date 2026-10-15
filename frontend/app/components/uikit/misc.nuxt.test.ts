@@ -19,7 +19,6 @@ vi.mock('~/utils/quill-markdown-paste', () => ({
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
-  document.body.innerHTML = '';
 });
 
 describe('SkillFilterSelect', () => {

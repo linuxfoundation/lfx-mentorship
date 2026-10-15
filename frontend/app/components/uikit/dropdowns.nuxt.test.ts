@@ -19,7 +19,6 @@ const options = () => [...document.body.querySelectorAll<HTMLElement>('[role="op
 
 afterEach(() => {
   vi.useRealTimers();
-  document.body.innerHTML = '';
 });
 
 describe('LfxPopover', () => {
@@ -92,7 +91,6 @@ describe('LfxPopover', () => {
     await wrapper.setProps({ visibility: true });
     await flushPromises();
     expect(panel()).not.toBeNull();
-    wrapper.unmount();
   });
 
   it('never opens while disabled', async () => {
@@ -190,7 +188,7 @@ describe('dropdown parts', () => {
   });
 
   it('opens a submenu inside a dropdown and goes back', async () => {
-    const wrapper = await mountSuspended(LfxDropdown, {
+    await mountSuspended(LfxDropdown, {
       props: { visibility: true },
       slots: {
         trigger: () => h('button', 'Menu'),
@@ -215,7 +213,6 @@ describe('dropdown parts', () => {
     back.click();
     await flushPromises();
     expect(sub().style.display).toBe('none');
-    wrapper.unmount();
   });
 
   it('styles the selector by size and type', async () => {

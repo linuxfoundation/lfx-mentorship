@@ -23,7 +23,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
-  document.body.innerHTML = '';
 });
 
 const click = async (wrapper: Awaited<ReturnType<typeof mountSuspended>>, label: string) => {

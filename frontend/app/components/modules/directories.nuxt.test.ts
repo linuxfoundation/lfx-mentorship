@@ -77,7 +77,6 @@ for (const { name, item } of directories) {
 afterEach(async () => {
   mode = 'ok';
   for (const key of Object.keys(requests)) requests[key] = [];
-  document.body.innerHTML = '';
   // The Nuxt app, and so its query cache, is shared by every test in the file.
   await mountSuspended(
     defineComponent({

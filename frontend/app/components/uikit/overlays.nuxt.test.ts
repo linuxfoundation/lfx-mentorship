@@ -3,7 +3,7 @@
 
 import { mountSuspended } from '@nuxt/test-utils/runtime';
 import { flushPromises } from '@vue/test-utils';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { h } from 'vue';
 import LfxDrawer from './drawer/drawer.vue';
 import LfxModal from './modal/modal.vue';
@@ -32,11 +32,6 @@ const tab = (target: Element, shiftKey = false) => {
   return event;
 };
 
-afterEach(() => {
-  document.body.innerHTML = '';
-  document.documentElement.style.overflow = '';
-});
-
 describe.each(overlays)('%s', (_name, component, backdrop, content, baseProps) => {
   const open = async (props: Record<string, unknown> = {}, slots = { default: twoButtons }) => {
     const trigger = document.createElement('button');
@@ -57,6 +52,8 @@ describe.each(overlays)('%s', (_name, component, backdrop, content, baseProps) =
   });
 
   it('locks scrolling and focuses the first control when opened', async () => {
+    // Earlier tests left overlays open; their teardown must have released the lock.
+    expect(document.documentElement.style.overflow).toBe('');
     await open({ ariaLabel: 'Share' });
     expect($(content)!.getAttribute('aria-label')).toBe('Share');
     expect(document.documentElement.style.overflow).toBe('hidden');
