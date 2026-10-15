@@ -147,6 +147,76 @@ func TestFGAOutboxIntegration_ClaimLargeBacklogTakesBoundedLocks(t *testing.T) {
 	}
 }
 
+// Two relays can snapshot the same pending marker. If the first commits its
+// claim before the second reaches the advisory lock, the second acquires the
+// released lock and FOR UPDATE follows the row to its in-flight version. The
+// locking step must recheck eligibility against that version and drop it.
+//
+// A cursor pins its snapshot at DECLARE, so the interleaving is driven
+// deterministically: open the production claim CTEs while the marker is
+// pending, let a pool claim take and commit it, then FETCH to run the lock step.
+func TestFGAOutboxIntegration_ClaimRechecksEligibilityAfterConcurrentClaim(t *testing.T) {
+	pool := integrationPool(t)
+	repo := NewFGAOutboxRepository(pool)
+	ctx := context.Background()
+	if err := repo.EnqueueObject(ctx, "mentorship_program", "program-concurrent", "update_access"); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	late, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin late claim: %v", err)
+	}
+	defer func() { _ = late.Rollback(ctx) }()
+	const batch = 1
+	if _, err := late.Exec(ctx,
+		`DECLARE late_claim NO SCROLL CURSOR FOR WITH `+fgaOutboxClaimCTEs+` SELECT id FROM candidates`,
+		batch, repo.maxAttempts, batch*fgaClaimScanFactor,
+	); err != nil {
+		t.Fatalf("open late claim: %v", err)
+	}
+
+	first, err := repo.Claim(ctx, batch)
+	if err != nil || len(first) != 1 {
+		t.Fatalf("first claim markers=%d err=%v", len(first), err)
+	}
+
+	rows, err := late.Query(ctx, `FETCH ALL FROM late_claim`)
+	if err != nil {
+		t.Fatalf("resume late claim: %v", err)
+	}
+	var reclaimed []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("scan late claim: %v", err)
+		}
+		reclaimed = append(reclaimed, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate late claim: %v", err)
+	}
+	if len(reclaimed) != 0 {
+		t.Fatalf("late claim took markers %v after the first claim committed; want none", reclaimed)
+	}
+	if err := late.Commit(ctx); err != nil {
+		t.Fatalf("commit late claim: %v", err)
+	}
+
+	var claimedAt time.Time
+	var claimedGeneration int64
+	if err := pool.QueryRow(ctx, `SELECT claimed_at, claimed_generation FROM fga_outbox WHERE id = $1`, first[0].ID).Scan(&claimedAt, &claimedGeneration); err != nil {
+		t.Fatalf("read claim: %v", err)
+	}
+	if !claimedAt.Equal(*first[0].ClaimedAt) || claimedGeneration != first[0].Generation {
+		t.Fatalf("claim overwritten: claimed_at=%v generation=%d; want %v/%d", claimedAt, claimedGeneration, *first[0].ClaimedAt, first[0].Generation)
+	}
+	if acknowledged, err := repo.Acknowledge(ctx, first[0]); err != nil || !acknowledged {
+		t.Fatalf("acknowledge first claim: acknowledged=%v err=%v", acknowledged, err)
+	}
+}
+
 func TestIndexOutboxIntegration_ClaimRetryAndSent(t *testing.T) {
 	pool := integrationPool(t)
 	seedIntegrationFixture(t, pool)
