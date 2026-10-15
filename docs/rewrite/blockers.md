@@ -44,7 +44,7 @@ The `mentorship_program` type must also define the named
 `mentorship_approver_team#member`. Mentorship emits that exact key in
 `references.global_mentorship_approver`; it is not interchangeable with the
 program's `auditor` relation. The `auditor` relation must include
-`global_mentorship_approver` so approvers can read submitted programs without
+`global_mentorship_approver` so approvers can read pending programs without
 receiving program-management permissions.
 
 The model must also include executable positive, negative, and inheritance

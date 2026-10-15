@@ -27,6 +27,9 @@ var programSvcTracer = otel.Tracer("programs-service")
 
 const maxEnrollmentTerms = 4
 
+// taskSubmitFileRequired is the task template submitFile value for a task that needs an upload.
+const taskSubmitFileRequired = "required"
+
 type enrollmentPrerequisite struct {
 	Name        string  `json:"name"`
 	Description *string `json:"description"`
@@ -41,13 +44,14 @@ type ProgramService struct {
 	termRepo   domain.ProgramTermRepository
 	appRepo    domain.ApplicationRepository
 	memberRepo domain.ProgramMemberRepository
+	notifier   domain.Notifier
 	cfClient   clients.CrowdfundingClient
 	projects   domain.ProjectLookup
 }
 
 // NewProgramService returns a ProgramService.
-func NewProgramService(repo domain.ProgramRepository, termRepo domain.ProgramTermRepository, appRepo domain.ApplicationRepository, memberRepo domain.ProgramMemberRepository) *ProgramService {
-	return &ProgramService{repo: repo, termRepo: termRepo, appRepo: appRepo, memberRepo: memberRepo}
+func NewProgramService(repo domain.ProgramRepository, termRepo domain.ProgramTermRepository, appRepo domain.ApplicationRepository, memberRepo domain.ProgramMemberRepository, notifier domain.Notifier) *ProgramService {
+	return &ProgramService{repo: repo, termRepo: termRepo, appRepo: appRepo, memberRepo: memberRepo, notifier: notifier}
 }
 
 // SetCrowdfundingClient configures the outbound crowdfunding client used by
@@ -65,10 +69,9 @@ func (s *ProgramService) SetProjectLookup(projects domain.ProjectLookup) {
 
 // programTransitions defines the valid next states for each program status.
 var programTransitions = map[models.ProgramStatus][]models.ProgramStatus{
-	models.ProgramStatusPending:   {models.ProgramStatusSubmitted},
-	models.ProgramStatusSubmitted: {models.ProgramStatusPublished, models.ProgramStatusRejected},
+	models.ProgramStatusPending:   {models.ProgramStatusPublished, models.ProgramStatusRejected},
 	models.ProgramStatusPublished: {models.ProgramStatusArchived, models.ProgramStatusHidden},
-	models.ProgramStatusRejected:  {models.ProgramStatusSubmitted}, // resubmit directly; no detour through pending
+	models.ProgramStatusRejected:  {},
 	models.ProgramStatusArchived:  {},
 	models.ProgramStatusHidden:    {models.ProgramStatusPublished, models.ProgramStatusArchived},
 }
@@ -297,6 +300,7 @@ func (s *ProgramService) Create(ctx context.Context, input models.ProgramCreateI
 		span.RecordError(err)
 		return nil, fmt.Errorf("create program: %w", err)
 	}
+	s.notifier.NotifyProgramSubmitted(ctx, p.ID, input.CreatorUserID)
 	return p, nil
 }
 
@@ -321,11 +325,8 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 		if term.Status != "" && term.Status != models.ProgramTermStatusOpen {
 			return nil, fmt.Errorf("%w: enrollment terms must be open", domain.ErrInvalidInput)
 		}
-		if term.StartDateTime == nil || term.EndDateTime == nil || !term.EndDateTime.After(*term.StartDateTime) {
-			return nil, fmt.Errorf("%w: term end date must be after start date", domain.ErrInvalidInput)
-		}
-		if term.ApplicationStartDate == nil || term.ApplicationEndDate == nil || !term.ApplicationEndDate.After(*term.ApplicationStartDate) || !term.ApplicationEndDate.Before(*term.StartDateTime) {
-			return nil, fmt.Errorf("%w: application window must end after it starts and before the term", domain.ErrInvalidInput)
+		if err := validateTermDates(term.StartDateTime, term.EndDateTime, term.ApplicationStartDate, term.ApplicationEndDate); err != nil {
+			return nil, err
 		}
 	}
 	if len(input.Prerequisites) > 0 {
@@ -351,7 +352,7 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 			}
 			var submitFile *string
 			if prerequisite.RequireFile {
-				value := "required"
+				value := taskSubmitFileRequired
 				submitFile = &value
 			}
 			templates = append(templates, taskTemplate{Name: prerequisite.Name, Description: prerequisite.Description, SubmitFile: submitFile, DueDate: prerequisite.DueDate})
@@ -394,7 +395,12 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 	}
 	input.Program.Status = models.ProgramStatusPending
 	input.Program.ID = uuid.New().String()
-	return s.repo.CreateEnrollment(ctx, input)
+	p, err := s.repo.CreateEnrollment(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	s.notifier.NotifyProgramSubmitted(ctx, p.ID, input.Program.CreatorUserID)
+	return p, nil
 }
 
 // resolveProjectMetadata replaces the caller's project slug, name, and logo
@@ -455,19 +461,24 @@ func validateHTTPURL(value *string) error {
 	return nil
 }
 
-// Decide publishes or rejects a submitted program.
+// Decide publishes or rejects a pending program.
 func (s *ProgramService) Decide(ctx context.Context, id string, status models.ProgramStatus) (*models.Program, error) {
 	if status != models.ProgramStatusPublished && status != models.ProgramStatusRejected {
-		return nil, fmt.Errorf("%w: decision must publish or reject a submitted program", domain.ErrInvalidInput)
+		return nil, fmt.Errorf("%w: decision must publish or reject a pending program", domain.ErrInvalidInput)
 	}
 	current, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("get program for decision: %w", err)
 	}
-	if current.Status != models.ProgramStatusSubmitted {
-		return nil, fmt.Errorf("%w: only a submitted program can be decided, not %q", domain.ErrInvalidStateTransition, current.Status)
+	if current.Status != models.ProgramStatusPending {
+		return nil, fmt.Errorf("%w: only a pending program can be decided, not %q", domain.ErrInvalidStateTransition, current.Status)
 	}
-	return s.Update(ctx, id, models.ProgramUpdateInput{Status: &status})
+	p, err := s.Update(ctx, id, models.ProgramUpdateInput{Status: &status})
+	if err != nil {
+		return nil, err
+	}
+	s.notifier.NotifyProgramDecided(ctx, id, status)
+	return p, nil
 }
 
 // Hide takes a published program out of public view. The hide guard in Update
@@ -478,7 +489,7 @@ func (s *ProgramService) Hide(ctx context.Context, id string) (*models.Program, 
 }
 
 // Unhide makes a hidden program public again. It pins the source status because
-// programTransitions also allows submitted → published, which only the approver
+// programTransitions also allows pending → published, which only the approver
 // team may apply through Decide.
 func (s *ProgramService) Unhide(ctx context.Context, id string) (*models.Program, error) {
 	from, to := models.ProgramStatusHidden, models.ProgramStatusPublished
@@ -508,6 +519,16 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 	}
 	if input.Terms != nil {
 		if err := validateOpenTerms(input.Terms); err != nil {
+			return nil, err
+		}
+	}
+	if len(input.TaskTemplates) > 0 {
+		current, err := s.repo.GetByID(ctx, id)
+		if err != nil {
+			span.RecordError(err)
+			return nil, fmt.Errorf("get program for update: %w", err)
+		}
+		if input.TaskTemplates, err = normalizeTaskTemplates(input.TaskTemplates, current.TaskTemplates); err != nil {
 			return nil, err
 		}
 	}
@@ -556,19 +577,19 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 		// The transition was validated against current.Status, so the write must apply only while the row still has it.
 		input.ExpectedStatus = &current.Status
 
-		// Submission guard (FR-004): all required fields must be present and at least one open term.
-		if next == models.ProgramStatusSubmitted {
+		// Publication guard (FR-004): a pending program needs all required fields and at least one open term.
+		if current.Status == models.ProgramStatusPending && next == models.ProgramStatusPublished {
 			if current.ProjectUID == nil || strings.TrimSpace(*current.ProjectUID) == "" {
-				return nil, fmt.Errorf("%w: a linked LF project is required before submission", domain.ErrStateLocked)
+				return nil, fmt.Errorf("%w: a linked LF project is required before publication", domain.ErrStateLocked)
 			}
 			if current.Description == nil || strings.TrimSpace(*current.Description) == "" {
-				return nil, fmt.Errorf("%w: description is required before submission", domain.ErrStateLocked)
+				return nil, fmt.Errorf("%w: description is required before publication", domain.ErrStateLocked)
 			}
 			if current.RepoLink == nil || strings.TrimSpace(*current.RepoLink) == "" {
-				return nil, fmt.Errorf("%w: repository URL is required before submission", domain.ErrStateLocked)
+				return nil, fmt.Errorf("%w: repository URL is required before publication", domain.ErrStateLocked)
 			}
 			if current.LogoURL == nil || strings.TrimSpace(*current.LogoURL) == "" {
-				return nil, fmt.Errorf("%w: logo is required before submission", domain.ErrStateLocked)
+				return nil, fmt.Errorf("%w: logo is required before publication", domain.ErrStateLocked)
 			}
 			skills, err := s.repo.ListSkills(ctx, id)
 			if err != nil {
@@ -576,7 +597,7 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 				return nil, fmt.Errorf("check program skills: %w", err)
 			}
 			if len(skills) == 0 {
-				return nil, fmt.Errorf("%w: at least one skill tag is required before submission", domain.ErrStateLocked)
+				return nil, fmt.Errorf("%w: at least one skill tag is required before publication", domain.ErrStateLocked)
 			}
 			count, err := s.termRepo.CountOpenTermsByProgram(ctx, id)
 			if err != nil {
@@ -584,7 +605,7 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 				return nil, fmt.Errorf("check open terms: %w", err)
 			}
 			if count == 0 {
-				return nil, fmt.Errorf("%w: program must have at least one open term to be submitted", domain.ErrStateLocked)
+				return nil, fmt.Errorf("%w: program must have at least one open term to be published", domain.ErrStateLocked)
 			}
 		}
 
@@ -607,6 +628,63 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 		return nil, fmt.Errorf("update program: %w", err)
 	}
 	return p, nil
+}
+
+// normalizeTaskTemplates validates a program update's task templates and returns them in the
+// shape applications clone: a blank submitFile or dueDate is cleared, and submitFile may only be
+// "required". A template that leaves custom out keeps the flag of the current template with the
+// same name (ignoring case), so an edit that does not send it keeps the migrated value.
+func normalizeTaskTemplates(raw, current json.RawMessage) (json.RawMessage, error) {
+	var incoming []struct {
+		Name        string  `json:"name"`
+		Description *string `json:"description"`
+		SubmitFile  *string `json:"submitFile"`
+		DueDate     *string `json:"dueDate"`
+		Custom      *bool   `json:"custom"`
+	}
+	// JSON null decodes to a nil slice; reject it so only an explicit [] clears the templates.
+	if err := json.Unmarshal(raw, &incoming); err != nil || incoming == nil {
+		return nil, fmt.Errorf("%w: task_templates must be an array of templates", domain.ErrInvalidInput)
+	}
+	var existing []taskTemplate
+	if len(current) > 0 {
+		if err := json.Unmarshal(current, &existing); err != nil {
+			return nil, fmt.Errorf("decode current task templates: %w", err)
+		}
+	}
+	customByName := make(map[string]templateFlag, len(existing))
+	for _, template := range existing {
+		customByName[strings.ToLower(strings.TrimSpace(template.Name))] = template.Custom
+	}
+	templates := make([]taskTemplate, 0, len(incoming))
+	for _, in := range incoming {
+		name := strings.TrimSpace(in.Name)
+		if name == "" {
+			return nil, fmt.Errorf("%w: task template name is required", domain.ErrInvalidInput)
+		}
+		template := taskTemplate{Name: name, Custom: customByName[strings.ToLower(name)]}
+		if in.Custom != nil {
+			template.Custom = templateFlag(*in.Custom)
+		}
+		if in.Description != nil && strings.TrimSpace(*in.Description) != "" {
+			description := strings.TrimSpace(*in.Description)
+			template.Description = &description
+		}
+		if in.SubmitFile != nil && *in.SubmitFile != "" {
+			if *in.SubmitFile != taskSubmitFileRequired {
+				return nil, fmt.Errorf("%w: task template submitFile must be %q or empty", domain.ErrInvalidInput, taskSubmitFileRequired)
+			}
+			template.SubmitFile = in.SubmitFile
+		}
+		if in.DueDate != nil && *in.DueDate != "" {
+			if err := validateDueDate(in.DueDate); err != nil {
+				return nil, err
+			}
+			template.DueDate = in.DueDate
+		}
+		templates = append(templates, template)
+	}
+	return json.Marshal(templates)
 }
 
 // validateOpenTerms checks a program update's open-term set and trims term names

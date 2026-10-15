@@ -48,7 +48,7 @@ A full run in-cluster, with NATS, against prod. It does the slow bulk file copy 
 
 The import queues about 330,000 permission (OpenFGA) and 330,000 search-index updates through fga-sync. Run it off-hours, and give the platform team a heads-up first.
 
-1. Do Phase 2 (runner pod), Phase 3 (copy), Phase 4 step 6 (import) and Phase 5 (verify).
+1. Do Phase 2 (runner pod), Phase 3 (copy), Phase 4 step 6 (import) and Phase 5 (verify). Run the import as `python migrate_dynamo_to_postgres.py --test-run`: legacy is still live, so a file uploaded after the copy's scan is logged as `MANIFEST_MISS` and its column set to NULL instead of stopping the import. The cutover run (Phase 4) takes no flag: inside the freeze, a missing file means the freeze leaked.
 2. **Record the timings:** the copy, the import (from `import.log`; the smoke import took about 16 minutes, 14 of them scanning DynamoDB) and how long both outboxes take to drain (Phase 5, step 3). The final run is reserved from these.
 3. **Count the duplicate users.** The import keeps a shared email or LFID on one user and clears it on the others, and a user left without one cannot use Mentorship. This lists how many there are, and how many of them hold memberships, applications or tasks:
    ```bash
@@ -210,7 +210,8 @@ python copy_legacy_objects.py 2>&1 | tee /work/copy.log
 ```
 
 - It ends with per-column counts (`copied`, `quarantined`, `missing`, `foreign`) and `Wrote N manifest entries`.
-- Every `QUARANTINED` or `MISSING` line is logged; keep the list for review.
+- Every `QUARANTINED` or `MISSING` line is logged; keep the list for review. Expect `QUARANTINED` logos to be oversized images or SVGs carrying active content only: script-free legacy SVG logos are copied, not quarantined ([03 §S3 objects](./03-migration-plan.md#migration-specific-tasks)).
+- A rerun re-evaluates every quarantined object. If an earlier run of the script quarantined legacy SVG logos (before the SVG allowance), rerunning it promotes them into the logos bucket and removes their held copies; the ETL then rewrites their URLs from the fresh manifest.
 - If the legacy credentials expire partway: refresh the secret (Phase 2, step 1), recreate the pod and re-run the setup check (Phase 2, step 4), then re-run the copy. The pod reads the secret only when it starts, and `/work` is lost with it, so expect the copy to start over; files already copied are skipped.
 
 ## Phase 4: cutover run (inside the freeze)
@@ -244,7 +245,7 @@ python copy_legacy_objects.py 2>&1 | tee /work/copy.log
 ## Phase 5: verify (before go/no-go)
 
 1. **`import.log`** ends with `Migration complete.`. Check these lines:
-   - `Member rows without userId: 1876 (… email_unique=1523, email_and_program_lfid=1 …)` means about 1,524 rows were linked;
+   - `Member user resolution: N rows (email_unique=…, email_and_program_lfid=…, user_id=…, …); M legacy userIds replaced by the email's user`. Each member is linked to the user with its email first, and to its own legacy `userId` only when the email settles nothing; each replaced `userId` is listed as `MEMBER_USER_FROM_EMAIL`;
    - file-rewrite counts: `missing` should be roughly zero for each column;
    - the `UNRESOLVED_MEMBER_USER`, `UNMAPPED_PROGRAM_PROJECT_MAPPING` and `UNMAPPED_MENTOR_MEMBER` reports.
 2. **Row counts.** Reference numbers from a smoke import of prod data on 2026-10-09; small growth since then is expected:

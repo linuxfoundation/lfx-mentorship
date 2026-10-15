@@ -39,6 +39,14 @@ func applicationsPath(p *program) string {
 	return "/programs/" + p.ID + "/terms/" + p.TermID + "/applications"
 }
 
+// signInMentee signs a user in and registers their mentee profile, which applying requires.
+func signInMentee(t *testing.T, lfid string) *actor {
+	t.Helper()
+	a := signIn(t, lfid)
+	registerMentee(t, a)
+	return a
+}
+
 // apply submits a mentee application for p's open term.
 func apply(t *testing.T, mentee *actor, p *program) application {
 	t.Helper()
@@ -93,21 +101,9 @@ func TestE2EMenteeJourney(t *testing.T) {
 		anonymous().call(t, http.MethodGet, "/applications/"+app.ID, nil).expect(http.StatusUnauthorized)
 	})
 
-	t.Run("the applicant edits only applicant fields", func(t *testing.T) {
-		var updated struct {
-			StartDateTime string `json:"start_date_time"`
-		}
-		mentee.mustJSON(t, http.MethodPatch, "/applications/"+app.ID, map[string]any{"start_date_time": at(20)}, http.StatusOK, &updated)
-		if updated.StartDateTime == "" {
-			t.Fatalf("start date not saved")
-		}
-		for _, field := range []string{"status", "tasks_submitted", "admin_notified", "evaluation", "reviewer_note", "attendance_type", "program_term_status"} {
-			var value any = "x"
-			if field == "tasks_submitted" || field == "admin_notified" {
-				value = true
-			}
-			mentee.call(t, http.MethodPatch, "/applications/"+app.ID, map[string]any{field: value}).expect(http.StatusBadRequest)
-		}
+	t.Run("the applicant cannot edit the application", func(t *testing.T) {
+		// Its dates come from the term, and every other field has a dedicated route.
+		mentee.call(t, http.MethodPatch, "/applications/"+app.ID, map[string]any{"start_date_time": at(20)}).expect(http.StatusMethodNotAllowed)
 	})
 
 	t.Run("submitting the prerequisite", func(t *testing.T) {
@@ -259,6 +255,10 @@ func TestE2EMenteeJourney(t *testing.T) {
 		admin.call(t, http.MethodGet, "/programs/"+other.ID+"/terms/"+p.TermID+"/applications/export", nil).expect(http.StatusNotFound)
 	})
 
+	// A second program the mentee applies to before being accepted into the first.
+	second := publishProgram(t, admin, "Second Journey Program")
+	secondApp := apply(t, mentee, second)
+
 	t.Run("acceptance", func(t *testing.T) {
 		admin.call(t, http.MethodPatch, "/applications/"+app.ID+"/status", map[string]any{"status": "accepted"}).expect(http.StatusBadRequest)
 		admin.call(t, http.MethodPatch, "/applications/"+app.ID+"/status", map[string]any{"status": "accepted", "attendance_type": "weekends"}).expect(http.StatusBadRequest)
@@ -277,6 +277,18 @@ func TestE2EMenteeJourney(t *testing.T) {
 		}
 		// An accepted program cannot be hidden.
 		admin.call(t, http.MethodPost, "/programs/"+p.ID+"/hide", nil).expect(http.StatusConflict)
+	})
+
+	t.Run("a mentee holds one accepted mentorship", func(t *testing.T) {
+		res := admin.call(t, http.MethodPatch, "/applications/"+secondApp.ID+"/status", map[string]any{"status": "accepted", "attendance_type": "full_time"}).expect(http.StatusUnprocessableEntity)
+		if !strings.Contains(res.errorMessage(), "accepted mentorship") {
+			t.Fatalf("got %q", res.errorMessage())
+		}
+		third := publishProgram(t, admin, "Third Journey Program")
+		res = mentee.call(t, http.MethodPost, applicationsPath(third), map[string]any{"role": "mentee"}).expect(http.StatusUnprocessableEntity)
+		if !strings.Contains(res.errorMessage(), "accepted mentorship") {
+			t.Fatalf("got %q", res.errorMessage())
+		}
 	})
 
 	t.Run("custom tasks on an accepted application", func(t *testing.T) {
@@ -337,6 +349,13 @@ func TestE2EMenteeJourney(t *testing.T) {
 		}
 		other := publishProgram(t, admin, "Other Graduation Program")
 		admin.call(t, http.MethodGet, "/programs/"+other.ID+"/terms/"+p.TermID+"/past-mentees", nil).expect(http.StatusNotFound)
+		// As in legacy, a graduated mentee cannot apply again, but an application made before
+		// graduating can still be accepted.
+		res := mentee.call(t, http.MethodPost, applicationsPath(other), map[string]any{"role": "mentee"}).expect(http.StatusUnprocessableEntity)
+		if !strings.Contains(res.errorMessage(), "graduated") {
+			t.Fatalf("got %q", res.errorMessage())
+		}
+		admin.mustJSON(t, http.MethodPatch, "/applications/"+secondApp.ID+"/status", map[string]any{"status": "accepted", "attendance_type": "full_time"}, http.StatusOK, nil)
 		var mentees struct {
 			Data []any `json:"data"`
 		}
@@ -356,35 +375,34 @@ func TestE2EMenteeJourney(t *testing.T) {
 	})
 }
 
+// The apply route takes mentee applications only: mentors request to join through the program's
+// members. Mentor applications imported from legacy can still be decided.
 func TestE2EMentorApplication(t *testing.T) {
 	reset(t)
 	admin := signIn(t, "admin")
 	p := publishProgram(t, admin, "Mentor Application Program")
 	volunteer := signIn(t, "mentor-applicant")
 
-	var app application
-	volunteer.mustJSON(t, http.MethodPost, applicationsPath(p), map[string]any{"role": "mentor"}, http.StatusCreated, &app)
-	if app.Role != "mentor" {
-		t.Fatalf("application: %+v", app)
-	}
-	// The same person may hold a mentee application for the same term alongside it.
-	apply(t, volunteer, p)
+	volunteer.call(t, http.MethodPost, applicationsPath(p), map[string]any{"role": "mentor"}).expect(http.StatusBadRequest)
+
+	app := application{ID: "00000000-0000-4000-8000-0000000000a1"}
+	dbExec(t, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentor', 'pending')`, app.ID, p.TermID, volunteer.ID)
 	admin.mustJSON(t, http.MethodPatch, "/applications/"+app.ID+"/status", map[string]any{"status": "accepted", "attendance_type": "full_time"}, http.StatusOK, &app)
 
 	var roster struct {
 		Data []member `json:"data"`
 	}
 	anonymous().mustJSON(t, http.MethodGet, "/programs/"+p.ID+"/members", nil, http.StatusOK, &roster)
-	if len(roster.Data) != 1 || roster.Data[0].UserID != volunteer.ID || roster.Data[0].Status != "active" {
+	if len(roster.Data) != 1 || roster.Data[0].UserID != volunteer.ID || roster.Data[0].Status != "approved" {
 		t.Fatalf("accepted mentor is not on the roster: %+v", roster)
 	}
 	awaitFGA(t, "lfx.fga-sync.member_put", func(m fgaMessage) bool {
 		return m.ObjectType == "mentorship_program" && m.Data.UID == p.ID && m.Data.Username == "mentor-applicant"
 	})
-	// Accepting a mentor sends no mentee welcome.
+	// Accepting a mentor application sends no mentee welcome.
 	awaitEmailsSent(t)
 	if n := len(e2e.fakes.emailsTo(volunteer.Email)); n != 0 {
-		t.Fatalf("mentor applicant got %d emails", n)
+		t.Fatalf("mentor applicant got %d emails; want none", n)
 	}
 }
 
@@ -392,10 +410,14 @@ func TestE2EApplicationGuards(t *testing.T) {
 	reset(t)
 	admin := signIn(t, "admin")
 	p := publishProgram(t, admin, "Guarded Program")
-	mentee := signIn(t, "mentee")
+	mentee := signInMentee(t, "mentee")
 
 	t.Run("create validation", func(t *testing.T) {
 		mentee.call(t, http.MethodPost, applicationsPath(p), map[string]any{"role": "observer"}).expect(http.StatusBadRequest)
+		noProfile := signIn(t, "no-profile").call(t, http.MethodPost, applicationsPath(p), map[string]any{"role": "mentee"}).expect(http.StatusUnprocessableEntity)
+		if !strings.Contains(noProfile.errorMessage(), "mentee profile") {
+			t.Fatalf("got %q", noProfile.errorMessage())
+		}
 		other := publishProgram(t, admin, "Other Guarded Program")
 		mentee.call(t, http.MethodPost, "/programs/"+other.ID+"/terms/"+p.TermID+"/applications", map[string]any{"role": "mentee"}).expect(http.StatusNotFound)
 		mentee.call(t, http.MethodPost, "/programs/"+p.ID+"/terms/00000000-0000-4000-8000-000000000000/applications", map[string]any{"role": "mentee"}).expect(http.StatusNotFound)
@@ -453,20 +475,23 @@ func TestE2EApplicationGuards(t *testing.T) {
 	})
 
 	t.Run("a declined applicant cannot reapply", func(t *testing.T) {
-		other := signIn(t, "declined-mentee")
+		other := signInMentee(t, "declined-mentee")
 		declined := apply(t, other, p)
-		admin.mustJSON(t, http.MethodPatch, "/applications/"+declined.ID+"/status", map[string]any{"status": "hold"}, http.StatusOK, nil)
+		// hold is no longer an application status.
+		admin.call(t, http.MethodPatch, "/applications/"+declined.ID+"/status", map[string]any{"status": "hold"}).expect(http.StatusBadRequest)
 		admin.mustJSON(t, http.MethodPatch, "/applications/"+declined.ID+"/status", map[string]any{"status": "declined"}, http.StatusOK, nil)
 		res := other.call(t, http.MethodPost, "/applications/"+declined.ID+"/reapply", nil).expect(http.StatusConflict)
 		if !strings.Contains(res.errorMessage(), "conflict") {
 			t.Fatalf("got %q", res.errorMessage())
 		}
+		// Nor can an admin clear the decline by withdrawing it, which would reopen reapplying.
+		admin.call(t, http.MethodPost, "/applications/"+declined.ID+"/withdraw-for-mentee", nil).expect(http.StatusConflict)
 		// An admin can reopen it.
 		admin.mustJSON(t, http.MethodPatch, "/applications/"+declined.ID+"/status", map[string]any{"status": "pending"}, http.StatusOK, nil)
 	})
 
 	t.Run("assisted withdrawal", func(t *testing.T) {
-		helped := signIn(t, "helped-mentee")
+		helped := signInMentee(t, "helped-mentee")
 		a := apply(t, helped, p)
 		var withdrawn application
 		admin.mustJSON(t, http.MethodPost, "/applications/"+a.ID+"/withdraw-for-mentee", nil, http.StatusOK, &withdrawn)
@@ -479,7 +504,7 @@ func TestE2EApplicationGuards(t *testing.T) {
 
 	t.Run("bulk decline and closing a term decline pending applications", func(t *testing.T) {
 		for _, lfid := range []string{"bulk-a", "bulk-b"} {
-			apply(t, signIn(t, lfid), p)
+			apply(t, signInMentee(t, lfid), p)
 		}
 		var res struct {
 			DeclinedCount int `json:"declined_count"`
@@ -491,7 +516,7 @@ func TestE2EApplicationGuards(t *testing.T) {
 		other := publishProgram(t, admin, "Bulk Other Program")
 		admin.call(t, http.MethodPost, "/programs/"+other.ID+"/terms/"+p.TermID+"/applications/bulk-decline", nil).expect(http.StatusNotFound)
 
-		late := apply(t, signIn(t, "bulk-c"), p)
+		late := apply(t, signInMentee(t, "bulk-c"), p)
 		admin.mustJSON(t, http.MethodPost, "/programs/"+p.ID+"/terms/"+p.TermID+"/close", nil, http.StatusOK, nil)
 		var got application
 		admin.mustJSON(t, http.MethodGet, "/applications/"+late.ID, nil, http.StatusOK, &got)

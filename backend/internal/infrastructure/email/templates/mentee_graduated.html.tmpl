@@ -1,0 +1,11 @@
+{{- /* Copyright The Linux Foundation and each contributor to LFX. */ -}}
+{{- /* SPDX-License-Identifier: MIT */ -}}
+{{- /* Legacy: mentee-mentee-graduated-v2 */ -}}
+{{template "header" .}}<p>{{.IssuedDate}}</p>
+<p>To Whom It May Concern:</p>
+<p>This is to certify that <strong>{{.MenteeName}}</strong> successfully completed the <strong>{{.ProgramName}}</strong> mentorship program at The Linux Foundation{{with .TermPeriod}} from {{.}}{{end}}. The Linux Foundation administers the Mentorship program, which gives participants an opportunity to develop their skills and contribute to open source projects; however, {{.MenteeName}} was not an employee of The Linux Foundation.</p>
+<p>{{.MenteeName}} worked on {{.ProgramName}}{{with .MentorNames}}, mentored by {{range $i, $name := .}}{{if $i}}, {{end}}{{$name}}{{end}}{{end}}.{{with .ProgramDescription}} A brief description of the program they worked on is given below:</p>
+<p style="white-space:pre-line;">{{.}}{{end}}</p>
+<p>{{.MenteeName}} learned to explore and learn new areas of code, work with the {{.ProgramName}} community, and internalized the open source philosophy. Please reach out if you have any questions.</p>
+<p style="margin:18px 0 0;">Sincerely,<br>The Linux Foundation Mentorship Team<br>The Linux Foundation</p>
+{{template "footer" .}}

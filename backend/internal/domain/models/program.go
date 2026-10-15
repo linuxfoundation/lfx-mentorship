@@ -13,7 +13,6 @@ type ProgramStatus string
 
 const (
 	ProgramStatusPending   ProgramStatus = "pending"
-	ProgramStatusSubmitted ProgramStatus = "submitted"
 	ProgramStatusPublished ProgramStatus = "published"
 	ProgramStatusRejected  ProgramStatus = "rejected"
 	ProgramStatusArchived  ProgramStatus = "archived"
@@ -23,7 +22,7 @@ const (
 // IsValid reports whether the status value is one of the allowed enum members.
 func (s ProgramStatus) IsValid() bool {
 	switch s {
-	case ProgramStatusPending, ProgramStatusSubmitted, ProgramStatusPublished,
+	case ProgramStatusPending, ProgramStatusPublished,
 		ProgramStatusRejected, ProgramStatusArchived, ProgramStatusHidden:
 		return true
 	}

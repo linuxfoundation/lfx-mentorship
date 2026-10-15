@@ -99,7 +99,7 @@ func TestE2ERelaysPublishAccessAndIndexChanges(t *testing.T) {
 
 	mentor := signIn(t, "relay-mentor")
 	inviteMentor(t, p, mentor)
-	mentee := signIn(t, "relay-mentee")
+	mentee := signInMentee(t, "relay-mentee")
 	app := apply(t, mentee, p)
 
 	t.Run("applications and tasks are indexed and access-controlled", func(t *testing.T) {

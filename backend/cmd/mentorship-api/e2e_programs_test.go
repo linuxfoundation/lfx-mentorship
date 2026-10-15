@@ -89,15 +89,11 @@ func TestE2EProgramLifecycle(t *testing.T) {
 		}
 	})
 
-	t.Run("submission requires a logo", func(t *testing.T) {
-		res := admin.call(t, http.MethodPost, "/programs/"+id+"/submit", nil).expect(http.StatusConflict)
+	t.Run("publishing requires a logo", func(t *testing.T) {
+		res := approver(t).call(t, http.MethodPost, "/programs/"+id+"/decision", map[string]any{"status": "published"}).expect(http.StatusConflict)
 		if !strings.Contains(res.errorMessage(), "logo is required") {
 			t.Fatalf("got %q", res.errorMessage())
 		}
-	})
-
-	t.Run("a pending program cannot be decided", func(t *testing.T) {
-		approver(t).call(t, http.MethodPost, "/programs/"+id+"/decision", map[string]any{"status": "published"}).expect(http.StatusConflict)
 	})
 
 	var logo struct {
@@ -108,18 +104,6 @@ func TestE2EProgramLifecycle(t *testing.T) {
 	if !strings.HasPrefix(logo.PublicURL, e2eCDNPrefix+"/") || logo.ContentType != "image/png" {
 		t.Fatalf("logo upload: %+v", logo)
 	}
-
-	var submitted program
-	admin.mustJSON(t, http.MethodPost, "/programs/"+id+"/submit", nil, http.StatusOK, &submitted)
-	if submitted.Status != "submitted" {
-		t.Fatalf("after submit: %q", submitted.Status)
-	}
-
-	t.Run("a submitted program is hidden from anonymous callers", func(t *testing.T) {
-		anonymous().call(t, http.MethodGet, "/programs/"+id, nil).expect(http.StatusNotFound)
-		anonymous().call(t, http.MethodGet, "/programs/"+id+"/catalog", nil).expect(http.StatusNotFound)
-		admin.call(t, http.MethodGet, "/programs/"+id, nil).expect(http.StatusOK)
-	})
 
 	t.Run("decision validates its input", func(t *testing.T) {
 		approver(t).call(t, http.MethodPost, "/programs/"+id+"/decision", map[string]any{}).expect(http.StatusBadRequest)
@@ -132,6 +116,12 @@ func TestE2EProgramLifecycle(t *testing.T) {
 	if published.Status != "published" {
 		t.Fatalf("after decision: %q", published.Status)
 	}
+	// Creating the program sent it for review; publishing it tells its admin.
+	awaitEmail(t, admin.Email, "We received your submission of Lifecycle Program", 1)
+	if review := awaitEmail(t, e2eReviewInbox, "submitted for review: Lifecycle Program", 1); !strings.Contains(review.Text, admin.Email) {
+		t.Fatalf("review notice lacks the submitter: %s", review.Text)
+	}
+	awaitEmail(t, admin.Email, "Lifecycle Program has been approved", 1)
 	approver(t).call(t, http.MethodPost, "/programs/"+id+"/decision", map[string]any{"status": "rejected"}).expect(http.StatusConflict)
 
 	t.Run("a published program is listed and resolvable", func(t *testing.T) {
@@ -187,30 +177,23 @@ func TestE2EProgramLifecycle(t *testing.T) {
 	})
 }
 
-func TestE2EProgramRejectionAndResubmission(t *testing.T) {
+func TestE2EProgramRejection(t *testing.T) {
 	reset(t)
 	admin := signIn(t, "admin")
 	p := createProgram(t, admin, "Rejected Program")
-	uploadLogo(t, admin, p.ID).expect(http.StatusCreated)
-	admin.mustJSON(t, http.MethodPost, "/programs/"+p.ID+"/submit", nil, http.StatusOK, nil)
 
 	var rejected program
 	approver(t).mustJSON(t, http.MethodPost, "/programs/"+p.ID+"/decision", map[string]any{"status": "rejected"}, http.StatusOK, &rejected)
 	if rejected.Status != "rejected" {
 		t.Fatalf("after reject: %q", rejected.Status)
 	}
+	awaitEmail(t, admin.Email, "Rejected Program was not approved", 1)
 	var mine programPage
 	admin.mustJSON(t, http.MethodGet, "/me/programs?status=rejected", nil, http.StatusOK, &mine)
 	if len(mine.Data) != 1 || mine.Data[0].AdminStatus != "rejected" {
 		t.Fatalf("rejected filter: %+v", mine)
 	}
 
-	// A rejected program goes straight back to submitted.
-	var resubmitted program
-	admin.mustJSON(t, http.MethodPost, "/programs/"+p.ID+"/submit", nil, http.StatusOK, &resubmitted)
-	if resubmitted.Status != "submitted" {
-		t.Fatalf("after resubmit: %q", resubmitted.Status)
-	}
 	admin.call(t, http.MethodPost, "/programs/"+p.ID+"/hide", nil).expect(http.StatusConflict)
 }
 
@@ -242,9 +225,9 @@ func TestE2EProgramCreateValidation(t *testing.T) {
 			term["endDate"] = day(19)
 			b["terms"] = []any{term}
 		}, http.StatusBadRequest},
-		{"application window after the term starts", func(b map[string]any) {
+		{"application window after the term ends", func(b map[string]any) {
 			term := openTermBody("x")
-			term["applicationEndDate"] = day(30)
+			term["applicationEndDate"] = day(130)
 			b["terms"] = []any{term}
 		}, http.StatusBadRequest},
 		{"required prerequisite without description", func(b map[string]any) {

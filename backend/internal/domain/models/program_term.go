@@ -46,23 +46,71 @@ type ProgramTerm struct {
 	UpdatedOn            time.Time         `json:"updated_on"`
 }
 
+// ApplicationWindowState is where a moment falls relative to a term's application window.
+type ApplicationWindowState string
+
+const (
+	// ApplicationWindowUnset means the term lacks a start or end date, so it takes no applications.
+	ApplicationWindowUnset    ApplicationWindowState = "unset"
+	ApplicationWindowUpcoming ApplicationWindowState = "upcoming"
+	ApplicationWindowOpen     ApplicationWindowState = "open"
+	ApplicationWindowClosed   ApplicationWindowState = "closed"
+)
+
+// ApplicationWindow places now against the term's application window. As in legacy, the window is
+// compared by UTC calendar day and both days are inclusive: it opens at 00:00 UTC on the start date
+// and closes after 23:59:59 UTC on the end date, whatever time of day the dates were stored with.
+func (t *ProgramTerm) ApplicationWindow(now time.Time) ApplicationWindowState {
+	if t.ApplicationStartDate == nil || t.ApplicationEndDate == nil {
+		return ApplicationWindowUnset
+	}
+	today := utcDay(now)
+	if today.Before(utcDay(*t.ApplicationStartDate)) {
+		return ApplicationWindowUpcoming
+	}
+	if today.After(utcDay(*t.ApplicationEndDate)) {
+		return ApplicationWindowClosed
+	}
+	return ApplicationWindowOpen
+}
+
+// utcDay truncates t to midnight UTC of its UTC calendar day.
+func utcDay(t time.Time) time.Time {
+	y, m, d := t.UTC().Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
+}
+
 // DiscoveryLabel returns the public-facing term state label per FR-017.
 // Mapping: open+window future→"Coming Soon"; open+in window→"Apply Now";
-// open+window past→"In Progress"; closed/deleted/nil dates→"Completed".
+// open+window past or unset→"In Progress"; closed/deleted→"Completed".
 func (t *ProgramTerm) DiscoveryLabel(now time.Time) string {
 	if t.Status != ProgramTermStatusOpen {
 		return "Completed"
 	}
-	if t.ApplicationStartDate == nil || t.ApplicationEndDate == nil {
-		return "In Progress"
-	}
-	if now.Before(*t.ApplicationStartDate) {
+	switch t.ApplicationWindow(now) {
+	case ApplicationWindowUpcoming:
 		return "Coming Soon"
-	}
-	if now.After(*t.ApplicationEndDate) {
+	case ApplicationWindowOpen:
+		return "Apply Now"
+	default:
 		return "In Progress"
 	}
-	return "Apply Now"
+}
+
+// AcceptsApplications reports whether the term takes applications at now: it is
+// open and now is inside its application window. ApplicationService.Create
+// enforces the same rule on submit.
+func (t *ProgramTerm) AcceptsApplications(now time.Time) bool {
+	return t.Status == ProgramTermStatusOpen && t.ApplicationWindow(now) == ApplicationWindowOpen
+}
+
+// ProgramTermApplyTarget is the header of the mentee apply page: the names the
+// page shows and whether the term takes applications now.
+type ProgramTermApplyTarget struct {
+	ProgramName           string `json:"program_name"`
+	ProjectName           string `json:"project_name,omitempty"`
+	TermName              string `json:"term_name"`
+	AcceptingApplications bool   `json:"accepting_applications"`
 }
 
 // ProgramTermCreateInput is the request body for creating a program term.

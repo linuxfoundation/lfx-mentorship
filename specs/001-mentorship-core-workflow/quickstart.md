@@ -41,7 +41,7 @@ curl -s -X POST $BASE/programs $AUTH \
 # Expected: 201, body contains "status":"pending"
 ```
 
-### 1b. Add a term (required before submission)
+### 1b. Add a term (required)
 
 ```bash
 PROGRAM_ID=<id from 1a>
@@ -51,34 +51,17 @@ curl -s -X POST $BASE/programs/$PROGRAM_ID/terms $AUTH \
 # Expected: 201, "status":"open"
 ```
 
-### 1c. Submit the program
+### 1c. Approve (reviewer action)
 
 ```bash
-curl -s -X PATCH $BASE/programs/$PROGRAM_ID $AUTH \
-  -d '{"status":"submitted"}'
-# Expected: 200, "status":"submitted"
-```
-
-### 1d. Submit without a term — expect 422
-
-```bash
-# Create a fresh program with no terms, then try to submit
-curl -s -X PATCH $BASE/programs/<new-program-id> $AUTH \
-  -d '{"status":"submitted"}'
-# Expected: 422, error message about needing at least one open term
-```
-
-### 1e. Approve (reviewer action)
-
-```bash
-curl -s -X PATCH $BASE/programs/$PROGRAM_ID $AUTH \
+curl -s -X POST $BASE/programs/$PROGRAM_ID/decision $AUTH \
   -d '{"status":"published"}'
-# Expected: 200, "status":"published"
+# Expected: 200, "status":"published" (approver team only)
 ```
 
-### 1f. Hide — blocked by pending application (tested in Scenario 3c)
+### 1d. Hide — blocked by pending application (tested in Scenario 3c)
 
-### 1g. Archive
+### 1e. Archive
 
 ```bash
 curl -s -X PATCH $BASE/programs/$PROGRAM_ID $AUTH \
@@ -122,11 +105,11 @@ MEMBER_ID=<id from response>
 ```bash
 # In real flow the token is in the invite email; the caller must be the invited user
 curl -s -X POST $BASE/mentor-invites/<invite-token>/accept $AUTH
-# Expected: 200, "status":"active"
+# Expected: 200, "status":"approved"
 
 # Verify
 curl -s $BASE/programs/$PROGRAM_ID/members | jq '.items[] | select(.id=="'$MEMBER_ID'") | .status'
-# Expected: "active"
+# Expected: "approved"
 ```
 
 ### 3c. Self-request flow
@@ -138,8 +121,8 @@ curl -s -X POST $BASE/programs/$PROGRAM_ID/members $AUTH \
 
 # Program Admin approves
 curl -s -X PATCH $BASE/programs/$PROGRAM_ID/members/<new-member-id> $AUTH \
-  -d '{"status":"active"}'
-# Expected: 200, "status":"active"
+  -d '{"status":"approved"}'
+# Expected: 200, "status":"approved"
 ```
 
 ---

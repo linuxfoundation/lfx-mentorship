@@ -17,14 +17,6 @@ The existing `PATCH /v1/programs/{id}` is extended with state-machine validation
 `PATCH /v1/programs/{id}` does not change status; a body with `status` returns `400`.
 
 ```
-POST /v1/programs/{id}/submit
-Authorization: Bearer {token}
-```
-
-Moves a `pending` or `rejected` program to `submitted`. Requires a linked LF
-project, description, repository URL, logo, ≥1 skill tag and ≥1 open term.
-
-```
 POST /v1/programs/{id}/decision
 Authorization: Bearer {token}
 Content-Type: application/json
@@ -32,7 +24,7 @@ Content-Type: application/json
 { "status": "published" | "rejected" }
 ```
 
-Approver team only; moves a `submitted` program to `published` or `rejected`.
+Approver team only; moves a `pending` program to `published` or `rejected`.
 
 ```
 POST /v1/programs/{id}/hide
@@ -112,11 +104,11 @@ POST /v1/mentor-invites/{token}/accept   [token + JWT]
 ```
 
 - Validates the signed `token` (issued at invite time, no expiry, contains `program_id` + `user_id`); the caller must be signed in as that user
-- Sets `program_members.status = active` for the matching record
+- Sets `program_members.status = approved` for the matching record
 - Notifies the program program_admin (in-process hook)
 
 **Responses**:
-- `200 OK` — `{ "status": "active", "program_id": "..." }`
+- `200 OK` — `{ "status": "approved", "program_id": "..." }`
 - `400 Bad Request` — invalid token, or no pending invite (already answered or revoked)
 - `403 Forbidden` — the token belongs to another user
 
@@ -139,12 +131,12 @@ POST /v1/mentor-invites/{token}/decline  [token + JWT]
 ### Existing endpoint — now with state guards and attendance_type
 
 ```
-PATCH /v1/applications/{id}
+PATCH /v1/applications/{id}/status
 Authorization: Bearer {token}
 Content-Type: application/json
 
 {
-  "status": "accepted" | "declined" | "graduated" | "withdrawn" | "hold" | "pending",
+  "status": "accepted" | "declined" | "graduated" | "withdrawn" | "pending",
   "attendance_type": "full_time" | "part_time"   // required when status = "accepted"
 }
 ```
@@ -223,7 +215,7 @@ Content-Type: application/json
 - **Mentee** (caller is the task's `assignee_id`): may transition `incomplete → in_progress`
   and `in_progress → submitted` only.
 - **Program Admin / Mentor** (caller is the program's member with `member_type = program_admin |
-  mentor` and `status = active`): may transition `submitted → complete` or reset any state
+  mentor` and `status = approved`): may transition `submitted → complete` or reset any state
   to `incomplete`.
 
 **Side effect when `submitted` or `complete`**: if all `prerequisite` tasks on the same

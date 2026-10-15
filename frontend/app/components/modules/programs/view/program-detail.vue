@@ -175,11 +175,11 @@ function openRepository() {
 }
 
 function openDonate() {
-  const programSlug = program.value?.slug;
-  if (!programSlug || !import.meta.client) return;
+  const id = program.value?.id;
+  if (!id || !import.meta.client) return;
 
   const base = String(crowdfundingUrl).replace(/\/$/, '');
-  window.open(`${base}/initiatives/${programSlug}`, '_blank', 'noopener,noreferrer');
+  window.open(`${base}/initiatives/${id}`, '_blank', 'noopener,noreferrer');
 }
 
 const isSignInModalOpen = ref(false);

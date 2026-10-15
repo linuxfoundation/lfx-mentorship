@@ -31,23 +31,27 @@ log = logging.getLogger("verify_migration")
 SAMPLE_SIZE = int(os.environ.get("VERIFY_SAMPLE_SIZE", "200"))
 SEED = os.environ.get("VERIFY_SEED")
 
-_APP_PRIORITY = {"graduated": 5, "accepted": 4, "hold": 3, "pending": 2, "declined": 1, "withdrawn": 0}
-_TASK_STATUSES = {"incomplete", "in_progress", "complete", "submitted"}
-_TASK_CATEGORIES = {"prerequisite", "non_prerequisite"}
+_APP_PRIORITY = {"graduated": 5, "accepted": 4, "pending": 2, "declined": 1, "withdrawn": 0}
 
 # Legacy value -> target value (03 §Migration-specific tasks). Unlisted values fall back as noted.
-_PROGRAM_STATUS = {  # else pending
-    "draft": "pending", "pending": "pending", "submitted": "submitted", "published": "published",
+_PROGRAM_STATUS = {  # else pending; draft, pending and submitted all become pending
+    "draft": "pending", "pending": "pending", "submitted": "pending", "published": "published",
     "rejected": "rejected", "archived": "archived", "hidden": "hidden",
 }
 _APPLICATION_STATUS = {  # else pending
     "pending": "pending", "accepted": "accepted", "approved": "accepted", "active": "accepted",
-    "declined": "declined", "withdrawn": "withdrawn", "graduated": "graduated", "hold": "hold",
+    "declined": "declined", "withdrawn": "withdrawn", "graduated": "graduated", "hold": "accepted",
 }
+_TASK_STATUS = {  # lowercased; else incomplete
+    "incomplete": "incomplete", "inprogress": "in_progress", "in_progress": "in_progress",
+    "submitted": "submitted", "completed": "complete", "complete": "complete",
+}
+_TASK_CATEGORY = {"prerequisite": "prerequisite", "non_prerequisite": "non_prerequisite", "nonPrerequisite": "non_prerequisite"}  # else NULL
+_TASK_SUBMIT_FILE = {"required": "required"}  # else NULL ("" and "no-required" mean no upload)
 _MEMBER_TYPE = {"maintainer": "program_admin", "program_admin": "program_admin", "mentor": "mentor"}  # else skipped
 _MEMBER_STATUS = {  # else skipped
-    "invited": "invited", "requested": "requested", "pending": "pending", "active": "active",
-    "accepted": "active", "approved": "active", "declined": "declined", "withdrawn": "withdrawn",
+    "invited": "invited", "requested": "requested", "pending": "pending", "active": "approved",
+    "accepted": "approved", "approved": "approved", "declined": "declined", "withdrawn": "withdrawn",
 }
 
 # Each query lists rows that break an invariant; every one must return nothing.
@@ -269,12 +273,13 @@ def _lower(value) -> str:
 
 
 def resolve_member_users(members, users, projects, overrides) -> list:
-    """Fills a member's missing userId by the matching rules, written apart from the importer's.
+    """Sets a member's user by the matching rules, written apart from the importer's.
 
     The one user with the member's email; for a program admin row with several, the one whose
-    lfid is the program's (its creator); otherwise the override, if it names a known user.
+    lfid is the program's (its creator); otherwise the row's own userId; otherwise the override,
+    if it names a known user. A member without an email takes its user's.
     """
-    user_ids = {u.get("id") for u in users} - {None}
+    by_id = {u.get("id"): u for u in users if u.get("id")}
     by_email: dict = {}
     for u in users:
         if u.get("id") and _lower(u.get("email")):
@@ -282,17 +287,18 @@ def resolve_member_users(members, users, projects, overrides) -> list:
     creator = {p.get("projectId"): _lower(p.get("lfid")) for p in projects}
     resolved = []
     for member in members:
-        if member.get("userId"):
-            resolved.append(member)
-            continue
         matches = by_email.get(_lower(member.get("email")), [])
         lfid = creator.get(member.get("projectId"))
         if len(matches) > 1 and _lower(member.get("memberType")) == "maintainer" and lfid:
             matches = [u for u in matches if _lower(u.get("lfid")) == lfid]
-        user_id = matches[0]["id"] if len(matches) == 1 else None
-        if user_id is None and overrides.get(member.get("id")) in user_ids:
+        user_id = matches[0]["id"] if len(matches) == 1 else member.get("userId")
+        if not user_id and overrides.get(member.get("id")) in by_id:
             user_id = overrides[member["id"]]
-        resolved.append({**member, "userId": user_id} if user_id else member)
+        if not user_id:
+            resolved.append(member)
+            continue
+        email = _text(member.get("email")) or _text(by_id.get(user_id, {}).get("email"))
+        resolved.append({**member, "userId": user_id, "email": email})
     return resolved
 
 
@@ -375,7 +381,7 @@ def verify_applications(cur, mentees, term_ids, report, rng, size) -> set:
 
 def verify_tasks(cur, tasks, term_ids, applied: set, report, rng, size):
     candidates = [t for t in tasks if m._as_uuid(t.get("id")) and m._as_uuid(t.get("assigneeId"))]
-    columns = "assignee_id::text, owner_id::text, program_term_id::text, name, description, category, status, custom, created_on"
+    columns = "assignee_id::text, owner_id::text, program_term_id::text, name, description, category, status, custom, submit_file, created_on"
     for t in _sample(candidates, rng, size):
         tid = m._as_uuid(t.get("id"))
         term_id, assignee = m._as_uuid(t.get("programTermId")), m._as_uuid(t.get("assigneeId"))
@@ -385,17 +391,17 @@ def verify_tasks(cur, tasks, term_ids, applied: set, report, rng, size):
         if row is None:
             report.missing(table, tid)
             continue
-        status = (t.get("status") or "incomplete").lower()
-        category = _text(t.get("category"))
         report.compare(table, tid, {
             "assignee_id": assignee,
             "owner_id": m._as_uuid(t.get("ownerId")),
             "program_term_id": term_id if term_id in term_ids else None,
             "name": _text(t.get("name")),
             "description": _text(t.get("description")),
-            "category": category if category in _TASK_CATEGORIES else None,
-            "status": status if status in _TASK_STATUSES else "incomplete",
+            "category": _TASK_CATEGORY.get(_text(t.get("category"))),
+            "status": _TASK_STATUS.get((_text(t.get("status")) or "").lower(), "incomplete"),
             "custom": m._as_bool(t.get("custom")),
+            # Built-in (custom "false") tasks always required a file in legacy.
+            "submit_file": "required" if str(t.get("custom")).lower() == "false" else _TASK_SUBMIT_FILE.get(_text(t.get("submitFile"))),
             "created_on": m._parse_ts(t.get("createdOn")),
         }, row)
     report.sampled["tasks"] = min(len(candidates), size)

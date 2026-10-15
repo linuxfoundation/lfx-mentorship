@@ -114,7 +114,7 @@ type ProgramTermRepository interface {
 	Create(ctx context.Context, input models.ProgramTermCreateInput) (*models.ProgramTerm, error)
 	Update(ctx context.Context, id string, input models.ProgramTermUpdateInput) (*models.ProgramTerm, error)
 	Delete(ctx context.Context, id string) error
-	CloseWithBulkDecline(ctx context.Context, id string) (*models.ProgramTerm, int, error)
+	CloseWithBulkDecline(ctx context.Context, id string) (*models.ProgramTerm, []*models.Application, error)
 
 	// CountOpenTermsByProgram returns the number of terms with status='open' for a program.
 	CountOpenTermsByProgram(ctx context.Context, programID string) (int, error)
@@ -165,8 +165,8 @@ type ApplicationRepository interface {
 	FindByTermAndUser(ctx context.Context, termID, userID string, role models.ApplicationRole) (*models.Application, error)
 	// CountWithdrawnByTermAndUser returns how many withdrawn applications a user holds for a term in a role.
 	CountWithdrawnByTermAndUser(ctx context.Context, termID, userID string, role models.ApplicationRole) (int, error)
-	// BulkDeclineByTerm moves all pending/submitted applications in a term to declined.
-	BulkDeclineByTerm(ctx context.Context, termID string) (int, error)
+	// BulkDeclineByTerm moves all pending applications in a term to declined and returns them.
+	BulkDeclineByTerm(ctx context.Context, termID string) ([]*models.Application, error)
 	// ListPastMenteesByTerm returns accepted/graduated application user IDs for a term.
 	ListPastMenteesByTerm(ctx context.Context, termID string) ([]*models.Application, error)
 }

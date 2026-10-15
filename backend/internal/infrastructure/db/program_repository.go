@@ -73,7 +73,7 @@ func enqueueProgramIndex(ctx context.Context, tx pgx.Tx, program *models.Program
 	document := NewProgramIndexDocument(program)
 	if err := tx.QueryRow(ctx, `
 		SELECT
-			COUNT(*) FILTER (WHERE member_type = 'mentor' AND status = 'active'),
+			COUNT(*) FILTER (WHERE member_type = 'mentor' AND status = 'approved'),
 			(SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE pt.program_id = $1 AND a.role = 'mentee' AND a.status = 'accepted'),
 			(SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE pt.program_id = $1 AND a.role = 'mentee' AND a.status = 'graduated')
 		FROM program_members
@@ -186,7 +186,7 @@ func (r *ProgramRepository) GetHeaderProjection(ctx context.Context, programID s
 		return nil, err
 	}
 	projection := &models.ProgramHeaderProjection{Program: program}
-	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FILTER (WHERE member_type = 'mentor' AND status = 'active'), (SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE pt.program_id = $1 AND a.role = 'mentee' AND a.status = 'accepted'), (SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE pt.program_id = $1 AND a.role = 'mentee' AND a.status = 'graduated') FROM program_members WHERE program_id = $1`, programID).Scan(&projection.Stats.Mentors, &projection.Stats.Mentees, &projection.Stats.Graduated); err != nil {
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FILTER (WHERE member_type = 'mentor' AND status = 'approved'), (SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE pt.program_id = $1 AND a.role = 'mentee' AND a.status = 'accepted'), (SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE pt.program_id = $1 AND a.role = 'mentee' AND a.status = 'graduated') FROM program_members WHERE program_id = $1`, programID).Scan(&projection.Stats.Mentors, &projection.Stats.Mentees, &projection.Stats.Graduated); err != nil {
 		return nil, fmt.Errorf("get program header stats: %w", err)
 	}
 	term, err := scanProgramTerm(r.pool.QueryRow(ctx, `SELECT`+programTermCols+` FROM program_terms WHERE program_id = $1 AND status = 'open' ORDER BY start_date_time DESC NULLS LAST LIMIT 1`, programID))
@@ -199,7 +199,7 @@ func (r *ProgramRepository) GetHeaderProjection(ctx context.Context, programID s
 }
 
 // sqlUnreviewedProgramStatuses lists program statuses that have not passed review.
-const sqlUnreviewedProgramStatuses = `('` + string(models.ProgramStatusPending) + `', '` + string(models.ProgramStatusSubmitted) + `')`
+const sqlUnreviewedProgramStatuses = `('` + string(models.ProgramStatusPending) + `')`
 
 // sqlProgramTermsAllClosed is true for a programs row that has a closed term
 // and no open one; deleted terms are ignored. A published program in that state
@@ -236,7 +236,7 @@ const administeredProgramsFrom = `
 			END AS admin_status
 		FROM programs
 		JOIN program_members pm ON pm.program_id = programs.id
-		WHERE pm.user_id = $1 AND pm.member_type = 'program_admin' AND pm.status = 'active'
+		WHERE pm.user_id = $1 AND pm.member_type = 'program_admin' AND pm.status = 'approved'
 	) ap`
 
 // ListAdministeredByUser returns the programs userID is an active program
@@ -276,7 +276,7 @@ func (r *ProgramRepository) ListAdministeredByUser(ctx context.Context, userID s
 	args = append(args, limit, offset)
 	q := `SELECT page.id, page.slug, page.name, page.lf_project_uid, page.lf_project_name, page.logo_url,
 			page.status, page.admin_status, page.created_on, page.updated_on,
-			(SELECT COUNT(*) FROM program_members m WHERE m.program_id = page.id AND m.member_type = 'mentor' AND m.status = 'active'),
+			(SELECT COUNT(*) FROM program_members m WHERE m.program_id = page.id AND m.member_type = 'mentor' AND m.status = 'approved'),
 			mentees.accepted, mentees.graduated
 		FROM (SELECT ap.*` + administeredProgramsFrom + where +
 		programListOrder("ap", "admin_status") + fmt.Sprintf(` LIMIT $%d OFFSET $%d`, len(args)-1, len(args)) + `) page
@@ -410,7 +410,7 @@ func (r *ProgramRepository) GetManagementSummary(ctx context.Context, programID 
 			-- Counted per (term, user): a withdrawn application is kept beside its reapplication.
 			COUNT(DISTINCT (a.program_term_id, a.user_id)) FILTER (WHERE pt.status = 'closed' AND p.status NOT IN ` + sqlUnreviewedProgramStatuses + ` AND a.role = 'mentee'),
 			COUNT(DISTINCT (a.program_term_id, a.user_id)) FILTER (WHERE p.status NOT IN ` + sqlUnreviewedProgramStatuses + ` AND a.role = 'mentee'),
-			(SELECT COUNT(*) FROM program_members pm WHERE pm.program_id = $1 AND pm.member_type = 'mentor' AND pm.status = 'active'),
+			(SELECT COUNT(*) FROM program_members pm WHERE pm.program_id = $1 AND pm.member_type = 'mentor' AND pm.status = 'approved'),
 			(SELECT COUNT(*) FROM program_terms WHERE program_id = $1 AND status <> 'deleted')
 		FROM program_terms pt
 		JOIN programs p ON p.id = pt.program_id
@@ -448,22 +448,24 @@ func catalogLimitOffset(filter models.ProgramFilter) (limit, offset int) {
 }
 
 // Term-derived discovery predicates, matching ProgramTerm.DiscoveryLabel / public catalog status.
+// The application window is compared by UTC calendar day, both days inclusive, as
+// ProgramTerm.ApplicationWindow does.
 const (
+	// sqlTermAcceptsApplications is ProgramTerm.AcceptsApplications for the program_terms row aliased pt.
+	sqlTermAcceptsApplications = `pt.status = 'open'
+		  AND (NOW() AT TIME ZONE 'UTC')::date
+		      BETWEEN (pt.application_start_date AT TIME ZONE 'UTC')::date AND (pt.application_end_date AT TIME ZONE 'UTC')::date`
 	sqlHasAcceptingTerm = `EXISTS (
 		SELECT 1 FROM program_terms pt
 		WHERE pt.program_id = programs.id
-		  AND pt.status = 'open'
-		  AND pt.application_start_date IS NOT NULL
-		  AND pt.application_end_date IS NOT NULL
-		  AND NOW() BETWEEN pt.application_start_date AND pt.application_end_date
+		  AND ` + sqlTermAcceptsApplications + `
 	)`
 	sqlHasComingSoonTerm = `EXISTS (
 		SELECT 1 FROM program_terms pt
 		WHERE pt.program_id = programs.id
 		  AND pt.status = 'open'
-		  AND pt.application_start_date IS NOT NULL
 		  AND pt.application_end_date IS NOT NULL
-		  AND pt.application_start_date > NOW()
+		  AND (pt.application_start_date AT TIME ZONE 'UTC')::date > (NOW() AT TIME ZONE 'UTC')::date
 	)`
 	sqlHasOpenTerm = `EXISTS (
 		SELECT 1 FROM program_terms pt
@@ -754,7 +756,7 @@ func (r *ProgramRepository) loadCatalogMentors(ctx context.Context, ids []string
 		) up ON true
 		WHERE pm.program_id = ANY($1::uuid[])
 		  AND pm.member_type = 'mentor'
-		  AND pm.status = 'active'
+		  AND pm.status = 'approved'
 		ORDER BY u.name NULLS LAST, pm.created_on`, ids)
 	if err != nil {
 		return nil, fmt.Errorf("list catalog mentors: %w", err)
@@ -819,7 +821,7 @@ func (r *ProgramRepository) createInTx(ctx context.Context, tx pgx.Tx, input mod
 	creatorMemberID := uuid.NewString()
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO program_members (id, program_id, user_id, member_type, status)
-		VALUES ($1, $2, $3, 'program_admin', 'active')`, creatorMemberID, p.ID, input.CreatorUserID); err != nil {
+		VALUES ($1, $2, $3, 'program_admin', 'approved')`, creatorMemberID, p.ID, input.CreatorUserID); err != nil {
 		return nil, fmt.Errorf("create program creator membership: %w", err)
 	}
 	var creatorLFID string

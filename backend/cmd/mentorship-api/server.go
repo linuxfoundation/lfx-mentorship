@@ -136,10 +136,12 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			Terms:        programTermRepo,
 			Members:      programMemberRepo,
 			Applications: applicationRepo,
+			Tasks:        taskRepo,
 		}, email.NotifierConfig{
 			PublicSiteURL: cfg.Email.PublicSiteURL,
 			SelfServeURL:  cfg.Email.SelfServeURL,
 			HRInbox:       cfg.Email.HRInbox,
+			ReviewInboxes: cfg.Email.ReviewInboxes,
 
 			AllowedRecipients: cfg.Email.AllowedRecipients,
 		}, logger)
@@ -152,7 +154,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	// Services
 	userSvc := service.NewUserService(userRepo)
 	userProfileSvc := service.NewUserProfileService(userProfileRepo)
-	programSvc := service.NewProgramService(programRepo, programTermRepo, applicationRepo, programMemberRepo)
+	programSvc := service.NewProgramService(programRepo, programTermRepo, applicationRepo, programMemberRepo, notifier)
 	if cfg.Crowdfunding.IsConfigured() {
 		programSvc.SetCrowdfundingClient(clients.NewCrowdfundingClient(clients.CrowdfundingConfig{
 			BaseURL: cfg.Crowdfunding.BaseURL,
@@ -162,9 +164,9 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	if natsConn != nil {
 		programSvc.SetProjectLookup(projects.NewClient(natsConn))
 	}
-	programTermSvc := service.NewProgramTermService(programTermRepo, applicationRepo)
+	programTermSvc := service.NewProgramTermService(programTermRepo, applicationRepo, notifier)
 	programMemberSvc := service.NewProgramMemberService(programMemberRepo, programRepo, userRepo, accounts, notifier, cfg.Local.InviteSecret)
-	applicationSvc := service.NewApplicationService(applicationRepo, taskRepo, programTermRepo, programRepo, programMemberRepo, notifier)
+	applicationSvc := service.NewApplicationService(applicationRepo, taskRepo, programTermRepo, programRepo, programMemberRepo, userProfileRepo, notifier)
 	taskSvc := service.NewTaskService(taskRepo, applicationRepo, programTermRepo, programMemberRepo, notifier)
 	menteeSvc := service.NewMenteeService(menteeRepo)
 	mentorSvc := service.NewMentorService(mentorRepo)
@@ -296,6 +298,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		r.Get("/programs/{id}/members", programMemberH.List)
 
 		r.Get("/programs/{programID}/terms/{termID}", programTermH.GetByID)
+		r.Get("/programs/{programID}/terms/{termID}/apply-target", programTermH.GetApplyTarget)
 
 		// ── Authenticated endpoints ────────────────────────────────────────
 		r.Group(func(r chi.Router) {
@@ -337,7 +340,6 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			// Programs
 			r.Post("/programs", programH.Create)
 			r.Patch("/programs/{id}", programH.Update)
-			r.Post("/programs/{id}/submit", programH.Submit)
 			r.Post("/programs/{id}/decision", programH.Decision)
 			r.Post("/programs/{id}/hide", programH.Hide)
 			r.Post("/programs/{id}/unhide", programH.Unhide)
@@ -365,7 +367,6 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			r.Get("/programs/{id}/applications", applicationH.ListByProgram)
 			r.Get("/applications/{id}", applicationH.GetByID)
 			r.Post("/programs/{programID}/terms/{id}/applications", applicationH.Create)
-			r.Patch("/applications/{id}", applicationH.Update)
 			r.Patch("/applications/{id}/status", applicationH.UpdateStatus)
 			r.Post("/applications/{id}/withdraw", applicationH.Withdraw)
 			r.Post("/applications/{id}/withdraw-for-mentee", applicationH.WithdrawForMentee)

@@ -80,7 +80,7 @@ func (b *DatabaseBuilder) buildProgram(ctx context.Context, id string) (Message,
 	}
 	writers, mentors := []string{}, []string{}
 	for _, member := range members {
-		if member.Status == nil || *member.Status != models.ProgramMemberStatusActive {
+		if member.Status == nil || *member.Status != models.ProgramMemberStatusApproved {
 			continue
 		}
 		lfid, err := b.requireLFID(ctx, member.UserID)
@@ -176,7 +176,7 @@ func (b *DatabaseBuilder) listAllMembers(ctx context.Context, programID string) 
 }
 
 func isActiveMembership(member *models.ProgramMember, relation string) bool {
-	if member.Status == nil || *member.Status != models.ProgramMemberStatusActive {
+	if member.Status == nil || *member.Status != models.ProgramMemberStatusApproved {
 		return false
 	}
 	return (relation == "writer" && member.MemberType == models.MemberTypeProgramAdmin) || (relation == "mentor" && member.MemberType == models.MemberTypeMentor)

@@ -7,6 +7,7 @@ Run from backend/db/scripts: python -m pytest. The upsert tests need a migrated
 database in MIGRATION_TEST_PG_DSN and are skipped without one.
 """
 
+import json
 import os
 import sys
 import types
@@ -14,6 +15,7 @@ import types
 import psycopg2
 import pytest
 
+import legacy_objects as lo
 import migrate_dynamo_to_postgres as m
 
 PROGRAM = "11111111-1111-4111-8111-111111111111"
@@ -107,10 +109,120 @@ class _Files:
 
 @pytest.mark.parametrize(
     "legacy, expected",
-    [("draft", "pending"), ("pending", "pending"), ("DRAFT", "pending"), (None, "pending"), ("", "pending"), ("unknown", "pending"), ("published", "published")],
+    [("draft", "pending"), ("pending", "pending"), ("DRAFT", "pending"), (None, "pending"), ("", "pending"), ("unknown", "pending"), ("published", "published"), ("submitted", "pending"), ("SUBMITTED", "pending")],
 )
 def test_program_status_maps_legacy_values(legacy, expected):
     assert m._normalize_program_status(legacy) == expected
+
+
+@pytest.mark.parametrize(
+    "legacy, expected",
+    [("approved", "approved"), ("accepted", "approved"), ("active", "approved"), ("invited", "invited"), ("requested", "requested"), ("pending", "pending"), ("declined", "declined"), ("withdrawn", "withdrawn"), ("rejected", None), ("", None), (None, None)],
+)
+def test_member_status_maps_legacy_values(legacy, expected):
+    assert m._member_status(legacy) == expected
+
+
+@pytest.mark.parametrize(
+    "legacy, expected",
+    [("pending", "pending"), ("approved", "accepted"), ("active", "accepted"), ("hold", "accepted"), ("HOLD", "accepted"), ("graduated", "graduated"), ("declined", "declined"), ("withdrawn", "withdrawn"), ("bogus", "pending"), (None, "pending")],
+)
+def test_application_status_maps_legacy_values(legacy, expected):
+    assert m._map_application_status(legacy) == expected
+
+
+@pytest.mark.parametrize(
+    "legacy, expected",
+    [("2026-05-01", "2026-05-01"), ("2026-5-1", "2026-05-01"), (" 2026-05-01 ", "2026-05-01"), ("05/01/2026", None), ("2026-02-30", None), ("", None), (None, None)],
+)
+def test_due_date_keeps_only_iso_dates(legacy, expected):
+    assert m._due_date(legacy) == expected
+
+
+def test_task_templates_reduce_to_prerequisite_shape():
+    legacy = [
+        {"id": "x", "name": " Resume ", "description": "Upload it", "category": "prerequisite", "submitFile": "required", "dueDate": "2026-05-01", "status": "incomplete", "custom": "true"},
+        {"name": "Cover Letter", "description": "Why this program", "category": "prerequisite", "submitFile": "", "custom": "false"},
+        {"name": "Code of Conduct", "description": "", "category": "prerequisite", "submitFile": "", "dueDate": "soon"},
+        {"name": "Weekly report", "description": "Mentor task", "category": "non_prerequisite", "submitFile": "required"},
+        {"name": "Demo", "description": "Mentor task", "category": "nonPrerequisite"},
+        {"name": "  ", "description": "Blank name", "category": "prerequisite"},
+        {"description": "No name", "category": "prerequisite"},
+        {"name": "Uncategorised", "submitFile": "yes"},
+    ]
+    assert json.loads(m._task_templates(legacy)) == [
+        {"name": "Resume", "description": "Upload it", "submitFile": "required", "dueDate": "2026-05-01", "custom": True},
+        {"name": "Cover Letter", "description": "Why this program", "submitFile": "required", "dueDate": None, "custom": False},
+        {"name": "Code of Conduct", "description": None, "submitFile": None, "dueDate": None, "custom": False},
+        {"name": "Uncategorised", "description": None, "submitFile": None, "dueDate": None, "custom": False},
+    ]
+
+
+@pytest.mark.parametrize("legacy", [None, [], {}, [{"name": "Weekly report", "category": "non_prerequisite"}], [{"name": "Demo", "category": "nonPrerequisite"}], [{"name": " ", "category": "prerequisite"}]])
+def test_task_templates_without_prerequisites_are_null(legacy):
+    assert m._task_templates(legacy) is None
+
+
+@pytest.mark.parametrize(
+    "legacy, expected",
+    [("prerequisite", "prerequisite"), ("non_prerequisite", "non_prerequisite"), ("nonPrerequisite", "non_prerequisite"), (" nonPrerequisite ", "non_prerequisite"), ("other", None), ("", None), (None, None)],
+)
+def test_task_category_maps_legacy_spellings(legacy, expected):
+    assert m._task_category(legacy) == expected
+
+
+@pytest.mark.parametrize(
+    "legacy, expected",
+    [
+        ("incomplete", "incomplete"), ("inProgress", "in_progress"), ("in_progress", "in_progress"), ("submitted", "submitted"),
+        ("completed", "complete"), ("complete", "complete"), (" Completed ", "complete"), ("pending", "incomplete"), ("", "incomplete"), (None, "incomplete"),
+    ],
+)
+def test_task_status_maps_legacy_spellings(legacy, expected):
+    assert m._task_status(legacy) == expected
+
+
+@pytest.mark.parametrize("legacy, expected", [("required", "required"), (" required ", "required"), ("no-required", None), ("", None), (None, None), ("yes", None)])
+def test_submit_file_keeps_only_required(legacy, expected):
+    assert m._submit_file(legacy) == expected
+
+
+@pytest.mark.parametrize(
+    "task, expected",
+    [
+        ({"custom": "false", "submitFile": ""}, "required"),
+        ({"custom": False, "submitFile": "no-required"}, "required"),
+        ({"custom": "false"}, "required"),
+        ({"custom": "true", "submitFile": "required"}, "required"),
+        ({"custom": "true", "submitFile": ""}, None),
+        ({"submitFile": "required"}, "required"),
+        ({"submitFile": "no-required"}, None),
+        ({}, None),
+    ],
+)
+def test_task_submit_file_requires_built_in_tasks(task, expected):
+    assert m._task_submit_file(task) == expected
+
+
+def test_tasks_import_with_legacy_status_category_and_submit_file(monkeypatch):
+    captured = []
+    monkeypatch.setattr(m.psycopg2.extras, "execute_batch", lambda cur, sql, rows, page_size=0: captured.append(rows) if "INSERT INTO tasks" in sql else None)
+    cur = types.SimpleNamespace(execute=lambda *args: None)
+    term, assignee, application = "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1", "b2b2b2b2-b2b2-4b2b-8b2b-b2b2b2b2b2b2", "c3c3c3c3-c3c3-4c3c-8c3c-c3c3c3c3c3c3"
+    tasks = [
+        {"id": "d4d4d4d4-d4d4-4d4d-8d4d-d4d4d4d4d4d4", "programTermId": term, "assigneeId": assignee, "status": "inProgress", "category": "nonPrerequisite", "submitFile": "no-required"},
+        {"id": "e5e5e5e5-e5e5-4e5e-8e5e-e5e5e5e5e5e5", "programTermId": term, "assigneeId": assignee, "status": "completed", "category": "prerequisite", "submitFile": "required"},
+        {"id": "f6f6f6f6-f6f6-4f6f-8f6f-f6f6f6f6f6f6", "programTermId": term, "assigneeId": assignee, "status": "incomplete", "category": "prerequisite", "submitFile": "", "custom": "false"},
+    ]
+    tasks[0]["applicationStatus"] = " hold "
+    tasks[1]["applicationStatus"] = "approved"
+    m.migrate_tasks(cur, tasks, {(term, assignee): application}, {term: "open"}, {assignee}, _Files())
+    # Columns: category, status, application_status at 7-9; submit_file at 12.
+    assert [(row[7], row[8], row[9], row[12]) for row in captured[0]] == [
+        ("non_prerequisite", "in_progress", "accepted", None),
+        ("prerequisite", "complete", "accepted", "required"),
+        ("prerequisite", "incomplete", None, "required"),
+    ]
 
 
 def program_rows(monkeypatch, projects, resolved):
@@ -216,6 +328,30 @@ def test_rerun_replaces_mentee_profile_when_keeper_changes(cursor):
     assert cursor.fetchall() == [(NEW_MENTEE, "mentee"), (MENTOR, "mentor")]
 
 
+LEGACY_USER = "77777777-7777-4777-8777-777777777777"
+EMAIL_USER = "88888888-8888-4888-8888-888888888888"
+MEMBER = "99999999-9999-4999-8999-999999999999"
+OTHER_MEMBER = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+
+
+def import_members(cur, *members):
+    programs = m.migrate_programs(cur, [{"projectId": PROGRAM, "name": "P"}], set(), _Files(), {})
+    rows = [{"id": mid, "projectId": PROGRAM, "userId": uid, "memberType": "mentor", "status": "accepted"} for mid, uid in members]
+    m.migrate_program_members(cur, rows, programs, set())
+    cur.execute("SELECT id::text, user_id::text FROM program_members WHERE program_id = %s ORDER BY id", (PROGRAM,))
+    return cur.fetchall()
+
+
+def test_rerun_moves_a_member_to_its_newly_resolved_user(cursor):
+    import_members(cursor, (MEMBER, LEGACY_USER))
+    assert import_members(cursor, (MEMBER, EMAIL_USER)) == [(MEMBER, EMAIL_USER)]
+
+
+def test_rerun_collapses_a_member_onto_its_users_existing_row(cursor):
+    import_members(cursor, (MEMBER, LEGACY_USER), (OTHER_MEMBER, EMAIL_USER))
+    assert import_members(cursor, (MEMBER, EMAIL_USER), (OTHER_MEMBER, EMAIL_USER)) == [(OTHER_MEMBER, EMAIL_USER)]
+
+
 MEMBER_USERS = [
     {"id": "u-alice", "email": "Alice@Example.org", "lfid": "alice"},
     {"id": "u-shared-1", "email": "shared@example.org", "lfid": "owner"},
@@ -242,7 +378,6 @@ def test_resolve_member_user_ids_matches_by_email_then_program_lfid():
         _member("m-mentor-shared", "shared@example.org", member_type="mentor"),
         _member("m-unknown", "ghost@example.org"),
         _member("m-noemail"),
-        _member("m-has-user", "alice@example.org", userId="u-existing"),
     ])
     assert got == {
         "m-email": "u-alice",
@@ -251,8 +386,31 @@ def test_resolve_member_user_ids_matches_by_email_then_program_lfid():
         "m-mentor-shared": None,
         "m-unknown": None,
         "m-noemail": None,
-        "m-has-user": "u-existing",
     }
+
+
+def test_resolve_member_user_ids_prefers_email_then_falls_back_to_user_id():
+    got = _user_ids([
+        # The email's user replaces a different legacy userId.
+        _member("m-email-wins", "alice@example.org", userId="u-shared-1"),
+        _member("m-unknown-email", "ghost@example.org", userId="u-alice"),
+        _member("m-ambiguous-email", "shared@example.org", project="p2", userId="u-shared-2"),
+        _member("m-no-email", userId="u-alice"),
+    ])
+    assert got == {
+        "m-email-wins": "u-alice",
+        "m-unknown-email": "u-alice",
+        "m-ambiguous-email": "u-shared-2",
+        "m-no-email": "u-alice",
+    }
+
+
+def test_resolve_member_user_ids_takes_a_missing_email_from_the_user():
+    resolved = m.resolve_member_user_ids(
+        [_member("m-no-email", userId="u-alice"), _member("m-email", " ghost@example.org ", userId="u-alice")],
+        MEMBER_USERS, MEMBER_PROJECTS, {},
+    )
+    assert {r["id"]: r["email"] for r in resolved} == {"m-no-email": "Alice@Example.org", "m-email": "ghost@example.org"}
 
 
 def test_resolve_member_user_ids_applies_overrides_only_when_matching_fails():
@@ -270,9 +428,10 @@ def test_resolve_member_user_ids_applies_overrides_only_when_matching_fails():
 
 
 def test_resolve_member_user_ids_does_not_mutate_input():
-    members = [_member("m", "alice@example.org")]
+    members = [_member("m", "alice@example.org"), _member("m-no-email", userId="u-alice")]
     m.resolve_member_user_ids(members, MEMBER_USERS, MEMBER_PROJECTS, {})
     assert "userId" not in members[0]
+    assert members[1]["email"] is None
 
 
 def test_load_member_user_overrides(tmp_path):
@@ -302,3 +461,33 @@ def test_user_fix_restores_an_lfid_before_the_tuples_are_seeded(cursor, tmp_path
     m.seed_derived_state(cursor)
     cursor.execute("SELECT object_uid FROM fga_outbox WHERE object_type = 'mentorship_application'")
     assert cursor.fetchall() == [(APPLICATION,)]
+
+
+LEGACY_PREFIX = lo.legacy_url_prefix("legacy")
+BUCKETS = {lo.LOGO: "logos", lo.SUBMISSION: "attachments"}
+
+
+def _rewriter(tmp_path, **kwargs):
+    path = tmp_path / "manifest.json"
+    lo.write_manifest(str(path), LEGACY_PREFIX, BUCKETS, [{"class": lo.LOGO, "value": LEGACY_PREFIX + "a.png", "status": lo.COPIED, "key": "a.png"}])
+    return lo.LegacyFileRewriter(str(path), "https://cdn", LEGACY_PREFIX, BUCKETS, **kwargs)
+
+
+def test_a_value_missing_from_the_manifest_stops_the_import(tmp_path):
+    with pytest.raises(RuntimeError, match="not in the copy manifest"):
+        _rewriter(tmp_path).rewrite("users.avatar_url", lo.LOGO, LEGACY_PREFIX + "new.png")
+
+
+def test_a_test_run_nulls_a_value_missing_from_the_manifest_and_reports_it(tmp_path, caplog):
+    files = _rewriter(tmp_path, tolerate_missing=True)
+    assert files.rewrite("users.avatar_url", lo.LOGO, LEGACY_PREFIX + "new.png") is None
+    assert files.rewrite("users.avatar_url", lo.LOGO, LEGACY_PREFIX + "a.png") == "https://cdn/a.png"
+    assert files.counts["users.avatar_url"] == {"manifest_miss": 1, "rewritten": 1}
+    assert "MANIFEST_MISS" in caplog.text
+
+
+def test_test_run_is_the_only_argument_accepted():
+    assert m.parse_args([]) is False
+    assert m.parse_args(["--test-run"]) is True
+    with pytest.raises(SystemExit):
+        m.parse_args(["--final"])

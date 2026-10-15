@@ -11,6 +11,7 @@ interface PlatformSummaryMenteeApi {
 
 interface PlatformSummaryApi {
   program_count: number;
+  project_count: number;
   accepting_program_count: number;
   mentor_count: number;
   stipends_paid: number;
@@ -39,7 +40,7 @@ export async function fetchPlatformSummary(): Promise<LandingSummaryResponse> {
       acceptingProgramCount: summary.accepting_program_count,
       mentorCount: summary.mentor_count,
       graduatedMenteeCount: summary.graduated_mentee_count,
-      foundationCount: 0, // TODO: Implement this
+      foundationCount: summary.project_count,
       stipendsPaid: summary.stipends_paid,
       graduatedMentees: (summary.graduated_mentee_users ?? []).map((mentee) => ({
         name: mentee.name ?? undefined,
