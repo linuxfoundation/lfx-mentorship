@@ -299,8 +299,8 @@ the program_admin can manage the program's visibility and terms throughout its l
 - **FR-040**: ~~System MUST allow a program_admin to transition an application to `hold`
   pending additional information.~~ Removed: `hold` is not an application status
   ([02-target-architecture](../../docs/rewrite/02-target-architecture.md)). Migration 003
-  drops it from `applications_status_check`; legacy `hold` rows, which mark a paused
-  accepted mentorship, import as `accepted`.
+  drops it from `applications_status_check`. Legacy `hold` rows, which mark a paused
+  accepted mentorship, import as `accepted`; a mentor `hold` row returns to `pending`.
 - **FR-041**: System MUST treat `accepted` as the enrolled state for the whole program
   period; there is no separate `active` application status.
 - **FR-042**: System MUST allow a program_admin to manually transition an `accepted`

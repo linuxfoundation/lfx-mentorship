@@ -214,12 +214,14 @@ def test_tasks_import_with_legacy_status_category_and_submit_file(monkeypatch):
         {"id": "e5e5e5e5-e5e5-4e5e-8e5e-e5e5e5e5e5e5", "programTermId": term, "assigneeId": assignee, "status": "completed", "category": "prerequisite", "submitFile": "required"},
         {"id": "f6f6f6f6-f6f6-4f6f-8f6f-f6f6f6f6f6f6", "programTermId": term, "assigneeId": assignee, "status": "incomplete", "category": "prerequisite", "submitFile": "", "custom": "false"},
     ]
+    tasks[0]["applicationStatus"] = " hold "
+    tasks[1]["applicationStatus"] = "approved"
     m.migrate_tasks(cur, tasks, {(term, assignee): application}, {term: "open"}, {assignee}, _Files())
-    # Columns: category, status at 7-8; submit_file at 12.
-    assert [(row[7], row[8], row[12]) for row in captured[0]] == [
-        ("non_prerequisite", "in_progress", None),
-        ("prerequisite", "complete", "required"),
-        ("prerequisite", "incomplete", "required"),
+    # Columns: category, status, application_status at 7-9; submit_file at 12.
+    assert [(row[7], row[8], row[9], row[12]) for row in captured[0]] == [
+        ("non_prerequisite", "in_progress", "accepted", None),
+        ("prerequisite", "complete", "accepted", "required"),
+        ("prerequisite", "incomplete", None, "required"),
     ]
 
 

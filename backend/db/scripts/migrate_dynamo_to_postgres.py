@@ -523,6 +523,12 @@ def _map_application_status(dynamo_status: str | None) -> str:
     return s if s in _VALID_APP_STATUSES else "pending"
 
 
+def _task_application_status(value: str | None) -> str | None:
+    """Map a task's denormalised legacy application status as its application's is mapped; absent stays NULL."""
+    s = (value or "").strip()
+    return _map_application_status(s) if s else None
+
+
 def _map_profile_type(dynamo_type: str | None) -> str:
     """Map DynamoDB user-profile type → user_profiles.profile_type."""
     if (dynamo_type or "").strip().lower() == "mentor":
@@ -1459,7 +1465,7 @@ def migrate_tasks(
             (t.get("description") or "").strip() or None,
             category,
             status,
-            (t.get("applicationStatus") or "").strip() or None,
+            _task_application_status(t.get("applicationStatus")),
             _map_program_term_status(known_term_ids.get(resolved_term_id), t.get("programTermStatus")),
             _as_bool(t.get("custom")),
             _task_submit_file(t),
