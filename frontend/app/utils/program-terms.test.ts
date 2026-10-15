@@ -2,8 +2,15 @@
 // SPDX-License-Identifier: MIT
 
 import { describe, it, expect } from 'vitest';
-import type { ProgramTerm } from '../types/program.types';
-import { getActiveTerms, getProgramTermDisplayStatus } from './program-terms';
+import type { Program, ProgramTerm } from '../types/program.types';
+import {
+  formatTermLabel,
+  getActiveTerms,
+  getProgramTermDisplayStatus,
+  sortTermsNewestFirst,
+  toProgramCardStatus,
+  withActiveTerms,
+} from './program-terms';
 
 const term = (overrides: Partial<ProgramTerm> = {}): ProgramTerm => ({
   id: 't1',
@@ -42,5 +49,55 @@ describe('application window', () => {
     const now = new Date('2026-07-01T00:00:00Z');
     expect(getActiveTerms([term({ status: 'closed' })], now)).toHaveLength(0);
     expect(getProgramTermDisplayStatus(term({ status: 'closed' }), now)).toBe('completed');
+  });
+
+  it('treats a deleted term or an unparseable window date as completed', () => {
+    const now = new Date('2026-07-01T00:00:00Z');
+    expect(getProgramTermDisplayStatus(term({ status: 'deleted' }), now)).toBe('completed');
+    expect(getProgramTermDisplayStatus(term({ applicationsCloseAt: 'not-a-date' }), now)).toBe(
+      'completed',
+    );
+  });
+});
+
+describe('toProgramCardStatus', () => {
+  // It reads the real clock, so windows are relative to now.
+  const day = 24 * 60 * 60 * 1000;
+  const iso = (offsetDays: number) => new Date(Date.now() + offsetDays * day).toISOString();
+  const accepting = term({ applicationsStartAt: iso(-2), applicationsCloseAt: iso(2) });
+  const opensSoon = term({ applicationsStartAt: iso(5), applicationsCloseAt: iso(10) });
+  const pastWindow = term({ applicationsStartAt: iso(-10), applicationsCloseAt: iso(-5) });
+  const finished = term({ status: 'closed' });
+
+  it.each([
+    ['any term accepting', [finished, opensSoon, accepting], 'acceptance'],
+    ['a term opening soon', [finished, opensSoon], 'open-soon'],
+    ['an open term past its window', [finished, pastWindow], 'in-progress'],
+    ['only closed terms', [finished], 'completed'],
+    ['no terms', [], 'completed'],
+  ])('%s', (_, terms, want) => {
+    expect(toProgramCardStatus(terms)).toBe(want);
+  });
+});
+
+describe('term helpers', () => {
+  it('sorts newest start first, undated last, without mutating the input', () => {
+    const input = [
+      term({ id: 'older', startsAt: '2025-01-01' }),
+      term({ id: 'undated', startsAt: '' }),
+      term({ id: 'newer', startsAt: '2026-01-01' }),
+    ];
+    expect(sortTermsNewestFirst(input).map((t) => t.id)).toEqual(['newer', 'older', 'undated']);
+    expect(input.map((t) => t.id)).toEqual(['older', 'undated', 'newer']);
+  });
+
+  it('appends the date range to the label when present', () => {
+    expect(formatTermLabel(term({ dateRangeLabel: 'Sep-Nov 2026' }))).toBe('Fall · Sep-Nov 2026');
+    expect(formatTermLabel(term())).toBe('Fall');
+  });
+
+  it('derives activeTerms from the program terms', () => {
+    const program = { terms: [term({ status: 'closed' })] } as unknown as Program;
+    expect(withActiveTerms(program).activeTerms).toEqual([]);
   });
 });

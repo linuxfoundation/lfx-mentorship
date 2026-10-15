@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadEmailConfig(t *testing.T) {
@@ -121,6 +122,107 @@ func TestLoadStorageConfig(t *testing.T) {
 			}
 			if name == "valid" && (cfg.Logos.CDNURLPrefix != "https://cdn.example.org" || !cfg.Logos.CreateMissingBucket || cfg.Attachments.CreateMissingBucket) {
 				t.Fatalf("unexpected config %+v", cfg)
+			}
+		})
+	}
+}
+
+func TestLoadConfig(t *testing.T) {
+	valid := map[string]string{
+		"HEIMDALL_JWKS_URL":                 "https://heimdall.example.org/.well-known/jwks",
+		"HEIMDALL_JWT_AUDIENCE":             "lfx-mentorship",
+		"HEIMDALL_JWT_ISSUER":               "heimdall",
+		"DISABLED_MOCK_LOCAL_PRINCIPAL":     "",
+		"ALLOW_MOCK_LOCAL_PRINCIPAL_BYPASS": "",
+		"MENTOR_INVITE_SECRET":              "secret",
+		"PORT":                              "",
+		"DB_MAX_CONNS":                      "",
+		"DB_MIN_CONNS":                      "",
+		"JWT_CLOCK_SKEW":                    "",
+		"FGA_NATS_URL":                      "",
+		"FGA_RELAY_BATCH_SIZE":              "",
+		"FGA_RELAY_MAX_ATTEMPTS":            "",
+		"FGA_RELAY_INTERVAL":                "",
+		"FGA_RELAY_RETRY_DELAY":             "",
+		"INDEX_RELAY_RETRY_DELAY":           "",
+		"INDEX_RELAY_MAX_ATTEMPTS":          "",
+		"CROWDFUNDING_BASE_URL":             "https://crowdfunding.example.org/",
+		"CROWDFUNDING_TIMEOUT":              "",
+		"AWS_REGION":                        "",
+		"LOGOS_S3_BUCKET":                   "",
+		"LOGOS_CDN_URL_PREFIX":              "",
+		"ATTACHMENTS_S3_BUCKET":             "",
+		"OTEL_SERVICE_NAME":                 "",
+	}
+	for name, tc := range map[string]struct {
+		override map[string]string
+		wantErr  string
+	}{
+		"defaults": {},
+		"mock principal instead of heimdall": {override: map[string]string{
+			"HEIMDALL_JWKS_URL": "", "HEIMDALL_JWT_AUDIENCE": "", "HEIMDALL_JWT_ISSUER": "", "DISABLED_MOCK_LOCAL_PRINCIPAL": "localdev",
+		}},
+		"overrides": {override: map[string]string{
+			"PORT": "9090", "DB_MAX_CONNS": "20", "DB_MIN_CONNS": "4", "JWT_CLOCK_SKEW": "30s",
+			"FGA_RELAY_BATCH_SIZE": "25", "FGA_RELAY_MAX_ATTEMPTS": "3", "FGA_RELAY_INTERVAL": "2s",
+			"FGA_RELAY_RETRY_DELAY": "5m", "INDEX_RELAY_RETRY_DELAY": "3m", "INDEX_RELAY_MAX_ATTEMPTS": "7",
+			"CROWDFUNDING_TIMEOUT": "4s",
+		}},
+		"partial heimdall config":      {override: map[string]string{"HEIMDALL_JWT_ISSUER": ""}, wantErr: "must be set together"},
+		"no heimdall and no mock":      {override: map[string]string{"HEIMDALL_JWKS_URL": "", "HEIMDALL_JWT_AUDIENCE": "", "HEIMDALL_JWT_ISSUER": ""}, wantErr: "are required"},
+		"non-numeric port":             {override: map[string]string{"PORT": "http"}, wantErr: "PORT"},
+		"non-numeric max conns":        {override: map[string]string{"DB_MAX_CONNS": "many"}, wantErr: "DB_MAX_CONNS"},
+		"non-numeric min conns":        {override: map[string]string{"DB_MIN_CONNS": "few"}, wantErr: "DB_MIN_CONNS"},
+		"bad clock skew":               {override: map[string]string{"JWT_CLOCK_SKEW": "5"}, wantErr: "JWT_CLOCK_SKEW"},
+		"zero relay batch":             {override: map[string]string{"FGA_RELAY_BATCH_SIZE": "0"}, wantErr: "FGA_RELAY_BATCH_SIZE"},
+		"negative relay attempts":      {override: map[string]string{"FGA_RELAY_MAX_ATTEMPTS": "-1"}, wantErr: "FGA_RELAY_MAX_ATTEMPTS"},
+		"bad relay interval":           {override: map[string]string{"FGA_RELAY_INTERVAL": "soon"}, wantErr: "FGA_RELAY_INTERVAL"},
+		"zero relay retry delay":       {override: map[string]string{"FGA_RELAY_RETRY_DELAY": "0s"}, wantErr: "FGA_RELAY_RETRY_DELAY"},
+		"negative index retry delay":   {override: map[string]string{"INDEX_RELAY_RETRY_DELAY": "-1m"}, wantErr: "INDEX_RELAY_RETRY_DELAY"},
+		"zero index attempts":          {override: map[string]string{"INDEX_RELAY_MAX_ATTEMPTS": "0"}, wantErr: "INDEX_RELAY_MAX_ATTEMPTS"},
+		"bad crowdfunding timeout":     {override: map[string]string{"CROWDFUNDING_TIMEOUT": "ten"}, wantErr: "CROWDFUNDING_TIMEOUT"},
+		"zero crowdfunding timeout":    {override: map[string]string{"CROWDFUNDING_TIMEOUT": "0s"}, wantErr: "CROWDFUNDING_TIMEOUT"},
+		"email config checked by nats": {override: map[string]string{"FGA_NATS_URL": "nats://nats:4222", "PUBLIC_SITE_URL": ""}, wantErr: "PUBLIC_SITE_URL"},
+		"storage config checked":       {override: map[string]string{"LOGOS_S3_BUCKET": "logos"}, wantErr: "AWS_REGION"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			for k, v := range valid {
+				t.Setenv(k, v)
+			}
+			for k, v := range tc.override {
+				t.Setenv(k, v)
+			}
+			cfg, err := loadConfig()
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want mention of %s", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("err = %v", err)
+			}
+			if cfg.Crowdfunding.BaseURL != "https://crowdfunding.example.org" || cfg.Local.InviteSecret != "secret" {
+				t.Fatalf("crowdfunding base %q, invite secret %q", cfg.Crowdfunding.BaseURL, cfg.Local.InviteSecret)
+			}
+			switch name {
+			case "defaults":
+				if cfg.Server.Port != 8080 || cfg.Database.MaxConns != 10 || cfg.Database.MinConns != 2 || cfg.JWT.ClockSkew != 5*time.Second ||
+					cfg.FGA.RelayBatch != 50 || cfg.FGA.RelayMaxAttempts != 10 || cfg.FGA.RelayInterval != time.Second || cfg.FGA.RelayRetryDelay != time.Minute ||
+					cfg.Indexer.RetryDelay != time.Minute || cfg.Indexer.MaxAttempts != 10 || cfg.Crowdfunding.Timeout != 10*time.Second ||
+					cfg.OTel.ServiceName != "lfx-mentorship-api" || cfg.JWT.HeimdallAudience != "lfx-mentorship" {
+					t.Fatalf("unexpected defaults %+v", cfg)
+				}
+			case "mock principal instead of heimdall":
+				if cfg.Local.DisabledMockLocalPrincipal != "localdev" || cfg.JWT.HeimdallJWKSURL != "" {
+					t.Fatalf("unexpected local config %+v / %+v", cfg.Local, cfg.JWT)
+				}
+			case "overrides":
+				if cfg.Server.Port != 9090 || cfg.Database.MaxConns != 20 || cfg.Database.MinConns != 4 || cfg.JWT.ClockSkew != 30*time.Second ||
+					cfg.FGA.RelayBatch != 25 || cfg.FGA.RelayMaxAttempts != 3 || cfg.FGA.RelayInterval != 2*time.Second || cfg.FGA.RelayRetryDelay != 5*time.Minute ||
+					cfg.Indexer.RetryDelay != 3*time.Minute || cfg.Indexer.MaxAttempts != 7 || cfg.Crowdfunding.Timeout != 4*time.Second {
+					t.Fatalf("overrides not applied %+v", cfg)
+				}
 			}
 		})
 	}
