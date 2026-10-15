@@ -66,7 +66,7 @@ func seedIntegrationFixture(t *testing.T, pool *pgxpool.Pool) integrationFixture
 	if _, err := pool.Exec(ctx, `INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES ('00000000-0000-0000-0000-000000000020', $1, $2, 'program_admin', 'approved')`, fixture.ProgramID, fixture.UserID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO program_terms (id, program_id, name, status) VALUES ($1, $3, 'Open', 'open'), ($2, $3, 'Closed', 'closed')`, fixture.OpenTerm, fixture.ClosedTerm, fixture.ProgramID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO program_terms (id, program_id, name, status, application_start_date, application_end_date) VALUES ($1, $3, 'Open', 'open', NOW() - interval '1 day', NOW() + interval '30 days'), ($2, $3, 'Closed', 'closed', NULL, NULL)`, fixture.OpenTerm, fixture.ClosedTerm, fixture.ProgramID); err != nil {
 		t.Fatal(err)
 	}
 	return fixture

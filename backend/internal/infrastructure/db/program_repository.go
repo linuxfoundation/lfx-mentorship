@@ -448,22 +448,24 @@ func catalogLimitOffset(filter models.ProgramFilter) (limit, offset int) {
 }
 
 // Term-derived discovery predicates, matching ProgramTerm.DiscoveryLabel / public catalog status.
+// The application window is compared by UTC calendar day, both days inclusive, as
+// ProgramTerm.ApplicationWindow does.
 const (
+	// sqlTermAcceptsApplications is ProgramTerm.AcceptsApplications for the program_terms row aliased pt.
+	sqlTermAcceptsApplications = `pt.status = 'open'
+		  AND (NOW() AT TIME ZONE 'UTC')::date
+		      BETWEEN (pt.application_start_date AT TIME ZONE 'UTC')::date AND (pt.application_end_date AT TIME ZONE 'UTC')::date`
 	sqlHasAcceptingTerm = `EXISTS (
 		SELECT 1 FROM program_terms pt
 		WHERE pt.program_id = programs.id
-		  AND pt.status = 'open'
-		  AND pt.application_start_date IS NOT NULL
-		  AND pt.application_end_date IS NOT NULL
-		  AND NOW() BETWEEN pt.application_start_date AND pt.application_end_date
+		  AND ` + sqlTermAcceptsApplications + `
 	)`
 	sqlHasComingSoonTerm = `EXISTS (
 		SELECT 1 FROM program_terms pt
 		WHERE pt.program_id = programs.id
 		  AND pt.status = 'open'
-		  AND pt.application_start_date IS NOT NULL
 		  AND pt.application_end_date IS NOT NULL
-		  AND pt.application_start_date > NOW()
+		  AND (pt.application_start_date AT TIME ZONE 'UTC')::date > (NOW() AT TIME ZONE 'UTC')::date
 	)`
 	sqlHasOpenTerm = `EXISTS (
 		SELECT 1 FROM program_terms pt

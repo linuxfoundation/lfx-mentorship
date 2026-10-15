@@ -435,16 +435,40 @@ func (n *stubNotifier) NotifyMenteeTaskAssigned(_ context.Context, _ string) {
 // ── helpers ─────────────────────────────────────────────────────────────────
 
 func newApplicationSvc(appRepo *stubAppRepo, taskRepo *stubTaskRepo, termRepo *stubTermRepo, progRepo *stubProgRepo) *service.ApplicationService {
-	return service.NewApplicationService(appRepo, taskRepo, termRepo, progRepo, &stubMemberRepo{
-		findActiveReviewer: func(context.Context, string, string) (*models.ProgramMember, error) {
-			status := models.ProgramMemberStatusApproved
-			return &models.ProgramMember{MemberType: models.MemberTypeMentor, Status: &status}, nil
-		},
-	}, &stubNotifier{})
+	return service.NewApplicationService(appRepo, taskRepo, termRepo, progRepo, approvedProgramAdmin(), menteeProfiles(1), &stubNotifier{})
 }
 
 func newApplicationSvcWithMember(appRepo *stubAppRepo, taskRepo *stubTaskRepo, termRepo *stubTermRepo, progRepo *stubProgRepo, memberRepo *stubMemberRepo) *service.ApplicationService {
-	return service.NewApplicationService(appRepo, taskRepo, termRepo, progRepo, memberRepo, &stubNotifier{})
+	return service.NewApplicationService(appRepo, taskRepo, termRepo, progRepo, memberRepo, menteeProfiles(1), &stubNotifier{})
+}
+
+// approvedProgramAdmin is a member repository in which every actor is an approved program admin,
+// which also makes them an active reviewer.
+func approvedProgramAdmin() *stubMemberRepo {
+	status := models.ProgramMemberStatusApproved
+	admin := func(context.Context, string, string) (*models.ProgramMember, error) {
+		return &models.ProgramMember{MemberType: models.MemberTypeProgramAdmin, Status: &status}, nil
+	}
+	return &stubMemberRepo{findActiveReviewer: admin, findActiveAdmin: admin}
+}
+
+// approvedMentor is a member repository in which every actor is an approved mentor: an active
+// reviewer, but not a program admin.
+func approvedMentor() *stubMemberRepo {
+	status := models.ProgramMemberStatusApproved
+	return &stubMemberRepo{
+		findActiveReviewer: func(context.Context, string, string) (*models.ProgramMember, error) {
+			return &models.ProgramMember{MemberType: models.MemberTypeMentor, Status: &status}, nil
+		},
+		findActiveAdmin: func(context.Context, string, string) (*models.ProgramMember, error) {
+			return nil, domain.ErrProgramMemberNotFound
+		},
+	}
+}
+
+// menteeProfiles is a profile repository reporting count mentee profiles for every user.
+func menteeProfiles(count int) *stubUserProfileRepo {
+	return &stubUserProfileRepo{countActiveMenteeProfiles: func(context.Context, string) (int, error) { return count, nil }}
 }
 
 func openTerm(t time.Time) *models.ProgramTerm {
@@ -499,31 +523,60 @@ func TestApplicationService_Create_TermNotOpen(t *testing.T) {
 	}
 }
 
-func TestApplicationService_Create_WindowNotYetOpen(t *testing.T) {
-	future := time.Now().Add(48 * time.Hour)
-	termRepo := &stubTermRepo{
-		getByID: func(_ context.Context, _ string) (*models.ProgramTerm, error) {
-			return &models.ProgramTerm{ID: "t1", Status: "open", ApplicationStartDate: &future}, nil
-		},
-	}
-	svc := newApplicationSvc(&stubAppRepo{}, &stubTaskRepo{}, termRepo, &stubProgRepo{})
-	_, err := svc.Create(context.Background(), "t1", models.ApplicationCreateInput{UserID: "u1", Role: "mentee"})
-	if !errors.Is(err, domain.ErrIneligible) {
-		t.Errorf("expected ErrIneligible, got %v", err)
+func TestApplicationService_Create_WindowRefusals(t *testing.T) {
+	past, future := time.Now().Add(-48*time.Hour), time.Now().Add(48*time.Hour)
+	for name, tc := range map[string]struct {
+		term *models.ProgramTerm
+		want string
+	}{
+		"not yet open": {&models.ProgramTerm{ID: "t1", Status: "open", ApplicationStartDate: &future, ApplicationEndDate: &future}, "has not opened yet"},
+		"closed":       {&models.ProgramTerm{ID: "t1", Status: "open", ApplicationStartDate: &past, ApplicationEndDate: &past}, "has closed"},
+		// As in legacy, a term missing either window date takes no applications.
+		"no start date": {&models.ProgramTerm{ID: "t1", Status: "open", ApplicationEndDate: &future}, "no application window"},
+		"no end date":   {&models.ProgramTerm{ID: "t1", Status: "open", ApplicationStartDate: &past}, "no application window"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			termRepo := &stubTermRepo{getByID: func(context.Context, string) (*models.ProgramTerm, error) { return tc.term, nil }}
+			svc := newApplicationSvc(&stubAppRepo{}, &stubTaskRepo{}, termRepo, &stubProgRepo{})
+			_, err := svc.Create(context.Background(), "t1", models.ApplicationCreateInput{UserID: "u1", Role: "mentee"})
+			if !errors.Is(err, domain.ErrIneligible) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v; want ErrIneligible naming %q", err, tc.want)
+			}
+		})
 	}
 }
 
-func TestApplicationService_Create_WindowClosed(t *testing.T) {
-	past := time.Now().Add(-48 * time.Hour)
-	termRepo := &stubTermRepo{
-		getByID: func(_ context.Context, _ string) (*models.ProgramTerm, error) {
-			return &models.ProgramTerm{ID: "t1", Status: "open", ApplicationEndDate: &past}, nil
-		},
+func TestApplicationService_Create_RequiresMenteeProfile(t *testing.T) {
+	repo := &stubAppRepo{create: func(context.Context, string, models.ApplicationCreateInput) (*models.Application, error) {
+		t.Fatal("an application was created without a mentee profile")
+		return nil, nil
+	}}
+	termRepo := &stubTermRepo{getByID: func(context.Context, string) (*models.ProgramTerm, error) { return openTerm(time.Now()), nil }}
+	svc := service.NewApplicationService(repo, &stubTaskRepo{}, termRepo, &stubProgRepo{}, approvedProgramAdmin(), menteeProfiles(0), &stubNotifier{})
+	_, err := svc.Create(context.Background(), "term-1", models.ApplicationCreateInput{UserID: "u1", Role: models.ApplicationRoleMentee})
+	if !errors.Is(err, domain.ErrIneligible) || !strings.Contains(err.Error(), "mentee profile") {
+		t.Fatalf("err = %v; want ErrIneligible naming the mentee profile", err)
 	}
-	svc := newApplicationSvc(&stubAppRepo{}, &stubTaskRepo{}, termRepo, &stubProgRepo{})
-	_, err := svc.Create(context.Background(), "t1", models.ApplicationCreateInput{UserID: "u1", Role: "mentee"})
-	if !errors.Is(err, domain.ErrIneligible) {
-		t.Errorf("expected ErrIneligible, got %v", err)
+}
+
+// Mentors join a program through a membership request, not through the apply route.
+func TestApplicationService_Create_MenteeOnly(t *testing.T) {
+	termRepo := &stubTermRepo{getByID: func(context.Context, string) (*models.ProgramTerm, error) { return openTerm(time.Now()), nil }}
+	for _, role := range []models.ApplicationRole{models.ApplicationRoleMentor, "owner"} {
+		svc := newApplicationSvc(&stubAppRepo{}, &stubTaskRepo{}, termRepo, &stubProgRepo{})
+		if _, err := svc.Create(context.Background(), "term-1", models.ApplicationCreateInput{UserID: "u1", Role: role}); !errors.Is(err, domain.ErrInvalidInput) {
+			t.Fatalf("role %q: err = %v; want ErrInvalidInput", role, err)
+		}
+	}
+
+	var created models.ApplicationRole
+	repo := &stubAppRepo{create: func(_ context.Context, _ string, in models.ApplicationCreateInput) (*models.Application, error) {
+		created = in.Role
+		return &models.Application{ID: in.ID, Role: in.Role}, nil
+	}}
+	svc := newApplicationSvc(repo, &stubTaskRepo{}, termRepo, &stubProgRepo{})
+	if _, err := svc.Create(context.Background(), "term-1", models.ApplicationCreateInput{UserID: "u1"}); err != nil || created != models.ApplicationRoleMentee {
+		t.Fatalf("no role: err = %v, created role %q; want a mentee application", err, created)
 	}
 }
 
@@ -804,12 +857,7 @@ func TestApplicationService_Update_AcceptedMenteeSendsNotification(t *testing.T)
 			return &models.Application{ID: id, Status: models.ApplicationStatusAccepted, ProgramTermID: "term-1", UserID: "mentee-1", Role: models.ApplicationRoleMentee, AttendanceType: &attType}, nil
 		},
 	}
-	status := models.ProgramMemberStatusApproved
-	svc := service.NewApplicationService(repo, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{}, &stubMemberRepo{
-		findActiveReviewer: func(context.Context, string, string) (*models.ProgramMember, error) {
-			return &models.ProgramMember{MemberType: models.MemberTypeMentor, Status: &status}, nil
-		},
-	}, notifier)
+	svc := service.NewApplicationService(repo, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{}, approvedProgramAdmin(), menteeProfiles(1), notifier)
 	next := models.ApplicationStatusAccepted
 	attType := models.AttendanceTypeFullTime
 	if _, err := svc.Update(context.Background(), "app-mentee-1", models.ApplicationUpdateInput{Status: &next, AttendanceType: &attType, ActorID: "reviewer"}); err != nil {
@@ -1066,15 +1114,7 @@ func TestApplicationService_ListByProgram_StatusFilter(t *testing.T) {
 // ── notifications ───────────────────────────────────────────────────────────
 
 func newApplicationSvcWithNotifier(appRepo *stubAppRepo, termRepo *stubTermRepo, n *stubNotifier) *service.ApplicationService {
-	status := models.ProgramMemberStatusApproved
-	return service.NewApplicationService(appRepo, &stubTaskRepo{}, termRepo, &stubProgRepo{}, &stubMemberRepo{
-		findActiveReviewer: func(context.Context, string, string) (*models.ProgramMember, error) {
-			return &models.ProgramMember{MemberType: models.MemberTypeMentor, Status: &status}, nil
-		},
-		findActiveAdmin: func(context.Context, string, string) (*models.ProgramMember, error) {
-			return &models.ProgramMember{MemberType: models.MemberTypeProgramAdmin, Status: &status}, nil
-		},
-	}, n)
+	return service.NewApplicationService(appRepo, &stubTaskRepo{}, termRepo, &stubProgRepo{}, approvedProgramAdmin(), menteeProfiles(1), n)
 }
 
 // menteeDecisionCalls counts the mentee notifications an application status change can send.
@@ -1093,7 +1133,6 @@ func TestApplicationService_Create_NotifiesMentee(t *testing.T) {
 	}{
 		{name: "new mentee application", role: models.ApplicationRoleMentee, want: 1},
 		{name: "mentee reapplies after withdrawing", role: models.ApplicationRoleMentee, existing: &models.Application{ID: "old", Status: models.ApplicationStatusWithdrawn}, want: 1},
-		{name: "mentor application tells the admins", role: models.ApplicationRoleMentor, wantRequested: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			termRepo := &stubTermRepo{getByID: func(context.Context, string) (*models.ProgramTerm, error) {
@@ -1141,7 +1180,6 @@ func TestApplicationService_Update_NotifiesMenteeOfStatusChange(t *testing.T) {
 		{name: "declined after acceptance", from: models.ApplicationStatusAccepted, to: models.ApplicationStatusDeclined, role: models.ApplicationRoleMentee, actor: "reviewer", want: menteeDecisionCalls{declined: 1}},
 		{name: "self-withdrawn", from: models.ApplicationStatusPending, to: models.ApplicationStatusWithdrawn, role: models.ApplicationRoleMentee, actor: "mentee-1", want: menteeDecisionCalls{withdrawn: 1}},
 		{name: "graduated", from: models.ApplicationStatusAccepted, to: models.ApplicationStatusGraduated, role: models.ApplicationRoleMentee, actor: "reviewer", want: menteeDecisionCalls{graduated: 1}},
-		{name: "put on hold", from: models.ApplicationStatusPending, to: models.ApplicationStatusHold, role: models.ApplicationRoleMentee, actor: "reviewer"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := &stubAppRepo{
@@ -1175,9 +1213,7 @@ func TestApplicationService_Update_NotifiesOfMentorApplicationDecision(t *testin
 	}{
 		{name: "withdrawn tells admins", from: models.ApplicationStatusPending, to: models.ApplicationStatusWithdrawn, actor: "mentor-1", wantWithdrew: 1},
 		{name: "declined while pending tells the mentor", from: models.ApplicationStatusPending, to: models.ApplicationStatusDeclined, actor: "reviewer", wantDeclined: 1},
-		{name: "declined while on hold tells the mentor", from: models.ApplicationStatusHold, to: models.ApplicationStatusDeclined, actor: "reviewer", wantDeclined: 1},
 		{name: "declined after acceptance sends nothing", from: models.ApplicationStatusAccepted, to: models.ApplicationStatusDeclined, actor: "reviewer"},
-		{name: "put on hold sends nothing", from: models.ApplicationStatusPending, to: models.ApplicationStatusHold, actor: "reviewer"},
 		{name: "withdrawn, term lookup fails after the write", from: models.ApplicationStatusPending, to: models.ApplicationStatusWithdrawn, actor: "mentor-1", termErr: errors.New("db down")},
 		{name: "declined, term lookup fails after the write", from: models.ApplicationStatusPending, to: models.ApplicationStatusDeclined, actor: "reviewer", termErr: errors.New("db down")},
 	} {
@@ -1192,7 +1228,7 @@ func TestApplicationService_Update_NotifiesOfMentorApplicationDecision(t *testin
 					return &models.Application{ID: id, Status: tc.to, ProgramTermID: "term-1", UserID: "mentor-1", Role: models.ApplicationRoleMentor}, nil
 				},
 			}
-			// The reviewer check also reads the term, so fail only the lookup after the write.
+			// The program admin check also reads the term, so fail only the lookup after the write.
 			termRepo := &stubTermRepo{getByID: func(_ context.Context, id string) (*models.ProgramTerm, error) {
 				if written && tc.termErr != nil {
 					return nil, tc.termErr
@@ -1278,6 +1314,33 @@ func TestApplicationService_AssistedWithdrawal_NotifiesMentee(t *testing.T) {
 	}
 }
 
+// A declined or graduated application is a final outcome: withdrawing it would let the mentee
+// reapply to the term, which a decline forbids.
+func TestApplicationService_AssistedWithdrawal_RefusesFinalOutcomes(t *testing.T) {
+	for _, from := range []models.ApplicationStatus{models.ApplicationStatusDeclined, models.ApplicationStatusGraduated} {
+		repo := &stubAppRepo{
+			getByID: func(_ context.Context, id string) (*models.Application, error) {
+				return &models.Application{ID: id, Status: from, ProgramTermID: "term-1", UserID: "mentee-1", Role: models.ApplicationRoleMentee}, nil
+			},
+			update: func(context.Context, string, models.ApplicationUpdateInput) (*models.Application, error) {
+				t.Fatalf("a %s application was withdrawn", from)
+				return nil, nil
+			},
+		}
+		n := &stubNotifier{}
+		svc := newApplicationSvcWithNotifier(repo, &stubTermRepo{}, n)
+		if _, err := svc.WithdrawForMentee(context.Background(), "app-1", "admin-1"); !errors.Is(err, domain.ErrInvalidStateTransition) {
+			t.Fatalf("from %s via program admin: err = %v; want ErrInvalidStateTransition", from, err)
+		}
+		if _, err := svc.WithdrawForMenteeAfterGatewayAuthorization(context.Background(), "app-1"); !errors.Is(err, domain.ErrInvalidStateTransition) {
+			t.Fatalf("from %s via gateway: err = %v; want ErrInvalidStateTransition", from, err)
+		}
+		if n.menteeWithdrawnCalls != 0 {
+			t.Fatalf("from %s: withdrawn notifications = %d; want 0", from, n.menteeWithdrawnCalls)
+		}
+	}
+}
+
 func TestApplicationService_AssistedWithdrawal_LostRaceSendsNothing(t *testing.T) {
 	repo := &stubAppRepo{
 		getByID: func(_ context.Context, id string) (*models.Application, error) {
@@ -1307,11 +1370,66 @@ func TestApplicationService_BulkDeclineByTerm_NotifiesEachMentee(t *testing.T) {
 		}, nil
 	}}
 	n := &stubNotifier{}
-	count, err := newApplicationSvcWithNotifier(repo, &stubTermRepo{}, n).BulkDeclineByTerm(context.Background(), "term-1")
+	count, err := newApplicationSvcWithNotifier(repo, &stubTermRepo{}, n).BulkDeclineByTerm(context.Background(), "term-1", "admin-1")
 	if err != nil {
 		t.Fatalf("BulkDeclineByTerm: %v", err)
 	}
 	if count != 3 || n.menteeDeclinedCalls != 2 {
 		t.Fatalf("count = %d, declined notifications = %d; want 3 declined and 2 mentees notified", count, n.menteeDeclinedCalls)
+	}
+}
+
+// ── program admin decisions ─────────────────────────────────────────────────
+
+// Off the gateway the service repeats the gateway's manager check: a mentor reviews an application
+// but does not decide it, and only a program admin deletes or bulk-declines.
+func TestApplicationService_AdminDecisionsRefuseMentors(t *testing.T) {
+	application := func(_ context.Context, id string) (*models.Application, error) {
+		return &models.Application{ID: id, Status: models.ApplicationStatusPending, ProgramTermID: "term-1", UserID: "mentee-1", Role: models.ApplicationRoleMentee}, nil
+	}
+	repo := &stubAppRepo{
+		getByID: application,
+		update: func(_ context.Context, id string, in models.ApplicationUpdateInput) (*models.Application, error) {
+			if in.Status != nil {
+				t.Fatal("a mentor changed an application's status")
+			}
+			return application(context.Background(), id)
+		},
+		delete: func(context.Context, string) error {
+			t.Fatal("a mentor deleted an application")
+			return nil
+		},
+		bulkDecline: func(context.Context, string) ([]*models.Application, error) {
+			t.Fatal("a mentor bulk-declined a term")
+			return nil, nil
+		},
+	}
+	svc := service.NewApplicationService(repo, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{}, approvedMentor(), menteeProfiles(1), &stubNotifier{})
+
+	declined := models.ApplicationStatusDeclined
+	if _, err := svc.Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &declined, ActorID: "mentor-1"}); !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("status change: err = %v; want ErrForbidden", err)
+	}
+	if err := svc.Delete(context.Background(), "app-1", "mentor-1"); !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("delete: err = %v; want ErrForbidden", err)
+	}
+	if _, err := svc.BulkDeclineByTerm(context.Background(), "term-1", "mentor-1"); !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("bulk decline: err = %v; want ErrForbidden", err)
+	}
+	// Reviewing stays open to mentors.
+	note := "strong candidate"
+	if _, err := svc.Update(context.Background(), "app-1", models.ApplicationUpdateInput{ReviewerNote: &note, ActorID: "mentor-1"}); err != nil {
+		t.Fatalf("reviewer note: %v", err)
+	}
+}
+
+func TestApplicationService_Delete_ProgramAdmin(t *testing.T) {
+	deleted := ""
+	repo := &stubAppRepo{delete: func(_ context.Context, id string) error {
+		deleted = id
+		return nil
+	}}
+	if err := newApplicationSvc(repo, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{}).Delete(context.Background(), "app-1", "admin-1"); err != nil || deleted != "app-1" {
+		t.Fatalf("err = %v, deleted %q; want app-1 deleted", err, deleted)
 	}
 }

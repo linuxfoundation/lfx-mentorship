@@ -249,7 +249,7 @@ The table maps against the **post-review revision** of the standalone model, whi
    | --- | --- | --- |
    | `PATCH /applications/{uid}/status` | `manager` | admins only (accept / decline) |
    | `POST /applications/{uid}/withdraw` | `mentee` | the applicant only — self-withdrawal. The `pending`-only limit is a **workflow rule** enforced in the service, not a relation |
-   | `POST /applications/{uid}/withdraw-for-mentee` | `manager` | admin only — staff-assisted (white-glove) withdrawal, permitted in any state. Separate route because the two populations have different *state* rights, and one relation cannot express that ([below](#withdrawal-needs-two-routes)) |
+   | `POST /applications/{uid}/withdraw-for-mentee` | `manager` | admin only — staff-assisted (white-glove) withdrawal, permitted in any state except a final outcome (`declined`, `graduated`). Separate route because the two populations have different *state* rights, and one relation cannot express that ([below](#withdrawal-needs-two-routes)) |
    | `POST /applications/{uid}/reapply` | `mentee` | the applicant only — reapplying on someone else's behalf is not a requirement, so this needs no admin twin |
    | `PUT /applications/{uid}/evaluation` | `reviewer` | mentors and admins — **not** the applicant |
    | `GET`/`PUT /applications/{uid}/note` | `reviewer` | the reviewer note — mentors and admins, **not** the applicant. A read on its own route, not a field on the application payload, precisely because `auditor` (which the applicant holds) may fetch the application |

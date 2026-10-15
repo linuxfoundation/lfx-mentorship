@@ -166,7 +166,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	}
 	programTermSvc := service.NewProgramTermService(programTermRepo, applicationRepo, notifier)
 	programMemberSvc := service.NewProgramMemberService(programMemberRepo, programRepo, userRepo, accounts, notifier, cfg.Local.InviteSecret)
-	applicationSvc := service.NewApplicationService(applicationRepo, taskRepo, programTermRepo, programRepo, programMemberRepo, notifier)
+	applicationSvc := service.NewApplicationService(applicationRepo, taskRepo, programTermRepo, programRepo, programMemberRepo, userProfileRepo, notifier)
 	taskSvc := service.NewTaskService(taskRepo, applicationRepo, programTermRepo, programMemberRepo, notifier)
 	menteeSvc := service.NewMenteeService(menteeRepo)
 	mentorSvc := service.NewMentorService(mentorRepo)
@@ -367,7 +367,6 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			r.Get("/programs/{id}/applications", applicationH.ListByProgram)
 			r.Get("/applications/{id}", applicationH.GetByID)
 			r.Post("/programs/{programID}/terms/{id}/applications", applicationH.Create)
-			r.Patch("/applications/{id}", applicationH.Update)
 			r.Patch("/applications/{id}/status", applicationH.UpdateStatus)
 			r.Post("/applications/{id}/withdraw", applicationH.Withdraw)
 			r.Post("/applications/{id}/withdraw-for-mentee", applicationH.WithdrawForMentee)

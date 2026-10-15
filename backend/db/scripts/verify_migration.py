@@ -31,7 +31,7 @@ log = logging.getLogger("verify_migration")
 SAMPLE_SIZE = int(os.environ.get("VERIFY_SAMPLE_SIZE", "200"))
 SEED = os.environ.get("VERIFY_SEED")
 
-_APP_PRIORITY = {"graduated": 5, "accepted": 4, "hold": 3, "pending": 2, "declined": 1, "withdrawn": 0}
+_APP_PRIORITY = {"graduated": 5, "accepted": 4, "pending": 2, "declined": 1, "withdrawn": 0}
 
 # Legacy value -> target value (03 §Migration-specific tasks). Unlisted values fall back as noted.
 _PROGRAM_STATUS = {  # else pending; draft, pending and submitted all become pending
@@ -40,7 +40,7 @@ _PROGRAM_STATUS = {  # else pending; draft, pending and submitted all become pen
 }
 _APPLICATION_STATUS = {  # else pending
     "pending": "pending", "accepted": "accepted", "approved": "accepted", "active": "accepted",
-    "declined": "declined", "withdrawn": "withdrawn", "graduated": "graduated", "hold": "hold",
+    "declined": "declined", "withdrawn": "withdrawn", "graduated": "graduated", "hold": "accepted",
 }
 _TASK_STATUS = {  # lowercased; else incomplete
     "incomplete": "incomplete", "inprogress": "in_progress", "in_progress": "in_progress",

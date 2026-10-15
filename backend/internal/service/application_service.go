@@ -28,6 +28,7 @@ type ApplicationService struct {
 	termRepo    domain.ProgramTermRepository
 	programRepo domain.ProgramRepository
 	memberRepo  domain.ProgramMemberRepository
+	profileRepo domain.UserProfileRepository
 	notifier    domain.Notifier
 }
 
@@ -83,9 +84,10 @@ func NewApplicationService(
 	termRepo domain.ProgramTermRepository,
 	programRepo domain.ProgramRepository,
 	memberRepo domain.ProgramMemberRepository,
+	profileRepo domain.UserProfileRepository,
 	notifier domain.Notifier,
 ) *ApplicationService {
-	return &ApplicationService{repo: repo, taskRepo: taskRepo, termRepo: termRepo, programRepo: programRepo, memberRepo: memberRepo, notifier: notifier}
+	return &ApplicationService{repo: repo, taskRepo: taskRepo, termRepo: termRepo, programRepo: programRepo, memberRepo: memberRepo, profileRepo: profileRepo, notifier: notifier}
 }
 
 func (s *ApplicationService) isActiveReviewer(ctx context.Context, programID, actorID string) (bool, error) {
@@ -102,18 +104,34 @@ func (s *ApplicationService) isActiveReviewer(ctx context.Context, programID, ac
 	return true, nil
 }
 
+// requireProgramAdmin refuses unless the actor is an active program admin of the term's program:
+// the relation Heimdall checks on the status, delete, bulk-decline and assisted-withdrawal routes.
+// A gateway principal has already passed that check, so it is not repeated.
+func (s *ApplicationService) requireProgramAdmin(ctx context.Context, programTermID, actorID string) error {
+	if auth.IsGatewayPrincipal(ctx) {
+		return nil
+	}
+	if actorID == "" {
+		return fmt.Errorf("%w: actor identity is required", domain.ErrForbidden)
+	}
+	term, err := s.termRepo.GetByID(ctx, programTermID)
+	if err != nil {
+		return fmt.Errorf("get program term for program admin check: %w", err)
+	}
+	if _, err := s.memberRepo.FindActiveProgramAdminByProgramAndUser(ctx, term.ProgramID, actorID); errors.Is(err, domain.ErrProgramMemberNotFound) {
+		return fmt.Errorf("%w: actor must be an active program_admin", domain.ErrForbidden)
+	} else if err != nil {
+		return fmt.Errorf("verify program admin: %w", err)
+	}
+	return nil
+}
+
 // applicationTransitions maps current → allowed next statuses.
 var applicationTransitions = map[models.ApplicationStatus][]models.ApplicationStatus{
 	models.ApplicationStatusPending: {
 		models.ApplicationStatusAccepted,
 		models.ApplicationStatusDeclined,
-		models.ApplicationStatusHold,
 		models.ApplicationStatusWithdrawn,
-	},
-	models.ApplicationStatusHold: {
-		models.ApplicationStatusAccepted,
-		models.ApplicationStatusDeclined,
-		models.ApplicationStatusPending,
 	},
 	// "accepted" is the enrolled state: a mentee stays accepted for the whole
 	// term and moves straight to "graduated" at the end. There is no separate
@@ -228,10 +246,15 @@ func (s *ApplicationService) ListByUser(ctx context.Context, userID string, filt
 	return apps, meta, nil
 }
 
-// Create validates input and creates an application.
+// Create validates input and creates a mentee application, or a reapplication after a withdrawal.
+// Mentors do not apply here: they request to join a program through its members (FR-023).
 // Guards enforced:
-//   - The term must be within its application window.
-//   - The user must not already have a pending/submitted application for the same term.
+//   - The term takes applications now (FR-016, ProgramTerm.AcceptsApplications).
+//   - The applicant has a mentee profile, created only once the eligibility criteria are
+//     confirmed (FR-025, FR-028).
+//   - Reapplication only from withdrawn, never from declined, up to the withdrawal limit (FR-030).
+//   - Under lock, in the repository: the program is published, and the applicant holds no
+//     accepted or graduated mentee application.
 func (s *ApplicationService) Create(ctx context.Context, programTermID string, input models.ApplicationCreateInput) (*models.Application, error) {
 	ctx, span := applicationSvcTracer.Start(ctx, "ApplicationService.Create")
 	defer span.End()
@@ -239,8 +262,11 @@ func (s *ApplicationService) Create(ctx context.Context, programTermID string, i
 	if input.UserID == "" {
 		return nil, fmt.Errorf("%w: user_id is required", domain.ErrInvalidInput)
 	}
-	if !input.Role.IsValid() {
-		return nil, fmt.Errorf("%w: role must be mentor or mentee", domain.ErrInvalidInput)
+	if input.Role == "" {
+		input.Role = models.ApplicationRoleMentee
+	}
+	if input.Role != models.ApplicationRoleMentee {
+		return nil, fmt.Errorf("%w: role must be mentee; mentors request to join a program through its members", domain.ErrInvalidInput)
 	}
 	if input.AttendanceType != nil && !input.AttendanceType.IsValid() {
 		return nil, fmt.Errorf("%w: attendance_type must be full_time or part_time", domain.ErrInvalidInput)
@@ -256,12 +282,22 @@ func (s *ApplicationService) Create(ctx context.Context, programTermID string, i
 	if term.Status != models.ProgramTermStatusOpen {
 		return nil, fmt.Errorf("%w: applications are not open for this term", domain.ErrIneligible)
 	}
-	now := time.Now()
-	if term.ApplicationStartDate != nil && now.Before(*term.ApplicationStartDate) {
+	switch term.ApplicationWindow(time.Now()) {
+	case models.ApplicationWindowUnset:
+		return nil, fmt.Errorf("%w: this term has no application window", domain.ErrIneligible)
+	case models.ApplicationWindowUpcoming:
 		return nil, fmt.Errorf("%w: application window has not opened yet", domain.ErrIneligible)
-	}
-	if term.ApplicationEndDate != nil && now.After(*term.ApplicationEndDate) {
+	case models.ApplicationWindowClosed:
 		return nil, fmt.Errorf("%w: application window has closed", domain.ErrIneligible)
+	}
+
+	profiles, err := s.profileRepo.CountActiveMenteeProfiles(ctx, input.UserID)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("check mentee profile: %w", err)
+	}
+	if profiles == 0 {
+		return nil, fmt.Errorf("%w: create a mentee profile, confirming the eligibility criteria, before applying", domain.ErrIneligible)
 	}
 
 	// Reapply guard: no existing non-terminal application for this term+user.
@@ -295,7 +331,7 @@ func (s *ApplicationService) Create(ctx context.Context, programTermID string, i
 		if err != nil {
 			return nil, fmt.Errorf("reapply application: %w", err)
 		}
-		s.notifyApplicationReceived(ctx, a, term.ProgramID)
+		s.notifier.NotifyMenteeApplicationReceived(ctx, a.ID)
 		return a, nil
 	}
 
@@ -309,19 +345,8 @@ func (s *ApplicationService) Create(ctx context.Context, programTermID string, i
 		span.RecordError(err)
 		return nil, fmt.Errorf("create application: %w", err)
 	}
-	s.notifyApplicationReceived(ctx, a, term.ProgramID)
+	s.notifier.NotifyMenteeApplicationReceived(ctx, a.ID)
 	return a, nil
-}
-
-// notifyApplicationReceived confirms a mentee application to the mentee, and tells program
-// admins about a mentor application.
-func (s *ApplicationService) notifyApplicationReceived(ctx context.Context, a *models.Application, programID string) {
-	switch a.Role {
-	case models.ApplicationRoleMentee:
-		s.notifier.NotifyMenteeApplicationReceived(ctx, a.ID)
-	case models.ApplicationRoleMentor:
-		s.notifier.NotifyAdminMentorRequested(ctx, programID, a.UserID)
-	}
 }
 
 func (s *ApplicationService) prerequisiteTasks(ctx context.Context, programTermID string, input models.ApplicationCreateInput, programID string) ([]models.TaskCreateInput, error) {
@@ -399,8 +424,10 @@ func (s *ApplicationService) Update(ctx context.Context, id string, input models
 			}
 		} else {
 			next := *input.Status
+			// A status change is a program admin decision, as the application's manager relation
+			// has it at the gateway; mentors review but do not decide.
 			if next != models.ApplicationStatusWithdrawn || input.ActorID != current.UserID {
-				if err := s.requireReviewer(ctx, current, input.ActorID); err != nil {
+				if err := s.requireProgramAdmin(ctx, current.ProgramTermID, input.ActorID); err != nil {
 					return nil, err
 				}
 			}
@@ -464,7 +491,7 @@ func (s *ApplicationService) Update(ctx context.Context, id string, input models
 		// A decline answers only an outstanding request (ExpectedStatus is the status the write applied
 		// from). Declining an accepted mentor leaves their approved membership in place, so it sends nothing.
 		declinedRequest := *input.Status == models.ApplicationStatusDeclined && input.ExpectedStatus != nil &&
-			(*input.ExpectedStatus == models.ApplicationStatusPending || *input.ExpectedStatus == models.ApplicationStatusHold)
+			*input.ExpectedStatus == models.ApplicationStatusPending
 		if withdrew || declinedRequest {
 			// The write has landed, so a failed lookup costs only the notice.
 			if term, err := s.termRepo.GetByID(ctx, a.ProgramTermID); err != nil {
@@ -498,8 +525,15 @@ func (s *ApplicationService) requireReviewer(ctx context.Context, application *m
 	return nil
 }
 
-// Delete removes an application and its authorization descendants.
-func (s *ApplicationService) Delete(ctx context.Context, id string) error {
+// Delete removes an application and its authorization descendants. Only a program admin may delete.
+func (s *ApplicationService) Delete(ctx context.Context, id, actorID string) error {
+	application, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return fmt.Errorf("get application for delete: %w", err)
+	}
+	if err := s.requireProgramAdmin(ctx, application.ProgramTermID, actorID); err != nil {
+		return err
+	}
 	if err := s.repo.Delete(ctx, id); err != nil {
 		return fmt.Errorf("delete application: %w", err)
 	}
@@ -516,19 +550,8 @@ func (s *ApplicationService) WithdrawForMentee(ctx context.Context, id, actorID 
 	if err != nil {
 		return nil, fmt.Errorf("get application for assisted withdrawal: %w", err)
 	}
-	term, err := s.termRepo.GetByID(ctx, application.ProgramTermID)
-	if err != nil {
-		return nil, fmt.Errorf("get application term: %w", err)
-	}
-	var memberErr error
-	if !auth.IsGatewayPrincipal(ctx) {
-		_, memberErr = s.memberRepo.FindActiveProgramAdminByProgramAndUser(ctx, term.ProgramID, actorID)
-	}
-	if memberErr != nil {
-		if errors.Is(memberErr, domain.ErrProgramMemberNotFound) {
-			return nil, fmt.Errorf("%w: actor must be an active program_admin", domain.ErrForbidden)
-		}
-		return nil, fmt.Errorf("verify program admin: %w", memberErr)
+	if err := s.requireProgramAdmin(ctx, application.ProgramTermID, actorID); err != nil {
+		return nil, err
 	}
 	return s.assistedWithdraw(ctx, application)
 }
@@ -544,9 +567,14 @@ func (s *ApplicationService) WithdrawForMenteeAfterGatewayAuthorization(ctx cont
 }
 
 // assistedWithdraw withdraws an application on the mentee's behalf, notifying them unless it was already withdrawn.
+// A declined or graduated application is a final outcome and is refused: withdrawing it would let the mentee
+// reapply to the term, which FR-030 forbids after a decline.
 // The write applies only while the row keeps the status read before it, so a concurrent change fails
 // rather than being overwritten and notified twice.
 func (s *ApplicationService) assistedWithdraw(ctx context.Context, application *models.Application) (*models.Application, error) {
+	if application.Status == models.ApplicationStatusDeclined || application.Status == models.ApplicationStatusGraduated {
+		return nil, fmt.Errorf("%w: cannot withdraw a %s application", domain.ErrInvalidStateTransition, application.Status)
+	}
 	status := models.ApplicationStatusWithdrawn
 	updated, err := s.repo.Update(ctx, application.ID, models.ApplicationUpdateInput{Status: &status, ExpectedStatus: &application.Status})
 	if err != nil {
@@ -559,10 +587,15 @@ func (s *ApplicationService) assistedWithdraw(ctx context.Context, application *
 }
 
 // BulkDeclineByTerm moves all pending applications in a term to declined and notifies each mentee.
-func (s *ApplicationService) BulkDeclineByTerm(ctx context.Context, termID string) (int, error) {
+// Only a program admin may bulk-decline.
+func (s *ApplicationService) BulkDeclineByTerm(ctx context.Context, termID, actorID string) (int, error) {
 	ctx, span := applicationSvcTracer.Start(ctx, "ApplicationService.BulkDeclineByTerm")
 	defer span.End()
 	span.SetAttributes(attribute.String("term.id", termID))
+
+	if err := s.requireProgramAdmin(ctx, termID, actorID); err != nil {
+		return 0, err
+	}
 
 	declined, err := s.repo.BulkDeclineByTerm(ctx, termID)
 	if err != nil {

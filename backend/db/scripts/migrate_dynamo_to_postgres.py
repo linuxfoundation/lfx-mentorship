@@ -21,7 +21,8 @@ Source → Target mapping
   jobspring-prod-program-terms        → program_terms
   jobspring-prod-project-members      → program_members
   jobspring-prod-program-term-mentees → applications     (full lifecycle;
-                                        graduated|hold map directly)
+                                        graduated maps directly,
+                                        hold maps to accepted)
   jobspring-prod-tasks                → tasks
                                         (application_id resolved via
                                         (program_term_id, assignee_id) lookup)
@@ -508,10 +509,11 @@ def _normalize_program_status(status: str | None) -> str:
     return m.get(status.lower(), "pending")
 
 
-_VALID_APP_STATUSES = {"pending", "accepted", "declined", "withdrawn", "graduated", "hold"}
+_VALID_APP_STATUSES = {"pending", "accepted", "declined", "withdrawn", "graduated"}
 # DynamoDB used "approved" and "active" for an enrolled mentee; applications.status
-# has no "active" value — "accepted" is the enrolled state until graduation.
-_APP_STATUS_MAP = {"approved": "accepted", "active": "accepted"}
+# has no "active" value — "accepted" is the enrolled state until graduation. Nor has
+# it "hold", which in legacy marks a paused accepted mentorship (migration 003).
+_APP_STATUS_MAP = {"approved": "accepted", "active": "accepted", "hold": "accepted"}
 
 
 def _map_application_status(dynamo_status: str | None) -> str:
@@ -1297,7 +1299,7 @@ def migrate_mentees(
     # break ties by newest updated_on so scan-order cannot change the outcome.
     _STATUS_PRIORITY = {
         "graduated": 5, "accepted": 4,
-        "hold": 3, "pending": 2, "declined": 1, "withdrawn": 0,
+        "pending": 2, "declined": 1, "withdrawn": 0,
     }
     best: dict = {}
     for row in app_rows:

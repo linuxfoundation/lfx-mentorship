@@ -136,7 +136,7 @@ Authorization: Bearer {token}
 Content-Type: application/json
 
 {
-  "status": "accepted" | "declined" | "graduated" | "withdrawn" | "hold" | "pending",
+  "status": "accepted" | "declined" | "graduated" | "withdrawn" | "pending",
   "attendance_type": "full_time" | "part_time"   // required when status = "accepted"
 }
 ```

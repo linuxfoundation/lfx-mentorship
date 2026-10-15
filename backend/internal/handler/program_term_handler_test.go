@@ -143,6 +143,12 @@ func applyTargetRequest() *http.Request {
 	return requestWithChiParam(r, "termID", "term-1")
 }
 
+// openTermInWindow returns an open term whose application window spans today.
+func openTermInWindow(programID, termID string) *models.ProgramTerm {
+	start, end := time.Now().AddDate(0, 0, -1), time.Now().AddDate(0, 0, 1)
+	return &models.ProgramTerm{ID: termID, ProgramID: programID, Name: "Spring 2026", Status: models.ProgramTermStatusOpen, ApplicationStartDate: &start, ApplicationEndDate: &end}
+}
+
 func TestProgramTermHandler_GetApplyTarget_ReturnsNamesAndAcceptance(t *testing.T) {
 	project := "Kubernetes"
 	programs := &stubProgramSvc{
@@ -155,7 +161,7 @@ func TestProgramTermHandler_GetApplyTarget_ReturnsNamesAndAcceptance(t *testing.
 			if programID != "prog-1" || termID != "term-1" {
 				t.Errorf("wrong scope: program=%q term=%q", programID, termID)
 			}
-			return &models.ProgramTerm{ID: termID, ProgramID: programID, Name: "Spring 2026", Status: models.ProgramTermStatusOpen}, nil
+			return openTermInWindow(programID, termID), nil
 		},
 	}, programs)
 
@@ -197,6 +203,35 @@ func TestProgramTermHandler_GetApplyTarget_NoProjectOmitsProjectName(t *testing.
 	}
 	if raw["accepting_applications"] != false {
 		t.Fatalf("accepting_applications = %v; want false for a closed term", raw["accepting_applications"])
+	}
+}
+
+// A pending program stays visible to its admin, but submit refuses an unpublished program, so the
+// apply page must not report it as accepting.
+func TestProgramTermHandler_GetApplyTarget_UnpublishedProgramNotAccepting(t *testing.T) {
+	pending := &stubProgramSvc{
+		getBySlug: func(_ context.Context, id string) (*models.Program, error) {
+			return &models.Program{ID: id, Name: "LFX Mentorship", Status: models.ProgramStatusPending}, nil
+		},
+	}
+	h := handler.NewProgramTermHandler(&stubProgramTermSvc{
+		getByProgramAndID: func(_ context.Context, programID, termID string) (*models.ProgramTerm, error) {
+			return openTermInWindow(programID, termID), nil
+		},
+	}, pending)
+
+	w := httptest.NewRecorder()
+	h.GetApplyTarget(w, applyTargetRequest())
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d; want 200", w.Code)
+	}
+	var got models.ProgramTermApplyTarget
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.AcceptingApplications {
+		t.Fatal("accepting_applications = true; want false for an unpublished program")
 	}
 }
 
