@@ -16,4 +16,12 @@ CREATE INDEX IF NOT EXISTS idx_index_outbox_inflight
   ON index_outbox (claimed_at)
   WHERE state = 'in_flight';
 
+-- The FGA relay's claim skips objects that already have a marker in flight.
+-- Without an index on in-flight markers by object, Postgres found them by
+-- walking the whole table on every claim (~90 ms over 330k markers), once a
+-- second per pod, and slower as acknowledged markers left dead tuples behind.
+CREATE INDEX IF NOT EXISTS idx_fga_outbox_in_flight_object
+  ON fga_outbox (object_type, object_uid)
+  WHERE state = 'in_flight';
+
 COMMIT;

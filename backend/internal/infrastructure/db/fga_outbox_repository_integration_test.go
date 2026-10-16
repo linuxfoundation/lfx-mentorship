@@ -218,6 +218,44 @@ func TestFGAOutboxIntegration_ClaimRechecksEligibilityAfterConcurrentClaim(t *te
 	}
 }
 
+// While markers are in flight, which during a drain is always, the claim's
+// NOT EXISTS has to find the in-flight marker for each candidate object. Without
+// an index on in-flight markers by object, Postgres walked the whole table on
+// every claim (~90 ms over 330k markers), once a second per pod.
+func TestFGAOutboxIntegration_ClaimFindsInFlightMarkersByObjectIndex(t *testing.T) {
+	pool := integrationPool(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO fga_outbox (marker_kind, object_type, object_uid, desired_operation)
+		SELECT 'object', 'mentorship_task', 'task-' || n, 'update_access' FROM generate_series(1, 20000) AS n`); err != nil {
+		t.Fatalf("seed markers: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE fga_outbox SET state = 'in_flight', claimed_at = NOW(), claimed_generation = generation
+		WHERE id IN (SELECT id FROM fga_outbox ORDER BY object_type, object_uid, id LIMIT 150)`); err != nil {
+		t.Fatalf("mark in flight: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `ANALYZE fga_outbox`); err != nil {
+		t.Fatalf("analyze: %v", err)
+	}
+	rows, err := pool.Query(ctx, `EXPLAIN WITH `+fgaOutboxClaimCTEs+` SELECT id FROM candidates`, 50, 10, 50*fgaClaimScanFactor)
+	if err != nil {
+		t.Fatalf("explain claim: %v", err)
+	}
+	var plan []string
+	for rows.Next() {
+		var line string
+		if err := rows.Scan(&line); err != nil {
+			t.Fatalf("scan plan: %v", err)
+		}
+		plan = append(plan, line)
+	}
+	rows.Close()
+	if text := strings.Join(plan, "\n"); !strings.Contains(text, "idx_fga_outbox_in_flight_object") {
+		t.Errorf("claim does not find in-flight markers through idx_fga_outbox_in_flight_object:\n%s", text)
+	}
+}
+
 // The index outbox keeps every sent record, so it only grows. Each relay polls
 // once a second, so the claim must reach pending and stale in-flight records
 // through indexes instead of scanning the sent ones on every poll.
