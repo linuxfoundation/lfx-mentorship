@@ -51,7 +51,7 @@ specs/            feature specs and task lists
 
 ## Deployment
 
-Both services ship as container images and Helm charts, deployed to the LFX v2 cluster by ArgoCD from [lfx-v2-argocd](https://github.com/linuxfoundation/lfx-v2-argocd) (`values/{global,dev}/lfx-mentorship-{backend,frontend}.yaml`). A push to `main` publishes `:development` images that dev tracks by digest; a `v*.*.*` tag publishes semver images and signed OCI charts, which staging and prod pin.
+Both services ship as container images and Helm charts, deployed to the LFX v2 cluster by ArgoCD from [lfx-v2-argocd](https://github.com/linuxfoundation/lfx-v2-argocd) (`values/{global,dev,prod}/lfx-mentorship-{backend,frontend}.yaml`). A push to `main` publishes `:development` images that dev tracks by digest; a `v*.*.*` tag publishes semver images and signed OCI charts, which prod pins.
 
 - **Base images are digest-pinned** — Chainguard Go to build, `gcr.io/distroless/static-debian12:nonroot` to run. Distroless has no shell and already ships CA certificates; keep it that way rather than reaching for alpine to install packages. It runs as uid 65532, matching the charts' `securityContext`.
 - **Migrations run automatically** as a Helm `pre-install`/`pre-upgrade` hook Job (`cmd/migrate`, embedding `db/migrations` via `iofs`), so schema changes land before new pods serve traffic. The hook deliberately uses the default ServiceAccount and mounts no ConfigMap — on a first install, pre-install hooks run before the chart's own ServiceAccount and ConfigMap exist.
@@ -98,6 +98,6 @@ Before creating or updating a PR, review the entire diff and verify:
 
 Implementation in progress. The backend (Go + Chi under `backend/`, Postgres schema in `backend/db/migrations/`) and the Nuxt public site under `frontend/` both build, containerize, and have Helm charts. Run `make build`, `make test`, `make lint`, and `make license-check` from `backend/`.
 
-Dev deployment to the LFX v2 cluster is wired up but **not yet applied** — see **Deployment** above. Authorization is validated in-process against Auth0 today; moving it to the platform's Heimdall/OpenFGA edge is a separate, later piece of work and is not a reason to hold up changes here.
+Dev and prod are deployed — see **Deployment** above. The API sits behind the LFX v2 gateway: Heimdall authorizes each route against OpenFGA, and the backend accepts only Heimdall-issued JWTs. Rollout status and open items are in `docs/heimdall-fga-implementation.md` and `docs/rewrite/blockers.md`.
 
 Tracking: [linuxfoundation/lfx-self-serve#1526](https://github.com/linuxfoundation/lfx-self-serve/issues/1526).
