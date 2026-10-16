@@ -60,17 +60,9 @@ func (r *IndexOutboxRepository) Enqueue(ctx context.Context, record domain.Index
 	return nil
 }
 
-func (r *IndexOutboxRepository) Claim(ctx context.Context, limit int) ([]domain.IndexOutboxRecord, error) {
-	if limit <= 0 {
-		limit = 50
-	}
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	var deadLettered int
-	if err := tx.QueryRow(ctx, `
+// indexOutboxDeadLetterStaleQuery dead-letters in-flight records whose relay
+// crashed after the last allowed attempt ($1 is the attempt limit).
+const indexOutboxDeadLetterStaleQuery = `
 		WITH stale_dead AS (
 			UPDATE index_outbox
 			SET state = 'dead_letter', claimed_generation = NULL, claimed_at = NULL,
@@ -81,10 +73,12 @@ func (r *IndexOutboxRepository) Claim(ctx context.Context, limit int) ([]domain.
 			  AND attempts >= $1
 			RETURNING id
 		)
-		SELECT COUNT(*) FROM stale_dead`, r.maxAttempts).Scan(&deadLettered); err != nil {
-		return nil, fmt.Errorf("dead-letter stale index outbox records: %w", err)
-	}
-	rows, err := tx.Query(ctx, `
+		SELECT COUNT(*) FROM stale_dead`
+
+// indexOutboxClaimQuery marks up to $1 due or stale records in flight ($2 is the
+// attempt limit). Sent records stay in the table, so both branches of the filter
+// must be reachable by index (idx_index_outbox_pending, idx_index_outbox_inflight).
+const indexOutboxClaimQuery = `
 		WITH claimed AS (
 			SELECT id
 			FROM index_outbox
@@ -106,7 +100,22 @@ func (r *IndexOutboxRepository) Claim(ctx context.Context, limit int) ([]domain.
 		WHERE o.id = claimed.id
 		RETURNING o.id, o.object_type, o.object_uid, o.action, o.headers, o.data,
 		          o.indexing_config, o.attempts, o.generation, o.claimed_generation,
-		          o.claimed_at, o.created_on`, limit, r.maxAttempts)
+		          o.claimed_at, o.created_on`
+
+func (r *IndexOutboxRepository) Claim(ctx context.Context, limit int) ([]domain.IndexOutboxRecord, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var deadLettered int
+	if err := tx.QueryRow(ctx, indexOutboxDeadLetterStaleQuery, r.maxAttempts).Scan(&deadLettered); err != nil {
+		return nil, fmt.Errorf("dead-letter stale index outbox records: %w", err)
+	}
+	rows, err := tx.Query(ctx, indexOutboxClaimQuery, limit, r.maxAttempts)
 	if err != nil {
 		return nil, fmt.Errorf("claim index outbox: %w", err)
 	}

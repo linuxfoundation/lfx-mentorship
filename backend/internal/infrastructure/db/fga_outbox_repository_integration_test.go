@@ -11,6 +11,7 @@ import (
 	"errors"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -214,6 +215,49 @@ func TestFGAOutboxIntegration_ClaimRechecksEligibilityAfterConcurrentClaim(t *te
 	}
 	if acknowledged, err := repo.Acknowledge(ctx, first[0]); err != nil || !acknowledged {
 		t.Fatalf("acknowledge first claim: acknowledged=%v err=%v", acknowledged, err)
+	}
+}
+
+// The index outbox keeps every sent record, so it only grows. Each relay polls
+// once a second, so the claim must reach pending and stale in-flight records
+// through indexes instead of scanning the sent ones on every poll.
+func TestIndexOutboxIntegration_ClaimDoesNotScanSentRecords(t *testing.T) {
+	pool := integrationPool(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO index_outbox (object_type, object_uid, action, headers, state, sent_on)
+		SELECT 'mentorship_task', gen_random_uuid(), 'created', '{}'::jsonb, 'sent', NOW()
+		FROM generate_series(1, 20000)`); err != nil {
+		t.Fatalf("seed sent records: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `ANALYZE index_outbox`); err != nil {
+		t.Fatalf("analyze: %v", err)
+	}
+	for _, tc := range []struct {
+		name  string
+		query string
+		args  []any
+	}{
+		{"stale sweep", indexOutboxDeadLetterStaleQuery, []any{10}},
+		{"claim", indexOutboxClaimQuery, []any{50, 10}},
+	} {
+		name := tc.name
+		rows, err := pool.Query(ctx, "EXPLAIN "+tc.query, tc.args...)
+		if err != nil {
+			t.Fatalf("explain %s: %v", name, err)
+		}
+		var plan []string
+		for rows.Next() {
+			var line string
+			if err := rows.Scan(&line); err != nil {
+				t.Fatalf("scan %s plan: %v", name, err)
+			}
+			plan = append(plan, line)
+		}
+		rows.Close()
+		if text := strings.Join(plan, "\n"); strings.Contains(text, "Seq Scan on index_outbox") {
+			t.Errorf("%s scans the whole table:\n%s", name, text)
+		}
 	}
 }
 
