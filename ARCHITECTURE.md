@@ -12,25 +12,19 @@ allowed to do what, and which services own what.
 **This file describes the target architecture**, not the state of the build. Build and rollout
 status lives in [`docs/heimdall-fga-implementation.md`](docs/heimdall-fga-implementation.md) and
 [`docs/rewrite/blockers.md`](docs/rewrite/blockers.md), so that this file stays stable as the code
-moves. The one exception is §6, which lists the contracts that are not settled yet, so that nobody
-builds against them.
+moves. §6 lists the decisions that are still open, so that nobody builds against them.
 
 Companion documents, all narrower than this one:
 
 | Document | Purpose |
 |---|---|
-| [`docs/rewrite/00-current-authz-relations.md`](docs/rewrite/00-current-authz-relations.md) | The legacy authorization baseline the new model is validated against |
-| [`docs/rewrite/01-current-system.md`](docs/rewrite/01-current-system.md) | The legacy platform being replaced |
-| [`docs/rewrite/02-target-architecture.md`](docs/rewrite/02-target-architecture.md) | Full rewrite proposal (data model, object storage, repo layout, scope exclusions) |
-| [`docs/rewrite/03-migration-plan.md`](docs/rewrite/03-migration-plan.md) | Migration phases |
+| [`docs/rewrite/02-target-architecture.md`](docs/rewrite/02-target-architecture.md) | Data model, object storage, repo layout, scope exclusions |
 | [`docs/rewrite/04-authorization-model.md`](docs/rewrite/04-authorization-model.md) | **The FGA model** — types, relations, and the Postgres/FGA split |
 | [`docs/rewrite/05-heimdall-gateway.md`](docs/rewrite/05-heimdall-gateway.md) | The gateway edge that consumes it |
 | [`docs/rewrite/06-route-matrix.md`](docs/rewrite/06-route-matrix.md) | **The per-route matrix** — every route's authenticator, authorizer, object extraction and relation; the implementation contract for the RuleSets |
 | [`docs/rewrite/07-email-delivery.md`](docs/rewrite/07-email-delivery.md) | The transactional email rail |
-| [`docs/rewrite/08-prod-migration-runbook.md`](docs/rewrite/08-prod-migration-runbook.md) | Production data migration runbook |
 | [`docs/fga-contract.md`](docs/fga-contract.md) | The messages this service publishes to fga-sync |
 | [`backend/docs/indexer-contract.md`](backend/docs/indexer-contract.md) | The documents this service publishes to the indexer |
-| [`CLAUDE.md`](CLAUDE.md) | Conventions for working in this repo |
 
 Where the code, the spec directory, or `docs/rewrite/` contradict the *contract* stated here, that is
 a defect in one of them — say so in review rather than letting the drift stand.
@@ -137,8 +131,8 @@ start — rather than shipping bespoke auth and retrofitting later. Decided in a
 - **There is no `mentorship_super_admin`.** LF staff reach everything through the existing
   project `writer` relation. A new global role for the same population would be redundant, and
   `writer` is already the population that can grant roles to others.
-- **Program approval is not project-scoped.** Approval is performed by a single global population
-  (currently one person), so it is a **global team membership check** on the approve endpoint —
+- **Program approval is not project-scoped.** Approval is performed by a single global population,
+  so it is a **global team membership check** on the approve endpoint —
   the same pattern used for SurveyMonkey template managers — not a relation on `project`.
 - **A project-level program admin relation is needed** — `project#mentorship_program_admin`:
   someone who can manage *all* mentorship programs for a project, including creating new ones,
@@ -157,8 +151,7 @@ publishes.** None of them is restated here. The model — four mentorship-owned 
 (`mentorship_program`, `mentorship_application`, `mentorship_task`, `mentorship_approver_team`) plus
 `mentorship_program_admin` and the computed `mentorship_program_creator` on the existing `project`
 type — is in
-[`model.fga`](https://github.com/linuxfoundation/lfx-v2-helm/blob/main/charts/lfx-platform/files/model.fga)
-(added in [lfx-v2-helm#177](https://github.com/linuxfoundation/lfx-v2-helm/pull/177)).
+[`model.fga`](https://github.com/linuxfoundation/lfx-v2-helm/blob/main/charts/lfx-platform/files/model.fga).
 
 What belongs in *this* document is the handful of properties that are cross-component contracts
 rather than schema:
@@ -177,16 +170,15 @@ rather than schema:
   `mentorship_super_admin`, per §3.1.
 - **One service owns all tuples on an FGA object.** `project#mentorship_program_admin` is owned end
   to end by [lfx-v2-project-service](https://github.com/linuxfoundation/lfx-v2-project-service) —
-  storage, the management API, and emission in its full-state `update_access`
-  ([lfx-v2-project-service#127](https://github.com/linuxfoundation/lfx-v2-project-service/pull/127)).
-  Mentorship only consumes the inherited `writer`, and emits tuples only on its own four
+  storage, the management API, and emission in its full-state `update_access`. Mentorship only
+  consumes the inherited `writer`, and emits tuples only on its own four
   `mentorship_*` types. `exclude_relations` was considered and is not the design (`04` AQ-4).
 - **The backend makes no FGA queries, so a caller's own programs, applications or tasks are listed
   through Query Service** ([lfx-v2-query-service](https://github.com/linuxfoundation/lfx-v2-query-service),
   over the index this service feeds), not through "my X" endpoints. The service serves only fully
   public lists (published programs, publicly listable profiles) behind `allow_all`, and lists
-  nested under an object the edge has already checked (`05`, `06`). The `/me` lists it serves
-  today for those types are not settled (§6).
+  nested under an object the edge has already checked (`05`, `06`). Whether `/me` lists of the
+  caller's own programs and applications may stay in the service is open (§6).
 
 ### 3.3 Service-side invariants the edge cannot enforce
 
@@ -267,9 +259,9 @@ and they are contracts rather than implementation details:
 | **lfx-v2-project-service** | Mentorship → NATS request/reply | Project slug, name and logo for a program's `lf_project_uid`. Also the owner of `project#mentorship_program_admin` (§3.2) | Program create or update fails; an unknown project is `400` |
 | **lfx-v2-auth-service** | Mentorship → NATS request/reply | LF account lookup by email or username, for mentor invitations | `ErrUpstreamUnavailable` |
 | **lfx-v2-email-service** | Mentorship → NATS `lfx.email-service.send_email` | The platform rail for all transactional email: a request/reply relay over Amazon SES, imported as `lfx-v2-email-service/pkg/api`. It accepts **pre-rendered** `html`/`text` only — no templating — so Mentorship owns and renders its own templates (`07`). Not Mandrill: that is the legacy rail and is out of scope ([linuxfoundation/lfx-self-serve#2188](https://github.com/linuxfoundation/lfx-self-serve/issues/2188)) | Log and continue — a failed send must not fail the business operation |
-| **Ledger API** | Mentorship → Ledger | Hourly CronJob, `LEDGER_API_KEY` bearer token; reads each program's credit and debit transactions (the Ledger project ID is the program ID) and caches amount raised and spent in `program_funding_stats`. **Direct, not proxied** — `LEDGER_BASE_URL` points at the Ledger service itself ([`clients/ledger.go`](backend/internal/infrastructure/clients/ledger.go)) | Last cached values served |
-| **Crowdfunding API** | Mentorship → CF → Ledger | Request-time call from `ProgramService` to CF's public (anonymous) gateway route `/crowdfunding/initiatives/{id}/transactions`; no token is sent ([`clients/crowdfunding.go`](backend/internal/infrastructure/clients/crowdfunding.go)). CF reads the Ledger and adds what a raw Ledger transaction lacks: donor metadata and the organization/individual split. The initiative ID is the program ID, which CF's `mentorship-sync` also uses as its `initiatives.id`. Sponsor cards aggregate those same transactions locally (`aggregateProgramSponsors`) | `ErrUpstreamUnavailable` |
-| **Snowflake** | Mentorship → SF → CF | Fivetran Postgres connector; `fivetran_mentorship_*` dbt models repointed. Crowdfunding reads Mentorship data from here (`mentorship-sync`, `03` OQ-2) | Analytics-plane only — never in the serving path |
+| **Ledger API** | Mentorship → Ledger | Hourly CronJob, `LEDGER_API_KEY` bearer token; reads each program's credit and debit transactions (the Ledger project ID is the program ID) and caches amount raised and spent in `program_funding_stats`. **Direct**, not proxied through Crowdfunding | Last cached values served |
+| **Crowdfunding API** | Mentorship → CF → Ledger | Request-time call to CF's public (anonymous) gateway route `/crowdfunding/initiatives/{id}/transactions`; no token is sent. CF reads the Ledger and adds what a raw Ledger transaction lacks: donor metadata and the organization/individual split. The initiative ID is the program ID, which CF's `mentorship-sync` also uses as its `initiatives.id`. Sponsor cards are aggregated from those same transactions in this service | `ErrUpstreamUnavailable` |
+| **Snowflake** | Mentorship → SF → CF | Fivetran Postgres connector feeding the `fivetran_mentorship_*` dbt models. Crowdfunding reads Mentorship data from here (`mentorship-sync`) | Analytics-plane only — never in the serving path |
 | **S3** | Mentorship → S3 | Program logos in a public bucket behind CloudFront, task submissions in a private one. Uploads go through the API, not presigned URLs; IRSA when deployed (`02` §object storage) | Upload fails; deletes are queued (`object_deletions`) and retried |
 | **LFX Self Serve** | SS → Mentorship | User token against `/mentorship/v1` on the shared gateway host (§1) | — |
 
@@ -279,7 +271,7 @@ request-time call goes through Crowdfunding. Do not implement against the wrong 
 **Direction of dependency matters, and it is asymmetric — state both halves:**
 
 - **Crowdfunding does not depend on Mentorship at request time.** It consumes Mentorship data only
-  through the Snowflake batch feed (`03` OQ-2), so nothing in *Crowdfunding's* serving path waits on
+  through the Snowflake batch feed, so nothing in *Crowdfunding's* serving path waits on
   this service.
 - **Mentorship does depend on Crowdfunding at request time.** `GET /v1/programs/{id}/transactions`
   and `/sponsors` call Crowdfunding synchronously and return `ErrUpstreamUnavailable` when it is
@@ -293,8 +285,7 @@ stale rather than fetched inline.
 
 ## 5. Data ownership
 
-PostgreSQL (shared LFX v2 RDS) is the system of record, replacing 8 DynamoDB tables and 30 GSIs.
-Full ERD in
+PostgreSQL (shared LFX v2 RDS) is the system of record. Full ERD in
 [`docs/rewrite/02-target-architecture.md`](docs/rewrite/02-target-architecture.md#data-model-proposal-level-erd).
 
 Cross-component notes:
@@ -304,14 +295,11 @@ Cross-component notes:
   authoritative for identity.
 - **`programs.lf_project_uid` is the project join key**, and the FGA parent tuple
   `mentorship_program#project@project:{uid}` is derived from it — so every inherited permission in
-  §3.2 depends on it. Program creation requires it and validates it against Project Service. The
-  target is `NOT NULL`. The column stays nullable only until the legacy programs the importer could
-  not map (`UNMAPPED_PROGRAM`) are resolved (`02`, `03`); until then such a program inherits nothing
-  from a project. `cii_project_id` is a *different*, legacy identifier and is not a substitute for
-  it.
+  §3.2 depends on it. Every program has one: creation requires it and validates it against Project
+  Service. `cii_project_id` is a *different*, legacy identifier and is not a substitute for it.
 - **`program_funding_stats`** is a cache, never authoritative. It may be stale.
-- **Search.** Elasticsearch is dropped from scope. Platform-wide search is Query Service over the
-  index this service feeds; in-service filtering is Postgres (§6).
+- **Search.** Elasticsearch is out of scope. Platform-wide search is Query Service over the index
+  this service feeds; in-service search is Postgres.
 - **FGA tuples and index documents are emitted through transactional outboxes**, because a
   Postgres commit and a NATS publish cannot be made atomic. The two differ on retry:
   - The **FGA** outbox stores a dirty-object marker, and the relay re-derives the payload from
@@ -324,12 +312,11 @@ Cross-component notes:
 
 ---
 
-## 6. Contracts not settled yet
+## 6. Open decisions
 
 Listed so that nobody builds against them.
 
-| Contract | What is open |
+| Decision | What is open |
 |---|---|
-| **`/me` lists of programs and applications** | `/v1/me/programs`, `/v1/me/mentor-programs` and `/v1/me/applications` are served by the service, and Self Serve reads all three, but caller-owned collections belong in Query Service (§3.2). The two program lists are exceptions pending platform sign-off, because they need grouping and counts the program index document does not carry (`06`); `/v1/me/applications` has no exception recorded |
-| **Approver-roster administration** | `/v1/admin/approver-team/members` exists but is cluster-local, behind a backend scope check, and not routed through the gateway. Exposing it needs a platform LF-staff relation that is not yet approved, and the roster has no named owner (`04` AQ-8, `06`) |
-| **Postgres full-text search** | `02` targets `tsvector` + GIN; no migration has them and in-service search uses `ILIKE`. Nothing may assume full-text semantics such as ranking or stemming |
+| **`/me` lists of programs and applications** | Whether `/v1/me/programs`, `/v1/me/mentor-programs` and `/v1/me/applications` may be served by this service rather than Query Service (§3.2). The two program lists need grouping and counts the program index document does not carry; awaiting platform sign-off (`06`) |
+| **Approver-roster administration** | Which platform LF-staff relation authorizes administering `mentorship_approver_team:global`, and who owns the roster (`04` AQ-8). The administration routes stay off the gateway until this is decided (`06`) |
