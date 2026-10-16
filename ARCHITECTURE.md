@@ -58,7 +58,7 @@ flowchart TB
     NATSRR["lfx-v2-email-service<br/>lfx-v2-auth-service<br/>lfx-v2-project-service"]
     LEDGER["Ledger API<br/>mentorship-credit transactions"]
     CF["Crowdfunding API<br/>categorized transactions"]
-    S3[("S3<br/>logos (public) · attachments (private)")]
+    S3[("S3, private buckets<br/>logos via CloudFront · attachments")]
     SF[("Snowflake")]
 
     USERS & ADMIN --> NUXT
@@ -262,7 +262,7 @@ and they are contracts rather than implementation details:
 | **Ledger API** | Mentorship → Ledger | Hourly CronJob, `LEDGER_API_KEY` bearer token; reads each program's credit and debit transactions (the Ledger project ID is the program ID) and caches amount raised and spent in `program_funding_stats`. **Direct**, not proxied through Crowdfunding | Last cached values served |
 | **Crowdfunding API** | Mentorship → CF → Ledger | Request-time call to CF's public (anonymous) gateway route `/crowdfunding/initiatives/{id}/transactions`; no token is sent. CF reads the Ledger and adds what a raw Ledger transaction lacks: donor metadata and the organization/individual split. The initiative ID is the program ID, which CF's `mentorship-sync` also uses as its `initiatives.id`. Sponsor cards are aggregated from those same transactions in this service | `ErrUpstreamUnavailable` |
 | **Snowflake** | Mentorship → SF → CF | Fivetran Postgres connector feeding the `fivetran_mentorship_*` dbt models. Crowdfunding reads Mentorship data from here (`mentorship-sync`) | Analytics-plane only — never in the serving path |
-| **S3** | Mentorship → S3 | Program logos in a public bucket behind CloudFront, task submissions in a private one. Uploads go through the API, not presigned URLs; IRSA when deployed (`02` §object storage) | Upload fails; deletes are queued (`object_deletions`) and retried |
+| **S3** | Mentorship → S3 | Two private buckets: program logos served publicly through CloudFront with Origin Access Control, task submissions through the API's authenticated download route. Uploads go through the API, not presigned URLs; IRSA when deployed (`02` §object storage) | Upload fails; deletes are queued (`object_deletions`) and retried |
 | **LFX Self Serve** | SS → Mentorship | User token against `/mentorship/v1` on the shared gateway host (§1) | — |
 
 Two Ledger paths, not one: the cache job calls the Ledger directly with an API key, and the
