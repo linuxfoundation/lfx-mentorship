@@ -217,7 +217,7 @@ func (n *Notifier) inviterName(ctx context.Context, inviterID string) string {
 	}
 	inviter, err := n.repos.Users.GetByID(ctx, inviterID)
 	if err != nil {
-		n.logger.WarnContext(ctx, "mentor inviter unavailable", "user_id", inviterID, "error", err)
+		n.logger.WarnContext(ctx, "mentor inviter unavailable", "error", err)
 		return inviterFallback
 	}
 	return fullName(inviter, inviterFallback)
@@ -422,7 +422,7 @@ func (n *Notifier) NotifyProfileCreated(ctx context.Context, userID string, prof
 	case models.UserProfileTypeMentee:
 		name, subject = templateMenteeProfileCreated, "Your LFX Mentorship mentee profile was successfully created."
 	default:
-		n.logger.WarnContext(ctx, "profile type has no email", "user_id", userID, "profile_type", profileType)
+		n.logger.WarnContext(ctx, "profile type has no email", "profile_type", profileType)
 		return
 	}
 	n.dispatch(ctx, name, func(ctx context.Context) ([]Message, error) {

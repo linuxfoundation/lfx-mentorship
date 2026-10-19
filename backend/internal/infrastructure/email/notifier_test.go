@@ -830,7 +830,7 @@ func TestNotifyAdminMentorRequested_PrefersMemberEmail(t *testing.T) {
 			if len(sent) != 1 {
 				t.Fatalf("sent = %+v", sent)
 			}
-			mustContain(t, "text", sent[0].Text, "contact them at "+tc.want+"\n")
+			mustContain(t, "text", sent[0].Text, "contact them at "+tc.want+".\n")
 		})
 	}
 }
@@ -846,7 +846,7 @@ func TestNotifyAdminMentorRequestedAndWithdrew(t *testing.T) {
 			subject: "A new mentor submitted request to join Kernel <Dev> mentorship program.",
 			want: []string{
 				"Mo Mentor\nRequested to become a mentor\n\nMo Mentor submitted a request to join the Kernel <Dev> mentorship project as a mentor.",
-				"Please select the CTA below to review the request on your program's Mentors tab, then contact them at mentor@linuxfoundation.org",
+				"Please select the CTA below to review the request on your program's Mentors tab, then contact them at mentor@linuxfoundation.org.",
 				"If you believe this mentor is not a good fit for your project, please contact them as well and let them know.",
 				"Add to Program: " + testAdminProgramURL,
 			},

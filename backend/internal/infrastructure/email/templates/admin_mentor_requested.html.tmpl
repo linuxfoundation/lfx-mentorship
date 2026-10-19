@@ -4,6 +4,6 @@
 {{template "header" .}}<p style="margin:0;font-size:20px;font-weight:600;line-height:1.4;color:#111827;">{{.MentorName}}</p>
 <p style="margin:0 0 24px;font-size:15px;color:#6b7280;">Requested to become a mentor</p>
 <p><strong>{{.MentorName}}</strong> submitted a request to join the <strong>{{.ProgramName}}</strong> mentorship project as a mentor.</p>
-<p>Please select the CTA below to review the request on your program's Mentors tab{{with .MentorEmail}}, then contact them at {{.}}{{end}}</p>
+<p>Please select the CTA below to review the request on your program's Mentors tab{{with .MentorEmail}}, then contact them at {{.}}{{end}}.</p>
 <p>If you believe this mentor is not a good fit for your project, please contact them as well and let them know.</p>
 {{template "button" .ManageURL}}Add to Program{{template "button_end"}}{{template "footer" .}}

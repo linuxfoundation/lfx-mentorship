@@ -443,6 +443,7 @@ func (n *stubNotifier) NotifyMenteeGraduated(_ context.Context, _ string)   { n.
 func (n *stubNotifier) NotifyMenteeTaskAssigned(_ context.Context, _ string) {
 	n.taskAssignedCalls++
 }
+func (n *stubNotifier) NotifyMenteePrerequisiteReminder(_ context.Context, _ string) {}
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 

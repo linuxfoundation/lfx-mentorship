@@ -31,18 +31,18 @@ func (n *LogNotifier) NotifyProgramDecided(ctx context.Context, programID string
 }
 
 // NotifyProgramUpdated logs a program-updated event.
-func (n *LogNotifier) NotifyProgramUpdated(ctx context.Context, programID, editorID string) {
-	n.logger.InfoContext(ctx, "notify: program updated", "program_id", programID, "editor_id", editorID)
+func (n *LogNotifier) NotifyProgramUpdated(ctx context.Context, programID, _ string) {
+	n.logger.InfoContext(ctx, "notify: program updated", "program_id", programID)
 }
 
 // NotifyProfileCreated logs a profile-created event.
-func (n *LogNotifier) NotifyProfileCreated(ctx context.Context, userID string, profileType models.UserProfileType) {
-	n.logger.InfoContext(ctx, "notify: profile created", "user_id", userID, "profile_type", profileType)
+func (n *LogNotifier) NotifyProfileCreated(ctx context.Context, _ string, profileType models.UserProfileType) {
+	n.logger.InfoContext(ctx, "notify: profile created", "profile_type", profileType)
 }
 
 // NotifyMentorInvited logs a mentor invitation event.
-func (n *LogNotifier) NotifyMentorInvited(ctx context.Context, programID, userID, inviterID, token string) {
-	n.logger.InfoContext(ctx, "notify: mentor invited", "program_id", programID, "user_id", userID, "inviter_id", inviterID)
+func (n *LogNotifier) NotifyMentorInvited(ctx context.Context, programID, userID, _, token string) {
+	n.logger.InfoContext(ctx, "notify: mentor invited", "program_id", programID, "user_id", userID)
 }
 
 // NotifyMentorDeclined logs a mentor-declined event.
@@ -103,4 +103,9 @@ func (n *LogNotifier) NotifyMenteeGraduated(ctx context.Context, applicationID s
 // NotifyMenteeTaskAssigned logs a task-assigned event.
 func (n *LogNotifier) NotifyMenteeTaskAssigned(ctx context.Context, taskID string) {
 	n.logger.InfoContext(ctx, "notify: mentee task assigned", "task_id", taskID)
+}
+
+// NotifyMenteePrerequisiteReminder logs a prerequisite-reminder event.
+func (n *LogNotifier) NotifyMenteePrerequisiteReminder(ctx context.Context, applicationID string) {
+	n.logger.InfoContext(ctx, "notify: mentee prerequisite reminder", "application_id", applicationID)
 }
