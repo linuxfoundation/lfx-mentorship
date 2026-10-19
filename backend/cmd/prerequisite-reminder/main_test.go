@@ -4,10 +4,54 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"io"
+	"log/slog"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestSendWithRetry(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	errDown := errors.New("database down")
+	// failing returns a send that fails its first n calls and then reminds 7, counting every call.
+	failing := func(n int, calls *int) func(context.Context) (int, error) {
+		return func(context.Context) (int, error) {
+			*calls++
+			if *calls <= n {
+				return 0, errDown
+			}
+			return 7, nil
+		}
+	}
+
+	t.Run("succeeds after a failure", func(t *testing.T) {
+		calls := 0
+		reminded, err := sendWithRetry(context.Background(), logger, 0, failing(1, &calls))
+		if err != nil || reminded != 7 || calls != 2 {
+			t.Errorf("got (%d, %v) after %d calls; want (7, nil) after 2", reminded, err, calls)
+		}
+	})
+	t.Run("gives up after the last attempt", func(t *testing.T) {
+		calls := 0
+		_, err := sendWithRetry(context.Background(), logger, 0, failing(sendAttempts, &calls))
+		if !errors.Is(err, errDown) || calls != sendAttempts {
+			t.Errorf("got %v after %d calls; want %v after %d", err, calls, errDown, sendAttempts)
+		}
+	})
+	t.Run("stops waiting when cancelled", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		calls := 0
+		_, err := sendWithRetry(ctx, logger, time.Hour, failing(sendAttempts, &calls))
+		if !errors.Is(err, errDown) || calls != 1 {
+			t.Errorf("got %v after %d calls; want %v after 1", err, calls, errDown)
+		}
+	})
+}
 
 func TestLoadConfig(t *testing.T) {
 	base := map[string]string{

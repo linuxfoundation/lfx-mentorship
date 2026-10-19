@@ -23,6 +23,17 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
+const (
+	// sendAttempts and sendRetryDelay retry a run that fails before queuing any reminder, such as
+	// one hit by a brief database outage. The Job itself never retries: there is no sent marker, so
+	// rerunning after a crash part-way through sending would email those mentees again.
+	sendAttempts   = 3
+	sendRetryDelay = 30 * time.Second
+	// shutdownGrace is how long queued reminders get to finish once the job is told to stop; it
+	// stays under the pod's default 30-second termination grace period.
+	shutdownGrace = 20 * time.Second
+)
+
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	if err := run(logger); err != nil {
@@ -75,14 +86,24 @@ func run(logger *slog.Logger) error {
 	}
 
 	logger.Info("prerequisite-reminder starting")
-	reminded, err := service.NewPrerequisiteReminderService(applicationRepo, notifier).SendReminders(ctx, start)
+	reminderSvc := service.NewPrerequisiteReminderService(applicationRepo, notifier)
+	reminded, err := sendWithRetry(ctx, logger, sendRetryDelay, func(ctx context.Context) (int, error) {
+		return reminderSvc.SendReminders(ctx, start)
+	})
 	if err != nil {
 		return err
 	}
-	// Reminders are queued from here on, and there is no sent marker: failing the run now would
-	// retry it and email every mentee again, so a send that does not finish is logged instead.
-	if err := notifier.Wait(ctx); err != nil {
-		logger.Error("prerequisite-reminder stopped before every reminder was sent", "error", err)
+
+	err = notifier.Wait(ctx)
+	if ctx.Err() != nil {
+		// Stopped while sending. The sends are detached from ctx and run on, so give them until
+		// shortly before the pod is killed rather than closing NATS under them.
+		graceCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
+		defer cancel()
+		err = notifier.Wait(graceCtx)
+	}
+	if err != nil {
+		return fmt.Errorf("stopped before every reminder was sent: %w", err)
 	}
 
 	logger.Info("prerequisite-reminder complete",
@@ -90,6 +111,23 @@ func run(logger *slog.Logger) error {
 		"reminded", reminded,
 	)
 	return nil
+}
+
+// sendWithRetry calls send up to sendAttempts times, delay apart, until it succeeds. send must queue
+// nothing when it fails, so a retry cannot remind anyone twice.
+func sendWithRetry(ctx context.Context, logger *slog.Logger, delay time.Duration, send func(context.Context) (int, error)) (int, error) {
+	for attempt := 1; ; attempt++ {
+		reminded, err := send(ctx)
+		if err == nil || attempt == sendAttempts {
+			return reminded, err
+		}
+		logger.Warn("prerequisite-reminder failed before sending; retrying", "attempt", attempt, "error", err)
+		select {
+		case <-ctx.Done():
+			return 0, err
+		case <-time.After(delay):
+		}
+	}
 }
 
 type config struct {

@@ -257,16 +257,15 @@ fundingStatsSyncCronJob:
 # reminder days. Sends through lfx-v2-email-service, so FGA_NATS_URL and
 # SELF_SERVE_URL are required, and EMAIL_ALLOWED_RECIPIENTS applies as it does to
 # the API. Reminder days are UTC calendar days and the job keeps no sent marker:
-# run it once a day, and keep timeZone at UTC.
+# run it once a day, and keep timeZone at UTC. A failed Job is never retried, since a
+# crash part-way through sending would email those mentees again; the command retries
+# its own failures from before it sends anything.
 prerequisiteReminderCronJob:
   enabled: false
   # 14:30 UTC daily, the legacy remind-incomplete-prerequisite-tasks schedule.
   schedule: "30 14 * * *"
   timeZone: "Etc/UTC"
   activeDeadlineSeconds: 1800
-  # A failed run is retried only when it failed before queuing any reminder; once
-  # reminders are queued the job exits successfully, so a retry never emails twice.
-  backoffLimit: 1
   image:
     # Defaults to same repository and tag as the main API image.
     repository: ""
