@@ -101,6 +101,26 @@ valueFrom is resolved at runtime, so it counts as set without a format check. */
 {{- end }}
 {{- end }}
 
+{{- /* The prerequisite reminder only sends email, so it needs NATS; the email guard above then
+requires SELF_SERVE_URL, which its button links to. */ -}}
+{{- if .Values.prerequisiteReminderCronJob.enabled }}
+{{- if not (or (get $email "FGA_NATS_URL") (hasKey $emailFromRef "FGA_NATS_URL")) }}
+{{- fail "values.yaml: FGA_NATS_URL is required (in config: or env:) when prerequisiteReminderCronJob.enabled=true — reminders are sent through lfx-v2-email-service." }}
+{{- end }}
+{{- if not .Values.prerequisiteReminderCronJob.schedule }}
+{{- fail "values.yaml: prerequisiteReminderCronJob.schedule is required when prerequisiteReminderCronJob.enabled=true." }}
+{{- end }}
+{{- if le (int .Values.prerequisiteReminderCronJob.activeDeadlineSeconds) 0 }}
+{{- fail "values.yaml: prerequisiteReminderCronJob.activeDeadlineSeconds must be greater than 0 when prerequisiteReminderCronJob.enabled=true." }}
+{{- end }}
+{{- if lt (int .Values.prerequisiteReminderCronJob.backoffLimit) 0 }}
+{{- fail "values.yaml: prerequisiteReminderCronJob.backoffLimit must be 0 or greater when prerequisiteReminderCronJob.enabled=true." }}
+{{- end }}
+{{- if not .Values.secretName }}
+{{- fail "values.yaml: secretName is required when prerequisiteReminderCronJob.enabled=true (must include the RDS connection components)." }}
+{{- end }}
+{{- end }}
+
 {{- /* Object storage: the binary refuses to start with a bucket but no region, or a logos
 bucket without a CDN prefix, since stored logo columns hold the full CDN URL. */ -}}
 {{- if or .Values.config.LOGOS_S3_BUCKET .Values.config.ATTACHMENTS_S3_BUCKET }}
