@@ -338,7 +338,7 @@ func (n *Notifier) NotifyProgramSubmitted(ctx context.Context, programID, submit
 		data := templateData{
 			RecipientName: reviewGreeting,
 			ProgramName:   program.Name,
-			ProgramURL:    n.programURL(program),
+			ProgramURL:    n.pendingProgramURL(program.ID),
 			ApproveURL:    n.programReviewURL(program.ID, reviewDecisionApprove),
 			RejectURL:     n.programReviewURL(program.ID, reviewDecisionReject),
 		}
@@ -983,6 +983,12 @@ func (n *Notifier) programURL(program *models.Program) string {
 		ref = program.ID
 	}
 	return n.publicURL + "/programs/" + url.PathEscape(ref)
+}
+
+// pendingProgramURL is the public site's page for a program awaiting review. It links by ID: the
+// public site resolves only published programs' slugs, but reads any visible program by its ID.
+func (n *Notifier) pendingProgramURL(programID string) string {
+	return n.publicURL + "/programs/" + url.PathEscape(programID)
 }
 
 // selfServeLink is the Self Serve page at path.

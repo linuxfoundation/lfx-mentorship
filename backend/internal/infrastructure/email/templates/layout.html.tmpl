@@ -9,7 +9,7 @@
 <meta name="color-scheme" content="light">
 <style>
 p { margin:0 0 16px; }
-a { color:#009AFF; }
+a { color:#0061A3; }
 @media only screen and (max-width:620px) { .wrapper { padding:24px 20px !important; } }
 </style>
 </head>
@@ -44,7 +44,7 @@ a { color:#009AFF; }
 {{end}}{{end}}
 {{- /* Call as {{template "button" .URL}}Label{{template "button_end"}} for a single primary button. */ -}}
 {{define "button"}}<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 24px;border-collapse:separate;">
-<tr><td align="center" valign="middle" bgcolor="#009AFF" style="border-radius:50px;background-color:#009AFF;"><a href="{{.}}" target="_blank" style="display:inline-block;padding:12px 24px;font-family:Inter,Arial,sans-serif;font-size:15px;font-weight:600;line-height:20px;color:#ffffff;text-decoration:none;border:1px solid #009AFF;border-radius:50px;">{{end}}
+<tr><td align="center" valign="middle" bgcolor="#0061A3" style="border-radius:50px;background-color:#0061A3;"><a href="{{.}}" target="_blank" style="display:inline-block;padding:12px 24px;font-family:Inter,Arial,sans-serif;font-size:15px;font-weight:600;line-height:20px;color:#ffffff;text-decoration:none;border:1px solid #0061A3;border-radius:50px;">{{end}}
 {{define "button_end"}}</a></td></tr>
 </table>
 {{end}}
@@ -53,14 +53,14 @@ a { color:#009AFF; }
 {{define "actions_start"}}<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 16px;">
 <tr><td style="font-family:Inter,Arial,sans-serif;">
 {{end}}
-{{define "action"}}<a href="{{.URL}}" target="_blank" style="display:inline-block;margin:0 8px 8px 0;padding:11px 23px;border-radius:50px;font-family:Inter,Arial,sans-serif;font-size:15px;font-weight:600;line-height:20px;text-decoration:none;{{if eq .Variant "primary"}}background-color:#009AFF;border:1px solid #009AFF;color:#ffffff;{{else if eq .Variant "approve"}}background-color:#ffffff;border:1px solid #16a34a;color:#16a34a;{{else if eq .Variant "reject"}}background-color:#ffffff;border:1px solid #dc2626;color:#dc2626;{{else}}background-color:#ffffff;border:1px solid #009AFF;color:#009AFF;{{end}}">{{.Label}}</a>
+{{define "action"}}<a href="{{.URL}}" target="_blank" style="display:inline-block;margin:0 8px 8px 0;padding:11px 23px;border-radius:50px;font-family:Inter,Arial,sans-serif;font-size:15px;font-weight:600;line-height:20px;text-decoration:none;{{if eq .Variant "primary"}}background-color:#0061A3;border:1px solid #0061A3;color:#ffffff;{{else if eq .Variant "approve"}}background-color:#ffffff;border:1px solid #15803d;color:#15803d;{{else if eq .Variant "reject"}}background-color:#ffffff;border:1px solid #dc2626;color:#dc2626;{{else}}background-color:#ffffff;border:1px solid #0061A3;color:#0061A3;{{end}}">{{.Label}}</a>
 {{end}}
 {{define "actions_end"}}</td></tr>
 </table>
 {{end}}
 {{define "footer"}}{{if not .Letter}}<p style="margin:8px 0 32px;font-size:15px;line-height:1.7;color:#374151;">Thank you,<br><strong style="color:#111827;">The LF Engineering Team</strong></p>
 {{end}}</td></tr>
-<tr><td style="border-top:1px solid #e5e7eb;padding:24px 0 0;font-family:Inter,Arial,sans-serif;font-size:12px;line-height:1.6;color:#9ca3af;">Copyright &copy; {{.Year}} The Linux Foundation&reg;. All rights reserved. The Linux Foundation has registered trademarks and uses trademarks. For a list of trademarks of The Linux Foundation, please see our <a href="https://www.linuxfoundation.org/legal/trademark-usage" target="_blank" style="color:#9ca3af;">Trademark Usage</a> page. Linux is a registered trademark of Linus Torvalds.</td></tr>
+<tr><td style="border-top:1px solid #e5e7eb;padding:24px 0 0;font-family:Inter,Arial,sans-serif;font-size:12px;line-height:1.6;color:#6b7280;">Copyright &copy; {{.Year}} The Linux Foundation&reg;. All rights reserved. The Linux Foundation has registered trademarks and uses trademarks. For a list of trademarks of The Linux Foundation, please see our <a href="https://www.linuxfoundation.org/legal/trademark-usage" target="_blank" style="color:#6b7280;">Trademark Usage</a> page. Linux is a registered trademark of Linus Torvalds.</td></tr>
 </table>
 </td></tr>
 </table>

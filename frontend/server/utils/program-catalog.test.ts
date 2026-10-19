@@ -212,6 +212,18 @@ describe('program lookups by slug or id', () => {
   );
 
   it.each([
+    ['fetchProgramCatalogItem', fetchProgramCatalogItem, '/catalog'],
+    ['fetchProgramMentees', fetchProgramMentees, '/mentees'],
+    ['fetchProgramSponsors', fetchProgramSponsors, '/sponsors'],
+  ] as const)('%s reads a program UUID without resolving it', async (_name, fetcher, suffix) => {
+    const uid = '3f2b8c1e-9a4d-4e7b-8c6f-1d2e3f4a5b6c';
+    fetchMock.mockResolvedValueOnce({ data: [] });
+    await fetcher(uid);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0]![0]).toBe(`http://api/v1/programs/${uid}${suffix}`);
+  });
+
+  it.each([
     ['fetchProgramCatalogItem', fetchProgramCatalogItem, 'Failed to load program'],
     ['fetchProgramMentees', fetchProgramMentees, 'Failed to load mentees'],
     ['fetchProgramSponsors', fetchProgramSponsors, 'Failed to load sponsors'],
