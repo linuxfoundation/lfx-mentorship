@@ -1,0 +1,5 @@
+{{- /* Copyright The Linux Foundation and each contributor to LFX. */ -}}
+{{- /* SPDX-License-Identifier: MIT */ -}}
+{{- /* Legacy: admin-project-edited-notification, whose crowdfunding "View Fund" button reads View Program here. */ -}}
+{{template "header" .}}{{template "greeting" (printf "Hi %s!" .RecipientName)}}<p>Just confirming that your updates to <strong>{{.ProgramName}}</strong> have been saved.</p>
+{{template "button" .ManageURL}}View Program{{template "button_end"}}{{template "footer" .}}

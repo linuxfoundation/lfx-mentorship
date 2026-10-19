@@ -204,7 +204,7 @@ func (s *ProgramMemberService) Create(ctx context.Context, programID string, inp
 
 	invite := input.MemberType == models.MemberTypeMentor && *input.Status == models.ProgramMemberStatusInvited
 	if invite {
-		if m, err := s.reinvite(ctx, programID, input.UserID); m != nil || err != nil {
+		if m, err := s.reinvite(ctx, programID, input.UserID, input.ActorID); m != nil || err != nil {
 			return m, err
 		}
 	}
@@ -218,7 +218,7 @@ func (s *ProgramMemberService) Create(ctx context.Context, programID string, inp
 
 	// A mentor created as requested asked to join and must not be invited back.
 	if invite {
-		s.sendInvite(ctx, programID, input.UserID)
+		s.sendInvite(ctx, programID, input.UserID, input.ActorID)
 	}
 
 	return m, nil
@@ -232,8 +232,8 @@ var reinvitableStatuses = []models.ProgramMemberStatus{
 }
 
 // reinvite sets the user's existing mentor row back to invited and emails the
-// invite again; it returns nil, nil when the user has no mentor row yet.
-func (s *ProgramMemberService) reinvite(ctx context.Context, programID, userID string) (*models.ProgramMember, error) {
+// invite again from inviterID; it returns nil, nil when the user has no mentor row yet.
+func (s *ProgramMemberService) reinvite(ctx context.Context, programID, userID, inviterID string) (*models.ProgramMember, error) {
 	existing, err := s.repo.FindByProgramUserAndType(ctx, programID, userID, models.MemberTypeMentor)
 	if errors.Is(err, domain.ErrProgramMemberNotFound) || (err == nil && existing == nil) {
 		return nil, nil
@@ -249,12 +249,12 @@ func (s *ProgramMemberService) reinvite(ctx context.Context, programID, userID s
 	if err != nil {
 		return nil, fmt.Errorf("re-invite mentor: %w", err)
 	}
-	s.sendInvite(ctx, programID, userID)
+	s.sendInvite(ctx, programID, userID, inviterID)
 	return m, nil
 }
 
-// sendInvite emails the mentor an invite link; a signing failure is not fatal to the caller.
-func (s *ProgramMemberService) sendInvite(ctx context.Context, programID, userID string) {
+// sendInvite emails the mentor an invite link from inviterID; a signing failure is not fatal to the caller.
+func (s *ProgramMemberService) sendInvite(ctx context.Context, programID, userID, inviterID string) {
 	if s.inviteSecret == "" {
 		return
 	}
@@ -263,7 +263,7 @@ func (s *ProgramMemberService) sendInvite(ctx context.Context, programID, userID
 		trace.SpanFromContext(ctx).RecordError(err)
 		return
 	}
-	s.notifier.NotifyMentorInvited(ctx, programID, userID, token)
+	s.notifier.NotifyMentorInvited(ctx, programID, userID, inviterID, token)
 }
 
 func (s *ProgramMemberService) userByEmail(ctx context.Context, email string) (*models.User, error) {

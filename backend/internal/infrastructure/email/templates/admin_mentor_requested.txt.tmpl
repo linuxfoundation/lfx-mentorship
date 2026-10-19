@@ -1,8 +1,13 @@
 {{- /* Copyright The Linux Foundation and each contributor to LFX. */ -}}
 {{- /* SPDX-License-Identifier: MIT */ -}}
-{{template "header" .}}{{.MentorName}} requested to join the {{.ProgramName}} mentorship program as a mentor.
+{{template "header" .}}{{.MentorName}}
+Requested to become a mentor
 
-Review the request in LFX Mentorship to add them to your program{{with .MentorEmail}}, or contact them at {{.}}{{end}}. If you believe this mentor is not a good fit for your program, please let them know.
+{{.MentorName}} submitted a request to join the {{.ProgramName}} mentorship project as a mentor.
 
-Review the request: {{.ManageURL}}
+Please select the CTA below to review the request on your program's Mentors tab{{with .MentorEmail}}, then contact them at {{.}}{{end}}
+
+If you believe this mentor is not a good fit for your project, please contact them as well and let them know.
+
+Add to Program: {{.ManageURL}}
 {{template "footer" .}}

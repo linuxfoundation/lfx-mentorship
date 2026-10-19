@@ -20,12 +20,13 @@ var userProfileSvcTracer = otel.Tracer("user-profiles-service")
 
 // UserProfileService orchestrates user profile reads and writes.
 type UserProfileService struct {
-	repo domain.UserProfileRepository
+	repo     domain.UserProfileRepository
+	notifier domain.Notifier
 }
 
 // NewUserProfileService returns a UserProfileService.
-func NewUserProfileService(repo domain.UserProfileRepository) *UserProfileService {
-	return &UserProfileService{repo: repo}
+func NewUserProfileService(repo domain.UserProfileRepository, notifier domain.Notifier) *UserProfileService {
+	return &UserProfileService{repo: repo, notifier: notifier}
 }
 
 // GetByID returns the user profile with the given ID.
@@ -92,6 +93,7 @@ func (s *UserProfileService) Create(ctx context.Context, input models.UserProfil
 		span.RecordError(err)
 		return nil, fmt.Errorf("create user profile: %w", err)
 	}
+	s.notifier.NotifyProfileCreated(ctx, p.UserID, models.UserProfileType(p.ProfileType))
 	return p, nil
 }
 
@@ -113,6 +115,10 @@ func (s *UserProfileService) Upsert(ctx context.Context, input models.UserProfil
 	if err != nil {
 		span.RecordError(err)
 		return nil, false, fmt.Errorf("upsert user profile: %w", err)
+	}
+	// Only a new profile is welcomed; replacing an existing one is an edit.
+	if inserted {
+		s.notifier.NotifyProfileCreated(ctx, p.UserID, models.UserProfileType(p.ProfileType))
 	}
 	return p, inserted, nil
 }

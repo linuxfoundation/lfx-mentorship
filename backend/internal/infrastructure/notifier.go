@@ -30,9 +30,19 @@ func (n *LogNotifier) NotifyProgramDecided(ctx context.Context, programID string
 	n.logger.InfoContext(ctx, "notify: program decided", "program_id", programID, "status", status)
 }
 
+// NotifyProgramUpdated logs a program-updated event.
+func (n *LogNotifier) NotifyProgramUpdated(ctx context.Context, programID, editorID string) {
+	n.logger.InfoContext(ctx, "notify: program updated", "program_id", programID, "editor_id", editorID)
+}
+
+// NotifyProfileCreated logs a profile-created event.
+func (n *LogNotifier) NotifyProfileCreated(ctx context.Context, userID string, profileType models.UserProfileType) {
+	n.logger.InfoContext(ctx, "notify: profile created", "user_id", userID, "profile_type", profileType)
+}
+
 // NotifyMentorInvited logs a mentor invitation event.
-func (n *LogNotifier) NotifyMentorInvited(ctx context.Context, programID, userID, token string) {
-	n.logger.InfoContext(ctx, "notify: mentor invited", "program_id", programID, "user_id", userID)
+func (n *LogNotifier) NotifyMentorInvited(ctx context.Context, programID, userID, inviterID, token string) {
+	n.logger.InfoContext(ctx, "notify: mentor invited", "program_id", programID, "user_id", userID, "inviter_id", inviterID)
 }
 
 // NotifyMentorDeclined logs a mentor-declined event.

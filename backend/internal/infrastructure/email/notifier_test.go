@@ -25,6 +25,8 @@ const (
 	testSelfServeURL  = "https://app.example.org"
 	testHRInbox       = "hr@linuxfoundation.org"
 	testReviewInbox   = "review@linuxfoundation.org"
+	// testAdminProgramURL is the fixture program's page for its program admins.
+	testAdminProgramURL = testSelfServeURL + "/mentorship/admin/p1"
 )
 
 type senderStub struct {
@@ -203,11 +205,12 @@ func newFixture() *fixture {
 	f := &fixture{
 		sender: &senderStub{},
 		users: &userRepoStub{users: map[string]*models.User{
-			"mentor": {ID: "mentor", Email: strPtr("mentor@linuxfoundation.org"), Name: strPtr("Mo Mentor"), LFID: strPtr("momentor")},
-			"mentee": {ID: "mentee", Email: strPtr("mentee@linuxfoundation.org"), GivenName: strPtr("Mia"), FamilyName: strPtr("Mentee")},
-			"admin1": {ID: "admin1", Email: strPtr("admin1@linuxfoundation.org")},
-			"admin2": {ID: "admin2", Email: strPtr("admin2@linuxfoundation.org")},
-			"noaddr": {ID: "noaddr"},
+			"mentor":  {ID: "mentor", Email: strPtr("mentor@linuxfoundation.org"), Name: strPtr("Mo Mentor"), LFID: strPtr("momentor")},
+			"inviter": {ID: "inviter", Name: strPtr("Ada Admin")},
+			"mentee":  {ID: "mentee", Email: strPtr("mentee@linuxfoundation.org"), GivenName: strPtr("Mia"), FamilyName: strPtr("Mentee")},
+			"admin1":  {ID: "admin1", Email: strPtr("admin1@linuxfoundation.org")},
+			"admin2":  {ID: "admin2", Email: strPtr("admin2@linuxfoundation.org")},
+			"noaddr":  {ID: "noaddr"},
 		}},
 		members:  &memberRepoStub{},
 		profiles: &profileRepoStub{address: json.RawMessage(`{"country":"IN","city":"Pune"}`)},
@@ -220,8 +223,9 @@ func newFixture() *fixture {
 		Programs: &programRepoStub{program: f.program},
 		Terms: &termRepoStub{term: &models.ProgramTerm{
 			ID: "t1", ProgramID: "p1", Name: "Fall 2026",
-			StartDateTime: timePtr(time.Date(2026, time.September, 1, 0, 0, 0, 0, time.UTC)),
-			EndDateTime:   timePtr(time.Date(2026, time.November, 30, 0, 0, 0, 0, time.UTC)),
+			StartDateTime:      timePtr(time.Date(2026, time.September, 1, 0, 0, 0, 0, time.UTC)),
+			EndDateTime:        timePtr(time.Date(2026, time.November, 30, 0, 0, 0, 0, time.UTC)),
+			ApplicationEndDate: timePtr(time.Date(2026, time.August, 15, 0, 0, 0, 0, time.UTC)),
 		}},
 		Members:      f.members,
 		Applications: &applicationRepoStub{app: &models.Application{ID: "a1", ProgramTermID: "t1", UserID: "mentee"}},
@@ -242,38 +246,59 @@ func (f *fixture) wait(t *testing.T) []Message {
 
 func TestNotifyMentorInvited(t *testing.T) {
 	f := newFixture()
-	f.n.NotifyMentorInvited(context.Background(), "p1", "mentor", "tok+en/=")
+	f.n.NotifyMentorInvited(context.Background(), "p1", "mentor", "inviter", "tok+en/=")
 
 	sent := f.wait(t)
 	if len(sent) != 1 {
 		t.Fatalf("sent %d messages, want 1", len(sent))
 	}
 	msg := sent[0]
-	if msg.To != "mentor@linuxfoundation.org" || msg.Subject != "You've been invited to mentor for Kernel <Dev>" {
+	if msg.To != "mentor@linuxfoundation.org" || msg.Subject != "You are invited to become a mentor for the Kernel <Dev> mentorship program." {
 		t.Fatalf("to/subject = %q / %q", msg.To, msg.Subject)
 	}
 	inviteURL := testSelfServeURL + "/mentorship/mentor/invites?token=tok%2Ben%2F%3D"
-	for _, want := range []string{"Hi Mo Mentor!", inviteURL, "log in with the username momentor", "Copyright © " + strconv.Itoa(time.Now().UTC().Year())} {
-		if !strings.Contains(msg.Text, want) {
-			t.Fatalf("text missing %q:\n%s", want, msg.Text)
-		}
+	profileURL := testSelfServeURL + "/mentorship/mentor"
+	mustContain(t, "text", msg.Text,
+		"Hi Mo Mentor!\n\nAda Admin has added you to be a mentor for the Kernel <Dev> mentorship on LFX Mentorship under the username momentor, a free platform",
+		"click Respond to Invitation CTA below to accept the invitation.",
+		"If you don't have a mentor profile yet, please click Create Profile CTA below to create your mentor profile",
+		"please use this username when logging in to accept the invite",
+		"Respond to Invitation: "+inviteURL+"\nCreate Profile: "+profileURL+"\n",
+		"The LF Engineering Team",
+		"Copyright © "+strconv.Itoa(time.Now().UTC().Year()),
+	)
+	if strings.Contains(msg.Text, "Hello,") {
+		t.Fatalf("text repeats the greeting:\n%s", msg.Text)
 	}
 	if !strings.Contains(msg.HTML, "Kernel &lt;Dev&gt;") || strings.Contains(msg.HTML, "Kernel <Dev>") {
 		t.Fatalf("html did not escape program name:\n%s", msg.HTML)
 	}
-	if !strings.Contains(msg.HTML, `href="`+inviteURL+`"`) || !strings.Contains(msg.HTML, ">Respond to Invitation</a>") {
-		t.Fatalf("html missing invite button:\n%s", msg.HTML)
-	}
+	mustContain(t, "html", msg.HTML, `href="`+inviteURL+`"`, ">Respond to Invitation</a>", `href="`+profileURL+`"`, ">Create Profile</a>")
 }
 
 func TestNotifyMentorInvited_NoLFIDOmitsUsernameNote(t *testing.T) {
 	f := newFixture()
 	f.users.users["mentor"].LFID = nil
-	f.n.NotifyMentorInvited(context.Background(), "p1", "mentor", "tok")
+	f.n.NotifyMentorInvited(context.Background(), "p1", "mentor", "inviter", "tok")
 
 	sent := f.wait(t)
 	if len(sent) != 1 || strings.Contains(sent[0].Text, "username") || strings.Contains(sent[0].HTML, "username") {
 		t.Fatalf("sent = %+v", sent)
+	}
+}
+
+func TestNotifyMentorInvited_UnknownInviterStillInvites(t *testing.T) {
+	for name, inviterID := range map[string]string{"no inviter": "", "unknown inviter": "missing", "unnamed inviter": "admin1"} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture()
+			f.n.NotifyMentorInvited(context.Background(), "p1", "mentor", inviterID, "tok")
+
+			sent := f.wait(t)
+			if len(sent) != 1 {
+				t.Fatalf("sent = %+v, want the invite", sent)
+			}
+			mustContain(t, "text", sent[0].Text, "A program administrator has added you to be a mentor")
+		})
 	}
 }
 
@@ -306,8 +331,8 @@ func TestNotifyAdminMentorDeclined(t *testing.T) {
 	if !strings.Contains(sent[0].Text, "Mo Mentor declined your invitation to participate as a mentor for the Kernel <Dev> mentorship program.") {
 		t.Fatalf("text = %s", sent[0].Text)
 	}
-	if !strings.Contains(sent[0].HTML, `href="`+testSelfServeURL+`/mentorship"`) {
-		t.Fatalf("html missing Self Serve link:\n%s", sent[0].HTML)
+	if !strings.Contains(sent[0].HTML, `href="`+testAdminProgramURL+`"`) {
+		t.Fatalf("html missing program admin link:\n%s", sent[0].HTML)
 	}
 }
 
@@ -322,13 +347,16 @@ func TestNotifyAdminMentorAccepted(t *testing.T) {
 		t.Fatalf("sent = %+v, want admin1 and admin2", sent)
 	}
 	msg := sent["admin1@linuxfoundation.org"]
-	if msg.Subject != "Mo Mentor accepted your mentor invitation for Kernel <Dev>" {
+	if msg.Subject != "Mo Mentor accepted your invitation to become a mentor for the Kernel <Dev> mentorship project." {
 		t.Fatalf("subject = %q", msg.Subject)
 	}
-	if !strings.Contains(msg.Text, "Mo Mentor accepted your invitation to participate as a mentor for the Kernel <Dev> mentorship program.") {
-		t.Fatalf("text = %s", msg.Text)
-	}
-	if !strings.Contains(msg.HTML, `href="`+testSelfServeURL+`/mentorship"`) || !strings.Contains(msg.HTML, "Kernel &lt;Dev&gt;") {
+	mustContain(t, "text", msg.Text,
+		"Hi there!\n\nCongratulations!",
+		"Mo Mentor accepted your invitation to participate as a mentor for the Kernel <Dev> mentorship program.",
+		"Login to LFX Mentorship at your earliest convenience to view your new mentor's profile.",
+		"View Program: "+testAdminProgramURL,
+	)
+	if !strings.Contains(msg.HTML, `href="`+testAdminProgramURL+`"`) || !strings.Contains(msg.HTML, "Kernel &lt;Dev&gt;") {
 		t.Fatalf("html = %s", msg.HTML)
 	}
 }
@@ -344,12 +372,14 @@ func TestNotifyAdminTasksSubmitted(t *testing.T) {
 	if len(sent) != 1 || sent[0].To != "admin2@linuxfoundation.org" {
 		t.Fatalf("sent = %+v, want only admin2 (admin1 send failed, noaddr has no email)", sent)
 	}
-	if sent[0].Subject != "New mentee application to review for Kernel <Dev>" {
+	if sent[0].Subject != "A new mentee submitted application to join Kernel <Dev> mentorship program." {
 		t.Fatalf("subject = %q", sent[0].Subject)
 	}
-	if !strings.Contains(sent[0].Text, "Hi there!") || !strings.Contains(sent[0].Text, "application from Mia Mentee to become a mentee for the Kernel <Dev> program (Fall 2026 term).") {
-		t.Fatalf("text = %s", sent[0].Text)
-	}
+	mustContain(t, "text", sent[0].Text,
+		"Hi there!",
+		"You received an application from Mia Mentee to become a mentee for the Kernel <Dev> project (Fall 2026 term).",
+		"View Program: "+testAdminProgramURL,
+	)
 	want := []models.ProgramMemberFilter{{Limit: pageSize, MemberType: "program_admin", Status: "approved"}}
 	if !slices.Equal(f.members.filters, want) {
 		t.Fatalf("filters = %+v, want %+v", f.members.filters, want)
@@ -400,43 +430,39 @@ func TestNotifyMenteeAccepted(t *testing.T) {
 	}
 
 	mentee := sent["mentee@linuxfoundation.org"]
-	if mentee.Subject != "Congratulations! You've been accepted to Kernel <Dev>" {
+	if mentee.Subject != "Congratulations! You were accepted to Kernel <Dev> mentorship program." {
 		t.Fatalf("mentee subject = %q", mentee.Subject)
 	}
-	if !strings.Contains(mentee.Text, "Hi Mia!") || !strings.Contains(mentee.Text, "accepted as a mentee to the Kernel <Dev> mentorship for the Fall 2026 term on a full-time basis.") {
-		t.Fatalf("mentee text = %s", mentee.Text)
-	}
+	mustContain(t, "mentee text", mentee.Text,
+		"Hi Mia!\n\nCongratulations!",
+		"We are pleased to let you know that you have been accepted as a mentee to the Kernel <Dev> mentorship for the Fall 2026 term on a full-time basis. The program administrator will contact you with the next steps.",
+		"Login To LFX Mentorship: "+testSelfServeURL+"/mentorship/mentee/overview",
+	)
 
 	admin := sent["admin1@linuxfoundation.org"]
-	if admin.Subject != "Mia Mentee has been accepted to Kernel <Dev>" {
+	if admin.Subject != "A new mentee was accepted to Kernel <Dev> mentorship program." {
 		t.Fatalf("admin subject = %q", admin.Subject)
 	}
-	for _, want := range []string{
-		"Program Admin: admin1@linuxfoundation.org\n",
-		"Program Admin: Mo Mentor (mentor@linuxfoundation.org)",
-		"Mentee Email: mentee@linuxfoundation.org",
-		"Mentorship Period: September 2026 – November 2026",
-		"Attendance Status: full-time",
-	} {
-		if !strings.Contains(admin.Text, want) {
-			t.Fatalf("admin text missing %q:\n%s", want, admin.Text)
-		}
-	}
-	if strings.Contains(admin.Text, "acceptance letter") {
-		t.Fatalf("admin copy must not carry the HR request:\n%s", admin.Text)
-	}
-	if strings.Contains(admin.Text, "India") || strings.Contains(admin.HTML, "India") {
+	mustContain(t, "admin text", admin.Text,
+		"Dear Program Admin and HR Team\n\nMia Mentee has been accepted to the Kernel <Dev> mentorship.",
+		"HR team, please generate the acceptance letter and contract paperwork with the following details:",
+		"Mentorship Program Name: Kernel <Dev>\nProgram Admin Email: admin1@linuxfoundation.org\nProgram Admin Name: Mo Mentor\nProgram Admin Email: mentor@linuxfoundation.org\nMentee Name: Mia Mentee\nMentee Email: mentee@linuxfoundation.org\n",
+		"Mentorship Start Month and Year: September 2026\nMentorship End Month and Year: November 2026\nAttendance Status: full-time\n",
+		"Program Admin you will be notified when mentee signs the acceptance letter.",
+		"Login To LFX Mentorship: "+testSelfServeURL+"/mentorship\n",
+	)
+	if strings.Contains(admin.Text, "India") || strings.Contains(admin.HTML, "India") || strings.Contains(admin.Text, "stipend") {
 		t.Fatalf("admin copy must not carry the mentee's country:\n%s", admin.Text)
 	}
 
 	hr := sent[testHRInbox]
-	if hr.Subject != admin.Subject || !strings.Contains(hr.Text, "Hi HR team!") || !strings.Contains(hr.Text, "acceptance letter") || !strings.Contains(hr.Text, "Program Admin: Mo Mentor (mentor@linuxfoundation.org)") {
+	if hr.Subject != admin.Subject || !strings.Contains(hr.Text, "Dear Program Admin and HR Team") || !strings.Contains(hr.Text, "Program Admin Name: Mo Mentor") {
 		t.Fatalf("hr = %+v", hr)
 	}
-	if !strings.Contains(hr.HTML, "Mo Mentor (mentor@linuxfoundation.org)") {
+	if !strings.Contains(hr.HTML, "mentor@linuxfoundation.org") {
 		t.Fatalf("hr html missing admin contact:\n%s", hr.HTML)
 	}
-	if !strings.Contains(hr.Text, "Mentee Country of Residence: India (IN)") || !strings.Contains(hr.Text, "stipend amount verification") || !strings.Contains(hr.HTML, "India (IN)") {
+	if !strings.Contains(hr.Text, "Mentee Country of Residence: India (IN)") || !strings.Contains(hr.Text, "NOTE: Please save the mentee country of residence for stipend amount verification.") || !strings.Contains(hr.HTML, "India (IN)") {
 		t.Fatalf("hr copy missing country of residence:\n%s", hr.Text)
 	}
 }
@@ -473,7 +499,7 @@ func TestNotifyMenteeAccepted_HRInboxAlsoAdmin_GetsHRNotice(t *testing.T) {
 			hr = append(hr, msg)
 		}
 	}
-	if len(hr) != 1 || !strings.Contains(hr[0].Text, "Hi HR team!") || !strings.Contains(hr[0].Text, "India (IN)") {
+	if len(hr) != 1 || !strings.Contains(hr[0].Text, "India (IN)") {
 		t.Fatalf("hr = %+v, want one HR notice with the country of residence", hr)
 	}
 }
@@ -499,14 +525,14 @@ func TestNotifyMenteeAccepted_WithoutAdmins_MenteeAndHRStillNotified(t *testing.
 	f.n.NotifyMenteeAccepted(context.Background(), "a1", "part_time")
 
 	sent := byRecipient(f.wait(t))
-	if len(sent) != 2 || !strings.Contains(sent["mentee@linuxfoundation.org"].Text, "part-time") || sent[testHRInbox].To == "" {
+	if len(sent) != 2 || !strings.Contains(sent["mentee@linuxfoundation.org"].Text, "on a part-time basis") || !strings.Contains(sent[testHRInbox].Text, "Attendance Status: part-time") {
 		t.Fatalf("sent = %+v", sent)
 	}
 }
 
 func TestNotify_LookupFailureSendsNothing(t *testing.T) {
 	f := newFixture()
-	f.n.NotifyMentorInvited(context.Background(), "missing", "mentor", "tok")
+	f.n.NotifyMentorInvited(context.Background(), "missing", "mentor", "inviter", "tok")
 	f.n.NotifyMentorDeclined(context.Background(), "p1", "noaddr")
 
 	if sent := f.wait(t); len(sent) != 0 {
@@ -623,19 +649,21 @@ func TestNotifyProgramSubmitted(t *testing.T) {
 		t.Fatalf("sent = %+v, want the admin and the review inbox", sent)
 	}
 	admin := sent["admin1@linuxfoundation.org"]
-	if admin.Subject != "We received your submission of Kernel <Dev>" {
+	if admin.Subject != "Your submission to the LFX Mentorship is pending approval." {
 		t.Fatalf("admin subject = %q", admin.Subject)
 	}
-	mustContain(t, "admin text", admin.Text, "Thank you for submitting Kernel <Dev>", "up to 5 business days", testSelfServeURL+"/mentorship")
+	mustContain(t, "admin text", admin.Text,
+		"Hi there!\n\nThank you for submitting Kernel <Dev> to be a part of our mentorship program on LFX Platform.",
+		"You will be notified via email when the review is complete.",
+		"View Project: "+testAdminProgramURL,
+	)
 	review := sent[testReviewInbox]
-	if review.Subject != "Mentorship program submitted for review: Kernel <Dev>" {
+	if review.Subject != "LFX Mentorship program submission is pending your review." {
 		t.Fatalf("review subject = %q", review.Subject)
 	}
-	mustContain(t, "review text", review.Text, "Hi LF Mentorship team!", "submitted for review by Mo Mentor (mentor@linuxfoundation.org).", "Review in Self Serve: "+testSelfServeURL+"/mentorship")
-	mustContain(t, "review html", review.HTML, ">Review in Self Serve</a>", "Kernel &lt;Dev&gt;")
-	if strings.Contains(review.HTML, "Approve") || strings.Contains(review.HTML, "Reject") {
-		t.Fatalf("review notice must not carry approve or reject links:\n%s", review.HTML)
-	}
+	reviewURL := testSelfServeURL + "/mentorship/program-review/p1?decision="
+	mustContain(t, "review text", review.Text, "Hi LF Mentorship team!", "submitted for review by Mo Mentor (mentor@linuxfoundation.org).", "View Submission: "+testPublicSiteURL+"/programs/kernel-dev\nApprove: "+reviewURL+"approve\nReject: "+reviewURL+"reject\n")
+	mustContain(t, "review html", review.HTML, `href="`+testPublicSiteURL+`/programs/kernel-dev"`, ">View Submission</a>", `href="`+reviewURL+`approve"`, ">Approve</a>", `href="`+reviewURL+`reject"`, ">Reject</a>", "Kernel &lt;Dev&gt;")
 }
 
 func TestNotifyProgramSubmitted_EveryReviewInboxGetsACopy(t *testing.T) {
@@ -649,7 +677,7 @@ func TestNotifyProgramSubmitted_EveryReviewInboxGetsACopy(t *testing.T) {
 		t.Fatalf("sent = %+v, want one notice per review inbox", sent)
 	}
 	for _, to := range f.n.reviewInboxes {
-		if sent[to].Subject != "Mentorship program submitted for review: Kernel <Dev>" {
+		if sent[to].Subject != "LFX Mentorship program submission is pending your review." {
 			t.Fatalf("%s subject = %q", to, sent[to].Subject)
 		}
 	}
@@ -686,8 +714,8 @@ func TestNotifyProgramDecided(t *testing.T) {
 		subject string
 		want    []string
 	}{
-		{models.ProgramStatusPublished, "Kernel <Dev> has been approved", []string{"approved to participate in LFX Mentorship and is now live", "View program: " + testPublicSiteURL + "/programs/kernel-dev"}},
-		{models.ProgramStatusRejected, "Kernel <Dev> was not approved", []string{"has not been approved", "Please contact our support team", supportDeskURL, "Manage your program: " + testSelfServeURL + "/mentorship"}},
+		{models.ProgramStatusPublished, "Your submission for the LFX Mentorship has been approved.", []string{"Hi there!\n\nCongratulations!", "Kernel <Dev> has been approved to participate in LFX Mentorship.\n", "You can manage your project by selecting View Project below", "View Project: " + testAdminProgramURL}},
+		{models.ProgramStatusRejected, "Your program submission to the LFX Mentorship was rejected.", []string{"Hi there\n\nRegrettably, Kernel <Dev> has not been approved", "Please contact our support team", supportDeskURL, "View Submission: " + testAdminProgramURL}},
 	} {
 		t.Run(string(tc.status), func(t *testing.T) {
 			f := newFixture()
@@ -705,6 +733,67 @@ func TestNotifyProgramDecided(t *testing.T) {
 			}
 			mustContain(t, "text", msg.Text, tc.want...)
 		})
+	}
+}
+
+func TestNotifyProgramUpdated(t *testing.T) {
+	f := newFixture()
+	f.n.NotifyProgramUpdated(context.Background(), "p1", "mentor")
+
+	sent := f.wait(t)
+	if len(sent) != 1 || sent[0].To != "mentor@linuxfoundation.org" || sent[0].Subject != "Your update was successful." {
+		t.Fatalf("sent = %+v, want only the editor", sent)
+	}
+	mustContain(t, "text", sent[0].Text,
+		"Hi Mo Mentor!\n\nJust confirming that your updates to Kernel <Dev> have been saved.",
+		"View Program: "+testAdminProgramURL,
+	)
+}
+
+func TestNotifyProfileCreated(t *testing.T) {
+	for name, tc := range map[string]struct {
+		profileType models.UserProfileType
+		subject     string
+		want        []string
+	}{
+		"mentor": {
+			profileType: models.UserProfileTypeMentor,
+			subject:     "Your LFX Mentorship mentor profile was successfully created.",
+			want: []string{
+				"Hi Mia!\n\nThank you for taking the first step to become a mentor on LFX Mentorship.",
+				"If you haven't requested to be added to a program yet, please select LFX Mentorship programs you would like to join as a mentor",
+				"View Profile: " + testSelfServeURL + "/mentorship/mentor/profile",
+			},
+		},
+		"mentee": {
+			profileType: models.UserProfileTypeMentee,
+			subject:     "Your LFX Mentorship mentee profile was successfully created.",
+			want: []string{
+				"Hi Mia!\n\nHurray Step 1 is Complete! Thank you for taking the first step to become a mentee on LFX Mentorship!",
+				"- Step 1: You are registered as a Mentee - Complete!\n- Step 2: Please view and apply to the Mentorship Programs based on your skillsets\n",
+				"Show me the Mentorship Projects: " + testPublicSiteURL + "/programs",
+			},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture()
+			f.n.NotifyProfileCreated(context.Background(), "mentee", tc.profileType)
+
+			sent := f.wait(t)
+			if len(sent) != 1 || sent[0].To != "mentee@linuxfoundation.org" || sent[0].Subject != tc.subject {
+				t.Fatalf("sent = %+v", sent)
+			}
+			mustContain(t, "text", sent[0].Text, tc.want...)
+		})
+	}
+}
+
+func TestNotifyProfileCreated_UnknownTypeSendsNothing(t *testing.T) {
+	f := newFixture()
+	f.n.NotifyProfileCreated(context.Background(), "mentee", models.UserProfileType("employer"))
+
+	if sent := f.wait(t); len(sent) != 0 {
+		t.Fatalf("sent = %+v", sent)
 	}
 }
 
@@ -741,7 +830,7 @@ func TestNotifyAdminMentorRequested_PrefersMemberEmail(t *testing.T) {
 			if len(sent) != 1 {
 				t.Fatalf("sent = %+v", sent)
 			}
-			mustContain(t, "text", sent[0].Text, "contact them at "+tc.want+".")
+			mustContain(t, "text", sent[0].Text, "contact them at "+tc.want+"\n")
 		})
 	}
 }
@@ -754,13 +843,18 @@ func TestNotifyAdminMentorRequestedAndWithdrew(t *testing.T) {
 	}{
 		"requested": {
 			notify:  func(n *Notifier) { n.NotifyAdminMentorRequested(context.Background(), "p1", "mentor") },
-			subject: "Mo Mentor requested to mentor for Kernel <Dev>",
-			want:    []string{"Mo Mentor requested to join the Kernel <Dev> mentorship program as a mentor.", "contact them at mentor@linuxfoundation.org", "Review the request: " + testSelfServeURL + "/mentorship"},
+			subject: "A new mentor submitted request to join Kernel <Dev> mentorship program.",
+			want: []string{
+				"Mo Mentor\nRequested to become a mentor\n\nMo Mentor submitted a request to join the Kernel <Dev> mentorship project as a mentor.",
+				"Please select the CTA below to review the request on your program's Mentors tab, then contact them at mentor@linuxfoundation.org",
+				"If you believe this mentor is not a good fit for your project, please contact them as well and let them know.",
+				"Add to Program: " + testAdminProgramURL,
+			},
 		},
 		"withdrew": {
 			notify:  func(n *Notifier) { n.NotifyAdminMentorWithdrew(context.Background(), "p1", "mentor") },
-			subject: "Mo Mentor withdrew their mentor request for Kernel <Dev>",
-			want:    []string{"Mo Mentor withdrew the request to participate as a mentor for the Kernel <Dev> mentorship program.", testSelfServeURL + "/mentorship"},
+			subject: "Mo Mentor withdrew a request to join your program as a mentor.",
+			want:    []string{"Hi there,\n\nRegrettably, Mo Mentor withdrew the request to participate as a mentor for the Kernel <Dev> mentorship program.", "View Program: " + testAdminProgramURL},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -782,7 +876,7 @@ func TestNotifyMenteeApplicationReceived(t *testing.T) {
 	prerequisite, other := models.TaskCategoryPrerequisite, models.TaskCategoryNonPrerequisite
 	f := newFixture()
 	f.tasks.tasks = []*models.Task{
-		{ID: "t1", Name: strPtr("Write an <intro>"), Category: &prerequisite},
+		{ID: "t1", Name: strPtr("Write an <intro>"), Category: &prerequisite, DueDate: strPtr("2026-08-01")},
 		{ID: "t2", Name: strPtr("Unrelated"), Category: &other},
 		{ID: "t3", Name: strPtr("  "), Category: &prerequisite},
 		{ID: "t4", Name: strPtr("Fix a bug"), Category: &prerequisite},
@@ -791,14 +885,79 @@ func TestNotifyMenteeApplicationReceived(t *testing.T) {
 	f.n.NotifyMenteeApplicationReceived(context.Background(), "a1")
 
 	sent := f.wait(t)
-	if len(sent) != 1 || sent[0].To != "mentee@linuxfoundation.org" || sent[0].Subject != "We received your application to Kernel <Dev>" {
+	if len(sent) != 1 || sent[0].To != "mentee@linuxfoundation.org" || sent[0].Subject != "Your application to Kernel <Dev> mentorship program was received." {
 		t.Fatalf("sent = %+v", sent)
 	}
-	mustContain(t, "text", sent[0].Text, "Hi Mia!", "Prerequisite tasks:\n- Write an <intro>\n- Fix a bug\n", "View your prerequisite tasks: "+testSelfServeURL+"/mentorship")
-	if strings.Contains(sent[0].Text, "Unrelated") {
-		t.Fatalf("text lists a task that is not a prerequisite:\n%s", sent[0].Text)
+	mustContain(t, "text", sent[0].Text,
+		"Hi Mia!",
+		"you need to complete a set of prerequisite tasks and submit them for review.",
+		// A task without its own due date is due when the term's applications close.
+		"Prerequisite tasks:\n\nTask Name: Write an <intro>\nDue Date: August 1, 2026\n\nTask Name: Fix a bug\nDue Date: August 15, 2026\n\n",
+		"Please login to LFX Mentorship at your earliest convenience to complete the tasks or select the link below.",
+		"View Prerequisite Tasks: "+testSelfServeURL+"/mentorship/mentee/tasks",
+	)
+	if strings.Contains(sent[0].Text, "Unrelated") || strings.Contains(sent[0].Text, "Task Created") {
+		t.Fatalf("text lists a task that is not a prerequisite, or a creation date:\n%s", sent[0].Text)
 	}
-	mustContain(t, "html", sent[0].HTML, "<li>Write an &lt;intro&gt;</li>", ">View Prerequisite Tasks</a>")
+	mustContain(t, "html", sent[0].HTML, "Write an &lt;intro&gt;</strong>", "August 1, 2026", ">View Prerequisite Tasks</a>")
+}
+
+func TestNotifyMenteeApplicationReceived_NoDueDateAnywhere(t *testing.T) {
+	prerequisite := models.TaskCategoryPrerequisite
+	f := newFixture()
+	f.n.repos.Terms = &termRepoStub{term: &models.ProgramTerm{ID: "t1", ProgramID: "p1", Name: "Fall 2026"}}
+	f.tasks.tasks = []*models.Task{{ID: "t1", Name: strPtr("Fix a bug"), Category: &prerequisite}}
+
+	f.n.NotifyMenteeApplicationReceived(context.Background(), "a1")
+
+	sent := f.wait(t)
+	if len(sent) != 1 || !strings.Contains(sent[0].Text, "Task Name: Fix a bug\n") || strings.Contains(sent[0].Text, "Due Date") {
+		t.Fatalf("sent = %+v, want the task without a due date row", sent)
+	}
+}
+
+func TestNotifyMenteePrerequisiteReminder(t *testing.T) {
+	prerequisite, other := models.TaskCategoryPrerequisite, models.TaskCategoryNonPrerequisite
+	f := newFixture()
+	f.tasks.tasks = []*models.Task{
+		{ID: "t1", Name: strPtr("Write an intro"), Category: &prerequisite, Status: models.TaskStatusIncomplete},
+		{ID: "t2", Name: strPtr("Fix a bug"), Category: &prerequisite, Status: models.TaskStatusInProgress, DueDate: strPtr("2026-08-01")},
+		{ID: "t3", Name: strPtr("Already sent"), Category: &prerequisite, Status: models.TaskStatusSubmitted},
+		{ID: "t4", Name: strPtr("Already done"), Category: &prerequisite, Status: models.TaskStatusComplete},
+		{ID: "t5", Name: strPtr("Unrelated"), Category: &other, Status: models.TaskStatusIncomplete},
+	}
+
+	f.n.NotifyMenteePrerequisiteReminder(context.Background(), "a1")
+
+	sent := f.wait(t)
+	if len(sent) != 1 || sent[0].To != "mentee@linuxfoundation.org" || sent[0].Subject != "Complete your prerequisite tasks for Kernel <Dev>" {
+		t.Fatalf("sent = %+v", sent)
+	}
+	mustContain(t, "text", sent[0].Text,
+		"Hi Mia!\n\nThank you for your interest in becoming a mentee on LFX Mentorship!",
+		"This is a reminder that your application for the Kernel <Dev> mentorship program (Fall 2026) still has incomplete prerequisite tasks.",
+		"Due date: August 15, 2026\n",
+		"Incomplete prerequisite tasks:\n\nTask Name: Write an intro\nDue Date: August 15, 2026\n\nTask Name: Fix a bug\nDue Date: August 1, 2026\n\n",
+		"View Prerequisite Tasks: "+testSelfServeURL+"/mentorship/mentee/tasks",
+	)
+	for _, notWant := range []string{"Already sent", "Already done", "Unrelated"} {
+		if strings.Contains(sent[0].Text, notWant) {
+			t.Fatalf("reminder lists %q:\n%s", notWant, sent[0].Text)
+		}
+	}
+	mustContain(t, "html", sent[0].HTML, "<strong>(Fall 2026)</strong>", "<strong>Due date: August 15, 2026</strong>", ">View Prerequisite Tasks</a>")
+}
+
+func TestNotifyMenteePrerequisiteReminder_NothingPendingSendsNothing(t *testing.T) {
+	prerequisite := models.TaskCategoryPrerequisite
+	f := newFixture()
+	f.tasks.tasks = []*models.Task{{ID: "t1", Name: strPtr("Already sent"), Category: &prerequisite, Status: models.TaskStatusSubmitted}}
+
+	f.n.NotifyMenteePrerequisiteReminder(context.Background(), "a1")
+
+	if sent := f.wait(t); len(sent) != 0 {
+		t.Fatalf("sent = %+v, want no reminder", sent)
+	}
 }
 
 func TestNotifyMenteeApplicationReceived_PagesThroughAllTasks(t *testing.T) {
@@ -814,7 +973,7 @@ func TestNotifyMenteeApplicationReceived_PagesThroughAllTasks(t *testing.T) {
 	if len(sent) != 1 {
 		t.Fatalf("sent = %+v", sent)
 	}
-	if got := strings.Count(sent[0].Text, "\n- Task "); got != pageSize+1 {
+	if got := strings.Count(sent[0].Text, "Task Name: Task "); got != pageSize+1 {
 		t.Fatalf("listed %d prerequisite tasks, want %d", got, pageSize+1)
 	}
 }
@@ -827,8 +986,8 @@ func TestNotifyMenteeApplicationReceived_NoTasks(t *testing.T) {
 	if len(sent) != 1 {
 		t.Fatalf("sent = %+v", sent)
 	}
-	mustContain(t, "text", sent[0].Text, "It will be reviewed, and you will be notified", "View your application: ")
-	if strings.Contains(sent[0].Text, "Prerequisite tasks") {
+	mustContain(t, "text", sent[0].Text, "Your mentorship application will be reviewed, and you will be notified", "View Application: "+testSelfServeURL+"/mentorship/mentee/overview")
+	if strings.Contains(sent[0].Text, "Prerequisite tasks") || strings.Contains(sent[0].Text, "prerequisite tasks") {
 		t.Fatalf("text lists prerequisite tasks that do not exist:\n%s", sent[0].Text)
 	}
 }
@@ -850,10 +1009,15 @@ func TestNotifyMenteeDeclined(t *testing.T) {
 	f.n.NotifyMenteeDeclined(context.Background(), "a1")
 
 	sent := f.wait(t)
-	if len(sent) != 1 || sent[0].To != "mentee@linuxfoundation.org" || sent[0].Subject != "An update on your application to Kernel <Dev>" {
+	if len(sent) != 1 || sent[0].To != "mentee@linuxfoundation.org" || sent[0].Subject != "Your application to Kernel <Dev> mentorship wasn't accepted." {
 		t.Fatalf("sent = %+v, want only the mentee", sent)
 	}
-	mustContain(t, "text", sent[0].Text, "has not been accepted", "mentorship@linuxfoundation.org", "Log in to LFX Mentorship: "+testSelfServeURL+"/mentorship")
+	mustContain(t, "text", sent[0].Text,
+		"Hi Mia\n\nRegrettably, your application to be a mentee for Kernel <Dev> mentorship has not been accepted.",
+		"Please reach out to program administrator with any questions",
+		"mentorship@linuxfoundation.org",
+		"Login To Your Account: "+testSelfServeURL+"/mentorship/mentee/overview",
+	)
 }
 
 func TestNotifyMenteeWithdrawn(t *testing.T) {
@@ -867,15 +1031,21 @@ func TestNotifyMenteeWithdrawn(t *testing.T) {
 		t.Fatalf("sent = %+v, want the mentee and the admin", sent)
 	}
 	mentee := sent["mentee@linuxfoundation.org"]
-	if mentee.Subject != "Your application to Kernel <Dev> has been withdrawn" {
+	if mentee.Subject != "Your application to Kernel <Dev> mentorship program was withdrawn." {
 		t.Fatalf("mentee subject = %q", mentee.Subject)
 	}
-	mustContain(t, "mentee text", mentee.Text, "Hi Mia!", "has been withdrawn", "View program: "+testPublicSiteURL+"/programs/kernel-dev")
+	mustContain(t, "mentee text", mentee.Text,
+		"Hi Mia,\n\nWe just want to confirm that your application to be a mentee for Kernel <Dev> mentorship program has been withdrawn.",
+		"Login To Your Account: "+testSelfServeURL+"/mentorship/mentee/overview",
+	)
 	admin := sent["admin1@linuxfoundation.org"]
-	if admin.Subject != "Mia Mentee's application to Kernel <Dev> was withdrawn" {
+	if admin.Subject != "A mentee application to Kernel <Dev> mentorship was withdrawn." {
 		t.Fatalf("admin subject = %q", admin.Subject)
 	}
-	mustContain(t, "admin text", admin.Text, "the application submitted by Mia Mentee for the Kernel <Dev> mentorship program (Fall 2026 term) has been withdrawn.", testSelfServeURL+"/mentorship")
+	mustContain(t, "admin text", admin.Text,
+		"Hi there,\n\nWe wanted to let you know that the application submitted by Mia Mentee for the Kernel <Dev> mentorship program (Fall 2026 term) has been withdrawn.",
+		"View Program: "+testAdminProgramURL,
+	)
 }
 
 func TestNotifyMenteeGraduated(t *testing.T) {
@@ -890,16 +1060,16 @@ func TestNotifyMenteeGraduated(t *testing.T) {
 	f.n.NotifyMenteeGraduated(context.Background(), "a1")
 
 	sent := f.wait(t)
-	if len(sent) != 1 || sent[0].To != "mentee@linuxfoundation.org" || sent[0].Subject != "Your LFX Mentorship certificate of completion for Kernel <Dev>" {
+	if len(sent) != 1 || sent[0].To != "mentee@linuxfoundation.org" || sent[0].Subject != "Congratulations! You have graduated from Kernel <Dev> mentorship program." {
 		t.Fatalf("sent = %+v, want only the mentee", sent)
 	}
 	msg := sent[0]
 	mustContain(t, "text", msg.Text,
 		time.Now().UTC().Format(dateLayout)+"\n\nTo Whom It May Concern:",
-		"certify that Mia Mentee successfully completed the Kernel <Dev> mentorship program at The Linux Foundation from September 1, 2026 – November 30, 2026.",
-		"mentored by Mo Mentor, Ana Guide, quiet-mentor.",
+		"certify that Mia Mentee successfully completed the Kernel <Dev> Program at The Linux Foundation from September 1, 2026 - November 30, 2026.",
+		"Mia Mentee worked on the Kernel <Dev>, mentored by Mo Mentor, Ana Guide, quiet-mentor. A brief description of the Project they worked on is given below:",
 		"Work on <drivers>.",
-		"Sincerely,\nThe Linux Foundation Mentorship Team",
+		"Sincerely,\nThe Linux Foundation Mentorship Team,\nThe Linux Foundation",
 	)
 	mustContain(t, "html", msg.HTML, "Work on &lt;drivers&gt;.")
 	for _, body := range []string{msg.Text, msg.HTML} {
@@ -940,7 +1110,7 @@ func TestNotifyMenteeGraduated_WithoutMentorsOrDescription(t *testing.T) {
 	if len(sent) != 1 {
 		t.Fatalf("sent = %+v", sent)
 	}
-	mustContain(t, "text", sent[0].Text, "Mia Mentee worked on Kernel <Dev>.\n\nMia Mentee learned")
+	mustContain(t, "text", sent[0].Text, "Mia Mentee worked on the Kernel <Dev>.\n\nMia Mentee learned")
 	if strings.Contains(sent[0].Text, "mentored by") || strings.Contains(sent[0].Text, "brief description") {
 		t.Fatalf("text = %s", sent[0].Text)
 	}
@@ -964,10 +1134,15 @@ func TestNotifyMenteeTaskAssigned(t *testing.T) {
 			f.n.NotifyMenteeTaskAssigned(context.Background(), "task-1")
 
 			sent := f.wait(t)
-			if len(sent) != 1 || sent[0].To != "mentee@linuxfoundation.org" || sent[0].Subject != "You have a new task for Kernel <Dev>" {
+			if len(sent) != 1 || sent[0].To != "mentee@linuxfoundation.org" || sent[0].Subject != "You were assigned a new task for Kernel <Dev> mentorship program." {
 				t.Fatalf("sent = %+v", sent)
 			}
-			mustContain(t, "text", sent[0].Text, "Hi Mia!", "Task Name: Ship <it>\nTask Created On: October 5, 2026\n", "View your tasks: "+testSelfServeURL+"/mentorship")
+			mustContain(t, "text", sent[0].Text,
+				"Hi Mia!",
+				"Please login to the LFX Mentorship at your earliest convenience to review your tasks and get started!",
+				"Task Name: Ship <it>\nTask Created on: October 5, 2026\n",
+				"View Tasks: "+testSelfServeURL+"/mentorship/mentee/tasks",
+			)
 			mustContain(t, "html", sent[0].HTML, "Ship &lt;it&gt;")
 			if tc.want != "" {
 				mustContain(t, "text", sent[0].Text, tc.want)

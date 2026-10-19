@@ -382,7 +382,10 @@ type stubNotifier struct {
 	programSubmittedCalls     int
 	programSubmitters         []string
 	programDecisions          []models.ProgramStatus
+	programEditors            []string
+	profilesCreated           []models.UserProfileType
 	mentorInvitedCalls        int
+	mentorInviters            []string
 	mentorDeclinedCalls       int
 	adminMentorDeclinedCalls  int
 	adminMentorAcceptedCalls  int
@@ -404,8 +407,17 @@ func (n *stubNotifier) NotifyProgramSubmitted(_ context.Context, _, submitterID 
 func (n *stubNotifier) NotifyProgramDecided(_ context.Context, _ string, status models.ProgramStatus) {
 	n.programDecisions = append(n.programDecisions, status)
 }
-func (n *stubNotifier) NotifyMentorInvited(_ context.Context, _, _, _ string) { n.mentorInvitedCalls++ }
-func (n *stubNotifier) NotifyMentorDeclined(_ context.Context, _, _ string)   { n.mentorDeclinedCalls++ }
+func (n *stubNotifier) NotifyProgramUpdated(_ context.Context, _, editorID string) {
+	n.programEditors = append(n.programEditors, editorID)
+}
+func (n *stubNotifier) NotifyProfileCreated(_ context.Context, _ string, profileType models.UserProfileType) {
+	n.profilesCreated = append(n.profilesCreated, profileType)
+}
+func (n *stubNotifier) NotifyMentorInvited(_ context.Context, _, _, inviterID, _ string) {
+	n.mentorInvitedCalls++
+	n.mentorInviters = append(n.mentorInviters, inviterID)
+}
+func (n *stubNotifier) NotifyMentorDeclined(_ context.Context, _, _ string) { n.mentorDeclinedCalls++ }
 func (n *stubNotifier) NotifyAdminMentorDeclined(_ context.Context, _, _ string) {
 	n.adminMentorDeclinedCalls++
 }

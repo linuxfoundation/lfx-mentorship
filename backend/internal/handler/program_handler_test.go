@@ -830,6 +830,26 @@ func TestProgramHandler_Update_PassesSkills(t *testing.T) {
 	}
 }
 
+func TestProgramHandler_Update_NamesTheCallerAsEditor(t *testing.T) {
+	var captured models.ProgramUpdateInput
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		update: func(_ context.Context, _ string, input models.ProgramUpdateInput) (*models.Program, error) {
+			captured = input
+			return &models.Program{ID: "p1"}, nil
+		},
+	})
+	// A body cannot name someone else as the editor.
+	r := httptest.NewRequest(http.MethodPatch, "/v1/programs/p1", strings.NewReader(`{"name":"Renamed","EditorID":"someone-else"}`))
+	r = requestWithPrincipal(r, "admin-1")
+	r = requestWithChiParam(r, "id", "p1")
+	w := httptest.NewRecorder()
+	h.Update(w, r)
+
+	if w.Code != http.StatusOK || captured.EditorID != "admin-1" {
+		t.Fatalf("got %d, editor %q; want 200 and admin-1", w.Code, captured.EditorID)
+	}
+}
+
 func TestProgramHandler_Update_PassesTerms(t *testing.T) {
 	var captured models.ProgramUpdateInput
 	h := handler.NewProgramHandler(&stubProgramSvc{
