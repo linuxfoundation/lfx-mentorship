@@ -125,7 +125,7 @@ func TestE2EMenteeJourney(t *testing.T) {
 		if !got.TasksSubmitted {
 			t.Fatalf("application not flagged tasks_submitted")
 		}
-		msg := awaitEmail(t, admin.Email, "New mentee application to review", 1)
+		msg := awaitEmail(t, admin.Email, "A new mentee submitted application to join Journey Program", 1)
 		if !strings.Contains(msg.Text, "Spring") {
 			t.Fatalf("tasks-submitted email lacks the term: %s", msg.Text)
 		}
@@ -270,8 +270,8 @@ func TestE2EMenteeJourney(t *testing.T) {
 			t.Fatalf("accepted: %+v", app)
 		}
 		awaitEmail(t, mentee.Email, "Congratulations", 1)
-		awaitEmail(t, admin.Email, "has been accepted", 1)
-		hr := awaitEmail(t, e2eHRInbox, "has been accepted", 1)
+		awaitEmail(t, admin.Email, "A new mentee was accepted to", 1)
+		hr := awaitEmail(t, e2eHRInbox, "A new mentee was accepted to", 1)
 		if !strings.Contains(hr.Text, "Kenya") || !strings.Contains(hr.Text, mentee.Email) {
 			t.Fatalf("HR notice lacks the country or mentee email: %s", hr.Text)
 		}

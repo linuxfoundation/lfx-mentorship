@@ -1,11 +1,6 @@
 {{- /* Copyright The Linux Foundation and each contributor to LFX. */ -}}
 {{- /* SPDX-License-Identifier: MIT */ -}}
 {{- /* Legacy: mentee-new-task-assigned-v2 */ -}}
-{{template "header" .}}<p>You have been assigned a new task for the <strong>{{.ProgramName}}</strong> mentorship.</p>
-<p>Please log in to LFX Mentorship at your earliest convenience to review your tasks and get started!</p>
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 18px;font-size:14px;line-height:150%;color:#444444;">
-<tr><td style="padding:2px 12px 2px 0;font-weight:bold;">Task Name</td><td>{{.TaskName}}</td></tr>
-<tr><td style="padding:2px 12px 2px 0;font-weight:bold;">Task Created On</td><td>{{.TaskCreatedOn}}</td></tr>
-{{with .TaskDueDate}}<tr><td style="padding:2px 12px 2px 0;font-weight:bold;">Due Date</td><td>{{.}}</td></tr>
-{{end}}</table>
-{{template "button" .ManageURL}}View Tasks{{template "button_end"}}{{template "footer" .}}
+{{template "header" .}}{{template "greeting" (printf "Hi %s!" .RecipientName)}}<p>You have been assigned a new task for the <strong>{{.ProgramName}}</strong> mentorship.</p>
+<p>Please login to the LFX Mentorship at your earliest convenience to review your tasks and get started!</p>
+{{template "details_start"}}{{template "detail" (detail "Task Name" .TaskName)}}{{template "detail" (detail "Task Created on" .TaskCreatedOn)}}{{with .TaskDueDate}}{{template "detail" (detail "Due Date" .)}}{{end}}{{template "details_end"}}{{template "button" .ManageURL}}View Tasks{{template "button_end"}}{{template "footer" .}}

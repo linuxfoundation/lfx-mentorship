@@ -173,6 +173,7 @@ func TestProgramMemberService_Create_Mentor_SetsInvitedStatus(t *testing.T) {
 	_, err := svc.Create(context.Background(), "prog-1", models.ProgramMemberCreateInput{
 		UserID:     "mentor-1",
 		MemberType: "mentor",
+		ActorID:    "admin-1",
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -180,8 +181,8 @@ func TestProgramMemberService_Create_Mentor_SetsInvitedStatus(t *testing.T) {
 	if capturedStatus != "invited" {
 		t.Errorf("mentor status = %q; want %q", capturedStatus, "invited")
 	}
-	if n.mentorInvitedCalls != 1 {
-		t.Errorf("NotifyMentorInvited called %d times; want 1", n.mentorInvitedCalls)
+	if n.mentorInvitedCalls != 1 || !slices.Equal(n.mentorInviters, []string{"admin-1"}) {
+		t.Errorf("NotifyMentorInvited called %d times from %v; want once from admin-1", n.mentorInvitedCalls, n.mentorInviters)
 	}
 }
 
@@ -211,10 +212,10 @@ func TestProgramMemberService_Create_ReinvitesExistingMentor(t *testing.T) {
 			},
 		}
 		n := &stubNotifier{}
-		m, err := newMemberSvc(memberRepo, publishedProgRepo(), n).Create(context.Background(), "prog-1", models.ProgramMemberCreateInput{UserID: "mentor-1", MemberType: models.MemberTypeMentor})
+		m, err := newMemberSvc(memberRepo, publishedProgRepo(), n).Create(context.Background(), "prog-1", models.ProgramMemberCreateInput{UserID: "mentor-1", MemberType: models.MemberTypeMentor, ActorID: "admin-1"})
 		if reinvitable {
-			if err != nil || m.ID != "member-1" || updatedTo != models.ProgramMemberStatusInvited || n.mentorInvitedCalls != 1 {
-				t.Errorf("%s: err = %v, row = %v, status = %q, invites = %d; want the row back to invited and one email", status, err, m, updatedTo, n.mentorInvitedCalls)
+			if err != nil || m.ID != "member-1" || updatedTo != models.ProgramMemberStatusInvited || !slices.Equal(n.mentorInviters, []string{"admin-1"}) {
+				t.Errorf("%s: err = %v, row = %v, status = %q, inviters = %v; want the row back to invited and one email from admin-1", status, err, m, updatedTo, n.mentorInviters)
 			}
 			// A concurrent answer between the read and the write must fail the update, not be overwritten.
 			if len(guard) != 1 || guard[0] != status {

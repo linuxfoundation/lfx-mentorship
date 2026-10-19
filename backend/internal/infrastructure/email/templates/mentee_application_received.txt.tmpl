@@ -1,16 +1,15 @@
 {{- /* Copyright The Linux Foundation and each contributor to LFX. */ -}}
 {{- /* SPDX-License-Identifier: MIT */ -}}
-{{template "header" .}}Thank you for your interest in becoming a mentee on LFX Mentorship!
+{{template "header" .}}{{template "greeting" (printf "Hi %s!" .RecipientName)}}Thank you for your interest in becoming a mentee on LFX Mentorship!
 
-{{if .Tasks}}Your initial application for the {{.ProgramName}} mentorship program has been received. To continue the application process, complete the prerequisite tasks below and submit them for review. Once you have, your application will be reviewed, and you will be notified about the admission decision.
+{{if .Tasks}}Your initial application for the {{.ProgramName}} mentorship program has been received. To continue the application process, you need to complete a set of prerequisite tasks and submit them for review. Upon successful completion of the tasks, your mentorship application will be reviewed, and you will be notified about the admission decision.
 
 Prerequisite tasks:
-{{range .Tasks}}- {{.}}
-{{end}}
-Please log in to LFX Mentorship at your earliest convenience to complete the tasks.
-{{else}}Your application for the {{.ProgramName}} mentorship program has been received. It will be reviewed, and you will be notified about the admission decision.
+
+{{template "tasks" .Tasks}}Please login to LFX Mentorship at your earliest convenience to complete the tasks or select the link below.
+{{else}}Your initial application for the {{.ProgramName}} mentorship program has been received. Your mentorship application will be reviewed, and you will be notified about the admission decision.
 {{end}}
 Best of luck with your application!
 
-{{if .Tasks}}View your prerequisite tasks{{else}}View your application{{end}}: {{.ManageURL}}
+{{if .Tasks}}View Prerequisite Tasks{{else}}View Application{{end}}: {{.ManageURL}}
 {{template "footer" .}}

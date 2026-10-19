@@ -117,11 +117,11 @@ func TestE2EProgramLifecycle(t *testing.T) {
 		t.Fatalf("after decision: %q", published.Status)
 	}
 	// Creating the program sent it for review; publishing it tells its admin.
-	awaitEmail(t, admin.Email, "We received your submission of Lifecycle Program", 1)
-	if review := awaitEmail(t, e2eReviewInbox, "submitted for review: Lifecycle Program", 1); !strings.Contains(review.Text, admin.Email) {
+	awaitEmail(t, admin.Email, "Your submission to the LFX Mentorship is pending approval.", 1)
+	if review := awaitEmail(t, e2eReviewInbox, "LFX Mentorship program submission is pending your review.", 1); !strings.Contains(review.Text, admin.Email) {
 		t.Fatalf("review notice lacks the submitter: %s", review.Text)
 	}
-	awaitEmail(t, admin.Email, "Lifecycle Program has been approved", 1)
+	awaitEmail(t, admin.Email, "Your submission for the LFX Mentorship has been approved.", 1)
 	approver(t).call(t, http.MethodPost, "/programs/"+id+"/decision", map[string]any{"status": "rejected"}).expect(http.StatusConflict)
 
 	t.Run("a published program is listed and resolvable", func(t *testing.T) {
@@ -187,7 +187,7 @@ func TestE2EProgramRejection(t *testing.T) {
 	if rejected.Status != "rejected" {
 		t.Fatalf("after reject: %q", rejected.Status)
 	}
-	awaitEmail(t, admin.Email, "Rejected Program was not approved", 1)
+	awaitEmail(t, admin.Email, "Your program submission to the LFX Mentorship was rejected.", 1)
 	var mine programPage
 	admin.mustJSON(t, http.MethodGet, "/me/programs?status=rejected", nil, http.StatusOK, &mine)
 	if len(mine.Data) != 1 || mine.Data[0].AdminStatus != "rejected" {

@@ -1,8 +1,8 @@
 {{- /* Copyright The Linux Foundation and each contributor to LFX. */ -}}
 {{- /* SPDX-License-Identifier: MIT */ -}}
-{{template "header" .}}We just want to confirm that your application to be a mentee for the {{.ProgramName}} mentorship program has been withdrawn.
+{{template "header" .}}{{template "greeting" (printf "Hi %s," .RecipientName)}}We just want to confirm that your application to be a mentee for {{.ProgramName}} mentorship program has been withdrawn.
 
-Please reach out to the program administrator with any questions, and we hope that you will consider applying again in the future.
+Please reach out to the program administrator with any questions, and we hope that you will consider submitting an application again in the future.
 
-View program: {{.ProgramURL}}
+Login To Your Account: {{.ManageURL}}
 {{template "footer" .}}

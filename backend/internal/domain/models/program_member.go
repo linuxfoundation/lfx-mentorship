@@ -82,6 +82,8 @@ type ProgramMemberCreateInput struct {
 	Status     *ProgramMemberStatus `json:"status,omitempty"`
 	// Email is stored on the member and, when neither UserID nor LFID is set, identifies the invitee's LF account.
 	Email *string `json:"email,omitempty"`
+	// ActorID is the caller's user ID, named as the inviter in a mentor invite email; not persisted.
+	ActorID string `json:"-"`
 }
 
 // ProgramMembership is one of the caller's own program_members rows, joined to

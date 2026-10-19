@@ -16,7 +16,12 @@ type Notifier interface {
 	NotifyProgramSubmitted(ctx context.Context, programID, submitterID string)
 	// NotifyProgramDecided tells program admins their program was published or rejected.
 	NotifyProgramDecided(ctx context.Context, programID string, status models.ProgramStatus)
-	NotifyMentorInvited(ctx context.Context, programID, userID, token string)
+	// NotifyProgramUpdated confirms to the editor that their changes to the program were saved.
+	NotifyProgramUpdated(ctx context.Context, programID, editorID string)
+	// NotifyProfileCreated welcomes a user who created their mentor or mentee profile.
+	NotifyProfileCreated(ctx context.Context, userID string, profileType models.UserProfileType)
+	// NotifyMentorInvited emails the invited mentor a link to answer, naming inviterID as the inviter.
+	NotifyMentorInvited(ctx context.Context, programID, userID, inviterID, token string)
 	// NotifyMentorDeclined tells the mentor a program admin declined their request.
 	NotifyMentorDeclined(ctx context.Context, programID, userID string)
 	// NotifyAdminMentorDeclined tells program admins the mentor declined their invite.
@@ -39,4 +44,7 @@ type Notifier interface {
 	NotifyMenteeGraduated(ctx context.Context, applicationID string)
 	// NotifyMenteeTaskAssigned tells the mentee a reviewer assigned them a task.
 	NotifyMenteeTaskAssigned(ctx context.Context, taskID string)
+	// NotifyMenteePrerequisiteReminder reminds the mentee of the prerequisite tasks they have not
+	// yet submitted.
+	NotifyMenteePrerequisiteReminder(ctx context.Context, applicationID string)
 }
