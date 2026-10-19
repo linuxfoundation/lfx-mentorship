@@ -46,6 +46,7 @@ Related: [08 runbook](./08-prod-migration-runbook.md) holds the commands; this p
 
 ## After release
 
+- [ ] Revert the FGA relay throttle once the import's FGA outbox has drained: in `values/prod/lfx-mentorship-backend.yaml`, remove `FGA_RELAY_BATCH_SIZE: "10"` (default 50) and `autoscaling.maxReplicas: 2` (default 10), set in [lfx-v2-argocd#1824](https://github.com/linuxfoundation/lfx-v2-argocd/pull/1824). It keeps the import's ~330k markers at 20 messages/s so the shared fga-sync consumer doesn't back up, but it also caps the API at 2 pods, which live traffic may need (Eng)
 - [ ] Snowflake reads Postgres: Fivetran connector and dbt models ([lfx-self-serve#1532](https://github.com/linuxfoundation/lfx-self-serve/issues/1532), [#1537](https://github.com/linuxfoundation/lfx-self-serve/issues/1537)), within 2–3 days; check Crowdfunding's sync creates no duplicate initiatives
 - [ ] Links we control point at the new host: LFX header, Crowdfunding footer and tools menu; they redirect until then
 - [ ] Legacy decommission per [03](./03-migration-plan.md) Phase 5
