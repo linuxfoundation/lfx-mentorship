@@ -5,6 +5,7 @@ package domain
 
 import (
 	"context"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
 )
@@ -169,6 +170,8 @@ type ApplicationRepository interface {
 	BulkDeclineByTerm(ctx context.Context, termID string) ([]*models.Application, error)
 	// ListPastMenteesByTerm returns accepted/graduated application user IDs for a term.
 	ListPastMenteesByTerm(ctx context.Context, termID string) ([]*models.Application, error)
+	// ListPrerequisiteRemindersDue returns the applications due a prerequisite reminder on now's UTC day.
+	ListPrerequisiteRemindersDue(ctx context.Context, now time.Time) ([]*models.PrerequisiteReminderCandidate, error)
 }
 
 // FileReplacement points a file column at a freshly written object.
