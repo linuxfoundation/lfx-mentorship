@@ -63,31 +63,29 @@ func TestUserRepository_BootstrapByLFID_ReleasesEmailFromAnotherAccount(t *testi
 	}
 }
 
-// Bootstrap stores only the token's claim: with no claim, an email written before the account
-// email was bound to the claim is cleared, while UpsertByLFID keeps the stored one.
-func TestUserRepository_BootstrapByLFID_ClearsEmailWithoutClaim(t *testing.T) {
+// A sign-in with no verified email keeps the stored one, as UpsertByLFID does: clearing it would
+// cut the user off from notifications and email invites.
+func TestUserRepository_BootstrapByLFID_KeepsEmailWithoutClaim(t *testing.T) {
 	pool := integrationPool(t)
 	ctx := context.Background()
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM users WHERE lfid IN ('noclaim_upsert', 'noclaim_bootstrap')`)
 	})
 	repo := NewUserRepository(pool)
-	for lfid, tc := range map[string]struct {
-		upsert func(context.Context, models.UserCreateInput) (*models.User, error)
-		want   *string
-	}{
-		"noclaim_upsert":    {repo.UpsertByLFID, ptrTo("noclaim_upsert.forged@example.org")},
-		"noclaim_bootstrap": {repo.BootstrapByLFID, nil},
+	for lfid, upsert := range map[string]func(context.Context, models.UserCreateInput) (*models.User, error){
+		"noclaim_upsert":    repo.UpsertByLFID,
+		"noclaim_bootstrap": repo.BootstrapByLFID,
 	} {
-		if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, lfid) VALUES (gen_random_uuid(), $1, $2)`, lfid+".forged@example.org", lfid); err != nil {
+		stored := lfid + ".stored@example.org"
+		if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, lfid) VALUES (gen_random_uuid(), $1, $2)`, stored, lfid); err != nil {
 			t.Fatal(err)
 		}
-		u, err := tc.upsert(ctx, models.UserCreateInput{LFID: &lfid})
+		u, err := upsert(ctx, models.UserCreateInput{LFID: &lfid})
 		if err != nil {
 			t.Fatalf("%s: %v", lfid, err)
 		}
-		if (u.Email == nil) != (tc.want == nil) || (tc.want != nil && *u.Email != *tc.want) {
-			t.Fatalf("%s: email = %v; want %v", lfid, u.Email, tc.want)
+		if u.Email == nil || *u.Email != stored {
+			t.Fatalf("%s: email = %v; want the stored %q", lfid, u.Email, stored)
 		}
 	}
 }

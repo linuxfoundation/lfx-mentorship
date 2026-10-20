@@ -162,6 +162,19 @@ func TestE2EUsers(t *testing.T) {
 		}
 	})
 
+	t.Run("sign-in without an email keeps the stored one", func(t *testing.T) {
+		linus := unprovisioned(t, "linus")
+		linus.call(t, http.MethodPut, "/me", map[string]any{}).expect(http.StatusOK)
+		noClaim := &actor{LFID: "linus", token: mintToken(t, validClaims("linus", "", "access:me"))}
+		var me struct {
+			Email string `json:"email"`
+		}
+		noClaim.mustJSON(t, http.MethodPut, "/me", map[string]any{}, http.StatusOK, &me)
+		if me.Email != linus.Email {
+			t.Fatalf("email after a sign-in without a claim = %q; want the stored %q", me.Email, linus.Email)
+		}
+	})
+
 	t.Run("DELETE /me removes the caller", func(t *testing.T) {
 		ada.call(t, http.MethodDelete, "/me", nil).expect(http.StatusNoContent)
 		ada.call(t, http.MethodGet, "/me", nil).expect(http.StatusUnauthorized)
