@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 type Handler = (event: H3Event) => unknown;
 type FakeEvent = { params?: Record<string, string>; query?: Record<string, unknown> };
 
+const USER_ID = '2f1c9a7e-5b3d-4c8e-9f0a-1b2c3d4e5f60';
 const fetchMock = vi.fn();
 vi.stubGlobal('$fetch', fetchMock);
 vi.stubGlobal('useRuntimeConfig', () => ({ apiBaseUrl: 'http://api' }));
@@ -54,24 +55,28 @@ describe('BFF route handlers', () => {
   });
 
   it('maps a mentee and a mentor by id', async () => {
-    fetchMock.mockResolvedValue({ user_id: 'u1', name: 'Ada', joined_at: '2026-03-15T12:00:00Z' });
+    fetchMock.mockResolvedValue({
+      user_id: USER_ID,
+      name: 'Ada',
+      joined_at: '2026-03-15T12:00:00Z',
+    });
     await expect(
-      call(await load('./mentees/[id].get'), { params: { id: 'u1' } }),
+      call(await load('./mentees/[id].get'), { params: { id: USER_ID } }),
     ).resolves.toMatchObject({
-      id: 'u1',
+      id: USER_ID,
       name: 'Ada',
       programs: [],
     });
     await expect(
-      call(await load('./mentors/[id].get'), { params: { id: 'u1' } }),
+      call(await load('./mentors/[id].get'), { params: { id: USER_ID } }),
     ).resolves.toMatchObject({
-      id: 'u1',
+      id: USER_ID,
       name: 'Ada',
       currentMentees: [],
     });
     expect(fetchMock.mock.calls.map((c) => c[0])).toEqual([
-      'http://api/v1/mentees/u1',
-      'http://api/v1/mentors/u1',
+      `http://api/v1/mentees/${USER_ID}`,
+      `http://api/v1/mentors/${USER_ID}`,
     ]);
   });
 

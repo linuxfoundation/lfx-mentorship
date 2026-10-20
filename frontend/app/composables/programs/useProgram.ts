@@ -9,7 +9,7 @@ import type { Program } from '~/types/program.types';
 export function useProgram(id: MaybeRef<string>) {
   return useQuery<Program>({
     queryKey: computed(() => ['program', toValue(id)]),
-    queryFn: () => $fetch<Program>(`/api/programs/${toValue(id)}`),
+    queryFn: () => $fetch<Program>(`/api/programs/${encodeURIComponent(toValue(id))}`),
     enabled: computed(() => !!toValue(id)),
   });
 }

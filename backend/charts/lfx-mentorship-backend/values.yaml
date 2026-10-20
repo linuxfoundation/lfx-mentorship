@@ -251,3 +251,32 @@ fundingStatsSyncCronJob:
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 1
   concurrencyPolicy: Forbid
+
+# ── CronJob: prerequisite-reminder ───────────────────────────────────────────
+# Emails pending mentees the prerequisite tasks they have not submitted, on their
+# reminder days. Sends through lfx-v2-email-service, so FGA_NATS_URL and
+# SELF_SERVE_URL are required, and EMAIL_ALLOWED_RECIPIENTS applies as it does to
+# the API. Reminder days are UTC calendar days and the job keeps no sent marker:
+# run it once a day, and keep timeZone at UTC. A failed Job is never retried, since a
+# crash part-way through sending would email those mentees again; the command retries
+# its own failures from before it sends anything.
+prerequisiteReminderCronJob:
+  enabled: false
+  # 14:30 UTC daily, the legacy remind-incomplete-prerequisite-tasks schedule.
+  schedule: "30 14 * * *"
+  timeZone: "Etc/UTC"
+  activeDeadlineSeconds: 1800
+  image:
+    # Defaults to same repository and tag as the main API image.
+    repository: ""
+    tag: ""
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  concurrencyPolicy: Forbid

@@ -34,7 +34,7 @@ flowchart TB
         NUXT["Nuxt 4 Server (BFF)<br/>public discovery · links to Self Serve to apply"]
         API["Go API (Chi)<br/>REST /v1"]
         PG[("PostgreSQL<br/>mentorship schema<br/>shared LFX v2 RDS")]
-        CRONS["CronJobs:<br/>term-status · program-funding-stats-sync · task-submission-status"]
+        CRONS["CronJobs:<br/>term-status · program-funding-stats-sync · task-submission-status · prerequisite-reminder"]
     end
 
     SS["LFX Self Serve<br/>manage programs, applications, tasks"]
@@ -261,10 +261,11 @@ Gateway limits are the skill's, with one correction when applying them: Traefik'
 ## Kubernetes resources
 
 - **Deployments**: `mentorship-api` (Go), `mentorship-frontend` (Nuxt) — each with Service + Ingress, Helm charts in-repo, deployed via ArgoCD ([lfx-v2-argocd](https://github.com/linuxfoundation/lfx-v2-argocd)).
-- **CronJobs** (3, down from 15+ Lambda jobs):
+- **CronJobs** (4, down from 15+ Lambda jobs):
   1. `term-status` — open/close program terms and application windows by date.
   2. `program-funding-stats-sync` — hourly funding-stats cache refresh from the Ledger API.
   3. `task-submission-status` — task submission status rollups.
+  4. `prerequisite-reminder` — daily at 14:30 UTC, as legacy `remind-incomplete-prerequisite-tasks` ran: emails pending mentees their unsubmitted prerequisite tasks 3 days after applying, every 7 days after that, and 3 days and 1 day before applications close.
 - **Database**: shared LFX v2 RDS, `mentorship` schema, credentials via K8s secrets ([lfx-secrets-management](https://github.com/linuxfoundation/lfx-secrets-management)).
 - CI/CD mirrors Crowdfunding: GitHub Actions (test, lint, image build → GHCR), MegaLinter, Trivy.
 

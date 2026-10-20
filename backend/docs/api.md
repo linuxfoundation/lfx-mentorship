@@ -2060,6 +2060,9 @@ This endpoint is authenticated and actor-scoped:
 
 Create a non-prerequisite task and assign it to an accepted mentee.
 
+The task's `program_term_id` is the application's term, and its `owner_id` and
+`created_by` are the caller; body values for those fields are ignored.
+
 **Request body**
 ```json
 {
@@ -2070,9 +2073,7 @@ Create a non-prerequisite task and assign it to an accepted mentee.
   "status":         "incomplete",       // defaults to "incomplete"
   "custom":         true,
   "submit_file":    "required",
-  "due_date":       "2026-05-01",
-  "program_term_id": "uuid",
-  "owner_id":       "uuid"
+  "due_date":       "2026-05-01"
 }
 ```
 

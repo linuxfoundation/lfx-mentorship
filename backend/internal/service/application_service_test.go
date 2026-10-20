@@ -37,6 +37,7 @@ type stubAppRepo struct {
 	countWithdrawn    func(context.Context, string, string, models.ApplicationRole) (int, error)
 	bulkDecline       func(context.Context, string) ([]*models.Application, error)
 	listPastMentees   func(context.Context, string) ([]*models.Application, error)
+	listRemindersDue  func(context.Context, time.Time) ([]*models.PrerequisiteReminderCandidate, error)
 }
 
 func (m *stubAppRepo) GetByID(ctx context.Context, id string) (*models.Application, error) {
@@ -136,6 +137,12 @@ func (m *stubAppRepo) BulkDeclineByTerm(ctx context.Context, termID string) ([]*
 func (m *stubAppRepo) ListPastMenteesByTerm(ctx context.Context, termID string) ([]*models.Application, error) {
 	if m.listPastMentees != nil {
 		return m.listPastMentees(ctx, termID)
+	}
+	return nil, nil
+}
+func (m *stubAppRepo) ListPrerequisiteRemindersDue(ctx context.Context, now time.Time) ([]*models.PrerequisiteReminderCandidate, error) {
+	if m.listRemindersDue != nil {
+		return m.listRemindersDue(ctx, now)
 	}
 	return nil, nil
 }
@@ -398,6 +405,7 @@ type stubNotifier struct {
 	menteeWithdrawnCalls      int
 	menteeGraduatedCalls      int
 	taskAssignedCalls         int
+	prerequisiteReminders     []string
 }
 
 func (n *stubNotifier) NotifyProgramSubmitted(_ context.Context, _, submitterID string) {
@@ -443,7 +451,9 @@ func (n *stubNotifier) NotifyMenteeGraduated(_ context.Context, _ string)   { n.
 func (n *stubNotifier) NotifyMenteeTaskAssigned(_ context.Context, _ string) {
 	n.taskAssignedCalls++
 }
-func (n *stubNotifier) NotifyMenteePrerequisiteReminder(_ context.Context, _ string) {}
+func (n *stubNotifier) NotifyMenteePrerequisiteReminder(_ context.Context, applicationID string) {
+	n.prerequisiteReminders = append(n.prerequisiteReminders, applicationID)
+}
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 

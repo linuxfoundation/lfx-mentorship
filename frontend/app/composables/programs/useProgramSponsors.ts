@@ -9,7 +9,8 @@ import type { ProgramSponsor } from '~/types/program.types';
 export function useProgramSponsors(programId: MaybeRef<string>, enabled: MaybeRef<boolean> = true) {
   return useQuery<ProgramSponsor[]>({
     queryKey: computed(() => ['program-sponsors', toValue(programId)]),
-    queryFn: () => $fetch<ProgramSponsor[]>(`/api/programs/${toValue(programId)}/sponsors`),
+    queryFn: () =>
+      $fetch<ProgramSponsor[]>(`/api/programs/${encodeURIComponent(toValue(programId))}/sponsors`),
     enabled: computed(() => Boolean(toValue(programId)) && Boolean(toValue(enabled))),
   });
 }

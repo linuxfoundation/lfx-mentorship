@@ -27,7 +27,7 @@ func (s *UserService) Bootstrap(ctx context.Context, lfid string, input models.U
 		return nil, fmt.Errorf("%w: principal is required", domain.ErrInvalidInput)
 	}
 	input.LFID = &lfid
-	user, err := s.repo.UpsertByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: input.Email, Name: input.Name, GivenName: input.GivenName, FamilyName: input.FamilyName, AvatarURL: input.AvatarURL})
+	user, err := s.repo.BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: input.Email, Name: input.Name, GivenName: input.GivenName, FamilyName: input.FamilyName, AvatarURL: input.AvatarURL})
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap user: %w", err)
 	}
@@ -91,6 +91,9 @@ func (s *UserService) Update(ctx context.Context, id string, input models.UserUp
 
 	if input.LFID != nil {
 		return nil, fmt.Errorf("%w: lfid cannot be updated", domain.ErrForbidden)
+	}
+	if input.Email != nil {
+		return nil, fmt.Errorf("%w: email cannot be updated", domain.ErrForbidden)
 	}
 
 	user, err := s.repo.Update(ctx, id, input)

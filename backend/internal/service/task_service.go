@@ -168,6 +168,9 @@ func (s *TaskService) Create(ctx context.Context, applicationID string, input mo
 	if application.Status != models.ApplicationStatusAccepted || application.Role != models.ApplicationRoleMentee || application.UserID != input.AssigneeID {
 		return nil, fmt.Errorf("%w: task assignee must be the accepted application's mentee", domain.ErrInvalidInput)
 	}
+	// A task belongs to its application's term; a body value would file it under another program.
+	termID := application.ProgramTermID
+	input.ProgramTermID = &termID
 	if input.Status == "" {
 		input.Status = models.TaskStatusIncomplete
 	}

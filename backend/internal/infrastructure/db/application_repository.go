@@ -566,13 +566,16 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 		return nil, fmt.Errorf("begin update application transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// becameAccepted is true only for the write that moves the application into accepted.
+	becameAccepted := false
 	if input.Status != nil && *input.Status == models.ApplicationStatusAccepted {
 		var (
 			termStatus models.ProgramTermStatus
 			role       models.ApplicationRole
 			userID     string
+			previous   models.ApplicationStatus
 		)
-		if err := tx.QueryRow(ctx, `SELECT pt.status, a.role, a.user_id FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE a.id = $1 FOR UPDATE OF pt`, id).Scan(&termStatus, &role, &userID); errors.Is(err, pgx.ErrNoRows) {
+		if err := tx.QueryRow(ctx, `SELECT pt.status, a.role, a.user_id, a.status FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE a.id = $1 FOR UPDATE OF pt, a`, id).Scan(&termStatus, &role, &userID, &previous); errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrApplicationNotFound
 		} else if err != nil {
 			return nil, fmt.Errorf("lock application term for acceptance: %w", err)
@@ -584,6 +587,7 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 				return nil, err
 			}
 		}
+		becameAccepted = previous != models.ApplicationStatusAccepted
 	}
 	if input.ExpectedStatus != nil {
 		var current models.ApplicationStatus
@@ -624,7 +628,9 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 		span.RecordError(err)
 		return nil, fmt.Errorf("update application: %w", err)
 	}
-	if a.Role == models.ApplicationRoleMentor && a.Status == models.ApplicationStatusAccepted {
+	// Membership follows the acceptance itself. Later edits of the accepted application must not
+	// reverse an admin's removal of the mentor, which is recorded on the member row.
+	if becameAccepted && a.Role == models.ApplicationRoleMentor {
 		if err := ensureAcceptedMentorMembership(ctx, tx, a); err != nil {
 			return nil, err
 		}
@@ -1110,4 +1116,59 @@ func (r *ApplicationRepository) ListPastMenteesByTerm(ctx context.Context, termI
 		apps = []*models.Application{}
 	}
 	return apps, nil
+}
+
+// listPrerequisiteRemindersDueSQL selects pending mentee applications on terms taking applications
+// ($7's UTC day), in published programs, with a prerequisite task not yet submitted, that are due a
+// reminder that day: models.IsPrerequisiteReminderDue, with its schedule constants as $8–$11.
+const listPrerequisiteRemindersDueSQL = `
+	SELECT a.id, a.created_on, pt.application_end_date
+	FROM applications a
+	JOIN program_terms pt ON pt.id = a.program_term_id
+	JOIN programs p ON p.id = pt.program_id
+	CROSS JOIN LATERAL (
+		SELECT ($7::timestamptz AT TIME ZONE 'UTC')::date - (a.created_on AT TIME ZONE 'UTC')::date AS since_applied,
+		       (pt.application_end_date AT TIME ZONE 'UTC')::date - ($7::timestamptz AT TIME ZONE 'UTC')::date AS until_close
+	) d
+	WHERE a.role = $1 AND a.status = $2 AND p.status = $3
+	  AND pt.status = 'open'
+	  AND ($7::timestamptz AT TIME ZONE 'UTC')::date
+	      BETWEEN (pt.application_start_date AT TIME ZONE 'UTC')::date AND (pt.application_end_date AT TIME ZONE 'UTC')::date
+	  AND ((d.since_applied >= $8 AND (d.since_applied - $8) % $9 = 0) OR d.until_close IN ($10, $11))
+	  AND EXISTS (
+		SELECT 1 FROM tasks t
+		WHERE t.application_id = a.id AND t.category = $4 AND t.status NOT IN ($5, $6)
+	  )
+	ORDER BY a.created_on, a.id`
+
+// ListPrerequisiteRemindersDue returns the applications due a prerequisite reminder on now's UTC day.
+func (r *ApplicationRepository) ListPrerequisiteRemindersDue(ctx context.Context, now time.Time) ([]*models.PrerequisiteReminderCandidate, error) {
+	ctx, span := applicationTracer.Start(ctx, "db.applications.ListPrerequisiteRemindersDue")
+	defer span.End()
+
+	rows, err := r.pool.Query(ctx, listPrerequisiteRemindersDueSQL,
+		models.ApplicationRoleMentee, models.ApplicationStatusPending, models.ProgramStatusPublished,
+		models.TaskCategoryPrerequisite, models.TaskStatusSubmitted, models.TaskStatusComplete,
+		now, models.PrerequisiteReminderFirstDay, models.PrerequisiteReminderInterval,
+		models.PrerequisiteReminderDaysBeforeEnd, models.PrerequisiteReminderFinalDaysBeforeEnd)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("list prerequisite reminders due: %w", err)
+	}
+	defer rows.Close()
+
+	candidates := []*models.PrerequisiteReminderCandidate{}
+	for rows.Next() {
+		var c models.PrerequisiteReminderCandidate
+		if err := rows.Scan(&c.ApplicationID, &c.CreatedOn, &c.ApplicationEndDate); err != nil {
+			span.RecordError(err)
+			return nil, fmt.Errorf("scan prerequisite reminder candidate: %w", err)
+		}
+		candidates = append(candidates, &c)
+	}
+	if err := rows.Err(); err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("prerequisite reminder candidates rows: %w", err)
+	}
+	return candidates, nil
 }
