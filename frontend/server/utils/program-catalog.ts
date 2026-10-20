@@ -10,6 +10,7 @@ import type {
   TermStatus,
 } from '../../app/types/program.types';
 import { toProgramCardStatus, withActiveTerms } from '../../app/utils/program-terms';
+import { isUUID } from './ids';
 
 export interface ProgramCatalogTerm {
   id: string;
@@ -133,12 +134,10 @@ export function mapCatalogMentee(mentee: ProgramCatalogMentee): ProgramMentee {
   };
 }
 
-const PROGRAM_UID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 // A UUID is read as is: the resolver hides a pending program's ID, but the catalog reads serve a
 // pending program to anyone holding its ID, which the program review email links by.
 async function resolveProgramUID(id: string): Promise<string> {
-  if (PROGRAM_UID.test(id)) return id;
+  if (isUUID(id)) return id;
   const config = useRuntimeConfig();
   const resolved = await $fetch<{ id: string }>(
     `${config.apiBaseUrl}/v1/programs/resolve/${encodeURIComponent(id)}`,

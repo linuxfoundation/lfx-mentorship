@@ -12,6 +12,7 @@ import type {
   ProfileProgramStatus,
   ProfileProgramTerm,
 } from '../../app/types/mentee.types';
+import { isUUID } from './ids';
 
 export interface MenteeMentor {
   id: string;
@@ -229,7 +230,11 @@ export async function fetchMentees(query: {
   }
 }
 
+// Mentees are keyed by user UUID; anything else is refused before it can reach the backend path.
 export async function fetchMentee(id: string): Promise<MenteeApiDetail> {
+  if (!isUUID(id)) {
+    throw createError({ statusCode: 404, message: 'Mentee not found' });
+  }
   const config = useRuntimeConfig();
   try {
     return await $fetch<MenteeApiDetail>(

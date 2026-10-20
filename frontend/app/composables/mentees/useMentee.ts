@@ -9,7 +9,7 @@ import type { MenteeDetail } from '~/types/mentee.types';
 export function useMentee(menteeId: MaybeRef<string>) {
   return useQuery<MenteeDetail>({
     queryKey: computed(() => ['mentee', toValue(menteeId)]),
-    queryFn: () => $fetch<MenteeDetail>(`/api/mentees/${toValue(menteeId)}`),
+    queryFn: () => $fetch<MenteeDetail>(`/api/mentees/${encodeURIComponent(toValue(menteeId))}`),
     enabled: computed(() => Boolean(toValue(menteeId))),
   });
 }

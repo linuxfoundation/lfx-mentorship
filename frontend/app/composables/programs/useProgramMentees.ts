@@ -9,7 +9,8 @@ import type { ProgramMentee } from '~/types/program.types';
 export function useProgramMentees(programId: MaybeRef<string>, enabled: MaybeRef<boolean> = true) {
   return useQuery<ProgramMentee[]>({
     queryKey: computed(() => ['program-mentees', toValue(programId)]),
-    queryFn: () => $fetch<ProgramMentee[]>(`/api/programs/${toValue(programId)}/mentees`),
+    queryFn: () =>
+      $fetch<ProgramMentee[]>(`/api/programs/${encodeURIComponent(toValue(programId))}/mentees`),
     enabled: computed(() => Boolean(toValue(programId)) && Boolean(toValue(enabled))),
   });
 }

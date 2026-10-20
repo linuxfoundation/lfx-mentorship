@@ -20,12 +20,15 @@ describe.each([
   ['fetchMentee', fetchMentee, 'mentees'],
   ['fetchMentor', fetchMentor, 'mentors'],
 ])('%s', (_name, fetcher, segment) => {
-  it('encodes the id in the backend path', async () => {
-    await fetcher('a b/../c?x=1#f');
-    expect(fetchMock).toHaveBeenCalledWith(`http://api/v1/${segment}/a%20b%2F..%2Fc%3Fx%3D1%23f`);
-  });
+  it.each(['a b/../c?x=1#f', '..', '..\\programs\\slug\\catalog', '%2e%2e', ''])(
+    'refuses the non-UUID id %j without calling the backend',
+    async (id) => {
+      await expect(fetcher(id)).rejects.toMatchObject({ statusCode: 404 });
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
 
-  it('leaves a plain id unchanged', async () => {
+  it('passes a user UUID through as the backend path segment', async () => {
     await fetcher('2f1c9a7e-5b3d-4c8e-9f0a-1b2c3d4e5f60');
     expect(fetchMock).toHaveBeenCalledWith(
       `http://api/v1/${segment}/2f1c9a7e-5b3d-4c8e-9f0a-1b2c3d4e5f60`,
