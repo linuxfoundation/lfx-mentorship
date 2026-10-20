@@ -1,9 +1,13 @@
 {{- /* Copyright The Linux Foundation and each contributor to LFX. */ -}}
 {{- /* SPDX-License-Identifier: MIT */ -}}
-{{template "header" .}}You have been added as a mentor for the {{.ProgramName}} mentorship on LFX Mentorship, a free platform that enables open source projects to run mentorships and get matched with mentees.
+{{template "header" .}}{{template "greeting" (printf "Hi %s!" .RecipientName)}}{{.InviterName}} has added you to be a mentor for the {{.ProgramName}} mentorship on LFX Mentorship{{with .LFID}} under the username {{.}}{{end}}, a free platform that enables open source projects to run mentorships and get matched with mentees.
 
-Accept or decline the invitation here:
-{{.InviteURL}}
-{{with .LFID}}
-Important: please log in with the username {{.}} to respond to this invitation. Using a different account will prevent your invitation from being connected.
-{{end}}{{template "footer" .}}
+To confirm, click Respond to Invitation CTA below to accept the invitation.
+
+If you're unable to be a mentor at this time, please click Respond to Invitation CTA below to decline it.
+
+If you don't have a mentor profile yet, please click Create Profile CTA below to create your mentor profile, it only takes a few minutes! If you already have a mentor profile, you can skip this step.
+{{if .LFID}}
+Important: please use this username when logging in to accept the invite and when creating your mentor profile. Using a different account will prevent your invite from being connected.
+{{end}}
+{{template "action" (action .InviteURL "Respond to Invitation" "primary")}}{{template "action" (action .ProfileURL "Create Profile" "secondary")}}{{template "footer" .}}

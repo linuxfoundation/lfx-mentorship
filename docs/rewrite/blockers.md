@@ -3,29 +3,28 @@
 
 # Authorization Implementation Blockers
 
-This document records the conditions that must be resolved before enabling
-Heimdall/OpenFGA authorization for Mentorship. The backend implementation is
-prepared for a staged rollout, but these blockers are deliberately kept
-outside the traffic cutover until their owners provide the required evidence.
+This document records the conditions for Heimdall/OpenFGA authorization in
+Mentorship. Authorization is enabled in dev and prod; the summary below shows
+what is done and what is still open.
 
 ## Status Summary
 
 | Blocker | Owner | Why it blocks | Current state |
 |---|---|---|---|
-| Shared OpenFGA model and executable fixtures | `lfx-v2-helm` | RuleSets and emitted tuples reference types and relations that do not exist until the model is deployed | Required before RuleSet activation |
-| Project admin relation ownership | `lfx-v2-project-service` plus Mentorship/platform owners | Project full-state sync must not delete a relation owned by the project service; the project-wide mentorship admin role must be authoritative and live-verified before cutover | Partially addressed: project-service PR #127 implements the target ownership model for the project-scoped mentorship admin role, but rollout, downstream verification, and cutover remain |
-| Project and approver roster authority | Mentorship/platform authority decision | FGA cannot distinguish an authoritative roster change from self-granting access | Storage shape exists for approvers; project-wide admin authority still requires ownership/API agreement |
-| Complete PostgreSQL data invariants | Mentorship/data migration | Missing parents or project IDs produce incomplete inheritance chains | Migration foundation exists; backfill and enforcement remain |
-| Heimdall/ArgoCD environment rollout | `lfx-v2-argocd`, platform owners | A correct chart is inert or unusable without real gateway, JWKS, audience, and model values | Local chart gates and first RuleSet pass exist; environment values are not landed |
-| Gateway verification and cutover | Platform/release owners | Enabling a fail-closed RuleSet without seeded tuples denies valid traffic; leaving the interim path live bypasses edge authorization | Not started in a deployed environment |
+| Shared OpenFGA model and executable fixtures | `lfx-v2-helm` | RuleSets and emitted tuples reference types and relations that do not exist until the model is deployed | Done: merged in [`lfx-v2-helm#177`](https://github.com/linuxfoundation/lfx-v2-helm/pull/177); prod runs `lfx-platform` 0.3.52, which includes it, and dev tracks `HEAD` |
+| Project admin relation ownership | `lfx-v2-project-service` plus Mentorship/platform owners | Project full-state sync must not delete a relation owned by the project service; the project-wide mentorship admin role must be authoritative and live-verified before cutover | Deployed: [`lfx-v2-project-service#127`](https://github.com/linuxfoundation/lfx-v2-project-service/pull/127) is in prod (0.9.18) and dev. Live verification through an unrelated project update remains (§2) |
+| Project and approver roster authority | Mentorship/platform authority decision | FGA cannot distinguish an authoritative roster change from self-granting access | Project-wide admin authority is settled (project-service, §2). The approver roster is stored in Postgres, but its admin routes stay cluster-local until a platform LF-staff relation is approved (§3) |
+| Complete PostgreSQL data invariants | Mentorship/data migration | Missing parents or project IDs produce incomplete inheritance chains | Tasks are enforced (`NOT NULL`; parentless rows quarantined). `programs.lf_project_uid` stays nullable until unmapped programs are resolved |
+| Heimdall/ArgoCD environment rollout | `lfx-v2-argocd`, platform owners | A correct chart is inert or unusable without real gateway, JWKS, audience, and model values | Done: dev and prod set `HEIMDALL_*` and `heimdall.enabled: true`; the backend accepts only Heimdall JWTs |
+| Gateway verification and cutover | Platform/release owners | Enabling a fail-closed RuleSet without seeded tuples denies valid traffic; leaving the interim path live bypasses edge authorization | Self Serve traffic goes through the gateway in dev and prod, and the interim ingress is disabled. Open: the Nuxt server still calls the backend Service directly, bypassing Heimdall (§5, evidence item 5) |
 
 ## 1. Shared OpenFGA Model
 
 **Owner:** `linuxfoundation/lfx-v2-helm`
 
-The current synchronization target is the open
+The model landed in
 [`lfx-v2-helm#177`](https://github.com/linuxfoundation/lfx-v2-helm/pull/177)
-pull request; its model is not deployed until that PR merges.
+and has been refined by later PRs there.
 
 ### What must exist
 
@@ -82,63 +81,41 @@ criterion.
    `references.global_mentorship_approver`, and the FGA contract test verifies
    that key independently from the deployed model relation check.
 
-## 2. Project Admin Relation Preservation
+## 2. Project Admin Relation
 
 **Owner:** `linuxfoundation/lfx-v2-project-service`
 
-### Temporary bridge and target ownership
+### Ownership
 
-Project-service PR #127 implements the target ownership model for the
-project-scoped mentorship admin role: project-service owns the project-wide
-`mentorship_program_admin` roster and its FGA emission rather than Mentorship
-maintaining a separate competing project-role tuple.
-
-The remaining work is not the ownership decision itself, but the rollout and
-verification of that implementation in the shared environment. The target
-architecture is now a single authority model: the project service owns the
-project-wide mentorship admin role and emits its `member_put` / `member_remove`
-updates through the normal project FGA flow.
-
-The target architecture remains:
+Project-service owns `project#mentorship_program_admin` end to end
+([`lfx-v2-project-service#127`](https://github.com/linuxfoundation/lfx-v2-project-service/pull/127)):
+the roster lives in project settings, is managed through project-service's API,
+and is emitted in its full-state `update_access` for the project:
 
 ```text
 project:{project_uid}#mentorship_program_admin@user:{program_admin_lfid}
 ```
 
-but the authoritative roster, assignment flow, and writes are owned by the
-project service, while Mentorship consumes the inherited relation for
-cross-program access checks.
+Mentorship writes no tuple on `project`; it only consumes the inherited relation
+for cross-program access checks.
 
-### Why this blocks
+### Why this blocked
 
-`update_access` is a full synchronization operation. The fga-sync consumer
-reads the live tuples for a project and removes publisher-managed relations
-that are absent from the new payload. A Mentorship admin tuple is a direct
-`user:` grant, not a `team:` grant, and therefore is deleted by the next
-project update unless the relation is explicitly excluded.
-
-The failure is silent and persistent:
-
-1. Mentorship emits a valid `member_put`.
-2. Cross-program administration works temporarily.
-3. Project-service publishes an unrelated project update.
-4. fga-sync removes the omitted Mentorship relation.
-5. `mentorship_program.writer` inheritance fails closed for that admin.
-
-Adding the relation to the OpenFGA model does not solve this lifecycle race.
-The publisher that performs full-state synchronization must preserve the
-relation.
+`update_access` is a full synchronization operation: fga-sync removes
+publisher-managed relations that are absent from the new payload. A tuple written
+by any publisher other than project-service would be deleted by the next project
+update, and `mentorship_program.writer` inheritance would fail closed for that
+admin. Having project-service own the relation removes that race.
 
 ### Required resolution evidence
 
-1. The project-service ownership of the project-wide mentorship admin role is
-   explicitly adopted and implemented in the live deployment.
-2. The project-service deployment version containing the project-scoped mentorship
-   admin role and its FGA emission is recorded in the environment rollout checklist.
-3. A project update containing unrelated changes is exercised in an
+Done: the ownership is adopted and deployed — prod runs project-service 0.9.18,
+which includes #127, and dev tracks `development`. Still to verify:
+
+1. A project update containing unrelated changes is exercised in an
    integration environment.
-4. The Mentorship admin tuple remains after that update.
-5. A cross-program `writer` check succeeds before and after the project update.
+2. The admin tuple remains after that update.
+3. A cross-program `writer` check succeeds before and after the project update.
 
 ## 3. Global Approver Roster Authority and Separation of Duties
 
@@ -267,20 +244,13 @@ across releases.
    Query Service; caller-owned views use `filter_grants=direct` with an explicit
    resource `type`.
 
-### Dual-gateway topology decision
+### Gateway topology
 
-Before enabling the shared gateway, document and verify the interim topology:
-
-- whether both gateways route to one Mentorship deployment or to separate
-   deployments;
-- which gateway-to-Service path is used in each environment;
-- whether the deployments share the same PostgreSQL instance and schema;
-- how cross-account traffic reaches the gateway, Service, and database; and
-- how the interim hostname is disabled so it cannot bypass Heimdall.
-
-The current code supports two URL prefixes on one backend deployment. That is a
-temporary migration shape, not evidence that cross-account routing or database
-ownership has been solved.
+Each environment runs one Mentorship deployment and one PostgreSQL schema.
+External traffic reaches it only through the shared gateway: the service mounts
+only `/mentorship/v1`, and the interim ingress is disabled. Inside the cluster,
+the Nuxt server still calls the backend Service directly, so gateway enforcement
+is not complete until §7 check 4 is done.
 
 ## 6. Seed, Repair, and Verification
 
@@ -311,20 +281,21 @@ expected tuple set.
 5. Operators monitor oldest pending outbox age, retry exhaustion, publication
    failures, derived-state verification mismatches, and revocation lag.
 
-## 7. Cutover Gate
+## 7. Acceptance Checks
 
-Gateway enforcement must remain disabled until all blockers above have evidence.
-The cutover is not just a Helm flag:
+Gateway enforcement is live in dev and prod. Do not set `heimdall.enabled=false`
+to run these checks: that removes the HTTPRoute, so the API is no longer
+reachable through the gateway.
 
-1. Deploy the shared model and verify its live ID.
-2. Deploy backend dual JWT acceptance, outbox relays, and exact dead-letter
-   repair tooling.
-3. Seed and verify FGA coverage.
-4. Deploy Middleware, HTTPRoute, and RuleSet without traffic first.
-5. Run authenticated, anonymous, denied, cross-program, and stale-tuple smoke
-   tests.
-6. Point the frontend/BFF at the shared gateway.
-7. Enable gateway traffic and retire the interim bypass path in the same change
-   window.
+Done: the Middleware, HTTPRoute and RuleSet serve traffic, the backend accepts
+only Heimdall JWTs, the FGA and index relays and `outbox-repair` are deployed,
+and the interim ingress is disabled.
 
-Until then, keep `heimdall.enabled=false` in environment values. 
+Still to check against the live deployment:
+
+1. The live OpenFGA model ID includes every Mentorship type and relation.
+2. FGA coverage after the seed matches PostgreSQL-derived expectations.
+3. Authenticated, anonymous, denied, cross-program, and stale-tuple smoke tests
+   pass through the gateway.
+4. The Nuxt server calls the gateway's cluster-internal address instead of the
+   backend Service (§5).

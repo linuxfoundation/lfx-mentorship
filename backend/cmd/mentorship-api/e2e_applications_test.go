@@ -25,7 +25,10 @@ type application struct {
 type task struct {
 	ID            string  `json:"id"`
 	ApplicationID *string `json:"application_id"`
+	ProgramTermID *string `json:"program_term_id"`
 	AssigneeID    string  `json:"assignee_id"`
+	OwnerID       *string `json:"owner_id"`
+	CreatedBy     *string `json:"created_by"`
 	Name          string  `json:"name"`
 	Category      string  `json:"category"`
 	Status        string  `json:"status"`
@@ -125,7 +128,7 @@ func TestE2EMenteeJourney(t *testing.T) {
 		if !got.TasksSubmitted {
 			t.Fatalf("application not flagged tasks_submitted")
 		}
-		msg := awaitEmail(t, admin.Email, "New mentee application to review", 1)
+		msg := awaitEmail(t, admin.Email, "A new mentee submitted application to join Journey Program", 1)
 		if !strings.Contains(msg.Text, "Spring") {
 			t.Fatalf("tasks-submitted email lacks the term: %s", msg.Text)
 		}
@@ -270,8 +273,8 @@ func TestE2EMenteeJourney(t *testing.T) {
 			t.Fatalf("accepted: %+v", app)
 		}
 		awaitEmail(t, mentee.Email, "Congratulations", 1)
-		awaitEmail(t, admin.Email, "has been accepted", 1)
-		hr := awaitEmail(t, e2eHRInbox, "has been accepted", 1)
+		awaitEmail(t, admin.Email, "A new mentee was accepted to", 1)
+		hr := awaitEmail(t, e2eHRInbox, "A new mentee was accepted to", 1)
 		if !strings.Contains(hr.Text, "Kenya") || !strings.Contains(hr.Text, mentee.Email) {
 			t.Fatalf("HR notice lacks the country or mentee email: %s", hr.Text)
 		}
@@ -292,12 +295,19 @@ func TestE2EMenteeJourney(t *testing.T) {
 	})
 
 	t.Run("custom tasks on an accepted application", func(t *testing.T) {
+		// The body's term, owner and creator are ignored: the task lands in its application's term,
+		// attributed to the caller.
 		var custom task
 		mentor.mustJSON(t, http.MethodPost, "/applications/"+app.ID+"/tasks", map[string]any{
 			"assignee_id": mentee.ID, "name": "Weekly report", "category": "non_prerequisite", "custom": true, "due_date": day(30),
+			"program_term_id": second.TermID, "owner_id": admin.ID, "created_by": admin.ID,
 		}, http.StatusCreated, &custom)
 		if custom.Status != "incomplete" || !custom.Custom {
 			t.Fatalf("custom task: %+v", custom)
+		}
+		if custom.ProgramTermID == nil || *custom.ProgramTermID != p.TermID ||
+			custom.OwnerID == nil || *custom.OwnerID != mentor.ID || custom.CreatedBy == nil || *custom.CreatedBy != mentor.ID {
+			t.Fatalf("custom task term/owner/creator not bound to the route and caller: %+v", custom)
 		}
 		mentor.call(t, http.MethodPost, "/applications/"+app.ID+"/tasks", map[string]any{"name": "x"}).expect(http.StatusBadRequest)
 		mentor.call(t, http.MethodPost, "/applications/"+app.ID+"/tasks", map[string]any{"assignee_id": mentor.ID}).expect(http.StatusBadRequest)

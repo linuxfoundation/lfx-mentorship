@@ -1,8 +1,8 @@
 {{- /* Copyright The Linux Foundation and each contributor to LFX. */ -}}
 {{- /* SPDX-License-Identifier: MIT */ -}}
-{{template "header" .}}Thank you for submitting {{.ProgramName}} to be a part of LFX Mentorship.
+{{template "header" .}}{{template "greeting" (printf "Hi %s!" .RecipientName)}}Thank you for submitting {{.ProgramName}} to be a part of our mentorship program on LFX Platform.
 
-The review process can take up to 5 business days, but most are completed within 24 hours. You will be notified by email when the review is complete.
+The review process can take up to 5 business days, but most are completed within 24 hours. You will be notified via email when the review is complete.
 
-Manage your program: {{.ManageURL}}
+View Project: {{.ManageURL}}
 {{template "footer" .}}

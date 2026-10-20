@@ -129,9 +129,37 @@ func TestE2EUsers(t *testing.T) {
 		ada.send(t, http.MethodPatch, "/me", strings.NewReader("{"), "application/json", nil).expect(http.StatusBadRequest)
 	})
 
-	t.Run("bootstrap with an email another user holds conflicts", func(t *testing.T) {
+	t.Run("PUT and PATCH /me ignore a body email", func(t *testing.T) {
 		grace := unprovisioned(t, "grace")
-		grace.call(t, http.MethodPut, "/me", map[string]any{"email": ada.Email}).expect(http.StatusConflict)
+		var me struct {
+			Email string `json:"email"`
+		}
+		grace.mustJSON(t, http.MethodPut, "/me", map[string]any{"email": ada.Email}, http.StatusOK, &me)
+		if me.Email != grace.Email {
+			t.Fatalf("bootstrap email = %q; want the token's %q", me.Email, grace.Email)
+		}
+		grace.mustJSON(t, http.MethodPatch, "/me", map[string]any{"email": ada.Email}, http.StatusOK, &me)
+		if me.Email != grace.Email {
+			t.Fatalf("patched email = %q; want the token's %q", me.Email, grace.Email)
+		}
+	})
+
+	t.Run("bootstrap takes back an email another account holds", func(t *testing.T) {
+		mallory := unprovisioned(t, "mallory")
+		mallory.call(t, http.MethodPut, "/me", map[string]any{}).expect(http.StatusOK)
+		alan := unprovisioned(t, "alan")
+		dbExec(t, "UPDATE users SET email = $1 WHERE lfid = 'mallory'", alan.Email)
+		var me struct {
+			Email string `json:"email"`
+		}
+		alan.mustJSON(t, http.MethodPut, "/me", map[string]any{}, http.StatusOK, &me)
+		if me.Email != alan.Email {
+			t.Fatalf("bootstrap email = %q; want %q", me.Email, alan.Email)
+		}
+		alan.call(t, http.MethodGet, "/me", nil).expect(http.StatusOK)
+		if n := dbCount(t, "SELECT count(*) FROM users WHERE lfid = 'mallory' AND email IS NULL"); n != 1 {
+			t.Fatalf("mallory still holds the address")
+		}
 	})
 
 	t.Run("DELETE /me removes the caller", func(t *testing.T) {

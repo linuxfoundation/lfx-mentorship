@@ -37,6 +37,7 @@ type stubAppRepo struct {
 	countWithdrawn    func(context.Context, string, string, models.ApplicationRole) (int, error)
 	bulkDecline       func(context.Context, string) ([]*models.Application, error)
 	listPastMentees   func(context.Context, string) ([]*models.Application, error)
+	listRemindersDue  func(context.Context, time.Time) ([]*models.PrerequisiteReminderCandidate, error)
 }
 
 func (m *stubAppRepo) GetByID(ctx context.Context, id string) (*models.Application, error) {
@@ -136,6 +137,12 @@ func (m *stubAppRepo) BulkDeclineByTerm(ctx context.Context, termID string) ([]*
 func (m *stubAppRepo) ListPastMenteesByTerm(ctx context.Context, termID string) ([]*models.Application, error) {
 	if m.listPastMentees != nil {
 		return m.listPastMentees(ctx, termID)
+	}
+	return nil, nil
+}
+func (m *stubAppRepo) ListPrerequisiteRemindersDue(ctx context.Context, now time.Time) ([]*models.PrerequisiteReminderCandidate, error) {
+	if m.listRemindersDue != nil {
+		return m.listRemindersDue(ctx, now)
 	}
 	return nil, nil
 }
@@ -382,7 +389,10 @@ type stubNotifier struct {
 	programSubmittedCalls     int
 	programSubmitters         []string
 	programDecisions          []models.ProgramStatus
+	programEditors            []string
+	profilesCreated           []models.UserProfileType
 	mentorInvitedCalls        int
+	mentorInviters            []string
 	mentorDeclinedCalls       int
 	adminMentorDeclinedCalls  int
 	adminMentorAcceptedCalls  int
@@ -395,6 +405,7 @@ type stubNotifier struct {
 	menteeWithdrawnCalls      int
 	menteeGraduatedCalls      int
 	taskAssignedCalls         int
+	prerequisiteReminders     []string
 }
 
 func (n *stubNotifier) NotifyProgramSubmitted(_ context.Context, _, submitterID string) {
@@ -404,8 +415,17 @@ func (n *stubNotifier) NotifyProgramSubmitted(_ context.Context, _, submitterID 
 func (n *stubNotifier) NotifyProgramDecided(_ context.Context, _ string, status models.ProgramStatus) {
 	n.programDecisions = append(n.programDecisions, status)
 }
-func (n *stubNotifier) NotifyMentorInvited(_ context.Context, _, _, _ string) { n.mentorInvitedCalls++ }
-func (n *stubNotifier) NotifyMentorDeclined(_ context.Context, _, _ string)   { n.mentorDeclinedCalls++ }
+func (n *stubNotifier) NotifyProgramUpdated(_ context.Context, _, editorID string) {
+	n.programEditors = append(n.programEditors, editorID)
+}
+func (n *stubNotifier) NotifyProfileCreated(_ context.Context, _ string, profileType models.UserProfileType) {
+	n.profilesCreated = append(n.profilesCreated, profileType)
+}
+func (n *stubNotifier) NotifyMentorInvited(_ context.Context, _, _, inviterID, _ string) {
+	n.mentorInvitedCalls++
+	n.mentorInviters = append(n.mentorInviters, inviterID)
+}
+func (n *stubNotifier) NotifyMentorDeclined(_ context.Context, _, _ string) { n.mentorDeclinedCalls++ }
 func (n *stubNotifier) NotifyAdminMentorDeclined(_ context.Context, _, _ string) {
 	n.adminMentorDeclinedCalls++
 }
@@ -430,6 +450,9 @@ func (n *stubNotifier) NotifyMenteeWithdrawn(_ context.Context, _ string)   { n.
 func (n *stubNotifier) NotifyMenteeGraduated(_ context.Context, _ string)   { n.menteeGraduatedCalls++ }
 func (n *stubNotifier) NotifyMenteeTaskAssigned(_ context.Context, _ string) {
 	n.taskAssignedCalls++
+}
+func (n *stubNotifier) NotifyMenteePrerequisiteReminder(_ context.Context, applicationID string) {
+	n.prerequisiteReminders = append(n.prerequisiteReminders, applicationID)
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -1431,5 +1454,131 @@ func TestApplicationService_Delete_ProgramAdmin(t *testing.T) {
 	}}
 	if err := newApplicationSvc(repo, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{}).Delete(context.Background(), "app-1", "admin-1"); err != nil || deleted != "app-1" {
 		t.Fatalf("err = %v, deleted %q; want app-1 deleted", err, deleted)
+	}
+}
+
+func TestApplicationService_Create_RequiresUserID(t *testing.T) {
+	termRepo := &stubTermRepo{getByID: func(context.Context, string) (*models.ProgramTerm, error) {
+		t.Fatal("term must not be read without an applicant")
+		return nil, nil
+	}}
+	_, err := newApplicationSvc(&stubAppRepo{}, &stubTaskRepo{}, termRepo, &stubProgRepo{}).Create(context.Background(), "term-1", models.ApplicationCreateInput{Role: models.ApplicationRoleMentee})
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("err = %v; want ErrInvalidInput", err)
+	}
+}
+
+func TestApplicationService_Create_PropagatesErrors(t *testing.T) {
+	repoErr := errors.New("db down")
+	withdrawn := func(context.Context, string, string, models.ApplicationRole) (*models.Application, error) {
+		return &models.Application{ID: "old", Status: models.ApplicationStatusWithdrawn}, nil
+	}
+	failingProgram := &stubProgRepo{getByID: func(context.Context, string) (*models.Program, error) { return nil, repoErr }}
+	for label, tc := range map[string]struct {
+		appRepo  *stubAppRepo
+		termRepo *stubTermRepo
+		progRepo *stubProgRepo
+		profiles *stubUserProfileRepo
+	}{
+		"load term": {termRepo: &stubTermRepo{getByID: func(context.Context, string) (*models.ProgramTerm, error) { return nil, repoErr }}},
+		"count mentee profiles": {profiles: &stubUserProfileRepo{countActiveMenteeProfiles: func(context.Context, string) (int, error) {
+			return 0, repoErr
+		}}},
+		"find existing application": {appRepo: &stubAppRepo{findByTermAndUser: func(context.Context, string, string, models.ApplicationRole) (*models.Application, error) {
+			return nil, repoErr
+		}}},
+		"load task templates":                  {progRepo: failingProgram},
+		"load task templates on reapplication": {appRepo: &stubAppRepo{findByTermAndUser: withdrawn}, progRepo: failingProgram},
+		"write reapplication": {appRepo: &stubAppRepo{
+			findByTermAndUser: withdrawn,
+			reapplyWithTasks: func(context.Context, string, string, models.ApplicationCreateInput, []models.TaskCreateInput) (*models.Application, error) {
+				return nil, repoErr
+			},
+		}},
+	} {
+		t.Run(label, func(t *testing.T) {
+			if tc.appRepo == nil {
+				tc.appRepo = &stubAppRepo{}
+			}
+			if tc.termRepo == nil {
+				tc.termRepo = &stubTermRepo{getByID: func(context.Context, string) (*models.ProgramTerm, error) { return openTerm(time.Now()), nil }}
+			}
+			if tc.progRepo == nil {
+				tc.progRepo = &stubProgRepo{}
+			}
+			if tc.profiles == nil {
+				tc.profiles = menteeProfiles(1)
+			}
+			n := &stubNotifier{}
+			svc := service.NewApplicationService(tc.appRepo, &stubTaskRepo{}, tc.termRepo, tc.progRepo, approvedProgramAdmin(), tc.profiles, n)
+			if _, err := svc.Create(context.Background(), "term-1", models.ApplicationCreateInput{UserID: "u1", Role: models.ApplicationRoleMentee}); !errors.Is(err, repoErr) {
+				t.Fatalf("err = %v; want the repository error", err)
+			}
+			if n.applicationReceivedCalls != 0 {
+				t.Errorf("application received notifications = %d; want 0", n.applicationReceivedCalls)
+			}
+		})
+	}
+}
+
+func TestApplicationService_Create_RejectsCorruptTaskTemplates(t *testing.T) {
+	termRepo := &stubTermRepo{getByID: func(context.Context, string) (*models.ProgramTerm, error) { return openTerm(time.Now()), nil }}
+	progRepo := &stubProgRepo{getByID: func(_ context.Context, id string) (*models.Program, error) {
+		return &models.Program{ID: id, TaskTemplates: json.RawMessage(`{"not":"a list"}`)}, nil
+	}}
+	appRepo := &stubAppRepo{create: func(context.Context, string, models.ApplicationCreateInput) (*models.Application, error) {
+		t.Fatal("an application must not be created without its prerequisite tasks")
+		return nil, nil
+	}}
+	_, err := newApplicationSvc(appRepo, &stubTaskRepo{}, termRepo, progRepo).Create(context.Background(), "term-1", models.ApplicationCreateInput{UserID: "u1", Role: models.ApplicationRoleMentee})
+	if err == nil || !strings.Contains(err.Error(), "decode program task templates") {
+		t.Fatalf("err = %v; want a task template decode error", err)
+	}
+}
+
+func TestApplicationService_Update_AuthorizationFailures(t *testing.T) {
+	repoErr := errors.New("db down")
+	accepted := models.ApplicationStatusAccepted
+	note := "looks good"
+	failingMembers := &stubMemberRepo{
+		findActiveReviewer: func(context.Context, string, string) (*models.ProgramMember, error) { return nil, repoErr },
+		findActiveAdmin:    func(context.Context, string, string) (*models.ProgramMember, error) { return nil, repoErr },
+	}
+	for label, tc := range map[string]struct {
+		appRepo *stubAppRepo
+		members *stubMemberRepo
+		input   models.ApplicationUpdateInput
+		want    error
+		// message names the check expected to refuse; several return ErrForbidden.
+		message string
+	}{
+		"application lookup fails": {
+			appRepo: &stubAppRepo{getByID: func(context.Context, string) (*models.Application, error) { return nil, repoErr }},
+			input:   models.ApplicationUpdateInput{Status: &accepted, ActorID: "admin-1"},
+			want:    repoErr,
+		},
+		"status change without an actor": {input: models.ApplicationUpdateInput{Status: &accepted}, want: domain.ErrForbidden, message: "actor identity is required"},
+		"reviewer note without an actor": {input: models.ApplicationUpdateInput{ReviewerNote: &note}, want: domain.ErrForbidden, message: "actor identity is required"},
+		"reviewer lookup fails":          {members: failingMembers, input: models.ApplicationUpdateInput{ReviewerNote: &note, ActorID: "mentor-1"}, want: repoErr},
+		"program admin lookup fails":     {members: failingMembers, input: models.ApplicationUpdateInput{Status: &accepted, ActorID: "admin-1"}, want: repoErr},
+		"mentor cannot decide":           {members: approvedMentor(), input: models.ApplicationUpdateInput{Status: &accepted, ActorID: "mentor-1"}, want: domain.ErrForbidden, message: "active program_admin"},
+	} {
+		t.Run(label, func(t *testing.T) {
+			if tc.appRepo == nil {
+				tc.appRepo = &stubAppRepo{}
+			}
+			tc.appRepo.update = func(context.Context, string, models.ApplicationUpdateInput) (*models.Application, error) {
+				t.Fatal("an unauthorized update must not be written")
+				return nil, nil
+			}
+			if tc.members == nil {
+				tc.members = approvedProgramAdmin()
+			}
+			svc := newApplicationSvcWithMember(tc.appRepo, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{}, tc.members)
+			_, err := svc.Update(context.Background(), "app-1", tc.input)
+			if !errors.Is(err, tc.want) || !strings.Contains(err.Error(), tc.message) {
+				t.Fatalf("err = %v; want %v mentioning %q", err, tc.want, tc.message)
+			}
+		})
 	}
 }

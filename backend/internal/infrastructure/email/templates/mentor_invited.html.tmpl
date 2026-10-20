@@ -1,7 +1,9 @@
 {{- /* Copyright The Linux Foundation and each contributor to LFX. */ -}}
 {{- /* SPDX-License-Identifier: MIT */ -}}
-{{- /* Legacy: mentor-project-invite */ -}}
-{{template "header" .}}<p>You have been added as a mentor for the <strong>{{.ProgramName}}</strong> mentorship on LFX Mentorship, a free platform that enables open source projects to run mentorships and get matched with mentees.</p>
-<p>Use the button below to accept or decline the invitation.</p>
-{{with .LFID}}<p><strong>Important:</strong> please log in with the username <strong>{{.}}</strong> to respond to this invitation. Using a different account will prevent your invitation from being connected.</p>
-{{end}}{{template "button" .InviteURL}}Respond to Invitation{{template "button_end"}}{{template "footer" .}}
+{{- /* Legacy: mentor-project-invite. The invite link accepts or declines; Create Profile opens the mentor profile form. */ -}}
+{{template "header" .}}{{template "greeting" (printf "Hi %s!" .RecipientName)}}<p><strong>{{.InviterName}}</strong> has added you to be a mentor for the <strong>{{.ProgramName}}</strong> mentorship on LFX Mentorship{{with .LFID}} under the username <strong>{{.}}</strong>{{end}}, a free platform that enables open source projects to run mentorships and get matched with mentees.</p>
+<p>To confirm, click Respond to Invitation CTA below to accept the invitation.</p>
+<p>If you're unable to be a mentor at this time, please click Respond to Invitation CTA below to decline it.</p>
+<p>If you don't have a mentor profile yet, please click Create Profile CTA below to create your mentor profile, it only takes a few minutes! If you already have a mentor profile, you can skip this step.</p>
+{{if .LFID}}<p><strong>Important</strong>: please use this username when logging in to accept the invite and when creating your mentor profile. Using a different account will prevent your invite from being connected.</p>
+{{end}}{{template "actions_start"}}{{template "action" (action .InviteURL "Respond to Invitation" "primary")}}{{template "action" (action .ProfileURL "Create Profile" "secondary")}}{{template "actions_end"}}{{template "footer" .}}

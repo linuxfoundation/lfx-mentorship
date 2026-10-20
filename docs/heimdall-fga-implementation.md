@@ -6,7 +6,7 @@
 This document is the operational README for Mentorship authentication and
 authorization. It describes the implementation that exists in this repository,
 the LFX product-service patterns it follows, the required configuration, the
-current validation level, and the work remaining before gateway cutover.
+current validation level, and the work that remains.
 
 For the detailed relation model and route-by-route decisions, see the
 [authorization model](rewrite/04-authorization-model.md),
@@ -19,8 +19,8 @@ For the detailed relation model and route-by-route decisions, see the
 | Area | Status | Evidence or remaining condition |
 | --- | --- | --- |
 | Heimdall JWT validation in the backend | **Implemented and tested** | PS256, issuer, audience, time claims, and `principal` are validated in-process |
-| Heimdall RuleSet | **Implemented in chart** | Route rules exist, but no Mentorship RuleSet is deployed in the dev environment yet |
-| Shared-gateway HTTPRoute and Middleware | **Implemented in chart** | Rendered successfully with live-shaped dev values; environment activation is pending |
+| Heimdall RuleSet | **Deployed in dev and prod** | `heimdall.enabled: true` in the `lfx-v2-argocd` dev and prod values |
+| Shared-gateway HTTPRoute and Middleware | **Deployed in dev and prod** | Rendered with the RuleSet; the interim ingress is disabled and the chart rejects it |
 | FGA transactional outbox | **Implemented and tested** | Generation-guarded claim, retry, acknowledgement, and dead-letter behavior |
 | FGA NATS/JetStream relay | **Implemented and dev-validated** | A program marker was acknowledged and its tuple was verified in the live `lfx-core` store |
 | Index relay authentication and retry | **Implemented and tested** | Service-token stamping, JetStream publish acknowledgement, delayed single-count retries, generation guards, and relay metrics |
@@ -29,8 +29,8 @@ For the detailed relation model and route-by-route decisions, see the
 | Initial FGA and index seeding | **Implemented in importer** | Environment seed still needs to be run after all reported data gaps are resolved or quarantined |
 | Dead-letter recovery | **Implemented** | Exact retained markers can be requeued through `/app/outbox-repair` |
 | Full dev tuple coverage verification | **Not complete** | PostgreSQL-derived expectations have not yet been reconciled with every live tuple |
-| Heimdall end-to-end gateway smoke | **Not complete** | Dev does not yet have the Mentorship HTTPRoute, Middleware, and RuleSet enabled |
-| Frontend/BFF gateway cutover | **Not started** | BFF URL and gateway audience must move atomically with gateway activation |
+| Heimdall end-to-end gateway smoke | **Partial** | Self Serve traffic reaches the API through the gateway in dev and prod; the authorization smokes in task 5 are not recorded |
+| Frontend/BFF gateway cutover | **Not done** | The Nuxt server calls the backend Service directly (`NUXT_API_BASE_URL` in `lfx-v2-argocd`), bypassing Heimdall; `05` GW-3 targets the gateway's cluster-internal address |
 | Query Service collection migration | **Not complete** | Programs are partially indexed; applications/tasks and collection consumers still need migration |
 
 The implementation does **not** include a periodic service-side reconciler.
@@ -173,7 +173,7 @@ The service publishes the standard fga-sync operations:
 
 Caller-owned collections — a user's programs, applications, and tasks — are
 served by Query Service. Query Service must hold all Mentorship resource objects
-before cutover.
+before consumers move to it.
 
 Nested views such as a program's terms or members may remain service-owned when
 every returned item shares the path parent's permission; Heimdall checks that
@@ -316,8 +316,7 @@ before their collections or caller-owned views move to Query Service.
 The importer is idempotent. Re-running it coalesces markers and increments their
 generation rather than creating duplicate outbox rows.
 
-Before enabling Heimdall, operators must resolve or explicitly quarantine every
-reported row. Reports include:
+Operators must resolve or explicitly quarantine every reported row. Reports include:
 
 - `UNMAPPED_PROGRAM`;
 - `UNMAPPED_PROGRAM_MEMBER`;
@@ -424,13 +423,15 @@ OpenFGA independently.
 
 Not yet validated end to end:
 
-- a real request through the deployed Mentorship HTTPRoute and Heimdall;
 - a real user token allowed by inherited project/program relations;
 - an authenticated denial and cross-program denial;
 - complete post-seed tuple coverage; and
 - stale-tuple/dead-letter repair against the live environment.
 
-## Remaining Tasks Before Cutover
+## Remaining Tasks
+
+Gateway traffic is enabled in dev and prod. Unchecked items are still open or not
+yet verified.
 
 ### 1. Repair and Quarantine Migration Gaps
 
@@ -482,11 +483,11 @@ Not yet validated end to end:
 
 ### 4. Land Environment Configuration
 
-- [ ] Add reviewed per-environment values in `lfx-v2-argocd` for Heimdall JWKS,
+- [x] Add reviewed per-environment values in `lfx-v2-argocd` for Heimdall JWKS,
   issuer, audience, shared gateway, domain, Heimdall URL, NATS, and Secret.
-- [ ] Render each environment and confirm no local-auth bypass values.
-- [ ] Deploy Middleware, RuleSet, and HTTPRoute in dev.
-- [ ] Confirm the backend validates a real Heimdall PS256 token.
+- [x] Render each environment and confirm no local-auth bypass values.
+- [x] Deploy Middleware, RuleSet, and HTTPRoute in dev.
+- [x] Confirm the backend validates a real Heimdall PS256 token.
 - [ ] Keep `/internal/metrics` cluster-local and verify the scraper reaches the
   Service directly rather than through Heimdall.
 
@@ -507,7 +508,7 @@ Not yet validated end to end:
 - [ ] Request the shared gateway audience rather than a standalone Mentorship
   audience.
 - [ ] Move browser traffic to `lfx-api.{lfx.domain}/mentorship/v1/...`.
-- [ ] Disable any interim direct backend hostname or route that bypasses
+- [x] Disable any interim direct backend hostname or route that bypasses
   Heimdall.
 - [ ] Enable gateway traffic and client configuration in one controlled window.
 - [ ] Document and test rollback by disabling the shared route and reverting
@@ -524,8 +525,8 @@ Not yet validated end to end:
 
 ## Cutover Gate
 
-Do not enable Mentorship shared-gateway traffic until all of the following are
-true:
+Gateway traffic is enabled in dev and prod. The list below is the acceptance bar
+for the items that are still open:
 
 1. the model and external ownership dependencies are live;
 2. migration gaps are resolved or explicitly quarantined;
@@ -538,5 +539,3 @@ true:
 8. resource collections other than the public program catalog are served by
    Query Service; and
 9. direct bypass routes are disabled.
-
-Until then, keep `heimdall.enabled=false` in environment values.

@@ -38,6 +38,10 @@ func (s *stubUserRepository) UpsertByLFID(context.Context, models.UserCreateInpu
 	return &models.User{}, nil
 }
 
+func (s *stubUserRepository) BootstrapByLFID(context.Context, models.UserCreateInput) (*models.User, error) {
+	return &models.User{}, nil
+}
+
 func (s *stubUserRepository) SearchCandidates(context.Context, string, int) ([]*models.User, error) {
 	return []*models.User{}, nil
 }
@@ -128,5 +132,23 @@ func TestUserService_UpdateRejectsLFIDMutation(t *testing.T) {
 	}
 	if called {
 		t.Fatal("repository update should not be called when LFID mutation is requested")
+	}
+}
+
+func TestUserService_UpdateRejectsEmailMutation(t *testing.T) {
+	called := false
+	svc := service.NewUserService(&stubUserRepository{
+		update: func(context.Context, string, models.UserUpdateInput) (*models.User, error) {
+			called = true
+			return &models.User{}, nil
+		},
+	})
+	email := "victim@example.org"
+	_, err := svc.Update(context.Background(), "user-1", models.UserUpdateInput{Email: &email})
+	if !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("err = %v; want ErrForbidden", err)
+	}
+	if called {
+		t.Fatal("repository update should not be called when email mutation is requested")
 	}
 }

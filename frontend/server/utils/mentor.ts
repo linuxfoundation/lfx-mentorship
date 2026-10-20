@@ -12,6 +12,7 @@ import type {
   MentorsListResponse,
   MentorsSummaryResponse,
 } from '../../app/types/mentor.types';
+import { isUUID } from './ids';
 
 export interface MentorApiMentor {
   id: string;
@@ -250,10 +251,16 @@ export async function fetchMentors(query: {
   }
 }
 
+// Mentors are keyed by user UUID; anything else is refused before it can reach the backend path.
 export async function fetchMentor(id: string): Promise<MentorApiDetail> {
+  if (!isUUID(id)) {
+    throw createError({ statusCode: 404, message: 'Mentor not found' });
+  }
   const config = useRuntimeConfig();
   try {
-    return await $fetch<MentorApiDetail>(`${config.apiBaseUrl}/v1/mentors/${id}`);
+    return await $fetch<MentorApiDetail>(
+      `${config.apiBaseUrl}/v1/mentors/${encodeURIComponent(id)}`,
+    );
   } catch (error) {
     throw createError({
       statusCode: fetchErrorStatus(error),

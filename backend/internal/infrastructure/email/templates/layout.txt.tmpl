@@ -1,8 +1,19 @@
 {{- /* Copyright The Linux Foundation and each contributor to LFX. */ -}}
 {{- /* SPDX-License-Identifier: MIT */ -}}
-{{define "header"}}{{if not .Letter}}Hi {{.RecipientName}}!
+{{define "header"}}{{end}}
+{{- define "greeting"}}{{.}}
 
+{{end}}
+{{- define "details_start"}}{{end}}
+{{- define "detail"}}{{.Label}}: {{.Value}}
+{{end}}
+{{- define "details_end"}}{{end}}
+{{- define "tasks"}}{{range .}}{{template "detail" (detail "Task Name" .Name)}}{{with .DueDate}}{{template "detail" (detail "Due Date" .)}}{{end}}
 {{end}}{{end}}
+{{- define "actions_start"}}{{end}}
+{{- define "action"}}{{.Label}}: {{.URL}}
+{{end}}
+{{- define "actions_end"}}{{end}}
 {{- define "footer"}}{{if not .Letter}}
 Thank you,
 The LF Engineering Team

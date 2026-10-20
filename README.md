@@ -17,12 +17,13 @@ public site are being built:
 ## Architecture
 
 - **Backend**: Go (Chi), PostgreSQL on the shared LFX v2 RDS, layered domain/service/handler/infrastructure design
-- **Frontend**: Nuxt 4 (Vue 3) SSR public site — discovery, program detail, apply flow; management surfaces live in [LFX Self Serve](https://github.com/linuxfoundation/lfx-self-serve)
+- **Frontend**: Nuxt 4 (Vue 3) SSR public site — discovery and program detail; applying and all management live in [LFX Self Serve](https://github.com/linuxfoundation/lfx-self-serve)
 - **Deployment**: Kubernetes (LFX v2 cluster), Helm charts, ArgoCD GitOps
-- **Auth**: Auth0 (OAuth2 PKCE for users, M2M for services), validated in-service today
+- **Auth**: behind the LFX v2 gateway — Heimdall authorizes each route against OpenFGA, and the backend accepts only Heimdall-issued JWTs. Users sign in with Auth0 through Self Serve.
 
-Authorization is expected to move to the platform's Heimdall/OpenFGA edge — see
-[linuxfoundation/lfx-mentorship#119](https://github.com/linuxfoundation/lfx-mentorship/pull/119).
+Authorization design: [docs/rewrite/04-authorization-model.md](docs/rewrite/04-authorization-model.md)
+and [docs/rewrite/05-heimdall-gateway.md](docs/rewrite/05-heimdall-gateway.md); rollout status:
+[docs/heimdall-fga-implementation.md](docs/heimdall-fga-implementation.md).
 
 ## Local development
 
@@ -65,7 +66,7 @@ Both services ship as container images and Helm charts:
 
 A push to `main` publishes images tagged `development`, which the dev
 environment tracks automatically. A `v*.*.*` tag publishes semver-tagged images
-plus signed OCI charts; staging and prod pin those chart versions, so promoting
+plus signed OCI charts; prod pins those chart versions, so promoting
 a release is a version-bump PR in
 [lfx-v2-argocd](https://github.com/linuxfoundation/lfx-v2-argocd).
 
