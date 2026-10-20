@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	emailapi "github.com/linuxfoundation/lfx-v2-email-service/pkg/api"
 )
 
 type application struct {
@@ -271,7 +273,14 @@ func TestE2EMenteeJourney(t *testing.T) {
 		}
 		awaitEmail(t, mentee.Email, "Congratulations", 1)
 		awaitEmail(t, admin.Email, "A new mentee was accepted to", 1)
-		hr := awaitEmail(t, e2eHRInbox, "A new mentee was accepted to", 1)
+		// The copy inbox gets the HR notice itself and a copy of the admin's notice; only the former carries the country.
+		awaitEmail(t, e2eCopyInbox, "A new mentee was accepted to", 2)
+		var hr emailapi.SendEmailRequest
+		for _, e := range emailsAbout(e2eCopyInbox, "A new mentee was accepted to") {
+			if !strings.HasPrefix(e.Subject, "[Sent to ") {
+				hr = e
+			}
+		}
 		if !strings.Contains(hr.Text, "Kenya") || !strings.Contains(hr.Text, mentee.Email) {
 			t.Fatalf("HR notice lacks the country or mentee email: %s", hr.Text)
 		}

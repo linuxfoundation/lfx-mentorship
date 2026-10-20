@@ -97,13 +97,11 @@ type EmailConfig struct {
 	PublicSiteURL string
 	// SelfServeURL is LFX Self Serve, where program management pages live.
 	SelfServeURL string
-	// HRInbox is the LF staff HR inbox copied on every mentee acceptance.
-	HRInbox string
 	// ReviewInboxes are the LF staff inboxes told about every program submitted for review.
 	ReviewInboxes []string
 	// AllowedRecipients, when set, are the only addresses mail goes to, so testing on real data cannot reach real users.
 	AllowedRecipients []string
-	// CopyInbox, when set, gets a copy of every email sent, so staff can see what went out.
+	// CopyInbox is the LF staff inbox sent every mentee acceptance and a copy of every other email.
 	CopyInbox string
 }
 
@@ -277,7 +275,6 @@ func loadEmailConfig(natsConfigured bool) (EmailConfig, error) {
 	cfg := EmailConfig{
 		PublicSiteURL: strings.TrimRight(os.Getenv("PUBLIC_SITE_URL"), "/"),
 		SelfServeURL:  strings.TrimRight(os.Getenv("SELF_SERVE_URL"), "/"),
-		HRInbox:       strings.TrimSpace(os.Getenv("EMAIL_HR_INBOX")),
 		CopyInbox:     strings.TrimSpace(os.Getenv("EMAIL_COPY_INBOX")),
 	}
 	if !natsConfigured {
@@ -288,8 +285,8 @@ func loadEmailConfig(natsConfigured bool) (EmailConfig, error) {
 			return EmailConfig{}, fmt.Errorf("%s must be an absolute http(s) URL with no query or fragment when FGA_NATS_URL is set", kv[0])
 		}
 	}
-	if addr, err := mail.ParseAddress(cfg.HRInbox); err != nil || addr.Address != cfg.HRInbox {
-		return EmailConfig{}, fmt.Errorf("EMAIL_HR_INBOX must be a bare email address when FGA_NATS_URL is set")
+	if addr, err := mail.ParseAddress(cfg.CopyInbox); err != nil || addr.Address != cfg.CopyInbox {
+		return EmailConfig{}, fmt.Errorf("EMAIL_COPY_INBOX must be a bare email address when FGA_NATS_URL is set")
 	}
 	var err error
 	if cfg.ReviewInboxes, err = addressList("EMAIL_REVIEW_INBOX"); err != nil {
@@ -304,11 +301,6 @@ func loadEmailConfig(natsConfigured bool) (EmailConfig, error) {
 	// A set value with no addresses would mean "send to everyone"; fail closed instead.
 	if os.Getenv("EMAIL_ALLOWED_RECIPIENTS") != "" && len(cfg.AllowedRecipients) == 0 {
 		return EmailConfig{}, fmt.Errorf("EMAIL_ALLOWED_RECIPIENTS is set but lists no addresses")
-	}
-	if cfg.CopyInbox != "" {
-		if addr, err := mail.ParseAddress(cfg.CopyInbox); err != nil || addr.Address != cfg.CopyInbox {
-			return EmailConfig{}, fmt.Errorf("EMAIL_COPY_INBOX must be a bare email address")
-		}
 	}
 	return cfg, nil
 }
