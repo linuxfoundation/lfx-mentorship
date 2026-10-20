@@ -10,9 +10,9 @@ the **cross-component contract**: how Mentorship plugs into the rest of the LFX 
 allowed to do what, and which services own what.
 
 **This file describes the target architecture**, not the state of the build. Build and rollout
-status lives in [`docs/heimdall-fga-implementation.md`](docs/heimdall-fga-implementation.md) and
-[`docs/rewrite/blockers.md`](docs/rewrite/blockers.md), so that this file stays stable as the code
-moves. §6 lists the decisions that are still open, so that nobody builds against them.
+status lives in [`docs/heimdall-fga-implementation.md`](docs/heimdall-fga-implementation.md), so
+that this file stays stable as the code moves. §6 lists the decisions that are still open, so that
+nobody builds against them.
 
 Companion documents, all narrower than this one:
 
@@ -23,6 +23,8 @@ Companion documents, all narrower than this one:
 | [`docs/rewrite/05-heimdall-gateway.md`](docs/rewrite/05-heimdall-gateway.md) | The gateway edge that consumes it |
 | [`docs/rewrite/06-route-matrix.md`](docs/rewrite/06-route-matrix.md) | **The per-route matrix** — every route's authenticator, authorizer, object extraction and relation; the implementation contract for the RuleSets |
 | [`docs/rewrite/07-email-delivery.md`](docs/rewrite/07-email-delivery.md) | The transactional email rail |
+| [`docs/rewrite/09-mentor-invitations.md`](docs/rewrite/09-mentor-invitations.md) | Mentor invitations: data, routes and email; Self Serve's integration guide is [`backend/docs/mentor-invite-integration.md`](backend/docs/mentor-invite-integration.md) |
+| [`backend/docs/api.md`](backend/docs/api.md) | The REST API reference: every route's request and response |
 | [`docs/fga-contract.md`](docs/fga-contract.md) | The messages this service publishes to fga-sync |
 | [`backend/docs/indexer-contract.md`](backend/docs/indexer-contract.md) | The documents this service publishes to the indexer |
 
@@ -56,7 +58,7 @@ flowchart TB
     FGASYNC["lfx-v2-fga-sync"]
     INDEXER["lfx-v2-indexer-service"]
     NATSRR["lfx-v2-email-service<br/>lfx-v2-auth-service<br/>lfx-v2-project-service"]
-    LEDGER["Ledger API<br/>mentorship-credit transactions"]
+    LEDGER["Ledger API<br/>program transactions"]
     CF["Crowdfunding API<br/>categorized transactions"]
     S3[("S3, private buckets<br/>logos via CloudFront · attachments")]
     SF[("Snowflake")]
@@ -233,7 +235,7 @@ and they are contracts rather than implementation details:
   **require authentication**, and carry no FGA check — `allow_all` at the edge, because the invitee
   holds no relation on the program yet. Ownership is enforced in the service: the token HMACs the
   `(programID, userID)` pair, so it names its own subject, and the handler **rejects the request
-  unless that subject matches the authenticated principal** (`04` AQ-7, `06`). This applies to
+  unless that subject matches the authenticated principal** (`04` AQ-7, `06`, `09`). This applies to
   decline exactly as it does to accept. Tokens do not expire, so this binding is the control:
   without it, `allow_all` would let any authenticated caller accept or decline a known invitation.
 - **There is a total authentication bypass for local development, and it must never reach a deployed
