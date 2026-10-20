@@ -57,6 +57,7 @@ func TestLoadConfig(t *testing.T) {
 	base := map[string]string{
 		"FGA_NATS_URL":             "nats://nats:4222",
 		"SELF_SERVE_URL":           "https://app.example.org/",
+		"EMAIL_COPY_INBOX":         " copies@linuxfoundation.org ",
 		"EMAIL_ALLOWED_RECIPIENTS": "",
 	}
 	cases := map[string]struct {
@@ -68,6 +69,8 @@ func TestLoadConfig(t *testing.T) {
 		"missing nats":              {override: map[string]string{"FGA_NATS_URL": ""}, wantErr: "FGA_NATS_URL"},
 		"missing self serve":        {override: map[string]string{"SELF_SERVE_URL": ""}, wantErr: "SELF_SERVE_URL"},
 		"relative self serve":       {override: map[string]string{"SELF_SERVE_URL": "app.example.org"}, wantErr: "SELF_SERVE_URL"},
+		"missing copy inbox":        {override: map[string]string{"EMAIL_COPY_INBOX": ""}, wantErr: "EMAIL_COPY_INBOX"},
+		"display-name copy inbox":   {override: map[string]string{"EMAIL_COPY_INBOX": "Copies <copies@linuxfoundation.org>"}, wantErr: "EMAIL_COPY_INBOX"},
 		"allowed recipients":        {override: map[string]string{"EMAIL_ALLOWED_RECIPIENTS": " a@linuxfoundation.org, b@linuxfoundation.org ,"}, wantTo: []string{"a@linuxfoundation.org", "b@linuxfoundation.org"}},
 		"invalid allowed recipient": {override: map[string]string{"EMAIL_ALLOWED_RECIPIENTS": "a@linuxfoundation.org,nobody"}, wantErr: "EMAIL_ALLOWED_RECIPIENTS"},
 		"comma-only recipients":     {override: map[string]string{"EMAIL_ALLOWED_RECIPIENTS": " , "}, wantErr: "EMAIL_ALLOWED_RECIPIENTS"},
@@ -92,6 +95,9 @@ func TestLoadConfig(t *testing.T) {
 			}
 			if cfg.SelfServeURL != "https://app.example.org" {
 				t.Errorf("SelfServeURL = %q; want the trailing slash trimmed", cfg.SelfServeURL)
+			}
+			if cfg.CopyInbox != "copies@linuxfoundation.org" {
+				t.Errorf("CopyInbox = %q; want the trimmed address", cfg.CopyInbox)
 			}
 			if !slices.Equal(cfg.AllowedRecipients, tc.wantTo) {
 				t.Errorf("AllowedRecipients = %v; want %v", cfg.AllowedRecipients, tc.wantTo)
