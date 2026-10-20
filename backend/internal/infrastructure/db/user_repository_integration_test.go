@@ -62,6 +62,35 @@ func TestUserRepository_BootstrapByLFID_ReleasesEmailFromAnotherAccount(t *testi
 	}
 }
 
+// Bootstrap stores only the token's claim: with no claim, an email written before the account
+// email was bound to the claim is cleared, while UpsertByLFID keeps the stored one.
+func TestUserRepository_BootstrapByLFID_ClearsEmailWithoutClaim(t *testing.T) {
+	pool := integrationPool(t)
+	ctx := context.Background()
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM users WHERE lfid IN ('noclaim_upsert', 'noclaim_bootstrap')`)
+	})
+	repo := NewUserRepository(pool)
+	for lfid, tc := range map[string]struct {
+		upsert func(context.Context, models.UserCreateInput) (*models.User, error)
+		want   *string
+	}{
+		"noclaim_upsert":    {repo.UpsertByLFID, ptrTo("noclaim_upsert.forged@example.org")},
+		"noclaim_bootstrap": {repo.BootstrapByLFID, nil},
+	} {
+		if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, lfid) VALUES (gen_random_uuid(), $1, $2)`, lfid+".forged@example.org", lfid); err != nil {
+			t.Fatal(err)
+		}
+		u, err := tc.upsert(ctx, models.UserCreateInput{LFID: &lfid})
+		if err != nil {
+			t.Fatalf("%s: %v", lfid, err)
+		}
+		if (u.Email == nil) != (tc.want == nil) || (tc.want != nil && *u.Email != *tc.want) {
+			t.Fatalf("%s: email = %v; want %v", lfid, u.Email, tc.want)
+		}
+	}
+}
+
 // Login refreshes the avatar from the identity's picture, and a login without one keeps it.
 func TestUserRepository_UpsertByLFID_RefreshesAvatar(t *testing.T) {
 	pool := integrationPool(t)

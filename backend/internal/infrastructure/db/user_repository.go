@@ -84,19 +84,20 @@ func (r *UserRepository) UpsertByLFID(ctx context.Context, input models.UserCrea
 }
 
 // BootstrapByLFID is UpsertByLFID for the caller's own sign-in, whose email is the verified token
-// claim: another LF account's row still holding that address is stale and gives it up. A legacy
-// row without an LFID keeps it, and the call returns ErrEmailInUse.
+// claim: it replaces the stored email, clearing it when the token carries none, and another LF
+// account's row still holding that address is stale and gives it up. A legacy row without an
+// LFID keeps it, and the call returns ErrEmailInUse.
 func (r *UserRepository) BootstrapByLFID(ctx context.Context, input models.UserCreateInput) (*models.User, error) {
 	return r.upsertByLFID(ctx, input, true)
 }
 
-func (r *UserRepository) upsertByLFID(ctx context.Context, input models.UserCreateInput, releaseEmail bool) (*models.User, error) {
+func (r *UserRepository) upsertByLFID(ctx context.Context, input models.UserCreateInput, bootstrap bool) (*models.User, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin upsert user transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if releaseEmail && input.Email != nil {
+	if bootstrap && input.Email != nil {
 		if _, err := tx.Exec(ctx, `
 			UPDATE users SET email = NULL
 			WHERE email = $1 AND lfid IS NOT NULL AND lfid <> $2`, *input.Email, input.LFID); err != nil {
@@ -108,12 +109,13 @@ func (r *UserRepository) upsertByLFID(ctx context.Context, input models.UserCrea
 		INSERT INTO users (id, email, lfid, name, given_name, family_name, avatar_url)
 		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6)
 		ON CONFLICT (lfid) DO UPDATE SET
-			email = COALESCE(EXCLUDED.email, users.email), name = COALESCE(EXCLUDED.name, users.name),
+			email = CASE WHEN $7 THEN EXCLUDED.email ELSE COALESCE(EXCLUDED.email, users.email) END,
+			name = COALESCE(EXCLUDED.name, users.name),
 			given_name = COALESCE(EXCLUDED.given_name, users.given_name),
 			family_name = COALESCE(EXCLUDED.family_name, users.family_name),
 			avatar_url = COALESCE(EXCLUDED.avatar_url, users.avatar_url), updated_on = NOW()
 		RETURNING id, email, lfid, name, given_name, family_name, avatar_url, created_on, updated_on`,
-		input.Email, input.LFID, input.Name, input.GivenName, input.FamilyName, input.AvatarURL,
+		input.Email, input.LFID, input.Name, input.GivenName, input.FamilyName, input.AvatarURL, bootstrap,
 	).Scan(&u.ID, &u.Email, &u.LFID, &u.Name, &u.GivenName, &u.FamilyName, &u.AvatarURL, &u.CreatedOn, &u.UpdatedOn)
 	if pgErr := (*pgconn.PgError)(nil); errors.As(err, &pgErr) && pgErr.Code == uniqueViolation && pgErr.ConstraintName == usersEmailKey {
 		return nil, domain.ErrEmailInUse
