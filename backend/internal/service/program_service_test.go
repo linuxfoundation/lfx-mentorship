@@ -1796,3 +1796,33 @@ func TestProgramService_Update_PropagatesRepositoryErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestProgramService_DescriptionLengthCapped(t *testing.T) {
+	// Multi-byte characters: the cap counts characters, not bytes.
+	atCap, overCap := strings.Repeat("é", 18_000), strings.Repeat("<", 18_001)
+	writes := 0
+	repo := &stubProgRepo{update: func(_ context.Context, id string, _ models.ProgramUpdateInput) (*models.Program, error) {
+		writes++
+		return &models.Program{ID: id}, nil
+	}}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+
+	if _, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Description: &atCap}); err != nil {
+		t.Fatalf("update at the cap: %v", err)
+	}
+	if _, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Description: &overCap}); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Errorf("update over the cap: expected ErrInvalidInput, got %v", err)
+	}
+	if writes != 1 {
+		t.Errorf("repository writes = %d; want only the update at the cap", writes)
+	}
+
+	projectUID := "00000000-0000-0000-0000-000000000001"
+	enrollment := models.ProgramEnrollmentInput{Program: models.ProgramCreateInput{ProjectUID: &projectUID, Name: "Program", Slug: "program", Description: &overCap}, Skills: []string{"Go"}}
+	if _, err := svc.CreateEnrollment(context.Background(), enrollment); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Errorf("enrollment over the cap: expected ErrInvalidInput, got %v", err)
+	}
+	if _, err := svc.Create(context.Background(), enrollment.Program); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Errorf("create over the cap: expected ErrInvalidInput, got %v", err)
+	}
+}

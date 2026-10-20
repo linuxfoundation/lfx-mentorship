@@ -452,7 +452,7 @@ Create a user profile.
   "last_name":    "Smith",
   "email":        "alice@example.com",
   "phone":        "+1-555-0100",
-  "introduction": "...",
+  "introduction": "...",          // at most 18,000 characters, also on update
   "terms_and_conditions": true,
   "address":       { ... },
   "skill_set":     { "skills": ["Go"], "improvementSkills": [], "comments": "" },
@@ -1019,7 +1019,7 @@ The backend reads the project's slug, name, and logo from Project Service by `pr
   "projectName":      "Cloud Native Computing Foundation",   // required only without FGA_NATS_URL
   "projectLogoUrl":   "https://...",                          // optional; http(s)
   "name":             "CNCF Mentorship 2026",                 // required; must be unique
-  "description":      "...",
+  "description":      "...",                                  // at most 18,000 characters
   "repositoryUrl":    "https://github.com/cncf/mentorship",
   "websiteUrl":       "https://...",
   "codeOfConductUrl": "https://...",
@@ -1053,7 +1053,7 @@ Update program fields. Status cannot be changed here: a body with `status` retur
 ```json
 {
   "name":        "Updated Name",
-  "description": "Updated description",
+  "description": "Updated description", // at most 18,000 characters
   "repo_link":   "https://...",
   "lfid":        "alice",
   "skills":      ["Go", "Kubernetes"],
