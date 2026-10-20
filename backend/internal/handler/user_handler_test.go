@@ -18,7 +18,8 @@ import (
 )
 
 type stubUserSvc struct {
-	getByID func(context.Context, string) (*models.User, error)
+	getByID   func(context.Context, string) (*models.User, error)
+	bootstrap func(context.Context, string, models.UserUpdateInput) (*models.User, error)
 	update  func(context.Context, string, models.UserUpdateInput) (*models.User, error)
 	delete  func(context.Context, string, string) error
 }
@@ -31,6 +32,9 @@ func (s *stubUserSvc) GetByID(ctx context.Context, id string) (*models.User, err
 }
 
 func (s *stubUserSvc) Bootstrap(ctx context.Context, lfid string, input models.UserUpdateInput) (*models.User, error) {
+	if s.bootstrap != nil {
+		return s.bootstrap(ctx, lfid, input)
+	}
 	return &models.User{LFID: &lfid}, nil
 }
 
@@ -157,6 +161,66 @@ func TestUserHandler_UpdateMe_StripsLFIDFromPayload(t *testing.T) {
 	}
 	if gotInput.LFID != nil {
 		t.Fatalf("gotInput.LFID = %v; want nil", gotInput.LFID)
+	}
+}
+
+func TestUserHandler_UpdateMe_StripsEmailFromPayload(t *testing.T) {
+	var gotInput models.UserUpdateInput
+	svc := &stubUserSvc{
+		update: func(_ context.Context, id string, input models.UserUpdateInput) (*models.User, error) {
+			gotInput = input
+			return &models.User{ID: id}, nil
+		},
+	}
+	h := handler.NewUserHandler(svc)
+	body, _ := json.Marshal(map[string]string{"email": "victim@example.org", "name": "Allowed"})
+	r := httptest.NewRequest(http.MethodPatch, "/v1/me", bytes.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	r = r.WithContext(auth.ContextWithPrincipal(r.Context(), &models.Principal{UserID: "caller-user", Email: "caller@example.org"}))
+	w := httptest.NewRecorder()
+
+	h.UpdateMe(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d; want 200", w.Code)
+	}
+	if gotInput.Email != nil {
+		t.Fatalf("gotInput.Email = %q; want nil", *gotInput.Email)
+	}
+}
+
+func TestUserHandler_BootstrapMe_TakesEmailFromPrincipal(t *testing.T) {
+	for name, tc := range map[string]struct {
+		claim string
+		want  *string
+	}{
+		"claim wins over the body": {claim: "caller@example.org", want: ptrString("caller@example.org")},
+		"no claim stores no email": {claim: "", want: nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var gotInput models.UserUpdateInput
+			svc := &stubUserSvc{
+				bootstrap: func(_ context.Context, lfid string, input models.UserUpdateInput) (*models.User, error) {
+					gotInput = input
+					return &models.User{LFID: &lfid}, nil
+				},
+			}
+			h := handler.NewUserHandler(svc)
+			body, _ := json.Marshal(map[string]string{"email": "victim@example.org"})
+			r := httptest.NewRequest(http.MethodPut, "/v1/me", bytes.NewReader(body))
+			r.Header.Set("Content-Type", "application/json")
+			r = r.WithContext(auth.ContextWithPrincipal(r.Context(), &models.Principal{Username: "caller", Email: tc.claim}))
+			w := httptest.NewRecorder()
+
+			h.BootstrapMe(w, r)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("got %d; want 200", w.Code)
+			}
+			if (gotInput.Email == nil) != (tc.want == nil) || (tc.want != nil && *gotInput.Email != *tc.want) {
+				t.Fatalf("gotInput.Email = %v; want %v", gotInput.Email, tc.want)
+			}
+		})
 	}
 }
 
