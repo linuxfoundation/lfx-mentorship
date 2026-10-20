@@ -98,6 +98,13 @@ func (r *UserRepository) upsertByLFID(ctx context.Context, input models.UserCrea
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if bootstrap && input.Email != nil {
+		// Lock the caller's row and the one holding their address in ID order first: two accounts
+		// holding each other's address would otherwise each lock the other's row, then deadlock on
+		// their own.
+		if _, err := tx.Exec(ctx, `
+			SELECT id FROM users WHERE lfid = $2 OR email = $1 ORDER BY id FOR UPDATE`, *input.Email, input.LFID); err != nil {
+			return nil, fmt.Errorf("lock users for email release: %w", err)
+		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE users SET email = NULL
 			WHERE email = $1 AND lfid IS NOT NULL AND lfid <> $2`, *input.Email, input.LFID); err != nil {

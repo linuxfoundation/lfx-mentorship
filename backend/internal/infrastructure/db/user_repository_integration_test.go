@@ -8,6 +8,7 @@ package db
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
@@ -164,6 +165,54 @@ func TestUserRepository_SearchCandidates(t *testing.T) {
 			if lfids[i] != tc.want[i] {
 				t.Errorf("%s: got %v; want %v", name, lfids, tc.want)
 				break
+			}
+		}
+	}
+}
+
+// Two accounts holding each other's address bootstrap at once: the row locks are taken in a
+// fixed order, so neither sign-in fails with a deadlock and each ends with its own address.
+func TestUserRepository_BootstrapByLFID_SwappedAddressesConcurrently(t *testing.T) {
+	pool := integrationPool(t)
+	ctx := context.Background()
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM users WHERE lfid IN ('swap_a', 'swap_b')`)
+	})
+	repo := NewUserRepository(pool)
+	accounts := map[string]string{"swap_a": "a.swap@example.org", "swap_b": "b.swap@example.org"}
+	for i := 0; i < 20; i++ {
+		if _, err := pool.Exec(ctx, `DELETE FROM users WHERE lfid IN ('swap_a', 'swap_b')`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, lfid) VALUES
+			(gen_random_uuid(), 'b.swap@example.org', 'swap_a'),
+			(gen_random_uuid(), 'a.swap@example.org', 'swap_b')`); err != nil {
+			t.Fatal(err)
+		}
+		var wg sync.WaitGroup
+		errs := make(chan error, len(accounts))
+		for lfid, email := range accounts {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_, err := repo.BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email})
+				errs <- err
+			}()
+		}
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			if err != nil {
+				t.Fatalf("iteration %d: %v", i, err)
+			}
+		}
+		for lfid, email := range accounts {
+			var got *string
+			if err := pool.QueryRow(ctx, `SELECT email FROM users WHERE lfid = $1`, lfid).Scan(&got); err != nil {
+				t.Fatal(err)
+			}
+			if got == nil || *got != email {
+				t.Fatalf("iteration %d: %s email = %v; want %q", i, lfid, got, email)
 			}
 		}
 	}
