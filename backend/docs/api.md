@@ -1738,9 +1738,10 @@ the program, that row is reset to `requested` instead. No invite email is sent.
 
 | Status | When |
 |---|---|
-| `400` | `program_id` is not a UUID, or the program is `pending` |
+| `400` | `program_id` is not a UUID, appears more than once in any letter case, or the program is `pending` |
 | `401` | No signed-in user |
-| `404` | The program does not exist, or is not visible to every signed-in user (`rejected`, `archived`, `hidden`) |
+| `403` | The caller lacks `viewer` on the program (checked by the gateway): it does not exist, or is not `published` and the caller is not one of its auditors |
+| `404` | The program is not `published` or `pending` |
 | `409` | The caller already has a mentor row in `invited`, `requested`, `pending`, `approved`, or `declined`, or the row changed concurrently |
 
 ---

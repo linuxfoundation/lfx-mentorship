@@ -462,6 +462,34 @@ func TestProgramMemberHandler_RequestMine_UsesPrincipalNotBody(t *testing.T) {
 	}
 }
 
+// Heimdall checks the program under the exact key, while encoding/json would
+// keep a later, differently cased key, so a body naming program_id twice is
+// refused before the service runs.
+func TestProgramMemberHandler_RequestMine_RejectsAmbiguousProgramID(t *testing.T) {
+	for name, body := range map[string]string{
+		"repeated key":      `{"program_id":"p1","program_id":"p2"}`,
+		"differently cased": `{"program_id":"p1","Program_ID":"p2"}`,
+		"not an object":     `["p1"]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := handler.NewProgramMemberHandler(&stubProgramMemberSvc{
+				requestMentor: func(context.Context, string, models.UserPrincipal) (*models.ProgramMember, error) {
+					t.Fatal("RequestMentorship must not run")
+					return nil, nil
+				},
+			}, &stubProgramSvc{})
+			r := httptest.NewRequest(http.MethodPost, "/v1/me/program-memberships", strings.NewReader(body))
+			r = r.WithContext(auth.ContextWithPrincipal(r.Context(), &models.Principal{UserID: "caller-user", Username: "caller-lfid"}))
+			w := httptest.NewRecorder()
+			h.RequestMine(w, r)
+
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("got %d; want 400: %s", w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
 func TestProgramMemberHandler_RequestMine_MapsErrors(t *testing.T) {
 	for name, tc := range map[string]struct {
 		err  error

@@ -5,12 +5,15 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
@@ -41,6 +44,55 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 		return false
 	}
 	return true
+}
+
+// decodeGuardedBody is decodeBody for a route whose Heimdall rule checks the
+// object named by guardKey in the body. Heimdall reads that exact key, while
+// encoding/json matches keys case-insensitively and keeps the last one, so a
+// body naming guardKey twice could authorize one object and act on another; it
+// is refused with a 400.
+func decodeGuardedBody(w http.ResponseWriter, r *http.Request, v any, guardKey string) bool {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+	if err == nil {
+		err = rejectDuplicateKey(body, guardKey)
+	}
+	if err == nil {
+		err = json.NewDecoder(bytes.NewReader(body)).Decode(v)
+	}
+	if err != nil {
+		Error(w, fmt.Errorf("%w: %s", domain.ErrInvalidInput, err.Error()))
+		return false
+	}
+	return true
+}
+
+// rejectDuplicateKey fails unless body is a JSON object naming key at most once,
+// compared case-insensitively.
+func rejectDuplicateKey(body []byte, key string) error {
+	dec := json.NewDecoder(bytes.NewReader(body))
+	if tok, err := dec.Token(); err != nil {
+		return err
+	} else if tok != json.Delim('{') {
+		return errors.New("body must be a JSON object")
+	}
+	seen := false
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		if name, _ := tok.(string); strings.EqualFold(name, key) {
+			if seen {
+				return fmt.Errorf("%s must appear once", key)
+			}
+			seen = true
+		}
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // mapError translates domain sentinel errors to HTTP status codes.

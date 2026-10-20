@@ -353,3 +353,31 @@ func TestMeProgramMembershipRulesNeedOnlyASignedInUser(t *testing.T) {
 		}
 	}
 }
+
+// Asking to mentor checks viewer on the program the body names, under the same
+// key the handler decodes, so only a program the caller can see is acted on.
+func TestMeProgramMembershipRequestChecksTheBodyProgram(t *testing.T) {
+	block := ruleBlock(t, "me-program-membership-request")
+	expected := `      match:
+        methods: [POST]
+        routes:
+          - path: /mentorship/v1/me/program-memberships
+      execute:
+        - authenticator: oidc
+        - authorizer: json_content_type
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_program:{{ "{{- .Request.Body.program_id -}}" }}'
+              relation: viewer
+        - finalizer: create_jwt`
+	if !strings.Contains(block, expected) {
+		t.Errorf("me-program-membership-request rule does not check viewer on the body program:\n%s", block)
+	}
+	if strings.Contains(block, "allow_all") || strings.Contains(block, "anonymous_authenticator") {
+		t.Errorf("me-program-membership-request rule must not admit unchecked or anonymous callers:\n%s", block)
+	}
+	if !strings.Contains(ruleBlock(t, "me-program-memberships"), "methods: [GET]\n") {
+		t.Error("me-program-memberships rule must cover only GET; POST needs the program check")
+	}
+}

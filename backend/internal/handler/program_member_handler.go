@@ -202,6 +202,10 @@ func (h *ProgramMemberHandler) ListMine(w http.ResponseWriter, r *http.Request) 
 	JSON(w, http.StatusOK, map[string]any{"data": memberships, "meta": meta})
 }
 
+// programIDBodyKey is the body field the RuleSet's me-program-membership-request
+// rule checks viewer on; the two must stay in sync.
+const programIDBodyKey = "program_id"
+
 // RequestMine handles POST /v1/me/program-memberships — the caller's own
 // request to mentor a program. The user is the principal, never the body.
 func (h *ProgramMemberHandler) RequestMine(w http.ResponseWriter, r *http.Request) {
@@ -211,7 +215,7 @@ func (h *ProgramMemberHandler) RequestMine(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var input models.ProgramMembershipRequestInput
-	if !decodeBody(w, r, &input) {
+	if !decodeGuardedBody(w, r, &input, programIDBodyKey) {
 		return
 	}
 	user := models.UserPrincipal{

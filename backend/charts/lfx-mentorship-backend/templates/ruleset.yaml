@@ -10,10 +10,10 @@ metadata:
     {{- include "lfx-v2-mentorship-service.labels" . | nindent 4 }}
 spec:
   rules:
-    # Slug resolution must happen before an object-level FGA check. Caller-owned
-    # collections are served by Query Service and are absent here; the public
-    # directory collections below are service-owned. Nested views remain checked
-    # against their path parent.
+    # Slug resolution must happen before an object-level FGA check. The public
+    # directory collections below are service-owned, and so, pending platform
+    # sign-off, are the caller's /me lists in the identity rule. Nested views
+    # remain checked against their path parent.
     - id: rule:lfx:lfx-mentorship-backend:public-resolver
       allow_encoded_slashes: "off"
       match:
@@ -176,17 +176,39 @@ spec:
             values:
               aud: {{ .Values.app.audience | quote }}
 
-    # A mentor's own program memberships. No FGA program relation: the service
-    # takes the user from the principal and scopes every read and write to it.
+    # A mentor's own program memberships. The service takes the user from the
+    # principal and scopes every read to it.
     - id: rule:lfx:lfx-mentorship-backend:me-program-memberships
       allow_encoded_slashes: "off"
       match:
-        methods: [GET, POST]
+        methods: [GET]
         routes:
           - path: /mentorship/v1/me/program-memberships
       execute:
         - authenticator: oidc
         - authorizer: allow_all
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    # Asking to mentor a program needs viewer on the program named in the body.
+    # The handler refuses a body naming program_id more than once, so the
+    # program checked here is the one the service acts on.
+    - id: rule:lfx:lfx-mentorship-backend:me-program-membership-request
+      allow_encoded_slashes: "off"
+      match:
+        methods: [POST]
+        routes:
+          - path: /mentorship/v1/me/program-memberships
+      execute:
+        - authenticator: oidc
+        - authorizer: json_content_type
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_program:{{ "{{- .Request.Body.program_id -}}" }}'
+              relation: viewer
         - finalizer: create_jwt
           config:
             values:
