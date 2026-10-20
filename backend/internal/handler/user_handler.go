@@ -55,7 +55,9 @@ func (h *UserHandler) BootstrapMe(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &input) {
 		return
 	}
-	if input.Email == nil && principal.Email != "" {
+	// Email is identity-bound: it comes from the verified token claim, never the body.
+	input.Email = nil
+	if principal.Email != "" {
 		input.Email = &principal.Email
 	}
 	if input.Name == nil && principal.Name != "" {
@@ -82,8 +84,9 @@ func (h *UserHandler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &input) {
 		return
 	}
-	// LFID is identity-bound and must not be mutable through update routes.
+	// LFID and email are identity-bound and must not be mutable through update routes.
 	input.LFID = nil
+	input.Email = nil
 
 	user, err := h.svc.Update(r.Context(), principal.UserID, input)
 	if err != nil {

@@ -17,6 +17,9 @@ type UserRepository interface {
 	List(ctx context.Context, filter models.UserFilter) ([]*models.User, *models.PaginationMeta, error)
 	Create(ctx context.Context, input models.UserCreateInput) (*models.User, error)
 	UpsertByLFID(ctx context.Context, input models.UserCreateInput) (*models.User, error)
+	// BootstrapByLFID upserts the caller's own row from their verified identity, taking the email
+	// back from any other LF account's row that still holds it.
+	BootstrapByLFID(ctx context.Context, input models.UserCreateInput) (*models.User, error)
 	// SearchCandidates matches part of a name or an LFID prefix, never an email.
 	SearchCandidates(ctx context.Context, query string, limit int) ([]*models.User, error)
 	Update(ctx context.Context, id string, input models.UserUpdateInput) (*models.User, error)

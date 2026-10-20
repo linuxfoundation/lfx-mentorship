@@ -24,9 +24,41 @@ func TestUserRepository_UpsertByLFID_EmailInUse(t *testing.T) {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM users WHERE email LIKE '%.inuse@example.org'`)
 	})
 	lfid, email := "inuse_lfid", "legacy.inuse@example.org"
-	_, err := NewUserRepository(pool).UpsertByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email})
-	if !errors.Is(err, domain.ErrEmailInUse) {
-		t.Fatalf("err = %v; want ErrEmailInUse", err)
+	repo := NewUserRepository(pool)
+	if _, err := repo.UpsertByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email}); !errors.Is(err, domain.ErrEmailInUse) {
+		t.Fatalf("UpsertByLFID err = %v; want ErrEmailInUse", err)
+	}
+	// Bootstrap releases an address only from another LF account, never from a legacy row.
+	if _, err := repo.BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email}); !errors.Is(err, domain.ErrEmailInUse) {
+		t.Fatalf("BootstrapByLFID err = %v; want ErrEmailInUse", err)
+	}
+}
+
+// A verified email held by another LF account's row is stale: bootstrap takes it over and
+// clears it there, so a squatted address cannot block the owner's first sign-in.
+func TestUserRepository_BootstrapByLFID_ReleasesEmailFromAnotherAccount(t *testing.T) {
+	pool := integrationPool(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, lfid) VALUES (gen_random_uuid(), 'owner.release@example.org', 'squatter_lfid')`); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM users WHERE lfid IN ('squatter_lfid', 'owner_lfid')`)
+	})
+	lfid, email := "owner_lfid", "owner.release@example.org"
+	u, err := NewUserRepository(pool).BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Email == nil || *u.Email != email {
+		t.Fatalf("email = %v; want %q", u.Email, email)
+	}
+	var squatter *string
+	if err := pool.QueryRow(ctx, `SELECT email FROM users WHERE lfid = 'squatter_lfid'`).Scan(&squatter); err != nil {
+		t.Fatal(err)
+	}
+	if squatter != nil {
+		t.Fatalf("squatter email = %q; want NULL", *squatter)
 	}
 }
 
