@@ -83,10 +83,10 @@ func (r *UserRepository) UpsertByLFID(ctx context.Context, input models.UserCrea
 	return r.upsertByLFID(ctx, input, false)
 }
 
-// BootstrapByLFID is UpsertByLFID for the caller's own sign-in, whose email is the verified token
-// claim: it replaces the stored email, clearing it when the token carries none, and another LF
-// account's row still holding that address is stale and gives it up. A legacy row without an
-// LFID keeps it, and the call returns ErrEmailInUse.
+// BootstrapByLFID is UpsertByLFID for the caller's own sign-in, whose email is the LF account's
+// verified address: another LF account's row still holding that address is stale and gives it up.
+// A legacy row without an LFID keeps it, and the call returns ErrEmailInUse. Without an email the
+// stored one is kept.
 func (r *UserRepository) BootstrapByLFID(ctx context.Context, input models.UserCreateInput) (*models.User, error) {
 	return r.upsertByLFID(ctx, input, true)
 }
@@ -116,13 +116,13 @@ func (r *UserRepository) upsertByLFID(ctx context.Context, input models.UserCrea
 		INSERT INTO users (id, email, lfid, name, given_name, family_name, avatar_url)
 		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6)
 		ON CONFLICT (lfid) DO UPDATE SET
-			email = CASE WHEN $7 THEN EXCLUDED.email ELSE COALESCE(EXCLUDED.email, users.email) END,
+			email = COALESCE(EXCLUDED.email, users.email),
 			name = COALESCE(EXCLUDED.name, users.name),
 			given_name = COALESCE(EXCLUDED.given_name, users.given_name),
 			family_name = COALESCE(EXCLUDED.family_name, users.family_name),
 			avatar_url = COALESCE(EXCLUDED.avatar_url, users.avatar_url), updated_on = NOW()
 		RETURNING id, email, lfid, name, given_name, family_name, avatar_url, created_on, updated_on`,
-		input.Email, input.LFID, input.Name, input.GivenName, input.FamilyName, input.AvatarURL, bootstrap,
+		input.Email, input.LFID, input.Name, input.GivenName, input.FamilyName, input.AvatarURL,
 	).Scan(&u.ID, &u.Email, &u.LFID, &u.Name, &u.GivenName, &u.FamilyName, &u.AvatarURL, &u.CreatedOn, &u.UpdatedOn)
 	if pgErr := (*pgconn.PgError)(nil); errors.As(err, &pgErr) && pgErr.Code == uniqueViolation && pgErr.ConstraintName == usersEmailKey {
 		return nil, domain.ErrEmailInUse

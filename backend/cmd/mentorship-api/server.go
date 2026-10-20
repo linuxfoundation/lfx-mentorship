@@ -152,7 +152,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	}
 
 	// Services
-	userSvc := service.NewUserService(userRepo)
+	userSvc := service.NewUserService(userRepo, accounts)
 	userProfileSvc := service.NewUserProfileService(userProfileRepo, notifier)
 	programSvc := service.NewProgramService(programRepo, programTermRepo, applicationRepo, programMemberRepo, notifier)
 	if cfg.Crowdfunding.IsConfigured() {

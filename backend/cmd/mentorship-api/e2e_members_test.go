@@ -153,28 +153,32 @@ func TestE2EMentorInvites(t *testing.T) {
 	})
 
 	t.Run("invite someone who never signed in, by LFID", func(t *testing.T) {
-		e2e.fakes.addAccount(fakeAccount{Username: "newcomer", Email: "newcomer@lf.example.org", Name: "New Comer"})
+		primary := "newcomer@lf.example.org"
+		e2e.fakes.addAccount(fakeAccount{Username: "newcomer", Email: primary, Name: "New Comer"})
 		var invited member
 		admin.mustJSON(t, http.MethodPost, members, map[string]any{"lfid": "newcomer", "member_type": "mentor"}, http.StatusCreated, &invited)
-		token := inviteToken(t, "newcomer@lf.example.org", 1)
+		token := inviteToken(t, primary, 1)
 
-		// Signing in later binds to the user the invite created.
+		// Signing in later binds to the user the invite created, keeping the account's primary email.
 		newcomer := signIn(t, "newcomer")
 		if newcomer.ID != invited.UserID {
 			t.Fatalf("sign-in created a second user: %s vs %s", newcomer.ID, invited.UserID)
+		}
+		if n := dbCount(t, "SELECT count(*) FROM users WHERE lfid = 'newcomer' AND email = $1", primary); n != 1 {
+			t.Fatalf("sign-in replaced the auth-service primary email %q", primary)
 		}
 		newcomer.call(t, http.MethodPost, "/mentor-invites/"+url.PathEscape(token)+"/decline", nil).expect(http.StatusNoContent)
 		awaitEmail(t, admin.Email, "declined your mentor invitation", 1)
 		newcomer.call(t, http.MethodPost, "/mentor-invites/"+url.PathEscape(token)+"/decline", nil).expect(http.StatusBadRequest)
 
 		// A declined mentor can be invited again, and the link they already have works.
-		before := len(emailsAbout(newcomer.Email, inviteSubject))
+		before := len(emailsAbout(primary, inviteSubject))
 		var again member
 		admin.mustJSON(t, http.MethodPost, members, map[string]any{"lfid": "newcomer", "member_type": "mentor"}, http.StatusCreated, &again)
 		if again.ID != invited.ID || again.Status != "invited" {
 			t.Fatalf("re-invite after decline: %+v", again)
 		}
-		inviteToken(t, newcomer.Email, before+1)
+		inviteToken(t, primary, before+1)
 		newcomer.call(t, http.MethodPost, "/mentor-invites/"+url.PathEscape(token)+"/accept", nil).expect(http.StatusOK)
 	})
 

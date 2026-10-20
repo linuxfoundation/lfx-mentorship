@@ -14,8 +14,9 @@ import (
 )
 
 type stubUserRepository struct {
-	delete func(context.Context, string) error
-	update func(context.Context, string, models.UserUpdateInput) (*models.User, error)
+	delete    func(context.Context, string) error
+	update    func(context.Context, string, models.UserUpdateInput) (*models.User, error)
+	bootstrap func(context.Context, models.UserCreateInput) (*models.User, error)
 }
 
 func (s *stubUserRepository) GetByID(context.Context, string) (*models.User, error) {
@@ -38,7 +39,10 @@ func (s *stubUserRepository) UpsertByLFID(context.Context, models.UserCreateInpu
 	return &models.User{}, nil
 }
 
-func (s *stubUserRepository) BootstrapByLFID(context.Context, models.UserCreateInput) (*models.User, error) {
+func (s *stubUserRepository) BootstrapByLFID(ctx context.Context, input models.UserCreateInput) (*models.User, error) {
+	if s.bootstrap != nil {
+		return s.bootstrap(ctx, input)
+	}
 	return &models.User{}, nil
 }
 
@@ -64,7 +68,7 @@ func TestUserService_Delete_AllowsOwner(t *testing.T) {
 			called = id == "user-1"
 			return nil
 		},
-	})
+	}, nil)
 
 	if err := svc.Delete(context.Background(), "user-1", "user-1"); err != nil {
 		t.Fatalf("Delete: %v", err)
@@ -80,7 +84,7 @@ func TestUserService_DeleteRejectsOtherActor(t *testing.T) {
 			t.Fatal("repository delete should not be called")
 			return nil
 		},
-	})
+	}, nil)
 
 	if err := svc.Delete(context.Background(), "user-1", "user-2"); !errors.Is(err, domain.ErrForbidden) {
 		t.Fatalf("err = %v; want ErrForbidden", err)
@@ -93,7 +97,7 @@ func TestUserService_DeleteRejectsMissingActor(t *testing.T) {
 			t.Fatal("repository delete should not be called")
 			return nil
 		},
-	})
+	}, nil)
 
 	if err := svc.Delete(context.Background(), "user-1", ""); !errors.Is(err, domain.ErrForbidden) {
 		t.Fatalf("err = %v; want ErrForbidden", err)
@@ -108,7 +112,7 @@ func TestUserService_UpdateSavesAvatarURL(t *testing.T) {
 			saved = in.AvatarURL
 			return &models.User{}, nil
 		},
-	})
+	}, nil)
 	if _, err := svc.Update(context.Background(), "user-1", models.UserUpdateInput{AvatarURL: &avatar}); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
@@ -124,7 +128,7 @@ func TestUserService_UpdateRejectsLFIDMutation(t *testing.T) {
 			called = true
 			return &models.User{}, nil
 		},
-	})
+	}, nil)
 	lfid := "attempted-change"
 	_, err := svc.Update(context.Background(), "user-1", models.UserUpdateInput{LFID: &lfid})
 	if !errors.Is(err, domain.ErrForbidden) {
@@ -142,7 +146,7 @@ func TestUserService_UpdateRejectsEmailMutation(t *testing.T) {
 			called = true
 			return &models.User{}, nil
 		},
-	})
+	}, nil)
 	email := "victim@example.org"
 	_, err := svc.Update(context.Background(), "user-1", models.UserUpdateInput{Email: &email})
 	if !errors.Is(err, domain.ErrForbidden) {
@@ -150,5 +154,37 @@ func TestUserService_UpdateRejectsEmailMutation(t *testing.T) {
 	}
 	if called {
 		t.Fatal("repository update should not be called when email mutation is requested")
+	}
+}
+
+func TestUserService_BootstrapEmailSource(t *testing.T) {
+	claim := "ada.claim@example.org"
+	for _, tc := range []struct {
+		name      string
+		directory domain.AccountDirectory
+		claim     *string
+		want      *string
+	}{
+		{"auth-service primary email wins over the claim", newDirectory(), &claim, ptr("ada.primary@example.org")},
+		{"account unknown to auth-service falls back to the claim", &stubDirectory{}, &claim, &claim},
+		{"auth-service unavailable falls back to the claim", &stubDirectory{err: domain.ErrUpstreamUnavailable}, &claim, &claim},
+		{"no directory takes the claim", nil, &claim, &claim},
+		{"no email anywhere leaves it unset so the stored one is kept", &stubDirectory{}, nil, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got models.UserCreateInput
+			svc := service.NewUserService(&stubUserRepository{
+				bootstrap: func(_ context.Context, in models.UserCreateInput) (*models.User, error) {
+					got = in
+					return &models.User{}, nil
+				},
+			}, tc.directory)
+			if _, err := svc.Bootstrap(context.Background(), "ada", models.UserUpdateInput{Email: tc.claim}); err != nil {
+				t.Fatalf("Bootstrap: %v", err)
+			}
+			if (got.Email == nil) != (tc.want == nil) || (got.Email != nil && *got.Email != *tc.want) {
+				t.Fatalf("email = %v; want %v", got.Email, tc.want)
+			}
+		})
 	}
 }
