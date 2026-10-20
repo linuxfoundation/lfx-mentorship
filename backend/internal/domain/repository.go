@@ -5,6 +5,7 @@ package domain
 
 import (
 	"context"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
 )
@@ -16,6 +17,9 @@ type UserRepository interface {
 	List(ctx context.Context, filter models.UserFilter) ([]*models.User, *models.PaginationMeta, error)
 	Create(ctx context.Context, input models.UserCreateInput) (*models.User, error)
 	UpsertByLFID(ctx context.Context, input models.UserCreateInput) (*models.User, error)
+	// BootstrapByLFID upserts the caller's own row from their verified identity, taking the email
+	// back from any other LF account's row that still holds it.
+	BootstrapByLFID(ctx context.Context, input models.UserCreateInput) (*models.User, error)
 	// SearchCandidates matches part of a name or an LFID prefix, never an email.
 	SearchCandidates(ctx context.Context, query string, limit int) ([]*models.User, error)
 	Update(ctx context.Context, id string, input models.UserUpdateInput) (*models.User, error)
@@ -169,6 +173,8 @@ type ApplicationRepository interface {
 	BulkDeclineByTerm(ctx context.Context, termID string) ([]*models.Application, error)
 	// ListPastMenteesByTerm returns accepted/graduated application user IDs for a term.
 	ListPastMenteesByTerm(ctx context.Context, termID string) ([]*models.Application, error)
+	// ListPrerequisiteRemindersDue returns the applications due a prerequisite reminder on now's UTC day.
+	ListPrerequisiteRemindersDue(ctx context.Context, now time.Time) ([]*models.PrerequisiteReminderCandidate, error)
 }
 
 // FileReplacement points a file column at a freshly written object.

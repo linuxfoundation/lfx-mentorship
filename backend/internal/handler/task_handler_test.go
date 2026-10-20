@@ -13,10 +13,12 @@ import (
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/handler"
+	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/auth"
 )
 
-// stubTaskSvc implements the handler's task service; only Edit and Update are exercised.
+// stubTaskSvc implements the handler's task service; only Create, Edit and Update are exercised.
 type stubTaskSvc struct {
+	create func(context.Context, string, models.TaskCreateInput) (*models.Task, error)
 	edit   func(context.Context, string, models.TaskUpdateInput) (*models.Task, error)
 	update func(context.Context, string, models.TaskUpdateInput) (*models.Task, error)
 }
@@ -37,8 +39,8 @@ func (s *stubTaskSvc) ListByProgramTerm(context.Context, string, models.TaskFilt
 func (s *stubTaskSvc) ListByProgramTermForActor(context.Context, string, models.TaskFilter, string) ([]*models.Task, *models.PaginationMeta, error) {
 	return nil, nil, nil
 }
-func (s *stubTaskSvc) Create(context.Context, string, models.TaskCreateInput) (*models.Task, error) {
-	return nil, nil
+func (s *stubTaskSvc) Create(ctx context.Context, applicationID string, in models.TaskCreateInput) (*models.Task, error) {
+	return s.create(ctx, applicationID, in)
 }
 func (s *stubTaskSvc) Update(ctx context.Context, id string, in models.TaskUpdateInput) (*models.Task, error) {
 	return s.update(ctx, id, in)
@@ -115,6 +117,40 @@ func TestTaskHandler_UpdateReview_AcceptsOnlyCompleteOrIncomplete(t *testing.T) 
 		if w.Code != want {
 			t.Errorf("%s: code = %d, body %s; want %d", status, w.Code, w.Body, want)
 		}
+	}
+}
+
+func TestTaskHandler_Create_BindsCreatorAndOwnerToPrincipal(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		principal *models.Principal
+		wantOwner *string
+	}{
+		{"user", &models.Principal{UserID: "caller-1", Username: "caller"}, ptrString("caller-1")},
+		{"m2m", &models.Principal{UserID: "svc-1", Username: "svc@clients"}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got models.TaskCreateInput
+			svc := &stubTaskSvc{create: func(_ context.Context, _ string, in models.TaskCreateInput) (*models.Task, error) {
+				got = in
+				return &models.Task{ID: "task-1"}, nil
+			}}
+			r := httptest.NewRequest(http.MethodPost, "/v1/applications/app-1/tasks",
+				strings.NewReader(`{"assignee_id":"mentee-1","created_by":"someone-else","owner_id":"other-user"}`))
+			r = requestWithChiParam(r, "id", "app-1")
+			r = r.WithContext(auth.ContextWithPrincipal(r.Context(), tc.principal))
+			w := httptest.NewRecorder()
+			handler.NewTaskHandler(svc).Create(w, r)
+			if w.Code != http.StatusCreated {
+				t.Fatalf("code = %d, body %s; want 201", w.Code, w.Body)
+			}
+			if got.CreatedBy == nil || *got.CreatedBy != tc.principal.UserID {
+				t.Errorf("created_by = %v; want %q", got.CreatedBy, tc.principal.UserID)
+			}
+			if (got.OwnerID == nil) != (tc.wantOwner == nil) || (got.OwnerID != nil && *got.OwnerID != *tc.wantOwner) {
+				t.Errorf("owner_id = %v; want %v", got.OwnerID, tc.wantOwner)
+			}
+		})
 	}
 }
 

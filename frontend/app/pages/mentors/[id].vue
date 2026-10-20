@@ -16,7 +16,7 @@ const mentorId = computed(() => String(route.params.id ?? ''));
 
 const { data: mentor, error } = await useAsyncData<MentorDetail>(
   `mentor-seo-${mentorId.value}`,
-  () => $fetch<MentorDetail>(`/api/mentors/${mentorId.value}`),
+  () => $fetch<MentorDetail>(`/api/mentors/${encodeURIComponent(mentorId.value)}`),
   { lazy: false },
 );
 

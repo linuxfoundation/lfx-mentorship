@@ -19,7 +19,7 @@ const programId = computed(() => String(route.params.id ?? ''));
 
 const { data: program, error } = await useAsyncData<Program>(
   `program-seo-${programId.value}`,
-  () => $fetch<Program>(`/api/programs/${programId.value}`),
+  () => $fetch<Program>(`/api/programs/${encodeURIComponent(programId.value)}`),
   { lazy: false },
 );
 

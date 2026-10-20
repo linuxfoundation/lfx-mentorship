@@ -9,7 +9,7 @@ import type { MentorDetail } from '~/types/mentor.types';
 export function useMentor(mentorId: MaybeRef<string>) {
   return useQuery<MentorDetail>({
     queryKey: computed(() => ['mentor', toValue(mentorId)]),
-    queryFn: () => $fetch<MentorDetail>(`/api/mentors/${toValue(mentorId)}`),
+    queryFn: () => $fetch<MentorDetail>(`/api/mentors/${encodeURIComponent(toValue(mentorId))}`),
     enabled: computed(() => Boolean(toValue(mentorId))),
   });
 }

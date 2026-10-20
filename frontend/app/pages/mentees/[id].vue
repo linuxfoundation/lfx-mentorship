@@ -16,7 +16,7 @@ const menteeId = computed(() => String(route.params.id ?? ''));
 
 const { data: mentee, error } = await useAsyncData<MenteeDetail>(
   `mentee-seo-${menteeId.value}`,
-  () => $fetch<MenteeDetail>(`/api/mentees/${menteeId.value}`),
+  () => $fetch<MenteeDetail>(`/api/mentees/${encodeURIComponent(menteeId.value)}`),
   { lazy: false },
 );
 

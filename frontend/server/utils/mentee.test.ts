@@ -13,6 +13,7 @@ import {
   type MenteeItem,
 } from './mentee';
 
+const USER_ID = '2f1c9a7e-5b3d-4c8e-9f0a-1b2c3d4e5f60';
 const fetchMock = vi.fn();
 vi.stubGlobal('$fetch', fetchMock);
 vi.stubGlobal('useRuntimeConfig', () => ({ apiBaseUrl: 'http://api' }));
@@ -182,8 +183,8 @@ describe('mentee fetchers', () => {
       502,
       'Failed to load mentee summary',
     ],
-    ['missing mentee', () => fetchMentee('u1'), { statusCode: 404 }, 404, 'Mentee not found'],
-    ['mentee', () => fetchMentee('u1'), { statusCode: 500 }, 500, 'Failed to load mentee'],
+    ['missing mentee', () => fetchMentee(USER_ID), { statusCode: 404 }, 404, 'Mentee not found'],
+    ['mentee', () => fetchMentee(USER_ID), { statusCode: 500 }, 500, 'Failed to load mentee'],
   ])('maps a %s failure', async (_label, call, upstream, statusCode, message) => {
     fetchMock.mockRejectedValue(upstream);
     await expect(call()).rejects.toMatchObject({ statusCode, message });
