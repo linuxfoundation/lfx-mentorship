@@ -22,8 +22,11 @@ func TestNewApplicationIndexConfig(t *testing.T) {
 	if got, want := config["access_check_relation"], "auditor"; got != want {
 		t.Fatalf("access_check_relation = %v, want %v", got, want)
 	}
-	if got, want := config["history_check_object"], "mentorship_program:program-1"; got != want {
-		t.Fatalf("history_check_object = %v, want %v", got, want)
+	if got, want := config["history_check_object"], config["access_check_object"]; got != want {
+		t.Fatalf("history_check_object = %v, want the access object %v", got, want)
+	}
+	if got, want := config["history_check_relation"], config["access_check_relation"]; got != want {
+		t.Fatalf("history_check_relation = %v, want the access relation %v", got, want)
 	}
 	if got, want := config["parent_refs"], []string{"mentorship_program:program-1"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("parent_refs = %v, want %v", got, want)

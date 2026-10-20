@@ -46,12 +46,16 @@ func NewApplicationIndexDocument(application *models.Application) ApplicationInd
 	}
 }
 
+// NewApplicationIndexConfig guards history with the same check as the document:
+// program auditors include approvers and project auditors, who cannot read the
+// application, so history must never be checked against the program.
 func NewApplicationIndexConfig(applicationID, programID, userID, role, status string) map[string]any {
+	accessObject := "mentorship_application:" + applicationID
 	return map[string]any{
 		"object_id":              applicationID,
-		"access_check_object":    "mentorship_application:" + applicationID,
+		"access_check_object":    accessObject,
 		"access_check_relation":  "auditor",
-		"history_check_object":   "mentorship_program:" + programID,
+		"history_check_object":   accessObject,
 		"history_check_relation": "auditor",
 		"parent_refs":            []string{"mentorship_program:" + programID},
 		"sort_name":              userID,

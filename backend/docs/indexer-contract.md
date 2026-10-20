@@ -79,10 +79,15 @@ Mentorship publishes one snapshot per application on
 | `object_ref` | Derived by the indexer from the NATS subject and `object_id` |
 | `access_check_object` | `mentorship_application:{application UUID}` |
 | `access_check_relation` | `auditor` |
-| `history_check_object` | `mentorship_program:{program UUID}` |
+| `history_check_object` | `mentorship_application:{application UUID}` |
 | `history_check_relation` | `auditor` |
 | `public` | `false` |
 | `tags` | `role:{role}`, `status:{status}` |
+
+History is checked exactly like the document. The program's `auditor` includes
+approvers and project auditors, who cannot read the application, so checking
+history against the program would show them what search hides. Documents
+published before this change keep the program check until their next write.
 
 The document contains the application ID, program-term ID, applicant user ID,
 role, status, term status, and creation/update timestamps. The application and
