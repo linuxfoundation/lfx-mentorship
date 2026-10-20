@@ -71,7 +71,7 @@ Two things this guard must get right, both learned from review:
 {{- /* Notification email: the binary requires these whenever NATS is set, bypass or not.
 Like the bypass guard, read both config: and env:; an env value overrides config, and a
 valueFrom is resolved at runtime, so it counts as set without a format check. */ -}}
-{{- $emailKeys := list "FGA_NATS_URL" "PUBLIC_SITE_URL" "SELF_SERVE_URL" "EMAIL_HR_INBOX" "EMAIL_REVIEW_INBOX" }}
+{{- $emailKeys := list "FGA_NATS_URL" "PUBLIC_SITE_URL" "SELF_SERVE_URL" "EMAIL_COPY_INBOX" "EMAIL_REVIEW_INBOX" }}
 {{- $email := dict }}
 {{- $emailFromRef := dict }}
 {{- range $key := $emailKeys }}
@@ -93,11 +93,28 @@ valueFrom is resolved at runtime, so it counts as set without a format check. */
 {{- fail (printf "values.yaml: %s must be an absolute http(s) URL (in config: or env:) when FGA_NATS_URL is set — notification email links point at it." $key) }}
 {{- end }}
 {{- end }}
-{{- if not (or (hasKey $emailFromRef "EMAIL_HR_INBOX") (regexMatch "^[^@\\s<>]+@[^@\\s<>]+$" (get $email "EMAIL_HR_INBOX"))) }}
-{{- fail "values.yaml: EMAIL_HR_INBOX must be an email address (in config: or env:) when FGA_NATS_URL is set — every mentee acceptance is sent to it." }}
+{{- if not (or (hasKey $emailFromRef "EMAIL_COPY_INBOX") (regexMatch "^[^@\\s<>,]+@[^@\\s<>,]+$" (get $email "EMAIL_COPY_INBOX"))) }}
+{{- fail "values.yaml: EMAIL_COPY_INBOX must be an email address (in config: or env:) when FGA_NATS_URL is set — every mentee acceptance and a copy of every other email is sent to it." }}
 {{- end }}
 {{- if not (or (hasKey $emailFromRef "EMAIL_REVIEW_INBOX") (regexMatch "^[^@\\s<>,]+@[^@\\s<>,]+(\\s*,\\s*[^@\\s<>,]+@[^@\\s<>,]+)*$" (get $email "EMAIL_REVIEW_INBOX"))) }}
 {{- fail "values.yaml: EMAIL_REVIEW_INBOX must be one or more comma-separated email addresses (in config: or env:) when FGA_NATS_URL is set — every program submitted for review is sent to each." }}
+{{- end }}
+{{- end }}
+
+{{- /* The prerequisite reminder only sends email, so it needs NATS; the email guard above then
+requires SELF_SERVE_URL, which its button links to. */ -}}
+{{- if .Values.prerequisiteReminderCronJob.enabled }}
+{{- if not (or (get $email "FGA_NATS_URL") (hasKey $emailFromRef "FGA_NATS_URL")) }}
+{{- fail "values.yaml: FGA_NATS_URL is required (in config: or env:) when prerequisiteReminderCronJob.enabled=true — reminders are sent through lfx-v2-email-service." }}
+{{- end }}
+{{- if not .Values.prerequisiteReminderCronJob.schedule }}
+{{- fail "values.yaml: prerequisiteReminderCronJob.schedule is required when prerequisiteReminderCronJob.enabled=true." }}
+{{- end }}
+{{- if le (int .Values.prerequisiteReminderCronJob.activeDeadlineSeconds) 0 }}
+{{- fail "values.yaml: prerequisiteReminderCronJob.activeDeadlineSeconds must be greater than 0 when prerequisiteReminderCronJob.enabled=true." }}
+{{- end }}
+{{- if not .Values.secretName }}
+{{- fail "values.yaml: secretName is required when prerequisiteReminderCronJob.enabled=true (must include the RDS connection components)." }}
 {{- end }}
 {{- end }}
 

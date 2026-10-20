@@ -452,7 +452,7 @@ Create a user profile.
   "last_name":    "Smith",
   "email":        "alice@example.com",
   "phone":        "+1-555-0100",
-  "introduction": "...",
+  "introduction": "...",          // at most 18,000 characters, also on update
   "terms_and_conditions": true,
   "address":       { ... },
   "skill_set":     { "skills": ["Go"], "improvementSkills": [], "comments": "" },
@@ -1019,7 +1019,7 @@ The backend reads the project's slug, name, and logo from Project Service by `pr
   "projectName":      "Cloud Native Computing Foundation",   // required only without FGA_NATS_URL
   "projectLogoUrl":   "https://...",                          // optional; http(s)
   "name":             "CNCF Mentorship 2026",                 // required; must be unique
-  "description":      "...",
+  "description":      "...",                                  // at most 18,000 characters
   "repositoryUrl":    "https://github.com/cncf/mentorship",
   "websiteUrl":       "https://...",
   "codeOfConductUrl": "https://...",
@@ -1053,7 +1053,7 @@ Update program fields. Status cannot be changed here: a body with `status` retur
 ```json
 {
   "name":        "Updated Name",
-  "description": "Updated description",
+  "description": "Updated description", // at most 18,000 characters
   "repo_link":   "https://...",
   "lfid":        "alice",
   "skills":      ["Go", "Kubernetes"],
@@ -2059,6 +2059,9 @@ This endpoint is authenticated and actor-scoped:
 
 Create a non-prerequisite task and assign it to an accepted mentee.
 
+The task's `program_term_id` is the application's term, and its `owner_id` and
+`created_by` are the caller; body values for those fields are ignored.
+
 **Request body**
 ```json
 {
@@ -2069,9 +2072,7 @@ Create a non-prerequisite task and assign it to an accepted mentee.
   "status":         "incomplete",       // defaults to "incomplete"
   "custom":         true,
   "submit_file":    "required",
-  "due_date":       "2026-05-01",
-  "program_term_id": "uuid",
-  "owner_id":       "uuid"
+  "due_date":       "2026-05-01"
 }
 ```
 
@@ -2599,7 +2600,7 @@ class ApiError extends Error {
 | `FGA_NATS_URL` | Yes for relays | — | Shared NATS URL for FGA and index publishing, notification email via lfx-v2-email-service, and project lookups via lfx-v2-project-service |
 | `PUBLIC_SITE_URL` | When `FGA_NATS_URL` is set | — | Public Mentorship site that user-facing email links point at |
 | `SELF_SERVE_URL` | When `FGA_NATS_URL` is set | — | LFX Self Serve base URL for management links in email |
-| `EMAIL_HR_INBOX` | When `FGA_NATS_URL` is set | — | LF staff HR inbox sent every mentee acceptance |
+| `EMAIL_COPY_INBOX` | When `FGA_NATS_URL` is set | — | LF staff inbox sent every mentee acceptance and a copy of every other email, subject prefixed `[Sent to <recipient>]`; must be in `EMAIL_ALLOWED_RECIPIENTS` when that is set |
 | `EMAIL_REVIEW_INBOX` | When `FGA_NATS_URL` is set | — | Comma-separated LF staff inboxes, each sent every program submitted for review |
 | `FGA_RELAY_BATCH_SIZE` | No | `50` | FGA/index claim batch size |
 | `FGA_RELAY_INTERVAL` | No | `1s` | Relay polling interval |

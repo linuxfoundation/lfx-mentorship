@@ -960,3 +960,59 @@ func TestApplicationRepositoryIntegration_CreateUsesTermWindowAndDates(t *testin
 		t.Fatalf("create after the window err = %v; want ErrIneligible", err)
 	}
 }
+
+func TestApplicationRepositoryIntegration_EditingAcceptedMentorKeepsRemoval(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	appID := "00000000-0000-0000-0000-000000000091"
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentor', 'pending')`, appID, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatalf("insert mentor application: %v", err)
+	}
+	apps := NewApplicationRepository(pool)
+	members := NewProgramMemberRepository(pool)
+	memberState := func() (status, operation string) {
+		t.Helper()
+		if err := pool.QueryRow(ctx, `SELECT status FROM program_members WHERE program_id = $1 AND user_id = $2 AND member_type = 'mentor'`, fixture.ProgramID, fixture.UserID).Scan(&status); err != nil {
+			t.Fatalf("read mentor membership: %v", err)
+		}
+		if err := pool.QueryRow(ctx, `SELECT desired_operation FROM fga_outbox WHERE marker_kind = 'membership' AND object_uid = $1 AND relation = 'mentor'`, fixture.ProgramID).Scan(&operation); err != nil {
+			t.Fatalf("read mentor membership marker: %v", err)
+		}
+		return status, operation
+	}
+
+	// Accepting the application makes the applicant an approved mentor.
+	accepted, pending := models.ApplicationStatusAccepted, models.ApplicationStatusPending
+	if _, err := apps.Update(ctx, appID, models.ApplicationUpdateInput{Status: &accepted, ExpectedStatus: &pending}); err != nil {
+		t.Fatalf("accept: %v", err)
+	}
+	if status, operation := memberState(); status != string(models.ProgramMemberStatusApproved) || operation != "sync" {
+		t.Fatalf("after acceptance: member %q, marker %q; want approved, sync", status, operation)
+	}
+
+	// An admin removes the mentor through the member row; the application stays accepted.
+	var memberID string
+	if err := pool.QueryRow(ctx, `SELECT id FROM program_members WHERE program_id = $1 AND user_id = $2 AND member_type = 'mentor'`, fixture.ProgramID, fixture.UserID).Scan(&memberID); err != nil {
+		t.Fatalf("read member id: %v", err)
+	}
+	withdrawn := models.ProgramMemberStatusWithdrawn
+	if _, err := members.Update(ctx, memberID, models.ProgramMemberUpdateInput{Status: &withdrawn}); err != nil {
+		t.Fatalf("withdraw mentor: %v", err)
+	}
+
+	// Content-only edits of the accepted application leave the removal in place.
+	note, evaluation := "keep notes", "partial"
+	for name, input := range map[string]models.ApplicationUpdateInput{
+		"empty":      {},
+		"note":       {ReviewerNote: &note},
+		"evaluation": {Evaluation: &evaluation},
+	} {
+		if _, err := apps.Update(ctx, appID, input); err != nil {
+			t.Fatalf("%s edit: %v", name, err)
+		}
+		if status, operation := memberState(); status != string(models.ProgramMemberStatusWithdrawn) || operation != "remove" {
+			t.Fatalf("after %s edit: member %q, marker %q; want withdrawn, remove", name, status, operation)
+		}
+	}
+}
