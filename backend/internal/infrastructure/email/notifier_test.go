@@ -23,7 +23,7 @@ import (
 const (
 	testPublicSiteURL = "https://mentorship.example.org"
 	testSelfServeURL  = "https://app.example.org"
-	testHRInbox       = "hr@linuxfoundation.org"
+	testCopyInbox     = "copies@linuxfoundation.org"
 	testReviewInbox   = "review@linuxfoundation.org"
 	// testAdminProgramURL is the fixture program's page for its program admins.
 	testAdminProgramURL = testSelfServeURL + "/mentorship/admin/p1"
@@ -230,10 +230,11 @@ func newFixture() *fixture {
 		Members:      f.members,
 		Applications: &applicationRepoStub{app: &models.Application{ID: "a1", ProgramTermID: "t1", UserID: "mentee"}},
 		Tasks:        f.tasks,
-	}, NotifierConfig{PublicSiteURL: testPublicSiteURL + "/", SelfServeURL: testSelfServeURL, HRInbox: testHRInbox, ReviewInboxes: []string{testReviewInbox}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}, NotifierConfig{PublicSiteURL: testPublicSiteURL + "/", SelfServeURL: testSelfServeURL, CopyInbox: testCopyInbox, ReviewInboxes: []string{testReviewInbox}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	return f
 }
 
+// wait drains in-flight notifications and returns what was sent, leaving out copies to the copy inbox.
 func (f *fixture) wait(t *testing.T) []Message {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -241,7 +242,25 @@ func (f *fixture) wait(t *testing.T) []Message {
 	if err := f.n.Wait(ctx); err != nil {
 		t.Fatalf("Wait: %v", err)
 	}
+	var originals []Message
+	for _, m := range f.sender.sent {
+		if !isCopy(f.n, m) {
+			originals = append(originals, m)
+		}
+	}
+	return originals
+}
+
+// waitAll is wait including the copies sent to the copy inbox.
+func (f *fixture) waitAll(t *testing.T) []Message {
+	t.Helper()
+	f.wait(t)
 	return f.sender.sent
+}
+
+// isCopy reports whether m is a copy of another message rather than one addressed to the copy inbox itself.
+func isCopy(n *Notifier, m Message) bool {
+	return strings.EqualFold(m.To, n.copyInbox) && strings.HasPrefix(m.Subject, copySubjectPrefix)
 }
 
 func TestNotifyMentorInvited(t *testing.T) {
@@ -455,7 +474,7 @@ func TestNotifyMenteeAccepted(t *testing.T) {
 		t.Fatalf("admin copy must not carry the mentee's country:\n%s", admin.Text)
 	}
 
-	hr := sent[testHRInbox]
+	hr := sent[testCopyInbox]
 	if hr.Subject != admin.Subject || !strings.Contains(hr.Text, "Dear Program Admin and HR Team") || !strings.Contains(hr.Text, "Program Admin Name: Mo Mentor") {
 		t.Fatalf("hr = %+v", hr)
 	}
@@ -478,7 +497,7 @@ func TestNotifyMenteeAccepted_HRNoticeWithoutCountry(t *testing.T) {
 			f.n.repos.Profiles = profiles
 			f.n.NotifyMenteeAccepted(context.Background(), "a1", "full_time")
 
-			hr := byRecipient(f.wait(t))[testHRInbox]
+			hr := byRecipient(f.wait(t))[testCopyInbox]
 			if hr.To == "" || strings.Contains(hr.Text, "Country of Residence") || strings.Contains(hr.Text, "stipend") {
 				t.Fatalf("hr = %+v, want notice without the country row", hr)
 			}
@@ -486,16 +505,16 @@ func TestNotifyMenteeAccepted_HRNoticeWithoutCountry(t *testing.T) {
 	}
 }
 
-func TestNotifyMenteeAccepted_HRInboxAlsoAdmin_GetsHRNotice(t *testing.T) {
+func TestNotifyMenteeAccepted_CopyInboxAlsoAdmin_GetsHRNotice(t *testing.T) {
 	f := newFixture()
-	f.users.users["hradmin"] = &models.User{ID: "hradmin", Email: strPtr(strings.ToUpper(testHRInbox))}
+	f.users.users["hradmin"] = &models.User{ID: "hradmin", Email: strPtr(strings.ToUpper(testCopyInbox))}
 	f.members.members = []*models.ProgramMember{{UserID: "hradmin"}}
 
 	f.n.NotifyMenteeAccepted(context.Background(), "a1", "full_time")
 
 	var hr []Message
 	for _, msg := range f.wait(t) {
-		if strings.EqualFold(msg.To, testHRInbox) {
+		if strings.EqualFold(msg.To, testCopyInbox) {
 			hr = append(hr, msg)
 		}
 	}
@@ -525,7 +544,7 @@ func TestNotifyMenteeAccepted_WithoutAdmins_MenteeAndHRStillNotified(t *testing.
 	f.n.NotifyMenteeAccepted(context.Background(), "a1", "part_time")
 
 	sent := byRecipient(f.wait(t))
-	if len(sent) != 2 || !strings.Contains(sent["mentee@linuxfoundation.org"].Text, "on a part-time basis") || !strings.Contains(sent[testHRInbox].Text, "Attendance Status: part-time") {
+	if len(sent) != 2 || !strings.Contains(sent["mentee@linuxfoundation.org"].Text, "on a part-time basis") || !strings.Contains(sent[testCopyInbox].Text, "Attendance Status: part-time") {
 		t.Fatalf("sent = %+v", sent)
 	}
 }
@@ -587,13 +606,13 @@ func TestNotify_PanicIsContained(t *testing.T) {
 func TestNotify_DeduplicatesRecipients(t *testing.T) {
 	f := newFixture()
 	f.members.members = []*models.ProgramMember{{UserID: "admin1"}}
-	f.n.hrInbox = "Admin1@linuxfoundation.org"
+	f.n.copyInbox = "Admin1@linuxfoundation.org"
 
 	f.n.NotifyMenteeAccepted(context.Background(), "a1", "full_time")
 
 	sent := f.wait(t)
 	if len(sent) != 2 {
-		t.Fatalf("sent %d messages, want mentee plus one for the admin who is also the HR inbox: %+v", len(sent), sent)
+		t.Fatalf("sent %d messages, want mentee plus one for the admin who is also the copy inbox: %+v", len(sent), sent)
 	}
 }
 
@@ -606,7 +625,76 @@ func TestNotify_AllowedRecipientsSuppressesOthers(t *testing.T) {
 
 	sent := f.wait(t)
 	if len(sent) != 1 || sent[0].To != "mentee@linuxfoundation.org" {
-		t.Fatalf("sent = %+v, want only the allowed mentee; the admin and HR inbox are suppressed", sent)
+		t.Fatalf("sent = %+v, want only the allowed mentee; the admin and copy inbox are suppressed", sent)
+	}
+}
+
+// copiesByOriginal splits sent into messages to their own recipients and copies, keyed by the recipient each copy names.
+func copiesByOriginal(t *testing.T, sent []Message) (originals map[string]Message, copies map[string]Message) {
+	t.Helper()
+	originals, copies = map[string]Message{}, map[string]Message{}
+	for _, m := range sent {
+		if rest, isCopy := strings.CutPrefix(m.Subject, copySubjectPrefix); isCopy && strings.EqualFold(m.To, testCopyInbox) {
+			to, subject, ok := strings.Cut(rest, "] ")
+			if !ok {
+				t.Fatalf("copy subject = %q, want \"[Sent to <recipient>] <subject>\"", m.Subject)
+			}
+			copies[to] = Message{To: to, Subject: subject, HTML: m.HTML, Text: m.Text}
+			continue
+		}
+		originals[m.To] = m
+	}
+	return originals, copies
+}
+
+func TestNotify_CopyInboxGetsEverySend(t *testing.T) {
+	f := newFixture()
+	f.members.members = []*models.ProgramMember{{UserID: "admin1"}}
+
+	f.n.NotifyMenteeAccepted(context.Background(), "a1", "full_time")
+
+	originals, copies := copiesByOriginal(t, f.waitAll(t))
+	if len(originals) != 3 || originals[testCopyInbox].To == "" || len(copies) != 2 {
+		t.Fatalf("got %d originals and %d copies, want the mentee, admin, and HR notice to the copy inbox, and a copy of the first two: %+v", len(originals), len(copies), f.sender.sent)
+	}
+	for _, to := range []string{"mentee@linuxfoundation.org", "admin1@linuxfoundation.org"} {
+		if copies[to] != originals[to] {
+			t.Errorf("copy for %s = %+v, want the original %+v", to, copies[to], originals[to])
+		}
+	}
+}
+
+func TestNotify_MailToTheCopyInboxIsNotCopied(t *testing.T) {
+	f := newFixture()
+	f.n.reviewInboxes = []string{strings.ToUpper(testCopyInbox)}
+
+	f.n.NotifyProgramSubmitted(context.Background(), "p1", "mentor")
+
+	if sent := f.waitAll(t); len(sent) != 1 || !strings.EqualFold(sent[0].To, testCopyInbox) || strings.HasPrefix(sent[0].Subject, copySubjectPrefix) {
+		t.Fatalf("sent = %+v, want the review notice to the copy inbox and no copy of it", sent)
+	}
+}
+
+func TestNotify_AllowedRecipientsStillCopiesSuppressedMail(t *testing.T) {
+	f := newFixture()
+	f.n.allowedRecipients = recipientSet([]string{testCopyInbox})
+
+	f.n.NotifyMenteeAccepted(context.Background(), "a1", "full_time")
+
+	originals, copies := copiesByOriginal(t, f.waitAll(t))
+	if len(originals) != 1 || originals[testCopyInbox].To == "" || len(copies) != 1 || copies["mentee@linuxfoundation.org"].To == "" {
+		t.Fatalf("sent = %+v, want the HR notice to the listed copy inbox and a copy of the suppressed mentee email", f.sender.sent)
+	}
+}
+
+func TestNotify_AllowedRecipientsSuppressCopiesToo(t *testing.T) {
+	f := newFixture()
+	f.n.allowedRecipients = recipientSet([]string{"mentee@linuxfoundation.org"})
+
+	f.n.NotifyMenteeAccepted(context.Background(), "a1", "full_time")
+
+	if sent := f.waitAll(t); len(sent) != 1 || sent[0].To != "mentee@linuxfoundation.org" {
+		t.Fatalf("sent = %+v, want only the mentee; the unlisted copy inbox gets neither the HR notice nor copies", sent)
 	}
 }
 

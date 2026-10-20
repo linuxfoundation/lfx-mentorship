@@ -80,6 +80,7 @@ func run(logger *slog.Logger) error {
 	}, email.NotifierConfig{
 		SelfServeURL:      cfg.SelfServeURL,
 		AllowedRecipients: cfg.AllowedRecipients,
+		CopyInbox:         cfg.CopyInbox,
 	}, logger)
 	if len(cfg.AllowedRecipients) > 0 {
 		logger.Warn("email restricted to EMAIL_ALLOWED_RECIPIENTS; all other recipients are suppressed", "allowed", len(cfg.AllowedRecipients))
@@ -133,6 +134,7 @@ func sendWithRetry(ctx context.Context, logger *slog.Logger, delay time.Duration
 type config struct {
 	NATSURL           string
 	SelfServeURL      string
+	CopyInbox         string
 	AllowedRecipients []string
 }
 
@@ -141,6 +143,7 @@ func loadConfig() (*config, error) {
 	cfg := &config{
 		NATSURL:      os.Getenv("FGA_NATS_URL"),
 		SelfServeURL: strings.TrimRight(os.Getenv("SELF_SERVE_URL"), "/"),
+		CopyInbox:    strings.TrimSpace(os.Getenv("EMAIL_COPY_INBOX")),
 	}
 	if cfg.NATSURL == "" {
 		return nil, fmt.Errorf("FGA_NATS_URL is required to send email")
@@ -148,6 +151,10 @@ func loadConfig() (*config, error) {
 	// The reminder's button links into Self Serve.
 	if u, err := url.Parse(cfg.SelfServeURL); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
 		return nil, fmt.Errorf("SELF_SERVE_URL must be an absolute http(s) URL with no query or fragment")
+	}
+	// Every reminder is copied to the staff inbox, as the API copies its email.
+	if addr, err := mail.ParseAddress(cfg.CopyInbox); err != nil || addr.Address != cfg.CopyInbox {
+		return nil, fmt.Errorf("EMAIL_COPY_INBOX must be a bare email address")
 	}
 	for r := range strings.SplitSeq(os.Getenv("EMAIL_ALLOWED_RECIPIENTS"), ",") {
 		if r = strings.TrimSpace(r); r == "" {

@@ -92,11 +92,13 @@ type Sender interface {
 type NotifierConfig struct {
 	PublicSiteURL string
 	SelfServeURL  string
-	HRInbox       string
 	// ReviewInboxes are the LF staff inboxes that review submitted programs; each gets its own copy.
 	ReviewInboxes []string
 	// AllowedRecipients, when set, are the only addresses mail goes to; every other send is suppressed.
 	AllowedRecipients []string
+	// CopyInbox is the LF staff inbox sent every mentee acceptance, with the mentee's country,
+	// and a copy of every other email, with the original recipient in the subject.
+	CopyInbox string
 }
 
 // Repositories are the lookups the Notifier needs to resolve recipients and template data.
@@ -117,10 +119,10 @@ type Notifier struct {
 	repos         Repositories
 	publicURL     string
 	selfServeURL  string
-	hrInbox       string
 	reviewInboxes []string
 	// allowedRecipients holds lowercased addresses; nil sends to everyone.
 	allowedRecipients map[string]bool
+	copyInbox         string
 	logger            *slog.Logger
 	wg                sync.WaitGroup
 	// dispatches holds one slot per notification in progress, up to maxConcurrentDispatches.
@@ -136,12 +138,12 @@ func NewNotifier(sender Sender, repos Repositories, cfg NotifierConfig, logger *
 		repos:         repos,
 		publicURL:     strings.TrimRight(cfg.PublicSiteURL, "/"),
 		selfServeURL:  strings.TrimRight(cfg.SelfServeURL, "/"),
-		hrInbox:       cfg.HRInbox,
 		reviewInboxes: cfg.ReviewInboxes,
 		logger:        logger,
 		dispatches:    make(chan struct{}, maxConcurrentDispatches),
 
 		allowedRecipients: recipientSet(cfg.AllowedRecipients),
+		copyInbox:         cfg.CopyInbox,
 	}
 }
 
@@ -514,12 +516,12 @@ func (n *Notifier) NotifyMenteeAccepted(ctx context.Context, applicationID, atte
 			return nil, err
 		}
 		data.MenteeCountry = n.menteeCountry(ctx, app.UserID)
-		hr, err := render(templateAdminMenteeAccepted, n.hrInbox, subject, data)
+		hr, err := render(templateAdminMenteeAccepted, n.copyInbox, subject, data)
 		if err != nil {
 			return nil, err
 		}
-		// HR goes first: dispatch keeps the first message per address, and an HR inbox that is
-		// also an admin must still get the copy with the country of residence.
+		// HR goes first: dispatch keeps the first message per address, and a copy inbox that is
+		// also an admin must still get the notice with the country of residence.
 		return append([]Message{hr}, msgs...), nil
 	})
 }
@@ -801,15 +803,19 @@ func (n *Notifier) dispatch(ctx context.Context, notification string, build func
 			return
 		}
 		seen := make(map[string]bool, len(msgs))
-		slots := make(chan struct{}, sendConcurrency)
-		var sends sync.WaitGroup
+		unique := make([]Message, 0, len(msgs))
 		for _, msg := range msgs {
 			addr := strings.ToLower(msg.To)
 			if seen[addr] {
 				continue
 			}
 			seen[addr] = true
-			if !n.recipientAllowed(addr) {
+			unique = append(unique, msg)
+		}
+		slots := make(chan struct{}, sendConcurrency)
+		var sends sync.WaitGroup
+		for _, msg := range append(unique, n.copies(unique)...) {
+			if !n.recipientAllowed(strings.ToLower(msg.To)) {
 				n.logger.InfoContext(ctx, "email notification suppressed", "notification", notification)
 				continue
 			}
@@ -834,6 +840,22 @@ func (n *Notifier) dispatch(ctx context.Context, notification string, build func
 		}
 		sends.Wait()
 	}()
+}
+
+// copySubjectPrefix starts a copy's subject, followed by the original recipient and "] ".
+const copySubjectPrefix = "[Sent to "
+
+// copies returns a copy of each message for the copy inbox, naming the original recipient in the subject.
+// Copies are built before the allowlist applies, so a listed copy inbox also shows suppressed mail.
+func (n *Notifier) copies(msgs []Message) []Message {
+	var out []Message
+	for _, msg := range msgs {
+		if strings.EqualFold(msg.To, n.copyInbox) {
+			continue
+		}
+		out = append(out, Message{To: n.copyInbox, Subject: copySubjectPrefix + msg.To + "] " + msg.Subject, HTML: msg.HTML, Text: msg.Text})
+	}
+	return out
 }
 
 // recipientUser is a resolved user with a usable email address.

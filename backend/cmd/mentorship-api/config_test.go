@@ -14,7 +14,7 @@ func TestLoadEmailConfig(t *testing.T) {
 	valid := map[string]string{
 		"PUBLIC_SITE_URL":          "https://mentorship.example.org/",
 		"SELF_SERVE_URL":           "https://app.example.org",
-		"EMAIL_HR_INBOX":           "hr@linuxfoundation.org",
+		"EMAIL_COPY_INBOX":         "copies@linuxfoundation.org",
 		"EMAIL_REVIEW_INBOX":       "review@linuxfoundation.org",
 		"EMAIL_ALLOWED_RECIPIENTS": "",
 	}
@@ -23,7 +23,7 @@ func TestLoadEmailConfig(t *testing.T) {
 		override map[string]string
 		wantErr  string
 	}{
-		"nats unset skips validation": {nats: false, override: map[string]string{"PUBLIC_SITE_URL": "", "EMAIL_HR_INBOX": "", "EMAIL_REVIEW_INBOX": ""}},
+		"nats unset skips validation": {nats: false, override: map[string]string{"PUBLIC_SITE_URL": "", "EMAIL_COPY_INBOX": "", "EMAIL_REVIEW_INBOX": ""}},
 		"valid":                       {nats: true},
 		"missing public site":         {nats: true, override: map[string]string{"PUBLIC_SITE_URL": ""}, wantErr: "PUBLIC_SITE_URL"},
 		"relative self serve":         {nats: true, override: map[string]string{"SELF_SERVE_URL": "app.example.org"}, wantErr: "SELF_SERVE_URL"},
@@ -31,8 +31,7 @@ func TestLoadEmailConfig(t *testing.T) {
 		"query on base url":           {nats: true, override: map[string]string{"SELF_SERVE_URL": "https://app.example.org?tenant=x"}, wantErr: "SELF_SERVE_URL"},
 		"empty query on base url":     {nats: true, override: map[string]string{"SELF_SERVE_URL": "https://app.example.org?"}, wantErr: "SELF_SERVE_URL"},
 		"fragment on base url":        {nats: true, override: map[string]string{"PUBLIC_SITE_URL": "https://mentorship.example.org#top"}, wantErr: "PUBLIC_SITE_URL"},
-		"missing hr inbox":            {nats: true, override: map[string]string{"EMAIL_HR_INBOX": ""}, wantErr: "EMAIL_HR_INBOX"},
-		"display-name hr inbox":       {nats: true, override: map[string]string{"EMAIL_HR_INBOX": "HR <hr@linuxfoundation.org>"}, wantErr: "EMAIL_HR_INBOX"},
+		"missing copy inbox":          {nats: true, override: map[string]string{"EMAIL_COPY_INBOX": ""}, wantErr: "EMAIL_COPY_INBOX"},
 		"missing review inbox":        {nats: true, override: map[string]string{"EMAIL_REVIEW_INBOX": ""}, wantErr: "EMAIL_REVIEW_INBOX"},
 		"invalid review inbox":        {nats: true, override: map[string]string{"EMAIL_REVIEW_INBOX": "review"}, wantErr: "EMAIL_REVIEW_INBOX"},
 		"review inbox list":           {nats: true, override: map[string]string{"EMAIL_REVIEW_INBOX": " a@linuxfoundation.org, b@contractor.linuxfoundation.org ,"}},
@@ -42,6 +41,8 @@ func TestLoadEmailConfig(t *testing.T) {
 		"invalid allowed recipient":   {nats: true, override: map[string]string{"EMAIL_ALLOWED_RECIPIENTS": "a@linuxfoundation.org,not-an-address"}, wantErr: "EMAIL_ALLOWED_RECIPIENTS"},
 		"comma-only recipients":       {nats: true, override: map[string]string{"EMAIL_ALLOWED_RECIPIENTS": " , "}, wantErr: "EMAIL_ALLOWED_RECIPIENTS"},
 		"blank recipients":            {nats: true, override: map[string]string{"EMAIL_ALLOWED_RECIPIENTS": " "}, wantErr: "EMAIL_ALLOWED_RECIPIENTS"},
+		"copy inbox":                  {nats: true, override: map[string]string{"EMAIL_COPY_INBOX": " copies@linuxfoundation.org "}},
+		"display-name copy inbox":     {nats: true, override: map[string]string{"EMAIL_COPY_INBOX": "Copies <copies@linuxfoundation.org>"}, wantErr: "EMAIL_COPY_INBOX"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			for k, v := range valid {
@@ -75,6 +76,9 @@ func TestLoadEmailConfig(t *testing.T) {
 			}
 			if name == "valid" && cfg.AllowedRecipients != nil {
 				t.Fatalf("AllowedRecipients = %q, want nil when unset", cfg.AllowedRecipients)
+			}
+			if tc.nats && cfg.CopyInbox != "copies@linuxfoundation.org" {
+				t.Fatalf("CopyInbox = %q, want the trimmed address", cfg.CopyInbox)
 			}
 		})
 	}
@@ -152,7 +156,7 @@ func TestLoadConfig(t *testing.T) {
 		"CROWDFUNDING_TIMEOUT":                 "",
 		"PUBLIC_SITE_URL":                      "",
 		"SELF_SERVE_URL":                       "",
-		"EMAIL_HR_INBOX":                       "",
+		"EMAIL_COPY_INBOX":                     "",
 		"EMAIL_REVIEW_INBOX":                   "",
 		"EMAIL_ALLOWED_RECIPIENTS":             "",
 		"AWS_REGION":                           "",
