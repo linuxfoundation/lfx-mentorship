@@ -470,6 +470,29 @@ func TestTaskService_DueDateMustBeISODate(t *testing.T) {
 	}
 }
 
+func TestTaskService_Create_TakesTermFromApplication(t *testing.T) {
+	var got models.TaskCreateInput
+	taskRepo := &stubTaskRepo{create: func(_ context.Context, _ string, in models.TaskCreateInput) (*models.Task, error) {
+		got = in
+		return &models.Task{ID: in.ID}, nil
+	}}
+	appRepo := &stubAppRepo{getByID: func(_ context.Context, id string) (*models.Application, error) {
+		return &models.Application{ID: id, ProgramTermID: "term-own", UserID: "u1", Role: models.ApplicationRoleMentee, Status: models.ApplicationStatusAccepted}, nil
+	}}
+	svc := newTaskSvc(taskRepo, appRepo, &stubTermRepo{}, &stubMemberRepo{})
+
+	foreign := "term-of-another-program"
+	for name, bodyTerm := range map[string]*string{"foreign": &foreign, "missing": nil} {
+		got = models.TaskCreateInput{}
+		if _, err := svc.Create(context.Background(), "app-1", models.TaskCreateInput{AssigneeID: "u1", ProgramTermID: bodyTerm}); err != nil {
+			t.Fatalf("%s: create: %v", name, err)
+		}
+		if got.ProgramTermID == nil || *got.ProgramTermID != "term-own" {
+			t.Errorf("%s: stored program_term_id = %v; want the application's term-own", name, got.ProgramTermID)
+		}
+	}
+}
+
 func TestTaskService_InvalidCategory_Rejected(t *testing.T) {
 	svc := newTaskSvc(&stubTaskRepo{}, &stubAppRepo{}, &stubTermRepo{}, &stubMemberRepo{})
 	bad := models.TaskCategory("optional") // not a member of the enum
