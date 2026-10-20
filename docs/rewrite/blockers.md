@@ -297,5 +297,6 @@ Still to check against the live deployment:
 2. FGA coverage after the seed matches PostgreSQL-derived expectations.
 3. Authenticated, anonymous, denied, cross-program, and stale-tuple smoke tests
    pass through the gateway.
-4. The Nuxt server calls the gateway's cluster-internal address instead of the
-   backend Service (§5).
+4. The Nuxt server calls the shared gateway hostname, as crowdfunding's
+   frontend does, instead of the backend Service, and a NetworkPolicy admits
+   only the Traefik pods (§5).
