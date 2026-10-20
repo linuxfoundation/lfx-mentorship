@@ -175,18 +175,6 @@ func TestE2EUsers(t *testing.T) {
 		}
 	})
 
-	t.Run("sign-in takes the auth-service primary email", func(t *testing.T) {
-		primary := "margaret.primary@lf.example.org"
-		e2e.fakes.addAccount(fakeAccount{Username: "margaret", Email: primary})
-		var me struct {
-			Email string `json:"email"`
-		}
-		unprovisioned(t, "margaret").mustJSON(t, http.MethodPut, "/me", map[string]any{}, http.StatusOK, &me)
-		if me.Email != primary {
-			t.Fatalf("bootstrap email = %q; want the auth-service primary %q", me.Email, primary)
-		}
-	})
-
 	t.Run("DELETE /me removes the caller", func(t *testing.T) {
 		ada.call(t, http.MethodDelete, "/me", nil).expect(http.StatusNoContent)
 		ada.call(t, http.MethodGet, "/me", nil).expect(http.StatusUnauthorized)

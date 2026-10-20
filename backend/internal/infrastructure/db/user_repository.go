@@ -83,10 +83,10 @@ func (r *UserRepository) UpsertByLFID(ctx context.Context, input models.UserCrea
 	return r.upsertByLFID(ctx, input, false)
 }
 
-// BootstrapByLFID is UpsertByLFID for the caller's own sign-in, whose email is the LF account's
-// verified address: another LF account's row still holding that address is stale and gives it up.
-// A legacy row without an LFID keeps it, and the call returns ErrEmailInUse. Without an email the
-// stored one is kept.
+// BootstrapByLFID is UpsertByLFID for the caller's own sign-in, whose email is the verified token
+// claim: another LF account's row still holding that address is stale and gives it up. A legacy
+// row without an LFID keeps it, and the call returns ErrEmailInUse. Without a claim the stored
+// email is kept.
 func (r *UserRepository) BootstrapByLFID(ctx context.Context, input models.UserCreateInput) (*models.User, error) {
 	return r.upsertByLFID(ctx, input, true)
 }

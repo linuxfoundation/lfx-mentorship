@@ -18,28 +18,15 @@ var userSvcTracer = otel.Tracer("users-service")
 
 // UserService orchestrates user reads and writes.
 type UserService struct {
-	repo     domain.UserRepository
-	accounts domain.AccountDirectory
+	repo domain.UserRepository
 }
 
-// Bootstrap resolves or creates the local user for a Heimdall LFID. Its email is the LF account's
-// primary email from auth-service, else the verified token claim in input.Email; with neither, the
-// stored email is kept. A failed lookup does not block sign-in.
+// Bootstrap resolves or creates the local user for a Heimdall LFID.
 func (s *UserService) Bootstrap(ctx context.Context, lfid string, input models.UserUpdateInput) (*models.User, error) {
-	ctx, span := userSvcTracer.Start(ctx, "UserService.Bootstrap")
-	defer span.End()
-
 	if lfid == "" {
 		return nil, fmt.Errorf("%w: principal is required", domain.ErrInvalidInput)
 	}
 	input.LFID = &lfid
-	if s.accounts != nil {
-		if email, err := s.accounts.PrimaryEmail(ctx, lfid); err == nil {
-			input.Email = &email
-		} else {
-			span.RecordError(err)
-		}
-	}
 	user, err := s.repo.BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: input.Email, Name: input.Name, GivenName: input.GivenName, FamilyName: input.FamilyName, AvatarURL: input.AvatarURL})
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap user: %w", err)
@@ -47,10 +34,9 @@ func (s *UserService) Bootstrap(ctx context.Context, lfid string, input models.U
 	return user, nil
 }
 
-// NewUserService returns a UserService. accounts may be nil, in which case sign-in takes the
-// email from the token claim alone.
-func NewUserService(repo domain.UserRepository, accounts domain.AccountDirectory) *UserService {
-	return &UserService{repo: repo, accounts: accounts}
+// NewUserService returns a UserService.
+func NewUserService(repo domain.UserRepository) *UserService {
+	return &UserService{repo: repo}
 }
 
 // GetByID returns the user with the given ID.
