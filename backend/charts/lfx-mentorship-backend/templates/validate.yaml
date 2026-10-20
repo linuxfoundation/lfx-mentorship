@@ -93,7 +93,7 @@ valueFrom is resolved at runtime, so it counts as set without a format check. */
 {{- fail (printf "values.yaml: %s must be an absolute http(s) URL (in config: or env:) when FGA_NATS_URL is set — notification email links point at it." $key) }}
 {{- end }}
 {{- end }}
-{{- if not (or (hasKey $emailFromRef "EMAIL_COPY_INBOX") (regexMatch "^[^@\\s<>]+@[^@\\s<>]+$" (get $email "EMAIL_COPY_INBOX"))) }}
+{{- if not (or (hasKey $emailFromRef "EMAIL_COPY_INBOX") (regexMatch "^[^@\\s<>,]+@[^@\\s<>,]+$" (get $email "EMAIL_COPY_INBOX"))) }}
 {{- fail "values.yaml: EMAIL_COPY_INBOX must be an email address (in config: or env:) when FGA_NATS_URL is set — every mentee acceptance and a copy of every other email is sent to it." }}
 {{- end }}
 {{- if not (or (hasKey $emailFromRef "EMAIL_REVIEW_INBOX") (regexMatch "^[^@\\s<>,]+@[^@\\s<>,]+(\\s*,\\s*[^@\\s<>,]+@[^@\\s<>,]+)*$" (get $email "EMAIL_REVIEW_INBOX"))) }}
