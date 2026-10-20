@@ -566,13 +566,16 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 		return nil, fmt.Errorf("begin update application transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// becameAccepted is true only for the write that moves the application into accepted.
+	becameAccepted := false
 	if input.Status != nil && *input.Status == models.ApplicationStatusAccepted {
 		var (
 			termStatus models.ProgramTermStatus
 			role       models.ApplicationRole
 			userID     string
+			previous   models.ApplicationStatus
 		)
-		if err := tx.QueryRow(ctx, `SELECT pt.status, a.role, a.user_id FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE a.id = $1 FOR UPDATE OF pt`, id).Scan(&termStatus, &role, &userID); errors.Is(err, pgx.ErrNoRows) {
+		if err := tx.QueryRow(ctx, `SELECT pt.status, a.role, a.user_id, a.status FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE a.id = $1 FOR UPDATE OF pt, a`, id).Scan(&termStatus, &role, &userID, &previous); errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrApplicationNotFound
 		} else if err != nil {
 			return nil, fmt.Errorf("lock application term for acceptance: %w", err)
@@ -584,6 +587,7 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 				return nil, err
 			}
 		}
+		becameAccepted = previous != models.ApplicationStatusAccepted
 	}
 	if input.ExpectedStatus != nil {
 		var current models.ApplicationStatus
@@ -624,7 +628,9 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 		span.RecordError(err)
 		return nil, fmt.Errorf("update application: %w", err)
 	}
-	if a.Role == models.ApplicationRoleMentor && a.Status == models.ApplicationStatusAccepted {
+	// Membership follows the acceptance itself. Later edits of the accepted application must not
+	// reverse an admin's removal of the mentor, which is recorded on the member row.
+	if becameAccepted && a.Role == models.ApplicationRoleMentor {
 		if err := ensureAcceptedMentorMembership(ctx, tx, a); err != nil {
 			return nil, err
 		}
