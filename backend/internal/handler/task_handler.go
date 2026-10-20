@@ -212,6 +212,14 @@ func (h *TaskHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &input) {
 		return
 	}
+	// The caller is the task's creator and owner; body values for either are ignored.
+	// An M2M principal has no users row for owner_id to reference.
+	creator := principal.UserID
+	input.CreatedBy = &creator
+	input.OwnerID = nil
+	if !principal.IsM2M() {
+		input.OwnerID = &creator
+	}
 
 	task, err := h.svc.Create(r.Context(), applicationID, input)
 	if err != nil {
