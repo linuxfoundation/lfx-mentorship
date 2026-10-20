@@ -42,6 +42,8 @@ func TestLoadEmailConfig(t *testing.T) {
 		"invalid allowed recipient":   {nats: true, override: map[string]string{"EMAIL_ALLOWED_RECIPIENTS": "a@linuxfoundation.org,not-an-address"}, wantErr: "EMAIL_ALLOWED_RECIPIENTS"},
 		"comma-only recipients":       {nats: true, override: map[string]string{"EMAIL_ALLOWED_RECIPIENTS": " , "}, wantErr: "EMAIL_ALLOWED_RECIPIENTS"},
 		"blank recipients":            {nats: true, override: map[string]string{"EMAIL_ALLOWED_RECIPIENTS": " "}, wantErr: "EMAIL_ALLOWED_RECIPIENTS"},
+		"copy inbox":                  {nats: true, override: map[string]string{"EMAIL_COPY_INBOX": " copies@linuxfoundation.org "}},
+		"display-name copy inbox":     {nats: true, override: map[string]string{"EMAIL_COPY_INBOX": "Copies <copies@linuxfoundation.org>"}, wantErr: "EMAIL_COPY_INBOX"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			for k, v := range valid {
@@ -75,6 +77,12 @@ func TestLoadEmailConfig(t *testing.T) {
 			}
 			if name == "valid" && cfg.AllowedRecipients != nil {
 				t.Fatalf("AllowedRecipients = %q, want nil when unset", cfg.AllowedRecipients)
+			}
+			if name == "valid" && cfg.CopyInbox != "" {
+				t.Fatalf("CopyInbox = %q, want empty when unset", cfg.CopyInbox)
+			}
+			if name == "copy inbox" && cfg.CopyInbox != "copies@linuxfoundation.org" {
+				t.Fatalf("CopyInbox = %q, want trimmed address", cfg.CopyInbox)
 			}
 		})
 	}

@@ -584,6 +584,86 @@ func TestNotify_AllowedRecipientsSuppressesOthers(t *testing.T) {
 	}
 }
 
+const testCopyInbox = "copies@linuxfoundation.org"
+
+// copiesByOriginal maps each copy sent to the copy inbox by the recipient named in its subject.
+func copiesByOriginal(t *testing.T, sent []Message) (originals map[string]Message, copies map[string]Message) {
+	t.Helper()
+	originals, copies = map[string]Message{}, map[string]Message{}
+	for _, m := range sent {
+		if rest, isCopy := strings.CutPrefix(m.Subject, "[Sent to "); isCopy && strings.EqualFold(m.To, testCopyInbox) {
+			to, subject, ok := strings.Cut(rest, "] ")
+			if !ok {
+				t.Fatalf("copy subject = %q, want \"[Sent to <recipient>] <subject>\"", m.Subject)
+			}
+			copies[to] = Message{To: to, Subject: subject, HTML: m.HTML, Text: m.Text}
+			continue
+		}
+		originals[m.To] = m
+	}
+	return originals, copies
+}
+
+func TestNotify_CopyInboxGetsEverySend(t *testing.T) {
+	f := newFixture()
+	f.members.members = []*models.ProgramMember{{UserID: "admin1"}}
+	f.n.copyInbox = testCopyInbox
+
+	f.n.NotifyMenteeAccepted(context.Background(), "a1", "full_time")
+
+	sent := f.wait(t)
+	originals, copies := copiesByOriginal(t, sent)
+	if len(originals) != 3 || len(copies) != 3 {
+		t.Fatalf("sent %d originals and %d copies, want the mentee, HR inbox, and admin each sent once and copied once: %+v", len(originals), len(copies), sent)
+	}
+	for to, orig := range originals {
+		if copies[to] != orig {
+			t.Errorf("copy for %s = %+v, want the original %+v", to, copies[to], orig)
+		}
+	}
+}
+
+func TestNotify_CopyInboxIsNotCopiedToItself(t *testing.T) {
+	f := newFixture()
+	f.n.copyInbox = strings.ToUpper(testCopyInbox)
+	f.n.hrInbox = testCopyInbox
+
+	f.n.NotifyMenteeAccepted(context.Background(), "a1", "full_time")
+
+	sent := f.wait(t)
+	_, copies := copiesByOriginal(t, sent)
+	if len(sent) != 3 || len(copies) != 1 || copies["mentee@linuxfoundation.org"].Subject == "" {
+		t.Fatalf("sent = %+v, want the mentee, the HR notice straight to the copy inbox, and one copy of the mentee's email", sent)
+	}
+}
+
+func TestNotify_AllowedRecipientsStillCopiesSuppressedMail(t *testing.T) {
+	f := newFixture()
+	f.n.copyInbox = testCopyInbox
+	f.n.allowedRecipients = recipientSet([]string{testCopyInbox})
+
+	f.n.NotifyMenteeAccepted(context.Background(), "a1", "full_time")
+
+	sent := f.wait(t)
+	originals, copies := copiesByOriginal(t, sent)
+	if len(originals) != 0 || len(copies) != 2 || copies["mentee@linuxfoundation.org"].Subject == "" || copies[testHRInbox].Subject == "" {
+		t.Fatalf("sent = %+v, want no originals but a copy of the suppressed mentee and HR emails", sent)
+	}
+}
+
+func TestNotify_AllowedRecipientsSuppressCopiesToo(t *testing.T) {
+	f := newFixture()
+	f.n.copyInbox = testCopyInbox
+	f.n.allowedRecipients = recipientSet([]string{"mentee@linuxfoundation.org"})
+
+	f.n.NotifyMenteeAccepted(context.Background(), "a1", "full_time")
+
+	sent := f.wait(t)
+	if len(sent) != 1 || sent[0].To != "mentee@linuxfoundation.org" {
+		t.Fatalf("sent = %+v, want only the mentee; copies to an unlisted copy inbox are suppressed", sent)
+	}
+}
+
 func TestRecipientAllowed(t *testing.T) {
 	n := &Notifier{allowedRecipients: recipientSet([]string{"Tester@LinuxFoundation.org", "pinned+qa@linuxfoundation.org"})}
 	for addr, want := range map[string]bool{

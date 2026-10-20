@@ -77,6 +77,8 @@ type NotifierConfig struct {
 	ReviewInboxes []string
 	// AllowedRecipients, when set, are the only addresses mail goes to; every other send is suppressed.
 	AllowedRecipients []string
+	// CopyInbox, when set, gets a copy of every email, with the original recipient in the subject.
+	CopyInbox string
 }
 
 // Repositories are the lookups the Notifier needs to resolve recipients and template data.
@@ -101,6 +103,7 @@ type Notifier struct {
 	reviewInboxes []string
 	// allowedRecipients holds lowercased addresses; nil sends to everyone.
 	allowedRecipients map[string]bool
+	copyInbox         string
 	logger            *slog.Logger
 	wg                sync.WaitGroup
 	// dispatches holds one slot per notification in progress, up to maxConcurrentDispatches.
@@ -122,6 +125,7 @@ func NewNotifier(sender Sender, repos Repositories, cfg NotifierConfig, logger *
 		dispatches:    make(chan struct{}, maxConcurrentDispatches),
 
 		allowedRecipients: recipientSet(cfg.AllowedRecipients),
+		copyInbox:         cfg.CopyInbox,
 	}
 }
 
@@ -668,15 +672,19 @@ func (n *Notifier) dispatch(ctx context.Context, notification string, build func
 			return
 		}
 		seen := make(map[string]bool, len(msgs))
-		slots := make(chan struct{}, sendConcurrency)
-		var sends sync.WaitGroup
+		unique := make([]Message, 0, len(msgs))
 		for _, msg := range msgs {
 			addr := strings.ToLower(msg.To)
 			if seen[addr] {
 				continue
 			}
 			seen[addr] = true
-			if !n.recipientAllowed(addr) {
+			unique = append(unique, msg)
+		}
+		slots := make(chan struct{}, sendConcurrency)
+		var sends sync.WaitGroup
+		for _, msg := range append(unique, n.copies(unique)...) {
+			if !n.recipientAllowed(strings.ToLower(msg.To)) {
 				n.logger.InfoContext(ctx, "email notification suppressed", "notification", notification)
 				continue
 			}
@@ -701,6 +709,22 @@ func (n *Notifier) dispatch(ctx context.Context, notification string, build func
 		}
 		sends.Wait()
 	}()
+}
+
+// copies returns a copy of each message for the copy inbox, naming the original recipient in the subject.
+// Copies are built before the allowlist applies, so a listed copy inbox also shows suppressed mail.
+func (n *Notifier) copies(msgs []Message) []Message {
+	if n.copyInbox == "" {
+		return nil
+	}
+	var out []Message
+	for _, msg := range msgs {
+		if strings.EqualFold(msg.To, n.copyInbox) {
+			continue
+		}
+		out = append(out, Message{To: n.copyInbox, Subject: "[Sent to " + msg.To + "] " + msg.Subject, HTML: msg.HTML, Text: msg.Text})
+	}
+	return out
 }
 
 // recipientUser is a resolved user with a usable email address.

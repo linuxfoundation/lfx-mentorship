@@ -103,6 +103,8 @@ type EmailConfig struct {
 	ReviewInboxes []string
 	// AllowedRecipients, when set, are the only addresses mail goes to, so testing on real data cannot reach real users.
 	AllowedRecipients []string
+	// CopyInbox, when set, gets a copy of every email sent, so staff can see what went out.
+	CopyInbox string
 }
 
 // CrowdfundingConfig holds outbound crowdfunding API settings.
@@ -276,6 +278,7 @@ func loadEmailConfig(natsConfigured bool) (EmailConfig, error) {
 		PublicSiteURL: strings.TrimRight(os.Getenv("PUBLIC_SITE_URL"), "/"),
 		SelfServeURL:  strings.TrimRight(os.Getenv("SELF_SERVE_URL"), "/"),
 		HRInbox:       strings.TrimSpace(os.Getenv("EMAIL_HR_INBOX")),
+		CopyInbox:     strings.TrimSpace(os.Getenv("EMAIL_COPY_INBOX")),
 	}
 	if !natsConfigured {
 		return cfg, nil
@@ -301,6 +304,11 @@ func loadEmailConfig(natsConfigured bool) (EmailConfig, error) {
 	// A set value with no addresses would mean "send to everyone"; fail closed instead.
 	if os.Getenv("EMAIL_ALLOWED_RECIPIENTS") != "" && len(cfg.AllowedRecipients) == 0 {
 		return EmailConfig{}, fmt.Errorf("EMAIL_ALLOWED_RECIPIENTS is set but lists no addresses")
+	}
+	if cfg.CopyInbox != "" {
+		if addr, err := mail.ParseAddress(cfg.CopyInbox); err != nil || addr.Address != cfg.CopyInbox {
+			return EmailConfig{}, fmt.Errorf("EMAIL_COPY_INBOX must be a bare email address")
+		}
 	}
 	return cfg, nil
 }
