@@ -505,6 +505,7 @@ func (h *ProgramHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Error(w, fmt.Errorf("%w: status transitions are handled by dedicated decision/hide/unhide routes", domain.ErrInvalidInput))
 		return
 	}
+	input.EditorID = principal.UserID
 	program, err := h.svc.Update(r.Context(), id, input)
 	if err != nil {
 		Error(w, err)

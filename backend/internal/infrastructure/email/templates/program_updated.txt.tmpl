@@ -1,0 +1,6 @@
+{{- /* Copyright The Linux Foundation and each contributor to LFX. */ -}}
+{{- /* SPDX-License-Identifier: MIT */ -}}
+{{template "header" .}}{{template "greeting" (printf "Hi %s!" .RecipientName)}}Just confirming that your updates to {{.ProgramName}} have been saved.
+
+View Program: {{.ManageURL}}
+{{template "footer" .}}

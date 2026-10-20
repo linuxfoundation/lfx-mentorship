@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -582,6 +583,32 @@ func TestProgramService_Update_Hide_NoApplications_OK(t *testing.T) {
 	_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Status: &next})
 	if err != nil {
 		t.Errorf("hide with no blocking apps should succeed, got %v", err)
+	}
+}
+
+func TestProgramService_Update_ConfirmsEditToEditor(t *testing.T) {
+	name := "Renamed"
+	failed := errors.New("db down")
+	for label, tc := range map[string]struct {
+		input   models.ProgramUpdateInput
+		repoErr error
+		want    []string
+	}{
+		"edit":                    {input: models.ProgramUpdateInput{Name: &name, EditorID: "admin-1"}, want: []string{"admin-1"}},
+		"service status change":   {input: models.ProgramUpdateInput{Name: &name}},
+		"edit that fails to save": {input: models.ProgramUpdateInput{Name: &name, EditorID: "admin-1"}, repoErr: failed},
+	} {
+		n := &stubNotifier{}
+		repo := &stubProgRepo{update: func(_ context.Context, id string, _ models.ProgramUpdateInput) (*models.Program, error) {
+			if tc.repoErr != nil {
+				return nil, tc.repoErr
+			}
+			return &models.Program{ID: id}, nil
+		}}
+		_, err := newProgramSvcWithNotifier(repo, &stubTermRepo{}, &stubAppRepo{}, n).Update(context.Background(), "prog-1", tc.input)
+		if !errors.Is(err, tc.repoErr) || !slices.Equal(n.programEditors, tc.want) {
+			t.Errorf("%s: err = %v, confirmations to %v; want %v", label, err, n.programEditors, tc.want)
+		}
 	}
 }
 
