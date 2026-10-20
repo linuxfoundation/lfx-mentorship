@@ -1801,28 +1801,49 @@ func TestProgramService_DescriptionLengthCapped(t *testing.T) {
 	// Multi-byte characters: the cap counts characters, not bytes.
 	atCap, overCap := strings.Repeat("é", 18_000), strings.Repeat("<", 18_001)
 	writes := 0
-	repo := &stubProgRepo{update: func(_ context.Context, id string, _ models.ProgramUpdateInput) (*models.Program, error) {
-		writes++
-		return &models.Program{ID: id}, nil
-	}}
+	repo := &stubProgRepo{
+		update: func(_ context.Context, id string, _ models.ProgramUpdateInput) (*models.Program, error) {
+			writes++
+			return &models.Program{ID: id}, nil
+		},
+		create: func(_ context.Context, in models.ProgramCreateInput) (*models.Program, error) {
+			writes++
+			return &models.Program{ID: in.ID}, nil
+		},
+		createEnrollment: func(context.Context, models.ProgramEnrollmentInput) (*models.Program, error) {
+			writes++
+			return &models.Program{ID: "prog-1"}, nil
+		},
+	}
 	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
 
-	if _, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Description: &atCap}); err != nil {
-		t.Fatalf("update at the cap: %v", err)
+	// Each write differs only in its description, so the cap is the one check that can refuse it.
+	for _, tc := range []struct {
+		description string
+		wantErr     bool
+	}{{atCap, false}, {overCap, true}} {
+		description := tc.description
+		enrollment := validEnrollment()
+		enrollment.Program.Description = &description
+		ops := map[string]func() error{
+			"update": func() error {
+				_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Description: &description})
+				return err
+			},
+			"enrollment": func() error { _, err := svc.CreateEnrollment(context.Background(), enrollment); return err },
+			"create":     func() error { _, err := svc.Create(context.Background(), enrollment.Program); return err },
+		}
+		for op, write := range ops {
+			err := write()
+			if tc.wantErr && !errors.Is(err, domain.ErrInvalidInput) {
+				t.Errorf("%s over the cap: expected ErrInvalidInput, got %v", op, err)
+			}
+			if !tc.wantErr && err != nil {
+				t.Errorf("%s at the cap: %v", op, err)
+			}
+		}
 	}
-	if _, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Description: &overCap}); !errors.Is(err, domain.ErrInvalidInput) {
-		t.Errorf("update over the cap: expected ErrInvalidInput, got %v", err)
-	}
-	if writes != 1 {
-		t.Errorf("repository writes = %d; want only the update at the cap", writes)
-	}
-
-	projectUID := "00000000-0000-0000-0000-000000000001"
-	enrollment := models.ProgramEnrollmentInput{Program: models.ProgramCreateInput{ProjectUID: &projectUID, Name: "Program", Slug: "program", Description: &overCap}, Skills: []string{"Go"}}
-	if _, err := svc.CreateEnrollment(context.Background(), enrollment); !errors.Is(err, domain.ErrInvalidInput) {
-		t.Errorf("enrollment over the cap: expected ErrInvalidInput, got %v", err)
-	}
-	if _, err := svc.Create(context.Background(), enrollment.Program); !errors.Is(err, domain.ErrInvalidInput) {
-		t.Errorf("create over the cap: expected ErrInvalidInput, got %v", err)
+	if writes != 3 {
+		t.Errorf("repository writes = %d; want only the three at the cap", writes)
 	}
 }
