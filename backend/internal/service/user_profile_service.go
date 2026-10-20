@@ -130,6 +130,9 @@ func (s *UserProfileService) validateCreateInput(ctx context.Context, input mode
 	if err := validateSkillSet(input.SkillSet); err != nil {
 		return err
 	}
+	if err := validateRichText("introduction", input.Introduction); err != nil {
+		return err
+	}
 	if input.ProfileType == "" {
 		return fmt.Errorf("%w: profile_type is required", domain.ErrInvalidInput)
 	}
@@ -213,6 +216,9 @@ func (s *UserProfileService) Update(ctx context.Context, id string, input models
 	span.SetAttributes(attribute.String("profile.id", id))
 
 	if err := validateSkillSet(input.SkillSet); err != nil {
+		return nil, err
+	}
+	if err := validateRichText("introduction", input.Introduction); err != nil {
 		return nil, err
 	}
 	var err error
