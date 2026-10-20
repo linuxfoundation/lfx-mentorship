@@ -25,7 +25,7 @@ For the detailed relation model and route-by-route decisions, see the
 | FGA NATS/JetStream relay | **Implemented and dev-validated** | A program marker was acknowledged and its tuple was verified in the live `lfx-core` store |
 | Index relay authentication and retry | **Implemented and tested** | Service-token stamping, JetStream publish acknowledgement, delayed single-count retries, generation guards, and relay metrics |
 | Program/application/task tuple lifecycle | **Implemented** | Full-state updates, precise membership changes, and hard-delete messages use fga-sync subjects |
-| Approver-team membership lifecycle | **Partially implemented** | PostgreSQL storage and precise markers exist; administration stays off the gateway until a platform staff relation is approved |
+| Approver-team membership lifecycle | **Implemented, cluster-local** | PostgreSQL storage and precise markers exist; the roster is reconciled from Helm values by the `approver-admin` post-sync Job. The HTTP routes stay off the gateway until a platform staff relation is approved |
 | Initial FGA and index seeding | **Implemented in importer** | Environment seed still needs to be run after all reported data gaps are resolved or quarantined |
 | Dead-letter recovery | **Implemented** | Exact retained markers can be requeued through `/app/outbox-repair` |
 | Full dev tuple coverage verification | **Not complete** | PostgreSQL-derived expectations have not yet been reconciled with every live tuple |

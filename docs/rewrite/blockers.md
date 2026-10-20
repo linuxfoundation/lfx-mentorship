@@ -143,6 +143,11 @@ stale access.
 ### Required resolution evidence
 
 1. The authority allowed to administer the global approver roster is named.
+   Interim: the `approverTeam.members` list in the environment's values file
+   in lfx-v2-argocd, applied by the chart's post-sync `approver-admin sync`
+   Job. Changing it is a reviewed ArgoCD PR, and nothing reachable through the
+   gateway can change the roster. The platform staff relation, when approved,
+   replaces this.
 2. The approver roster has relational source-of-truth storage.
 3. Insert and removal transactions create generation-guarded outbox markers.
 4. Transactional emission and the explicit seed cover `member_put` and precise

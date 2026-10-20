@@ -30,7 +30,7 @@ Three rules govern the whole table, and each is a place a RuleSet can be wrong w
 | Route | Auth | Object | Relation | Service must also |
 | --- | --- | --- | --- | --- |
 | `GET /livez`, `/healthz`, `/readyz` | — | — | — | **Not routed through the gateway at all.** These are kubelet probe targets on the cluster-local Service; exposing them on `lfx-api.{lfx.domain}` publishes liveness surface for no caller that needs it |
-| `GET/POST /v1/admin/approver-team/members`, `DELETE /v1/admin/approver-team/members/{userID}` | — | — | — | **Not routed through the gateway.** Approver-team administration is cluster-local until a platform staff relation is approved; the service keeps its `manage:mentorship:approvers` scope check as defence in depth |
+| `GET/POST /v1/admin/approver-team/members`, `DELETE /v1/admin/approver-team/members/{userID}` | — | — | — | **Not routed through the gateway.** Approver-team administration is cluster-local until a platform staff relation is approved: the roster is reconciled from `approverTeam.members` in Helm values by `/app/approver-admin` (see `backend/docs/api.md`). The service keeps its `manage:mentorship:approvers` scope check as defence in depth |
 
 ## Public catalog reads
 
