@@ -1,29 +1,66 @@
 {{- /* Copyright The Linux Foundation and each contributor to LFX. */ -}}
 {{- /* SPDX-License-Identifier: MIT */ -}}
-{{- /* Layout follows the legacy Mandrill templates: white card, centred greeting, pill button, dark footer. */ -}}
+{{- /* The shared LFX transactional email layout: logo header, blue button, Linux Foundation footer. The copy inside each email is the legacy Mandrill template's. */ -}}
 {{define "header"}}<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<style>
+p { margin:0 0 16px; }
+a { color:#0061A3; }
+@media only screen and (max-width:620px) { .wrapper { padding:24px 20px !important; } }
+</style>
 </head>
-<body style="margin:0;padding:0;background-color:#fafafa;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#fafafa;">
-<tr><td align="center" valign="top">
+<body style="margin:0;padding:0;background-color:#ffffff;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#ffffff;">
+<tr><td align="center" valign="top" class="wrapper" style="padding:32px 40px;">
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;">
-<tr><td align="center" style="background-color:#ffffff;padding:25px 18px;font-family:Helvetica,Arial,sans-serif;font-size:24px;font-weight:bold;color:#0068fa;">LFX Mentorship</td></tr>
-<tr><td valign="top" style="background-color:#ffffff;padding:9px 18px 18px;font-family:Helvetica,Arial,sans-serif;font-size:16px;line-height:150%;color:#757575;">
-{{if not .Letter}}<h3 style="margin:0 0 18px;text-align:center;font-family:Arial,'Helvetica Neue',Helvetica,sans-serif;font-size:22px;font-weight:bold;line-height:150%;color:#444444;">Hi {{.RecipientName}}!</h3>
+{{- /* The LFX Mentorship lockup, as the public site's header draws it: the LFX mark and the word Mentorship. */}}
+<tr><td style="padding:0 0 24px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+<td valign="middle" style="padding:0 8px 0 0;"><img src="https://itx-project-logos-png-prod.s3.us-west-2.amazonaws.com/lfx-logo-color.png" alt="LFX" width="120" height="32" style="display:block;height:32px;width:auto;border:0;"></td>
+<td valign="middle" style="font-family:Inter,Arial,sans-serif;font-size:22px;font-weight:500;line-height:32px;color:#003778;">Mentorship</td>
+</tr></table></td></tr>
+<tr><td valign="top" style="border-top:1px solid #e5e7eb;padding:32px 0 0;font-family:Inter,Arial,sans-serif;font-size:16px;line-height:1.6;color:#374151;">
+{{end}}
+{{- /* Call as {{template "greeting" (printf "Hi %s!" .RecipientName)}}: each legacy template punctuates its greeting differently. */ -}}
+{{define "greeting"}}<p style="margin:0 0 16px;font-size:16px;color:#111827;">{{.}}</p>
+{{end}}
+{{- /* Call as {{template "details_start"}}{{template "detail" (detail "Label" .Value)}}…{{template "details_end"}}. */ -}}
+{{define "details_start"}}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px;background-color:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;">
+<tr><td style="padding:16px 20px;font-family:Inter,Arial,sans-serif;font-size:14px;line-height:1.7;color:#374151;">
+{{end}}
+{{define "detail"}}<span style="color:#6b7280;">{{.Label}}:</span> <strong style="color:#111827;font-weight:600;">{{.Value}}</strong><br>
+{{end}}
+{{define "details_end"}}</td></tr>
+</table>
+{{end}}
+{{- /* Call as {{template "tasks" .Tasks}}: one details block per task, with its due date when known. */ -}}
+{{define "tasks"}}{{range .}}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 12px;background-color:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;">
+<tr><td style="padding:12px 20px;font-family:Inter,Arial,sans-serif;font-size:14px;line-height:1.7;color:#374151;">
+{{template "detail" (detail "Task Name" .Name)}}{{with .DueDate}}{{template "detail" (detail "Due Date" .)}}{{end}}</td></tr>
+</table>
 {{end}}{{end}}
-{{- /* Call as {{template "button" .URL}}Label{{template "button_end"}}. */ -}}
-{{define "button"}}<table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" style="margin:9px auto 18px;border-collapse:separate;border-radius:50px;background-color:#0068FA;">
-<tr><td align="center" valign="middle" style="padding:15px;font-family:Arial,sans-serif;font-size:14px;"><a href="{{.}}" target="_blank" style="font-weight:bold;line-height:100%;text-align:center;text-decoration:none;color:#FFFFFF;">{{end}}
+{{- /* Call as {{template "button" .URL}}Label{{template "button_end"}} for a single primary button. */ -}}
+{{define "button"}}<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 24px;border-collapse:separate;">
+<tr><td align="center" valign="middle" bgcolor="#0061A3" style="border-radius:50px;background-color:#0061A3;"><a href="{{.}}" target="_blank" style="display:inline-block;padding:12px 24px;font-family:Inter,Arial,sans-serif;font-size:15px;font-weight:600;line-height:20px;color:#ffffff;text-decoration:none;border:1px solid #0061A3;border-radius:50px;">{{end}}
 {{define "button_end"}}</a></td></tr>
 </table>
 {{end}}
-{{define "footer"}}{{if not .Letter}}<p style="margin:18px 0 0;">Thank you,<br>The LF Engineering Team</p>
+{{- /* Call as {{template "actions_start"}}{{template "action" (action .URL "Label" "primary")}}…{{template "actions_end"}}
+     for a row of buttons that wraps on narrow screens. Variants: primary, secondary, approve, reject. */ -}}
+{{define "actions_start"}}<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 16px;">
+<tr><td style="font-family:Inter,Arial,sans-serif;">
+{{end}}
+{{define "action"}}<a href="{{.URL}}" target="_blank" style="display:inline-block;margin:0 8px 8px 0;padding:11px 23px;border-radius:50px;font-family:Inter,Arial,sans-serif;font-size:15px;font-weight:600;line-height:20px;text-decoration:none;{{if eq .Variant "primary"}}background-color:#0061A3;border:1px solid #0061A3;color:#ffffff;{{else if eq .Variant "approve"}}background-color:#ffffff;border:1px solid #15803d;color:#15803d;{{else if eq .Variant "reject"}}background-color:#ffffff;border:1px solid #dc2626;color:#dc2626;{{else}}background-color:#ffffff;border:1px solid #0061A3;color:#0061A3;{{end}}">{{.Label}}</a>
+{{end}}
+{{define "actions_end"}}</td></tr>
+</table>
+{{end}}
+{{define "footer"}}{{if not .Letter}}<p style="margin:8px 0 32px;font-size:15px;line-height:1.7;color:#374151;">Thank you,<br><strong style="color:#111827;">The LF Engineering Team</strong></p>
 {{end}}</td></tr>
-<tr><td align="center" style="background-color:#333333;padding:20px 18px;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:150%;color:#FFFFFF;">Copyright &copy; {{.Year}} The Linux Foundation&reg;. All rights reserved. The Linux Foundation has registered trademarks and uses trademarks. For a list of trademarks of The Linux Foundation, please see our <a href="https://www.linuxfoundation.org/legal/trademark-usage" target="_blank" style="color:#FFFFFF;">Trademark Usage</a> page. Linux is a registered trademark of Linus Torvalds.</td></tr>
+<tr><td style="border-top:1px solid #e5e7eb;padding:24px 0 0;font-family:Inter,Arial,sans-serif;font-size:12px;line-height:1.6;color:#6b7280;">Copyright &copy; {{.Year}} The Linux Foundation&reg;. All rights reserved. The Linux Foundation has registered trademarks and uses trademarks. For a list of trademarks of The Linux Foundation, please see our <a href="https://www.linuxfoundation.org/legal/trademark-usage" target="_blank" style="color:#6b7280;">Trademark Usage</a> page. Linux is a registered trademark of Linus Torvalds.</td></tr>
 </table>
 </td></tr>
 </table>

@@ -1,10 +1,10 @@
 {{- /* Copyright The Linux Foundation and each contributor to LFX. */ -}}
 {{- /* SPDX-License-Identifier: MIT */ -}}
-{{template "header" .}}Congratulations!
+{{template "header" .}}{{template "greeting" (printf "Hi %s!" .RecipientName)}}Congratulations!
 
 {{.MentorName}} accepted your invitation to participate as a mentor for the {{.ProgramName}} mentorship program.
 
-Log in to LFX Mentorship at your earliest convenience to view your new mentor's profile.
+Login to LFX Mentorship at your earliest convenience to view your new mentor's profile.
 
-Manage your program: {{.ManageURL}}
+View Program: {{.ManageURL}}
 {{template "footer" .}}

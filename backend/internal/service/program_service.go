@@ -627,6 +627,9 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 		span.RecordError(err)
 		return nil, fmt.Errorf("update program: %w", err)
 	}
+	if input.EditorID != "" {
+		s.notifier.NotifyProgramUpdated(ctx, id, input.EditorID)
+	}
 	return p, nil
 }
 

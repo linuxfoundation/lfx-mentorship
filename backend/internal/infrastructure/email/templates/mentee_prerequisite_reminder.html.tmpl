@@ -1,0 +1,10 @@
+{{- /* Copyright The Linux Foundation and each contributor to LFX. */ -}}
+{{- /* SPDX-License-Identifier: MIT */ -}}
+{{- /* Legacy: mentee-incomplete-prerequisite-reminder. The due date is the term's application end date. */ -}}
+{{template "header" .}}{{template "greeting" (printf "Hi %s!" .RecipientName)}}<p>Thank you for your interest in becoming a mentee on LFX Mentorship!</p>
+<p>This is a reminder that your application for the <strong>{{.ProgramName}}</strong> mentorship program{{with .TermName}} <strong>({{.}})</strong>{{end}} still has incomplete prerequisite tasks. Please complete and submit the tasks listed below so your mentorship application can be reviewed.</p>
+{{with .ApplicationEndDate}}<p><strong>Due date: {{.}}</strong></p>
+{{end}}<p style="margin:0 0 12px;"><strong>Incomplete prerequisite tasks:</strong></p>
+{{template "tasks" .Tasks}}<p style="margin:16px 0;">Please login to LFX Mentorship at your earliest convenience to complete the tasks or select the link below.</p>
+<p>Best of luck with your application!</p>
+{{template "button" .ManageURL}}View Prerequisite Tasks{{template "button_end"}}{{template "footer" .}}

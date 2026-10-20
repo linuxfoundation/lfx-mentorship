@@ -1,19 +1,13 @@
 {{- /* Copyright The Linux Foundation and each contributor to LFX. */ -}}
 {{- /* SPDX-License-Identifier: MIT */ -}}
-{{template "header" .}}{{.MenteeName}} has been accepted to the {{.ProgramName}} mentorship.
-{{if .HRNotice}}
-Please generate the acceptance letter and contract paperwork with the following details.
+{{template "header" .}}{{template "greeting" "Dear Program Admin and HR Team"}}{{.MenteeName}} has been accepted to the {{.ProgramName}} mentorship.
+
+HR team, please generate the acceptance letter and contract paperwork with the following details:
+
+{{template "detail" (detail "Mentorship Program Name" .ProgramName)}}{{range .ProgramAdmins}}{{with .Name}}{{template "detail" (detail "Program Admin Name" .)}}{{end}}{{template "detail" (detail "Program Admin Email" .Email)}}{{end}}{{template "detail" (detail "Mentee Name" .MenteeName)}}{{with .MenteeEmail}}{{template "detail" (detail "Mentee Email" .)}}{{end}}{{with .TermStart}}{{template "detail" (detail "Mentorship Start Month and Year" .)}}{{end}}{{with .TermEnd}}{{template "detail" (detail "Mentorship End Month and Year" .)}}{{end}}{{with .AttendanceType}}{{template "detail" (detail "Attendance Status" .)}}{{end}}{{with .MenteeCountry}}{{template "detail" (detail "Mentee Country of Residence" .)}}{{end}}
+Program Admin you will be notified when mentee signs the acceptance letter.
+{{if .MenteeCountry}}
+NOTE: Please save the mentee country of residence for stipend amount verification.
 {{end}}
-Mentorship Program: {{.ProgramName}}
-{{range .ProgramAdmins}}Program Admin: {{.}}
-{{end}}Mentee Name: {{.MenteeName}}
-{{with .MenteeEmail}}Mentee Email: {{.}}
-{{end}}{{with .MenteeCountry}}Mentee Country of Residence: {{.}}
-{{end}}{{with .TermName}}Term: {{.}}
-{{end}}{{with .TermPeriod}}Mentorship Period: {{.}}
-{{end}}{{with .AttendanceType}}Attendance Status: {{.}}
-{{end}}{{if .MenteeCountry}}
-Note: please save the mentee's country of residence for stipend amount verification.
-{{end}}
-Manage the program: {{.ManageURL}}
+Login To LFX Mentorship: {{.ManageURL}}
 {{template "footer" .}}

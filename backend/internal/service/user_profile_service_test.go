@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
@@ -76,7 +77,7 @@ func (m *stubUserProfileRepo) CountActiveMenteeProfiles(ctx context.Context, use
 }
 
 func newUserProfileSvc(repo *stubUserProfileRepo) *service.UserProfileService {
-	return service.NewUserProfileService(repo)
+	return service.NewUserProfileService(repo, &stubNotifier{})
 }
 
 // ── Create ────────────────────────────────────────────────────────────────────
@@ -149,6 +150,46 @@ func TestUserProfileService_Create_Mentor_NoEligibilityCheck(t *testing.T) {
 	})
 	if err != nil {
 		t.Errorf("mentor profile should not require eligibility flags, got %v", err)
+	}
+}
+
+func TestUserProfileService_Create_WelcomesTheNewProfile(t *testing.T) {
+	for _, profileType := range []models.UserProfileType{models.UserProfileTypeMentor, models.UserProfileTypeMentee} {
+		n := &stubNotifier{}
+		svc := service.NewUserProfileService(&stubUserProfileRepo{}, n)
+		_, err := svc.Create(context.Background(), models.UserProfileCreateInput{UserID: "u1", ProfileType: string(profileType), AgeEligible: true, WorkEligible: true})
+		if err != nil || !slices.Equal(n.profilesCreated, []models.UserProfileType{profileType}) {
+			t.Errorf("%s: err = %v, welcomed = %v; want one welcome", profileType, err, n.profilesCreated)
+		}
+	}
+}
+
+func TestUserProfileService_Create_FailureSendsNoWelcome(t *testing.T) {
+	n := &stubNotifier{}
+	svc := service.NewUserProfileService(&stubUserProfileRepo{
+		create: func(context.Context, models.UserProfileCreateInput) (*models.UserProfile, error) {
+			return nil, errors.New("db down")
+		},
+	}, n)
+	if _, err := svc.Create(context.Background(), models.UserProfileCreateInput{UserID: "u1", ProfileType: "mentor"}); err == nil || len(n.profilesCreated) != 0 {
+		t.Errorf("err = %v, welcomed = %v; want an error and no welcome", err, n.profilesCreated)
+	}
+}
+
+func TestUserProfileService_Upsert_WelcomesOnlyANewProfile(t *testing.T) {
+	for _, inserted := range []bool{true, false} {
+		n := &stubNotifier{}
+		svc := service.NewUserProfileService(&stubUserProfileRepo{
+			upsertByUserAndType: func(_ context.Context, in models.UserProfileCreateInput) (*models.UserProfile, bool, error) {
+				return &models.UserProfile{UserID: in.UserID, ProfileType: in.ProfileType}, inserted, nil
+			},
+		}, n)
+		if _, _, err := svc.Upsert(context.Background(), models.UserProfileCreateInput{UserID: "u1", ProfileType: "mentor"}); err != nil {
+			t.Fatalf("Upsert: %v", err)
+		}
+		if want := map[bool]int{true: 1, false: 0}[inserted]; len(n.profilesCreated) != want {
+			t.Errorf("inserted = %v: welcomed %d times, want %d", inserted, len(n.profilesCreated), want)
+		}
 	}
 }
 

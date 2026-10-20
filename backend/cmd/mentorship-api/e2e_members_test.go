@@ -50,7 +50,7 @@ func awaitEmail(t *testing.T, address, subject string, n int) emailapi.SendEmail
 }
 
 // inviteSubject identifies mentor invitation emails.
-const inviteSubject = "invited to mentor"
+const inviteSubject = "invited to become a mentor"
 
 // inviteToken returns the token from the nth invite email sent to address.
 func inviteToken(t *testing.T, address string, n int) string {
@@ -111,7 +111,7 @@ func TestE2EMentorInvites(t *testing.T) {
 		if accepted.Status != "approved" {
 			t.Fatalf("accepted: %+v", accepted)
 		}
-		awaitEmail(t, admin.Email, "accepted your mentor invitation", 1)
+		awaitEmail(t, admin.Email, "accepted your invitation to become a mentor", 1)
 		mentor.call(t, http.MethodPost, "/mentor-invites/"+escaped+"/accept", nil).expect(http.StatusBadRequest)
 		admin.call(t, http.MethodPost, members, map[string]any{"user_id": mentor.ID, "member_type": "mentor"}).expect(http.StatusConflict)
 

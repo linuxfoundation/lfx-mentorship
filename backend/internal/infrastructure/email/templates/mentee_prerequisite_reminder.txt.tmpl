@@ -1,0 +1,16 @@
+{{- /* Copyright The Linux Foundation and each contributor to LFX. */ -}}
+{{- /* SPDX-License-Identifier: MIT */ -}}
+{{template "header" .}}{{template "greeting" (printf "Hi %s!" .RecipientName)}}Thank you for your interest in becoming a mentee on LFX Mentorship!
+
+This is a reminder that your application for the {{.ProgramName}} mentorship program{{with .TermName}} ({{.}}){{end}} still has incomplete prerequisite tasks. Please complete and submit the tasks listed below so your mentorship application can be reviewed.
+{{with .ApplicationEndDate}}
+Due date: {{.}}
+{{end}}
+Incomplete prerequisite tasks:
+
+{{template "tasks" .Tasks}}Please login to LFX Mentorship at your earliest convenience to complete the tasks or select the link below.
+
+Best of luck with your application!
+
+View Prerequisite Tasks: {{.ManageURL}}
+{{template "footer" .}}

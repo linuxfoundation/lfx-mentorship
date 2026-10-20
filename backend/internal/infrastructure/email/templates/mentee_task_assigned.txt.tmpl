@@ -1,12 +1,9 @@
 {{- /* Copyright The Linux Foundation and each contributor to LFX. */ -}}
 {{- /* SPDX-License-Identifier: MIT */ -}}
-{{template "header" .}}You have been assigned a new task for the {{.ProgramName}} mentorship.
+{{template "header" .}}{{template "greeting" (printf "Hi %s!" .RecipientName)}}You have been assigned a new task for the {{.ProgramName}} mentorship.
 
-Please log in to LFX Mentorship at your earliest convenience to review your tasks and get started!
+Please login to the LFX Mentorship at your earliest convenience to review your tasks and get started!
 
-Task Name: {{.TaskName}}
-Task Created On: {{.TaskCreatedOn}}
-{{with .TaskDueDate}}Due Date: {{.}}
-{{end}}
-View your tasks: {{.ManageURL}}
+{{template "detail" (detail "Task Name" .TaskName)}}{{template "detail" (detail "Task Created on" .TaskCreatedOn)}}{{with .TaskDueDate}}{{template "detail" (detail "Due Date" .)}}{{end}}
+View Tasks: {{.ManageURL}}
 {{template "footer" .}}

@@ -43,7 +43,7 @@ const (
 	greetingFallback = "there"
 	menteeFallback   = "A mentee"
 	mentorFallback   = "A mentor"
-	hrGreeting       = "HR team"
+	inviterFallback  = "A program administrator"
 	reviewGreeting   = "LF Mentorship team"
 )
 
@@ -57,11 +57,31 @@ const (
 // supportDeskURL is the LF support desk the legacy program rejection email pointed program admins at.
 const supportDeskURL = "https://jira.linuxfoundation.org/servicedesk/customer/portal/4/group/31"
 
-// selfServeMentorshipPath is the Self Serve lens where program admins, mentors, and mentees manage mentorships.
-const selfServeMentorshipPath = "/mentorship"
+// Self Serve pages the email buttons open.
+const (
+	// selfServeMentorshipPath is the Self Serve lens where program admins, mentors, and mentees manage mentorships.
+	selfServeMentorshipPath = "/mentorship"
+	// selfServeAdminProgramPath, followed by a program ID, is the program admin's program page.
+	selfServeAdminProgramPath = selfServeMentorshipPath + "/admin/"
+	// selfServeProgramReviewPath, followed by a program ID, is where LF staff confirm a publish or reject decision.
+	selfServeProgramReviewPath = selfServeMentorshipPath + "/program-review/"
+	// selfServeMentorInvitesPath is the Self Serve page where an invited mentor accepts or declines.
+	selfServeMentorInvitesPath = selfServeMentorshipPath + "/mentor/invites"
+	// selfServeMentorProfilePath is the mentor profile form; a mentor who already has a profile is sent on to their programs.
+	selfServeMentorProfilePath = selfServeMentorshipPath + "/mentor"
+	// selfServeMentorOwnProfilePath is where a mentor views and edits their own profile.
+	selfServeMentorOwnProfilePath = selfServeMentorshipPath + "/mentor/profile"
+	// selfServeMenteeOverviewPath is the mentee's home page in Self Serve.
+	selfServeMenteeOverviewPath = selfServeMentorshipPath + "/mentee/overview"
+	// selfServeMenteeTasksPath is where a mentee works through their tasks.
+	selfServeMenteeTasksPath = selfServeMentorshipPath + "/mentee/tasks"
+)
 
-// selfServeMentorInvitesPath is the Self Serve page where an invited mentor accepts or declines.
-const selfServeMentorInvitesPath = selfServeMentorshipPath + "/mentor/invites"
+// Values of the program-review page's decision query parameter.
+const (
+	reviewDecisionApprove = "approve"
+	reviewDecisionReject  = "reject"
+)
 
 // Sender delivers one rendered Message.
 type Sender interface {
@@ -170,8 +190,8 @@ func (n *Notifier) Wait(ctx context.Context) error {
 	}
 }
 
-// NotifyMentorInvited emails the invited mentor a link to accept or decline.
-func (n *Notifier) NotifyMentorInvited(ctx context.Context, programID, userID, token string) {
+// NotifyMentorInvited emails the invited mentor a link to accept or decline, naming the admin who invited them.
+func (n *Notifier) NotifyMentorInvited(ctx context.Context, programID, userID, inviterID, token string) {
 	n.dispatch(ctx, templateMentorInvited, func(ctx context.Context) ([]Message, error) {
 		program, err := n.repos.Programs.GetByID(ctx, programID)
 		if err != nil {
@@ -181,15 +201,30 @@ func (n *Notifier) NotifyMentorInvited(ctx context.Context, programID, userID, t
 		if err != nil {
 			return nil, err
 		}
-		msg, err := render(templateMentorInvited, to, "You've been invited to mentor for "+program.Name, templateData{
+		msg, err := render(templateMentorInvited, to, "You are invited to become a mentor for the "+program.Name+" mentorship program.", templateData{
 			RecipientName: firstName(user),
 			ProgramName:   program.Name,
-			ProgramURL:    n.programURL(program),
-			InviteURL:     n.selfServeURL + selfServeMentorInvitesPath + "?token=" + url.QueryEscape(token),
+			InviterName:   n.inviterName(ctx, inviterID),
+			InviteURL:     n.selfServeLink(selfServeMentorInvitesPath + "?token=" + url.QueryEscape(token)),
+			ProfileURL:    n.selfServeLink(selfServeMentorProfilePath),
 			LFID:          deref(user.LFID),
 		})
 		return []Message{msg}, err
 	})
+}
+
+// inviterName is the inviting admin's name. The inviter is context for the mentor; an unknown or
+// unnamed inviter, or a failed lookup, must not hold back the invite.
+func (n *Notifier) inviterName(ctx context.Context, inviterID string) string {
+	if inviterID == "" {
+		return inviterFallback
+	}
+	inviter, err := n.repos.Users.GetByID(ctx, inviterID)
+	if err != nil {
+		n.logger.WarnContext(ctx, "mentor inviter unavailable", "error", err)
+		return inviterFallback
+	}
+	return fullName(inviter, inviterFallback)
 }
 
 // NotifyMentorDeclined tells the mentor a program admin declined their request.
@@ -215,7 +250,7 @@ func (n *Notifier) NotifyMentorDeclined(ctx context.Context, programID, userID s
 // NotifyAdminMentorAccepted tells every active program admin that an invited mentor accepted.
 func (n *Notifier) NotifyAdminMentorAccepted(ctx context.Context, programID, userID string) {
 	n.notifyAdminsOfMentor(ctx, templateAdminMentorAccepted, programID, userID, func(mentor, program string) string {
-		return mentor + " accepted your mentor invitation for " + program
+		return mentor + " accepted your invitation to become a mentor for the " + program + " mentorship project."
 	})
 }
 
@@ -229,14 +264,14 @@ func (n *Notifier) NotifyAdminMentorDeclined(ctx context.Context, programID, use
 // NotifyAdminMentorRequested tells every active program admin that a mentor asked to join the program.
 func (n *Notifier) NotifyAdminMentorRequested(ctx context.Context, programID, userID string) {
 	n.notifyAdminsOfMentor(ctx, templateAdminMentorRequested, programID, userID, func(mentor, program string) string {
-		return mentor + " requested to mentor for " + program
+		return "A new mentor submitted request to join " + program + " mentorship program."
 	})
 }
 
 // NotifyAdminMentorWithdrew tells every active program admin that a mentor withdrew their request to join.
 func (n *Notifier) NotifyAdminMentorWithdrew(ctx context.Context, programID, userID string) {
 	n.notifyAdminsOfMentor(ctx, templateAdminMentorWithdrew, programID, userID, func(mentor, program string) string {
-		return mentor + " withdrew their mentor request for " + program
+		return mentor + " withdrew a request to join your program as a mentor."
 	})
 }
 
@@ -259,7 +294,7 @@ func (n *Notifier) notifyAdminsOfMentor(ctx context.Context, name, programID, us
 		mentorName := fullName(mentor, mentorFallback)
 		return adminMessages(admins, name, subject(mentorName, program.Name), templateData{
 			ProgramName: program.Name,
-			ManageURL:   n.manageURL(),
+			ManageURL:   n.adminProgramURL(program.ID),
 			MentorName:  mentorName,
 			MentorEmail: n.mentorEmail(ctx, programID, mentor),
 		})
@@ -294,9 +329,9 @@ func (n *Notifier) NotifyProgramSubmitted(ctx context.Context, programID, submit
 		if err != nil {
 			return nil, err
 		}
-		return adminMessages(admins, templateProgramSubmitted, "We received your submission of "+program.Name, templateData{
+		return adminMessages(admins, templateProgramSubmitted, "Your submission to the LFX Mentorship is pending approval.", templateData{
 			ProgramName: program.Name,
-			ManageURL:   n.manageURL(),
+			ManageURL:   n.adminProgramURL(program.ID),
 		})
 	})
 	n.dispatch(ctx, templateProgramReview, func(ctx context.Context) ([]Message, error) {
@@ -307,7 +342,9 @@ func (n *Notifier) NotifyProgramSubmitted(ctx context.Context, programID, submit
 		data := templateData{
 			RecipientName: reviewGreeting,
 			ProgramName:   program.Name,
-			ManageURL:     n.manageURL(),
+			ProgramURL:    n.pendingProgramURL(program.ID),
+			ApproveURL:    n.programReviewURL(program.ID, reviewDecisionApprove),
+			RejectURL:     n.programReviewURL(program.ID, reviewDecisionReject),
 		}
 		// The submitter is context for the reviewer; a failed lookup must not hold back the notice.
 		if submitterID != "" {
@@ -321,7 +358,7 @@ func (n *Notifier) NotifyProgramSubmitted(ctx context.Context, programID, submit
 		}
 		msgs := make([]Message, 0, len(n.reviewInboxes))
 		for _, to := range n.reviewInboxes {
-			msg, err := render(templateProgramReview, to, "Mentorship program submitted for review: "+program.Name, data)
+			msg, err := render(templateProgramReview, to, "LFX Mentorship program submission is pending your review.", data)
 			if err != nil {
 				return nil, err
 			}
@@ -333,12 +370,12 @@ func (n *Notifier) NotifyProgramSubmitted(ctx context.Context, programID, submit
 
 // NotifyProgramDecided tells every active program admin their program was published or rejected.
 func (n *Notifier) NotifyProgramDecided(ctx context.Context, programID string, status models.ProgramStatus) {
-	var name, verdict string
+	var name, subject string
 	switch status {
 	case models.ProgramStatusPublished:
-		name, verdict = templateProgramApproved, " has been approved"
+		name, subject = templateProgramApproved, "Your submission for the LFX Mentorship has been approved."
 	case models.ProgramStatusRejected:
-		name, verdict = templateProgramRejected, " was not approved"
+		name, subject = templateProgramRejected, "Your program submission to the LFX Mentorship was rejected."
 	default:
 		n.logger.WarnContext(ctx, "program decision has no email", "program_id", programID, "status", status)
 		return
@@ -352,12 +389,57 @@ func (n *Notifier) NotifyProgramDecided(ctx context.Context, programID string, s
 		if err != nil {
 			return nil, err
 		}
-		return adminMessages(admins, name, program.Name+verdict, templateData{
+		return adminMessages(admins, name, subject, templateData{
 			ProgramName: program.Name,
-			ProgramURL:  n.programURL(program),
-			ManageURL:   n.manageURL(),
+			ManageURL:   n.adminProgramURL(program.ID),
 			SupportURL:  supportDeskURL,
 		})
+	})
+}
+
+// NotifyProgramUpdated confirms to the editor that their changes to the program were saved.
+func (n *Notifier) NotifyProgramUpdated(ctx context.Context, programID, editorID string) {
+	n.dispatch(ctx, templateProgramUpdated, func(ctx context.Context) ([]Message, error) {
+		program, err := n.repos.Programs.GetByID(ctx, programID)
+		if err != nil {
+			return nil, fmt.Errorf("get program: %w", err)
+		}
+		user, to, err := n.recipient(ctx, editorID)
+		if err != nil {
+			return nil, err
+		}
+		msg, err := render(templateProgramUpdated, to, "Your update was successful.", templateData{
+			RecipientName: firstName(user),
+			ProgramName:   program.Name,
+			ManageURL:     n.adminProgramURL(program.ID),
+		})
+		return []Message{msg}, err
+	})
+}
+
+// NotifyProfileCreated welcomes a user who created their mentor or mentee profile.
+func (n *Notifier) NotifyProfileCreated(ctx context.Context, userID string, profileType models.UserProfileType) {
+	var name, subject string
+	switch profileType {
+	case models.UserProfileTypeMentor:
+		name, subject = templateMentorProfileCreated, "Your LFX Mentorship mentor profile was successfully created."
+	case models.UserProfileTypeMentee:
+		name, subject = templateMenteeProfileCreated, "Your LFX Mentorship mentee profile was successfully created."
+	default:
+		n.logger.WarnContext(ctx, "profile type has no email", "profile_type", profileType)
+		return
+	}
+	n.dispatch(ctx, name, func(ctx context.Context) ([]Message, error) {
+		user, to, err := n.recipient(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		msg, err := render(name, to, subject, templateData{
+			RecipientName: firstName(user),
+			ManageURL:     n.selfServeLink(selfServeMentorOwnProfilePath),
+			ProgramURL:    n.publicURL + "/programs",
+		})
+		return []Message{msg}, err
 	})
 }
 
@@ -376,16 +458,16 @@ func (n *Notifier) NotifyAdminTasksSubmitted(ctx context.Context, applicationID 
 		if err != nil {
 			return nil, err
 		}
-		return adminMessages(admins, templateAdminTasksSubmitted, "New mentee application to review for "+program.Name, templateData{
+		return adminMessages(admins, templateAdminTasksSubmitted, "A new mentee submitted application to join "+program.Name+" mentorship program.", templateData{
 			ProgramName: program.Name,
-			ManageURL:   n.manageURL(),
+			ManageURL:   n.adminProgramURL(program.ID),
 			TermName:    term.Name,
 			MenteeName:  fullName(mentee, menteeFallback),
 		})
 	})
 }
 
-// NotifyMenteeAccepted congratulates the mentee and tells every active program admin.
+// NotifyMenteeAccepted congratulates the mentee and tells every active program admin and HR.
 func (n *Notifier) NotifyMenteeAccepted(ctx context.Context, applicationID, attendanceType string) {
 	attendance := attendanceLabel(models.AttendanceType(attendanceType))
 	n.dispatch(ctx, templateMenteeAccepted, func(ctx context.Context) ([]Message, error) {
@@ -397,10 +479,10 @@ func (n *Notifier) NotifyMenteeAccepted(ctx context.Context, applicationID, atte
 		if err != nil {
 			return nil, err
 		}
-		msg, err := render(templateMenteeAccepted, to, "Congratulations! You've been accepted to "+program.Name, templateData{
+		msg, err := render(templateMenteeAccepted, to, "Congratulations! You were accepted to "+program.Name+" mentorship program.", templateData{
 			RecipientName:  firstName(user),
 			ProgramName:    program.Name,
-			ManageURL:      n.manageURL(),
+			ManageURL:      n.selfServeLink(selfServeMenteeOverviewPath),
 			TermName:       term.Name,
 			AttendanceType: attendance,
 		})
@@ -416,16 +498,16 @@ func (n *Notifier) NotifyMenteeAccepted(ctx context.Context, applicationID, atte
 			return nil, fmt.Errorf("get mentee: %w", err)
 		}
 		menteeName := fullName(mentee, menteeFallback)
-		subject := menteeName + " has been accepted to " + program.Name
+		subject := "A new mentee was accepted to " + program.Name + " mentorship program."
 		admins, err := n.activeAdmins(ctx, program.ID, templateAdminMenteeAccepted)
 		if err != nil {
 			return nil, err
 		}
 		data := templateData{
 			ProgramName:    program.Name,
-			ManageURL:      n.manageURL(),
-			TermName:       term.Name,
-			TermPeriod:     termPeriod(term, monthLayout),
+			ManageURL:      n.selfServeLink(selfServeMentorshipPath),
+			TermStart:      termDate(term.StartDateTime, monthLayout),
+			TermEnd:        termDate(term.EndDateTime, monthLayout),
 			MenteeName:     menteeName,
 			MenteeEmail:    strings.TrimSpace(deref(mentee.Email)),
 			AttendanceType: attendance,
@@ -435,15 +517,13 @@ func (n *Notifier) NotifyMenteeAccepted(ctx context.Context, applicationID, atte
 		if err != nil {
 			return nil, err
 		}
-		data.RecipientName = hrGreeting
-		data.HRNotice = true
 		data.MenteeCountry = n.menteeCountry(ctx, app.UserID)
 		hr, err := render(templateAdminMenteeAccepted, n.hrInbox, subject, data)
 		if err != nil {
 			return nil, err
 		}
 		// HR goes first: dispatch keeps the first message per address, and an HR inbox that is
-		// also an admin must still get the HR notice with the country of residence.
+		// also an admin must still get the copy with the country of residence.
 		return append([]Message{hr}, msgs...), nil
 	})
 }
@@ -451,7 +531,7 @@ func (n *Notifier) NotifyMenteeAccepted(ctx context.Context, applicationID, atte
 // NotifyMenteeApplicationReceived confirms the application to the mentee and lists the prerequisite tasks to complete.
 func (n *Notifier) NotifyMenteeApplicationReceived(ctx context.Context, applicationID string) {
 	n.dispatch(ctx, templateMenteeApplicationReceived, func(ctx context.Context) ([]Message, error) {
-		app, _, program, err := n.applicationContext(ctx, applicationID)
+		app, term, program, err := n.applicationContext(ctx, applicationID)
 		if err != nil {
 			return nil, err
 		}
@@ -459,27 +539,79 @@ func (n *Notifier) NotifyMenteeApplicationReceived(ctx context.Context, applicat
 		if err != nil {
 			return nil, err
 		}
-		tasks, err := n.applicationTasks(ctx, app.ID)
+		tasks, err := n.prerequisiteTasks(ctx, app.ID, term, false)
 		if err != nil {
 			return nil, err
 		}
-		var names []string
-		for _, task := range tasks {
-			if task.Category == nil || *task.Category != models.TaskCategoryPrerequisite {
-				continue
-			}
-			if name := strings.TrimSpace(deref(task.Name)); name != "" {
-				names = append(names, name)
-			}
+		link := selfServeMenteeOverviewPath
+		if len(tasks) > 0 {
+			link = selfServeMenteeTasksPath
 		}
-		msg, err := render(templateMenteeApplicationReceived, to, "We received your application to "+program.Name, templateData{
+		msg, err := render(templateMenteeApplicationReceived, to, "Your application to "+program.Name+" mentorship program was received.", templateData{
 			RecipientName: firstName(user),
 			ProgramName:   program.Name,
-			ManageURL:     n.manageURL(),
-			Tasks:         names,
+			ManageURL:     n.selfServeLink(link),
+			Tasks:         tasks,
 		})
 		return []Message{msg}, err
 	})
+}
+
+// NotifyMenteePrerequisiteReminder reminds the mentee of the prerequisite tasks they have not yet
+// submitted, as the legacy reminder job did. It sends nothing when every prerequisite is submitted.
+func (n *Notifier) NotifyMenteePrerequisiteReminder(ctx context.Context, applicationID string) {
+	n.dispatch(ctx, templateMenteePrerequisiteReminder, func(ctx context.Context) ([]Message, error) {
+		app, term, program, err := n.applicationContext(ctx, applicationID)
+		if err != nil {
+			return nil, err
+		}
+		tasks, err := n.prerequisiteTasks(ctx, app.ID, term, true)
+		if err != nil || len(tasks) == 0 {
+			return nil, err
+		}
+		user, to, err := n.recipient(ctx, app.UserID)
+		if err != nil {
+			return nil, err
+		}
+		msg, err := render(templateMenteePrerequisiteReminder, to, "Complete your prerequisite tasks for "+program.Name, templateData{
+			RecipientName:      firstName(user),
+			ProgramName:        program.Name,
+			TermName:           term.Name,
+			ApplicationEndDate: termDate(term.ApplicationEndDate, dateLayout),
+			ManageURL:          n.selfServeLink(selfServeMenteeTasksPath),
+			Tasks:              tasks,
+		})
+		return []Message{msg}, err
+	})
+}
+
+// prerequisiteTasks lists the application's named prerequisite tasks, only those still to submit
+// when pendingOnly is set. A task without its own due date is due when the term's applications close.
+func (n *Notifier) prerequisiteTasks(ctx context.Context, applicationID string, term *models.ProgramTerm, pendingOnly bool) ([]taskItem, error) {
+	tasks, err := n.applicationTasks(ctx, applicationID)
+	if err != nil {
+		return nil, err
+	}
+	applicationEnd := termDate(term.ApplicationEndDate, dateLayout)
+	var items []taskItem
+	for _, task := range tasks {
+		if task.Category == nil || *task.Category != models.TaskCategoryPrerequisite {
+			continue
+		}
+		if pendingOnly && (task.Status == models.TaskStatusSubmitted || task.Status == models.TaskStatusComplete) {
+			continue
+		}
+		name := strings.TrimSpace(deref(task.Name))
+		if name == "" {
+			continue
+		}
+		due := dueDate(task.DueDate)
+		if due == "" {
+			due = applicationEnd
+		}
+		items = append(items, taskItem{Name: name, DueDate: due})
+	}
+	return items, nil
 }
 
 // NotifyMenteeDeclined tells the mentee their application was declined.
@@ -493,10 +625,10 @@ func (n *Notifier) NotifyMenteeDeclined(ctx context.Context, applicationID strin
 		if err != nil {
 			return nil, err
 		}
-		msg, err := render(templateMenteeDeclined, to, "An update on your application to "+program.Name, templateData{
+		msg, err := render(templateMenteeDeclined, to, "Your application to "+program.Name+" mentorship wasn't accepted.", templateData{
 			RecipientName: firstName(user),
 			ProgramName:   program.Name,
-			ManageURL:     n.manageURL(),
+			ManageURL:     n.selfServeLink(selfServeMenteeOverviewPath),
 		})
 		return []Message{msg}, err
 	})
@@ -513,10 +645,10 @@ func (n *Notifier) NotifyMenteeWithdrawn(ctx context.Context, applicationID stri
 		if err != nil {
 			return nil, err
 		}
-		msg, err := render(templateMenteeWithdrawn, to, "Your application to "+program.Name+" has been withdrawn", templateData{
+		msg, err := render(templateMenteeWithdrawn, to, "Your application to "+program.Name+" mentorship program was withdrawn.", templateData{
 			RecipientName: firstName(user),
 			ProgramName:   program.Name,
-			ProgramURL:    n.programURL(program),
+			ManageURL:     n.selfServeLink(selfServeMenteeOverviewPath),
 		})
 		return []Message{msg}, err
 	})
@@ -534,9 +666,9 @@ func (n *Notifier) NotifyMenteeWithdrawn(ctx context.Context, applicationID stri
 			return nil, err
 		}
 		menteeName := fullName(mentee, menteeFallback)
-		return adminMessages(admins, templateAdminMenteeWithdrawn, menteeName+"'s application to "+program.Name+" was withdrawn", templateData{
+		return adminMessages(admins, templateAdminMenteeWithdrawn, "A mentee application to "+program.Name+" mentorship was withdrawn.", templateData{
 			ProgramName: program.Name,
-			ManageURL:   n.manageURL(),
+			ManageURL:   n.adminProgramURL(program.ID),
 			TermName:    term.Name,
 			MenteeName:  menteeName,
 		})
@@ -558,13 +690,14 @@ func (n *Notifier) NotifyMenteeGraduated(ctx context.Context, applicationID stri
 		if err != nil {
 			return nil, err
 		}
-		msg, err := render(templateMenteeGraduated, to, "Your LFX Mentorship certificate of completion for "+program.Name, templateData{
+		msg, err := render(templateMenteeGraduated, to, "Congratulations! You have graduated from "+program.Name+" mentorship program.", templateData{
 			Letter:             true,
 			IssuedDate:         time.Now().UTC().Format(dateLayout),
 			MenteeName:         fullName(user, deref(user.LFID)),
 			ProgramName:        program.Name,
 			ProgramDescription: strings.TrimSpace(deref(program.Description)),
-			TermPeriod:         termPeriod(term, dateLayout),
+			TermStart:          termDate(term.StartDateTime, dateLayout),
+			TermEnd:            termDate(term.EndDateTime, dateLayout),
 			MentorNames:        mentors,
 		})
 		return []Message{msg}, err
@@ -589,10 +722,10 @@ func (n *Notifier) NotifyMenteeTaskAssigned(ctx context.Context, taskID string) 
 		if err != nil {
 			return nil, err
 		}
-		msg, err := render(templateMenteeTaskAssigned, to, "You have a new task for "+program.Name, templateData{
+		msg, err := render(templateMenteeTaskAssigned, to, "You were assigned a new task for "+program.Name+" mentorship program.", templateData{
 			RecipientName: firstName(user),
 			ProgramName:   program.Name,
-			ManageURL:     n.manageURL(),
+			ManageURL:     n.selfServeLink(selfServeMenteeTasksPath),
 			TaskName:      deref(task.Name),
 			TaskCreatedOn: task.CreatedOn.UTC().Format(dateLayout),
 			TaskDueDate:   dueDate(task.DueDate),
@@ -831,15 +964,11 @@ func adminMessages(admins []recipientUser, name, subject string, data templateDa
 	return msgs, nil
 }
 
-// adminContacts lists admins as "Name (email)", as the legacy acceptance notice did for HR.
-func adminContacts(admins []recipientUser) []string {
-	contacts := make([]string, 0, len(admins))
+// adminContacts lists each admin's name and email, as the legacy acceptance notice did for HR.
+func adminContacts(admins []recipientUser) []adminContact {
+	contacts := make([]adminContact, 0, len(admins))
 	for _, admin := range admins {
-		contact := admin.email
-		if name := fullName(admin.user, ""); name != "" {
-			contact = name + " (" + admin.email + ")"
-		}
-		contacts = append(contacts, contact)
+		contacts = append(contacts, adminContact{Name: fullName(admin.user, ""), Email: admin.email})
 	}
 	return contacts
 }
@@ -880,8 +1009,25 @@ func (n *Notifier) programURL(program *models.Program) string {
 	return n.publicURL + "/programs/" + url.PathEscape(ref)
 }
 
-func (n *Notifier) manageURL() string {
-	return n.selfServeURL + selfServeMentorshipPath
+// pendingProgramURL is the public site's page for a program awaiting review. It links by ID: the
+// public site resolves only published programs' slugs, but reads any visible program by its ID.
+func (n *Notifier) pendingProgramURL(programID string) string {
+	return n.publicURL + "/programs/" + url.PathEscape(programID)
+}
+
+// selfServeLink is the Self Serve page at path.
+func (n *Notifier) selfServeLink(path string) string {
+	return n.selfServeURL + path
+}
+
+// adminProgramURL is the program admin's page for the program.
+func (n *Notifier) adminProgramURL(programID string) string {
+	return n.selfServeLink(selfServeAdminProgramPath + url.PathEscape(programID))
+}
+
+// programReviewURL opens the LF staff review page for the program with decision preselected.
+func (n *Notifier) programReviewURL(programID, decision string) string {
+	return n.selfServeLink(selfServeProgramReviewPath + url.PathEscape(programID) + "?decision=" + decision)
 }
 
 func deref(s *string) string {
@@ -917,12 +1063,12 @@ func fullName(user *models.User, fallback string) string {
 	return fallback
 }
 
-// termPeriod renders the term's start and end in layout as "start – end", or "" when either is unset.
-func termPeriod(term *models.ProgramTerm, layout string) string {
-	if term.StartDateTime == nil || term.EndDateTime == nil {
+// termDate renders a term boundary in layout, or "" when it is unset.
+func termDate(t *time.Time, layout string) string {
+	if t == nil {
 		return ""
 	}
-	return term.StartDateTime.UTC().Format(layout) + " – " + term.EndDateTime.UTC().Format(layout)
+	return t.UTC().Format(layout)
 }
 
 // dueDate renders a task's YYYY-MM-DD due date in dateLayout; any other value is returned as stored.

@@ -133,6 +133,9 @@ type ProgramUpdateInput struct {
 	// ExpectedStatus, when set, makes a status change apply only from this status. The service
 	// refuses any other current status and then pins the one it validated for the repository.
 	ExpectedStatus *ProgramStatus `json:"-"`
+	// EditorID is the user who edited the program, emailed a confirmation once it is saved.
+	// Status changes made by the service itself leave it empty and send nothing; not persisted.
+	EditorID string `json:"-"`
 }
 
 // ProgramSkill maps to the public.program_skills table.

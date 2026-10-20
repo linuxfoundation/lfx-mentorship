@@ -1,7 +1,7 @@
 {{- /* Copyright The Linux Foundation and each contributor to LFX. */ -}}
 {{- /* SPDX-License-Identifier: MIT */ -}}
 {{- /* Legacy: mentee-application-declined */ -}}
-{{template "header" .}}<p>Regrettably, your application to be a mentee for the <strong>{{.ProgramName}}</strong> mentorship program has not been accepted.</p>
-<p>Please reach out to the program administrator with any questions, and we hope that you will consider applying again in the future.</p>
+{{template "header" .}}{{template "greeting" (printf "Hi %s" .RecipientName)}}<p>Regrettably, your application to be a mentee for <strong>{{.ProgramName}}</strong> mentorship has not been accepted.</p>
+<p>Please reach out to program administrator with any questions, and we hope that you will consider submitting an application again in the future.</p>
 <p>If you are interested in learning about how to get involved in the open source community, please contact us at <a href="mailto:mentorship@linuxfoundation.org">mentorship@linuxfoundation.org</a>.</p>
-{{template "button" .ManageURL}}Log in to LFX Mentorship{{template "button_end"}}{{template "footer" .}}
+{{template "button" .ManageURL}}Login To Your Account{{template "button_end"}}{{template "footer" .}}

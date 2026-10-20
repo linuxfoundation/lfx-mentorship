@@ -114,6 +114,7 @@ func (h *ProgramMemberHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &input) {
 		return
 	}
+	input.ActorID = principal.UserID
 
 	member, err := h.svc.Create(r.Context(), programID, input)
 	if err != nil {
