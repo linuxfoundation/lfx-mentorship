@@ -63,17 +63,27 @@ transaction.
   `approver-admin sync <lfid>...`, adding the missing members and removing any
   not listed, so the values file is the record of who may publish or reject
   programs. Changing the roster is an ArgoCD PR.
-- **One-off.** Run the same binary as a Job that mounts the backend Secret.
-  The simplest way is to copy the sync Job and change its command:
+- **One-off.** Run the same binary as a Job built from the backend Deployment,
+  which has the image, the Secret and the pod security settings. (The sync Job
+  itself is deleted once it succeeds, so it cannot be copied.) The recipe below
+  lists the roster; change the `command` for `add`, `remove` or `sync`:
 
   ```bash
-  kubectl -n mentorship-backend get job -l app.kubernetes.io/component=approver-sync -o json \
-    | jq '.items[0] | {apiVersion, kind, metadata: {name: "approver-admin-list"},
-        spec: {backoffLimit: 0, template: .spec.template}}
-      | .spec.template.spec.containers[0].command = ["/app/approver-admin", "list"]
-      | .spec.template.spec.containers[0].args = []' \
+  NS=mentorship-backend
+  kubectl -n "$NS" get deploy lfx-mentorship-backend -o json | jq '{
+    apiVersion: "batch/v1", kind: "Job",
+    metadata: {name: "approver-admin-list", namespace: .metadata.namespace},
+    spec: {backoffLimit: 0, ttlSecondsAfterFinished: 3600, template: {spec: {
+      restartPolicy: "Never",
+      automountServiceAccountToken: false,
+      securityContext: .spec.template.spec.securityContext,
+      imagePullSecrets: (.spec.template.spec.imagePullSecrets // []),
+      containers: [.spec.template.spec.containers[0]
+        | {name: "approver-admin", image, imagePullPolicy, securityContext, env, envFrom,
+           command: ["/app/approver-admin", "list"]}]}}}}' \
     | kubectl apply -f -
-  kubectl -n mentorship-backend logs job/approver-admin-list
+  kubectl -n "$NS" wait --for=condition=complete --timeout=120s job/approver-admin-list
+  kubectl -n "$NS" logs job/approver-admin-list
   ```
 
   Subcommands: `list`, `add <lfid>...`, `remove <lfid>...`, `sync <lfid>...`.
