@@ -66,13 +66,16 @@ transaction.
 - **One-off.** Run the same binary as a Job built from the backend Deployment,
   which has the image, the Secret and the pod security settings. (The sync Job
   itself is deleted once it succeeds, so it cannot be copied.) The recipe below
-  lists the roster; change the `command` for `add`, `remove` or `sync`:
+  lists the roster; change the `command` for `add`, `remove` or `sync`. A
+  finished Job is immutable and `apply` would reuse it, so each run deletes the
+  previous one first:
 
   ```bash
   NS=mentorship-backend
+  kubectl -n "$NS" delete job approver-admin --ignore-not-found
   kubectl -n "$NS" get deploy lfx-mentorship-backend -o json | jq '{
     apiVersion: "batch/v1", kind: "Job",
-    metadata: {name: "approver-admin-list", namespace: .metadata.namespace},
+    metadata: {name: "approver-admin", namespace: .metadata.namespace},
     spec: {backoffLimit: 0, ttlSecondsAfterFinished: 3600, template: {spec: {
       restartPolicy: "Never",
       automountServiceAccountToken: false,
@@ -81,9 +84,9 @@ transaction.
       containers: [.spec.template.spec.containers[0]
         | {name: "approver-admin", image, imagePullPolicy, securityContext, env, envFrom,
            command: ["/app/approver-admin", "list"]}]}}}}' \
-    | kubectl apply -f -
-  kubectl -n "$NS" wait --for=condition=complete --timeout=120s job/approver-admin-list
-  kubectl -n "$NS" logs job/approver-admin-list
+    | kubectl create -f -
+  kubectl -n "$NS" wait --for=condition=complete --timeout=120s job/approver-admin
+  kubectl -n "$NS" logs job/approver-admin
   ```
 
   Subcommands: `list`, `add <lfid>...`, `remove <lfid>...`, `sync <lfid>...`.
