@@ -50,6 +50,11 @@ type taskAccess interface {
 	GetByIDForActor(ctx context.Context, id, actorID string) (*models.Task, error)
 }
 
+// taskSubmissions reacts to a task its file upload has submitted.
+type taskSubmissions interface {
+	TaskSubmitted(ctx context.Context, task *models.Task)
+}
+
 type deletionScheduler interface {
 	Schedule(ctx context.Context, bucket domain.ObjectBucket, locator string, delay time.Duration) (string, error)
 }
@@ -60,10 +65,11 @@ type deletionScheduler interface {
 // Every upload writes a fresh key and never overwrites, and every dropped locator goes
 // through the object_deletions queue rather than an inline delete.
 type FileService struct {
-	files     domain.FileRepository
-	deletions deletionScheduler
-	programs  domain.ProgramRepository
-	tasks     taskAccess
+	files       domain.FileRepository
+	deletions   deletionScheduler
+	programs    domain.ProgramRepository
+	tasks       taskAccess
+	submissions taskSubmissions
 	// logos and attachments are nil when their bucket is not configured.
 	logos       *LogoBucket
 	attachments domain.ObjectStore
@@ -75,10 +81,11 @@ func NewFileService(
 	deletions deletionScheduler,
 	programs domain.ProgramRepository,
 	tasks taskAccess,
+	submissions taskSubmissions,
 	logos *LogoBucket,
 	attachments domain.ObjectStore,
 ) *FileService {
-	return &FileService{files: files, deletions: deletions, programs: programs, tasks: tasks, logos: logos, attachments: attachments}
+	return &FileService{files: files, deletions: deletions, programs: programs, tasks: tasks, submissions: submissions, logos: logos, attachments: attachments}
 }
 
 // UploadProgramLogo stores a new logo for the program and points programs.logo_url at it.
@@ -143,7 +150,8 @@ func (s *FileService) DownloadProgramLogo(ctx context.Context, program *models.P
 	return s.getLogo(ctx, program.LogoURL, byteRange)
 }
 
-// UploadTaskFile stores the assignee's submission for a task that is not yet complete.
+// UploadTaskFile stores the assignee's submission for a task that is not yet complete and
+// marks the task submitted.
 func (s *FileService) UploadTaskFile(ctx context.Context, taskID, actorID, filename string, data []byte) (*models.UploadedFile, error) {
 	ctx, span := fileSvcTracer.Start(ctx, "FileService.UploadTaskFile")
 	defer span.End()
@@ -174,6 +182,7 @@ func (s *FileService) UploadTaskFile(ctx context.Context, taskID, actorID, filen
 		span.RecordError(err)
 		return nil, err
 	}
+	s.submissions.TaskSubmitted(ctx, task)
 	return &models.UploadedFile{
 		Filename:    downloadFilename(key, t),
 		ContentType: t.contentType,

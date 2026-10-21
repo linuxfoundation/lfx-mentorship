@@ -160,8 +160,12 @@ TASK_ID=<prerequisite task id>
 curl -s -X PATCH $BASE/tasks/$TASK_ID $AUTH -d '{"status":"in_progress"}'
 # Expected: 200
 
-# Mentee: in_progress → submitted
+# Mentee: in_progress → submitted (uploading a file to file-upload also submits the task)
 curl -s -X PATCH $BASE/tasks/$TASK_ID $AUTH -d '{"status":"submitted"}'
+# Expected: 200
+
+# Mentee: submitted → in_progress (back to work before review)
+curl -s -X PATCH $BASE/tasks/$TASK_ID $AUTH -d '{"status":"in_progress"}'
 # Expected: 200
 
 # Verify tasks_submitted flag when last task submitted

@@ -62,9 +62,9 @@ func (r *FileRepository) ReplaceTaskFile(ctx context.Context, rep domain.FileRep
 			return err
 		}
 		t, err := scanTask(tx.QueryRow(ctx, `
-			UPDATE tasks SET file = $3
+			UPDATE tasks SET file = $3, status = $5
 			WHERE id = $1 AND file IS NOT DISTINCT FROM $2 AND status <> $4
-			RETURNING `+taskCols, rep.RowID, rep.Previous, rep.Next, models.TaskStatusComplete))
+			RETURNING `+taskCols, rep.RowID, rep.Previous, rep.Next, models.TaskStatusComplete, models.TaskStatusSubmitted))
 		if errors.Is(err, pgx.ErrNoRows) {
 			return taskFileMiss(ctx, tx, rep.RowID, func(s models.TaskStatus) bool { return s != models.TaskStatusComplete })
 		}

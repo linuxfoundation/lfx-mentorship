@@ -276,7 +276,8 @@ the program_admin can manage the program's visibility and terms throughout its l
   mentee upon application submission, linking each via `application_id` with
   `category = prerequisite`.
 - **FR-033**: System MUST restrict task status transitions by actor: a mentee may
-  move a task `incomplete → in_progress` and `in_progress → submitted`; a program_admin
+  move a task `incomplete → in_progress`, `in_progress → submitted` and
+  `submitted → in_progress`, and uploading a task file marks it `submitted`; a program_admin
   or mentor may move a task `submitted → complete` or reset any state to
   `incomplete`.
 - **FR-034**: System MUST set `applications.tasks_submitted = true` once all

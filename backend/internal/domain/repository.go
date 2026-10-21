@@ -192,7 +192,8 @@ type FileReplacement struct {
 // deletion in the same transaction.
 type FileRepository interface {
 	ReplaceProgramLogo(ctx context.Context, r FileReplacement) error
-	// ReplaceTaskFile returns ErrStateLocked once the task is complete or its application is withdrawn.
+	// ReplaceTaskFile also marks the task submitted. It returns ErrStateLocked once the task is
+	// complete or its application is withdrawn.
 	ReplaceTaskFile(ctx context.Context, r FileReplacement) error
 	ClearProgramLogo(ctx context.Context, programID, previous string) error
 	// ClearTaskFile returns ErrStateLocked unless the task is incomplete or in progress and its

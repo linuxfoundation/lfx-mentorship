@@ -213,7 +213,8 @@ func validateTaskUpdate(input models.TaskUpdateInput) error {
 
 // Update applies the assignee's submission or a reviewer's review to a task.
 // Permission rules:
-//   - Only the task's assignee may mark it in_progress/submitted, moving forward one step.
+//   - Only the task's assignee may mark it in_progress/submitted, moving forward one step or
+//     taking a submitted task back to in_progress.
 //   - Only an active reviewer who is not the assignee may mark it complete, reset it to
 //     incomplete, or set its denormalised application and program term statuses.
 //   - When every prerequisite task is submitted or complete, the application is flagged
@@ -282,14 +283,15 @@ func (s *TaskService) authorizeUpdate(ctx context.Context, id string, input mode
 		case models.TaskStatusInProgress:
 			validTransition = next == models.TaskStatusSubmitted
 		case models.TaskStatusSubmitted:
-			validTransition = next == models.TaskStatusComplete
+			validTransition = next == models.TaskStatusComplete || next == models.TaskStatusInProgress
 		}
 		if !validTransition {
 			return fmt.Errorf("%w: cannot transition task from %q to %q", domain.ErrInvalidStateTransition, current.Status, next)
 		}
 	}
 
-	// Actor permission: mentee (assignee) may only advance; reviewer may complete or reset.
+	// Actor permission: mentee (assignee) moves between in_progress and submitted; reviewer may
+	// complete or reset.
 	switch next {
 	case models.TaskStatusInProgress, models.TaskStatusSubmitted:
 		if current.AssigneeID != input.ActorID {
@@ -345,6 +347,14 @@ func (s *TaskService) Edit(ctx context.Context, id string, input models.TaskUpda
 		s.markTasksSubmitted(ctx, *t.ApplicationID)
 	}
 	return t, nil
+}
+
+// TaskSubmitted runs the tasks_submitted side effect for a task submitted outside Update,
+// such as by its file upload.
+func (s *TaskService) TaskSubmitted(ctx context.Context, t *models.Task) {
+	if t.ApplicationID != nil {
+		s.markTasksSubmitted(ctx, *t.ApplicationID)
+	}
 }
 
 // markTasksSubmitted flags the application once every prerequisite task is submitted or

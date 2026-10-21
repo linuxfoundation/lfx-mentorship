@@ -206,7 +206,8 @@ not ended. A mentee application is also refused once the user has a `graduated` 
 ### Status Lifecycle & Actor Permissions
 
 ```
-incomplete ──mentee──► in_progress ──mentee──► submitted ──admin/mentor──► complete
+incomplete ──mentee──► in_progress ◄──mentee──► submitted ──admin/mentor──► complete
+any state but complete ──mentee file upload──► submitted
 any state ──admin/mentor──► incomplete  (reset)
 ```
 

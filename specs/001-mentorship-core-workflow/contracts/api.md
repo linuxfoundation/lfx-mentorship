@@ -212,8 +212,9 @@ Content-Type: application/json
 ```
 
 **Actor rules**:
-- **Mentee** (caller is the task's `assignee_id`): may transition `incomplete → in_progress`
-  and `in_progress → submitted` only.
+- **Mentee** (caller is the task's `assignee_id`): may transition `incomplete → in_progress`,
+  `in_progress → submitted` and `submitted → in_progress` only. Uploading a file through
+  `POST /v1/tasks/{id}/file-upload` also marks the task `submitted`.
 - **Program Admin / Mentor** (caller is the program's member with `member_type = program_admin |
   mentor` and `status = approved`): may transition `submitted → complete` or reset any state
   to `incomplete`.
