@@ -406,3 +406,39 @@ func TestProgramTermRepositoryIntegration_ReopenLocksProgramBeforeTerm(t *testin
 		t.Fatalf("reopen term: %v", err)
 	}
 }
+
+// Legacy clones are recognized by the program's lfid, so it can be set while empty but not changed,
+// neither alongside a prerequisite change nor on its own.
+func TestProgramRepositoryIntegration_UpdateKeepsLFIDOnceSet(t *testing.T) {
+	pool := integrationPool(t)
+	f := seedIntegrationFixture(t, pool)
+	s := &syncSeeder{t: t, pool: pool}
+	repo := NewProgramRepository(pool)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+
+	creator, other := "legacy-creator", "someone-else"
+	if _, _, err := repo.Update(ctx, f.ProgramID, models.ProgramUpdateInput{LFID: &creator}, models.PrerequisiteChanges{}); err != nil {
+		t.Fatalf("set an empty lfid: %v", err)
+	}
+	if _, _, err := repo.Update(ctx, f.ProgramID, models.ProgramUpdateInput{LFID: &creator}, models.PrerequisiteChanges{}); err != nil {
+		t.Fatalf("send the same lfid: %v", err)
+	}
+	if _, _, err := repo.Update(ctx, f.ProgramID, models.ProgramUpdateInput{LFID: &other}, models.PrerequisiteChanges{}); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("change lfid: err = %v; want ErrInvalidInput", err)
+	}
+
+	app := s.apply(f.OpenTerm, "mentee", "pending")
+	reviewer := f.UserID
+	s.createdBy(s.task(app, "Legacy", "prerequisite", "incomplete"), creator, &reviewer)
+	if _, _, err := repo.Update(ctx, f.ProgramID, models.ProgramUpdateInput{LFID: &other},
+		models.PrerequisiteChanges{Removed: []string{"legacy"}}); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("change lfid with a removal: err = %v; want ErrInvalidInput", err)
+	}
+	if got := syncedTasks(t, pool, app); len(got) != 1 {
+		t.Fatalf("tasks = %v; want the legacy clone kept when the update is refused", keys(got))
+	}
+	applyChanges(t, pool, f.ProgramID, models.PrerequisiteChanges{Removed: []string{"legacy"}})
+	if got := syncedTasks(t, pool, app); len(got) != 0 {
+		t.Errorf("tasks = %v; want the legacy clone removed, still recognized by the unchanged lfid", keys(got))
+	}
+}

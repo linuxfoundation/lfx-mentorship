@@ -1100,7 +1100,7 @@ Update program fields. Status cannot be changed here: a body with `status` retur
   "name":        "Updated Name",
   "description": "Updated description", // at most 18,000 characters
   "repo_link":   "https://...",
-  "lfid":        "alice",
+  "lfid":        "alice", // the program's creator: set while empty, 400 if changed once set
   "skills":      ["Go", "Kubernetes"],
   "terms": [
     {

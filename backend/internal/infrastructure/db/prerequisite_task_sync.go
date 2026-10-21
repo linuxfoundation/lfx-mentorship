@@ -137,7 +137,8 @@ func applyPrerequisiteChanges(ctx context.Context, tx pgx.Tx, programID string, 
 // A clone made here has no owner and was created by its applicant (models.PrerequisiteTemplate.NewTask),
 // which no task route can produce: a route records its caller as creator, and as owner unless the
 // caller is a service. Legacy cloned templates as the program's creator, whose LFID it recorded as
-// created_by and the program keeps as lfid; tasks created through routes record a user ID instead.
+// created_by and the program keeps as lfid, which cannot change once set; tasks created through
+// routes record a user ID instead.
 func clonedFromTemplate(t *models.Task, legacyCreator *string) bool {
 	if t.CreatedBy == nil {
 		return false

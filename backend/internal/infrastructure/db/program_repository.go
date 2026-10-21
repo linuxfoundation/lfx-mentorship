@@ -939,6 +939,18 @@ func (r *ProgramRepository) update(ctx context.Context, id string, input models.
 			return nil, nil, fmt.Errorf("%w: program task templates changed concurrently", domain.ErrConflict)
 		}
 	}
+	// lfid records the program's creator, which legacy prerequisite clones are recognized by
+	// (clonedFromTemplate), so it can be set while empty but never changed.
+	if input.LFID != nil {
+		var current *string
+		if err := tx.QueryRow(ctx, `SELECT lfid FROM programs WHERE id = $1 FOR UPDATE`, id).Scan(&current); errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil, domain.ErrProgramNotFound
+		} else if err != nil {
+			return nil, nil, fmt.Errorf("lock program for lfid change: %w", err)
+		} else if current != nil && *current != "" && *current != *input.LFID {
+			return nil, nil, fmt.Errorf("%w: lfid records the program's creator and cannot be changed once set", domain.ErrInvalidInput)
+		}
+	}
 
 	const q = `
 		UPDATE programs SET
