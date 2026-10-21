@@ -664,9 +664,7 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 }
 
 // MarkTasksSubmitted sets tasks_submitted once every prerequisite task is submitted or complete,
-// and reports whether this call flipped it. The application row is locked, then the prerequisite
-// tasks, so a concurrent flip or task reset is decided against one consistent state. The flag
-// gates no access, so only the search documents are refreshed.
+// and reports whether this call flipped it.
 func (r *ApplicationRepository) MarkTasksSubmitted(ctx context.Context, id string) (bool, error) {
 	ctx, span := applicationTracer.Start(ctx, "db.applications.MarkTasksSubmitted")
 	defer span.End()
@@ -677,11 +675,25 @@ func (r *ApplicationRepository) MarkTasksSubmitted(ctx context.Context, id strin
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	flipped, err := markTasksSubmitted(ctx, tx, id)
+	if err != nil {
+		span.RecordError(err)
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit mark tasks submitted transaction: %w", err)
+	}
+	return flipped, nil
+}
+
+// markTasksSubmitted is MarkTasksSubmitted inside the caller's transaction. The application row
+// is locked, then the prerequisite tasks, so a concurrent flip or task reset is decided against
+// one consistent state. The flag gates no access, so only the search documents are refreshed.
+func markTasksSubmitted(ctx context.Context, tx pgx.Tx, id string) (bool, error) {
 	var submitted bool
 	if err := tx.QueryRow(ctx, `SELECT tasks_submitted FROM applications WHERE id = $1 FOR UPDATE`, id).Scan(&submitted); errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	} else if err != nil {
-		span.RecordError(err)
 		return false, fmt.Errorf("lock application for tasks submitted: %w", err)
 	}
 	if submitted {
@@ -692,7 +704,6 @@ func (r *ApplicationRepository) MarkTasksSubmitted(ctx context.Context, id strin
 		SELECT COUNT(*), COUNT(*) FILTER (WHERE status IN ('submitted', 'complete'))
 		FROM (SELECT status FROM tasks WHERE application_id = $1 AND category = 'prerequisite' FOR SHARE) prerequisites`,
 		id).Scan(&total, &done); err != nil {
-		span.RecordError(err)
 		return false, fmt.Errorf("count prerequisite tasks: %w", err)
 	}
 	if total == 0 || done < total {
@@ -701,7 +712,6 @@ func (r *ApplicationRepository) MarkTasksSubmitted(ctx context.Context, id strin
 
 	a, err := scanApplication(tx.QueryRow(ctx, `UPDATE applications SET tasks_submitted = true WHERE id = $1 RETURNING `+applicationCols, id))
 	if err != nil {
-		span.RecordError(err)
 		return false, fmt.Errorf("mark tasks submitted: %w", err)
 	}
 	if err := enqueueApplicationIndex(ctx, tx, a, "updated"); err != nil {
@@ -713,9 +723,6 @@ func (r *ApplicationRepository) MarkTasksSubmitted(ctx context.Context, id strin
 	}
 	if err := enqueueProgramIndexByID(ctx, tx, programID); err != nil {
 		return false, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return false, fmt.Errorf("commit mark tasks submitted transaction: %w", err)
 	}
 	return true, nil
 }

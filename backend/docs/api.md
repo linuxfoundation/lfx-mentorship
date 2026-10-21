@@ -1107,10 +1107,17 @@ term close and reopen routes. Omit `terms` to leave them unchanged. The
 mentee application clones into `prerequisite` tasks. Each entry is
 `{name, description, submitFile, dueDate, custom}`: `name` is required and trimmed,
 `submitFile` is `"required"` or blank, and `dueDate` is a `YYYY-MM-DD` date or blank.
-Blank values are stored as `null`. An entry that leaves out `custom` keeps the flag of
-the current template with the same name (ignoring case), or `false` for a new one.
-Tasks already cloned for existing applications are not changed. Omit
-`task_templates` to leave them unchanged.
+Blank values are stored as `null`. Names must be unique, ignoring case. An entry that
+leaves out `custom` keeps the flag of the current template with the same name (ignoring
+case), or `false` for a new one. Omit `task_templates` to leave them unchanged.
+
+The prerequisite tasks of the program's pending mentee applications follow the new list
+in the same transaction, matched to a template by name (ignoring case): a task the
+mentee has not submitted takes its template's content, or is deleted when its template
+was removed; a `submitted` or `complete` task is kept as it is; and a template no task
+matches is added as an `incomplete` task. Renaming a template therefore replaces its
+unsubmitted tasks. An application left with every prerequisite task done is flagged
+`tasks_submitted`. Accepted, declined, and withdrawn applications keep their tasks.
 
 **Response** `200` → `<Program>`  
 **Errors** `400` (including an `id` that is not an open term of the program, or a

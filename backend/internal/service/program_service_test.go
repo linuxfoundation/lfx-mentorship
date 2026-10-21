@@ -893,6 +893,7 @@ func TestProgramService_Update_RejectsInvalidTaskTemplates(t *testing.T) {
 		"blank name":     `[{"name":" "}]`,
 		"unknown submit": `[{"name":"Resume","submitFile":"yes"}]`,
 		"bad due date":   `[{"name":"Resume","dueDate":"05/01/2026"}]`,
+		"duplicate name": `[{"name":"Resume"},{"name":" resume "}]`,
 	}
 	for name, templates := range cases {
 		t.Run(name, func(t *testing.T) {

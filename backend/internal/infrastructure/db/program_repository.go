@@ -985,6 +985,18 @@ func (r *ProgramRepository) Update(ctx context.Context, id string, input models.
 		}
 	}
 
+	// The service normalized the templates; a new list reaches the pending applications' tasks too.
+	if len(input.TaskTemplates) > 0 {
+		var prerequisites []models.PrerequisiteTemplate
+		if err := json.Unmarshal(input.TaskTemplates, &prerequisites); err != nil {
+			return nil, fmt.Errorf("decode task templates for prerequisite sync: %w", err)
+		}
+		if err := syncPrerequisiteTasks(ctx, tx, updatedID, prerequisites); err != nil {
+			span.RecordError(err)
+			return nil, err
+		}
+	}
+
 	p, err := scanProgram(tx.QueryRow(ctx, `SELECT`+programSelectCols+programsWithFundingFrom+` WHERE programs.id = $1`, updatedID))
 	if err != nil {
 		span.RecordError(err)

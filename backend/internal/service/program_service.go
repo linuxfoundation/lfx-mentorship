@@ -645,7 +645,8 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 // normalizeTaskTemplates validates a program update's task templates and returns them in the
 // shape applications clone: a blank submitFile or dueDate is cleared, and submitFile may only be
 // "required". A template that leaves custom out keeps the flag of the current template with the
-// same name (ignoring case), so an edit that does not send it keeps the migrated value.
+// same name (ignoring case), so an edit that does not send it keeps the migrated value. Names must
+// be unique, ignoring case: the name is what matches a template to its applicants' tasks.
 func normalizeTaskTemplates(raw, current json.RawMessage) (json.RawMessage, error) {
 	var incoming []struct {
 		Name        string  `json:"name"`
@@ -669,11 +670,16 @@ func normalizeTaskTemplates(raw, current json.RawMessage) (json.RawMessage, erro
 		customByName[strings.ToLower(strings.TrimSpace(template.Name))] = template.Custom
 	}
 	templates := make([]taskTemplate, 0, len(incoming))
+	seen := make(map[string]struct{}, len(incoming))
 	for _, in := range incoming {
 		name := strings.TrimSpace(in.Name)
 		if name == "" {
 			return nil, fmt.Errorf("%w: task template name is required", domain.ErrInvalidInput)
 		}
+		if _, dup := seen[strings.ToLower(name)]; dup {
+			return nil, fmt.Errorf("%w: task template name %q is used more than once", domain.ErrInvalidInput, name)
+		}
+		seen[strings.ToLower(name)] = struct{}{}
 		template := taskTemplate{Name: name, Custom: customByName[strings.ToLower(name)]}
 		if in.Custom != nil {
 			template.Custom = templateFlag(*in.Custom)

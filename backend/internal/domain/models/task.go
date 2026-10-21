@@ -103,6 +103,17 @@ type TaskCreateInput struct {
 	CreatedBy     *string       `json:"created_by,omitempty"`
 }
 
+// PrerequisiteTemplate is one entry of a program's task_templates as the service normalizes it,
+// the content its applications' prerequisite tasks carry. Name identifies it, ignoring case and
+// surrounding space.
+type PrerequisiteTemplate struct {
+	Name        string  `json:"name"`
+	Description *string `json:"description"`
+	SubmitFile  *string `json:"submitFile"`
+	DueDate     *string `json:"dueDate"`
+	Custom      bool    `json:"custom"`
+}
+
 // TaskUpdateInput is the request body for updating a task. A nil field is left unchanged; an
 // empty SubmitFile or DueDate clears it.
 type TaskUpdateInput struct {
