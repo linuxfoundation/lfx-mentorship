@@ -594,6 +594,73 @@ func (s *ProgramMemberService) WithdrawMine(ctx context.Context, id, userID stri
 	return nil
 }
 
+// AcceptMineInvite moves the caller's own invited mentor row to approved and
+// tells the program's active admins. It answers the same invitation as
+// AcceptInvite, by membership ID rather than the emailed token, for a mentor
+// who is signed in to LFX Self Serve.
+func (s *ProgramMemberService) AcceptMineInvite(ctx context.Context, id, userID string) error {
+	ctx, span := programMemberSvcTracer.Start(ctx, "ProgramMemberService.AcceptMineInvite")
+	defer span.End()
+	span.SetAttributes(attribute.String("member.id", id), attribute.String("user.id", userID))
+
+	current, err := s.answerMineInvite(ctx, id, userID, models.ProgramMemberStatusApproved)
+	if err != nil {
+		span.RecordError(err)
+		return err
+	}
+	s.notifier.NotifyAdminMentorAccepted(ctx, current.ProgramID, userID)
+	return nil
+}
+
+// DeclineMineInvite moves the caller's own invited mentor row to declined and
+// tells the program's active admins. It is the by-ID counterpart of DeclineInvite.
+func (s *ProgramMemberService) DeclineMineInvite(ctx context.Context, id, userID string) error {
+	ctx, span := programMemberSvcTracer.Start(ctx, "ProgramMemberService.DeclineMineInvite")
+	defer span.End()
+	span.SetAttributes(attribute.String("member.id", id), attribute.String("user.id", userID))
+
+	current, err := s.answerMineInvite(ctx, id, userID, models.ProgramMemberStatusDeclined)
+	if err != nil {
+		span.RecordError(err)
+		return err
+	}
+	s.notifier.NotifyAdminMentorDeclined(ctx, current.ProgramID, userID)
+	return nil
+}
+
+// answerMineInvite moves the caller's own invited mentor row to status and
+// returns the row as it was read. A row that is not the caller's mentor row is
+// reported as not found, so member IDs cannot be probed; a row no longer
+// invited, including one answered concurrently, is an invalid transition.
+func (s *ProgramMemberService) answerMineInvite(ctx context.Context, id, userID string, status models.ProgramMemberStatus) (*models.ProgramMember, error) {
+	if userID == "" {
+		return nil, fmt.Errorf("%w: caller identity is required", domain.ErrUnauthorized)
+	}
+	if _, err := uuid.Parse(id); err != nil {
+		return nil, domain.ErrProgramMemberNotFound
+	}
+
+	current, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("get member for invite answer: %w", err)
+	}
+	if current.UserID != userID || current.MemberType != models.MemberTypeMentor {
+		return nil, domain.ErrProgramMemberNotFound
+	}
+	if current.Status == nil || *current.Status != models.ProgramMemberStatusInvited {
+		var currentStatus models.ProgramMemberStatus
+		if current.Status != nil {
+			currentStatus = *current.Status
+		}
+		return nil, fmt.Errorf("%w: cannot answer an invite on a mentor membership that is %q", domain.ErrInvalidStateTransition, currentStatus)
+	}
+
+	if _, err := s.repo.UpdateIfStatus(ctx, id, []models.ProgramMemberStatus{models.ProgramMemberStatusInvited}, models.ProgramMemberUpdateInput{Status: &status}); err != nil {
+		return nil, fmt.Errorf("answer mentor invite: %w", err)
+	}
+	return current, nil
+}
+
 // Update patches a program member, enforcing program ownership, admin authorization,
 // and the status lifecycle.
 func (s *ProgramMemberService) Update(ctx context.Context, programID, id string, input models.ProgramMemberUpdateInput, actorID string) (*models.ProgramMember, error) {

@@ -25,6 +25,8 @@ type stubProgramMemberSvc struct {
 	listMine       func(context.Context, string, models.ProgramMemberFilter) ([]*models.ProgramMembership, *models.PaginationMeta, error)
 	requestMentor  func(context.Context, string, models.UserPrincipal) (*models.ProgramMember, error)
 	withdrawMine   func(context.Context, string, string) error
+	acceptMine     func(context.Context, string, string) error
+	declineMine    func(context.Context, string, string) error
 	delete         func(context.Context, string, string, string) error
 	search         func(context.Context, string, string) ([]*models.MentorCandidate, error)
 }
@@ -85,6 +87,18 @@ func (s *stubProgramMemberSvc) RequestMentorship(ctx context.Context, programID 
 func (s *stubProgramMemberSvc) WithdrawMine(ctx context.Context, id, userID string) error {
 	if s.withdrawMine != nil {
 		return s.withdrawMine(ctx, id, userID)
+	}
+	return nil
+}
+func (s *stubProgramMemberSvc) AcceptMineInvite(ctx context.Context, id, userID string) error {
+	if s.acceptMine != nil {
+		return s.acceptMine(ctx, id, userID)
+	}
+	return nil
+}
+func (s *stubProgramMemberSvc) DeclineMineInvite(ctx context.Context, id, userID string) error {
+	if s.declineMine != nil {
+		return s.declineMine(ctx, id, userID)
 	}
 	return nil
 }
@@ -375,6 +389,8 @@ func TestProgramMemberHandler_MeRoutes_NoPrincipal_Return401(t *testing.T) {
 		"list":     h.ListMine,
 		"request":  h.RequestMine,
 		"withdraw": h.WithdrawMine,
+		"accept":   h.AcceptMineInvite,
+		"decline":  h.DeclineMineInvite,
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := httptest.NewRequest(http.MethodPost, "/v1/me/program-memberships", strings.NewReader(`{"program_id":"p1"}`))
@@ -531,5 +547,51 @@ func TestProgramMemberHandler_WithdrawMine(t *testing.T) {
 				t.Errorf("WithdrawMine(%q, %q); want (m1, caller-user)", gotID, gotUser)
 			}
 		})
+	}
+}
+
+func TestProgramMemberHandler_AnswerMineInvite(t *testing.T) {
+	for action, tc := range map[string]struct {
+		call func(*handler.ProgramMemberHandler) http.HandlerFunc
+		stub func(*stubProgramMemberSvc, func(context.Context, string, string) error)
+	}{
+		"accept": {
+			call: func(h *handler.ProgramMemberHandler) http.HandlerFunc { return h.AcceptMineInvite },
+			stub: func(s *stubProgramMemberSvc, f func(context.Context, string, string) error) { s.acceptMine = f },
+		},
+		"decline": {
+			call: func(h *handler.ProgramMemberHandler) http.HandlerFunc { return h.DeclineMineInvite },
+			stub: func(s *stubProgramMemberSvc, f func(context.Context, string, string) error) { s.declineMine = f },
+		},
+	} {
+		for name, outcome := range map[string]struct {
+			err  error
+			want int
+		}{
+			"answered":           {nil, http.StatusNoContent},
+			"not the caller row": {domain.ErrProgramMemberNotFound, http.StatusNotFound},
+			"not invited":        {domain.ErrInvalidStateTransition, http.StatusConflict},
+		} {
+			t.Run(action+"/"+name, func(t *testing.T) {
+				var gotID, gotUser string
+				svc := &stubProgramMemberSvc{}
+				tc.stub(svc, func(_ context.Context, id, userID string) error {
+					gotID, gotUser = id, userID
+					return outcome.err
+				})
+				h := handler.NewProgramMemberHandler(svc, &stubProgramSvc{})
+				r := httptest.NewRequest(http.MethodPost, "/v1/me/program-memberships/m1/"+action, nil)
+				r = requestWithPrincipal(r, "caller-user")
+				r = requestWithChiParam(r, "id", "m1")
+				w := httptest.NewRecorder()
+				tc.call(h)(w, r)
+				if w.Code != outcome.want {
+					t.Errorf("got %d; want %d", w.Code, outcome.want)
+				}
+				if gotID != "m1" || gotUser != "caller-user" {
+					t.Errorf("%s(%q, %q); want (m1, caller-user)", action, gotID, gotUser)
+				}
+			})
+		}
 	}
 }

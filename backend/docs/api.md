@@ -1762,6 +1762,39 @@ Withdraws the caller's own mentor request, moving it from `requested` or
 
 ---
 
+#### `POST /v1/me/program-memberships/{id}/accept` 🔒
+
+Accepts an invitation to mentor a program, moving the caller's own mentor row
+from `invited` to `approved`, and emails the program's active Program Admins
+(`NotifyAdminMentorAccepted`). It answers the same invitation as
+`POST /v1/mentor-invites/{token}/accept`, by membership ID instead of the
+emailed token, so a signed-in mentor can answer from LFX Self Serve.
+
+**Response** `204`
+
+**Errors**
+
+| Status | When |
+|---|---|
+| `401` | No signed-in user |
+| `404` | No mentor row with this ID belongs to the caller. Rows owned by other users return `404`, not `403`, so IDs cannot be probed. |
+| `409` | The row is in any status other than `invited`, including when it changed concurrently |
+
+---
+
+#### `POST /v1/me/program-memberships/{id}/decline` 🔒
+
+Declines an invitation to mentor a program, moving the caller's own mentor row
+from `invited` to `declined`, and emails the program's active Program Admins
+(`NotifyAdminMentorDeclined`). The by-ID counterpart of
+`POST /v1/mentor-invites/{token}/decline`.
+
+**Response** `204`
+
+**Errors** as for accept
+
+---
+
 ## 11. Mentor Invite Tokens
 
 These endpoints are called by the LFX Self Serve page that the invite email links to (`/mentorship/mentor/invites?token=…`). Both need the signed token **and** the invited user's JWT: the token says which program and user it was issued for, and the caller must be that user.

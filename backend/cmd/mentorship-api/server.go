@@ -326,6 +326,8 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			r.Get("/me/program-memberships", programMemberH.ListMine)
 			r.Post("/me/program-memberships", programMemberH.RequestMine)
 			r.Post("/me/program-memberships/{id}/withdraw", programMemberH.WithdrawMine)
+			r.Post("/me/program-memberships/{id}/accept", programMemberH.AcceptMineInvite)
+			r.Post("/me/program-memberships/{id}/decline", programMemberH.DeclineMineInvite)
 
 			// User profiles
 			r.Get("/me/profiles", userProfileH.ListMe)

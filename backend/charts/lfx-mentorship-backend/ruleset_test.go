@@ -336,6 +336,8 @@ func TestMeProgramMembershipRulesNeedOnlyASignedInUser(t *testing.T) {
 	for id, route := range map[string]string{
 		"me-program-memberships":         "/mentorship/v1/me/program-memberships",
 		"me-program-membership-withdraw": "/mentorship/v1/me/program-memberships/:id/withdraw",
+		"me-program-membership-accept":   "/mentorship/v1/me/program-memberships/:id/accept",
+		"me-program-membership-decline":  "/mentorship/v1/me/program-memberships/:id/decline",
 	} {
 		block := ruleBlock(t, id)
 		if strings.Count(block, "- path:") != 1 || !strings.Contains(block, "- path: "+route+"\n") {
