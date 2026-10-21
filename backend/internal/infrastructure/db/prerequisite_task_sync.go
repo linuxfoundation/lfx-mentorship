@@ -119,7 +119,8 @@ func applyPrerequisiteChanges(ctx context.Context, tx pgx.Tx, programID string, 
 		}
 		// Only a deletion can complete the set; the flag records the first completion and is never
 		// cleared, so an added task leaves it as it is. A deletion that leaves no prerequisite has
-		// removed the last one outstanding, so that completes the set too.
+		// removed the last one outstanding, so that completes the set too. The program update
+		// refreshes the program's search document once, after every application.
 		if deleted {
 			flipped, err := markTasksSubmitted(ctx, tx, a.ID, true)
 			if err != nil {

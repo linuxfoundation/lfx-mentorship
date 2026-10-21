@@ -680,6 +680,17 @@ func (r *ApplicationRepository) MarkTasksSubmitted(ctx context.Context, id strin
 		span.RecordError(err)
 		return false, err
 	}
+	if flipped {
+		var programID string
+		if err := tx.QueryRow(ctx, `
+			SELECT pt.program_id FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id
+			WHERE a.id = $1`, id).Scan(&programID); err != nil {
+			return false, fmt.Errorf("resolve application program for index refresh: %w", err)
+		}
+		if err := enqueueProgramIndexByID(ctx, tx, programID); err != nil {
+			return false, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return false, fmt.Errorf("commit mark tasks submitted transaction: %w", err)
 	}
@@ -688,7 +699,8 @@ func (r *ApplicationRepository) MarkTasksSubmitted(ctx context.Context, id strin
 
 // markTasksSubmitted is MarkTasksSubmitted inside the caller's transaction. The application row
 // is locked, then the prerequisite tasks, so a concurrent flip or task reset is decided against
-// one consistent state. The flag gates no access, so only the search documents are refreshed.
+// one consistent state. The flag gates no access, so only the application's search document is
+// refreshed here; refreshing its program's is left to the caller, so a bulk caller does it once.
 // An application with no prerequisite task is complete only when noneIsDone is set.
 func markTasksSubmitted(ctx context.Context, tx pgx.Tx, id string, noneIsDone bool) (bool, error) {
 	var submitted bool
@@ -716,13 +728,6 @@ func markTasksSubmitted(ctx context.Context, tx pgx.Tx, id string, noneIsDone bo
 		return false, fmt.Errorf("mark tasks submitted: %w", err)
 	}
 	if err := enqueueApplicationIndex(ctx, tx, a, "updated"); err != nil {
-		return false, err
-	}
-	var programID string
-	if err := tx.QueryRow(ctx, `SELECT program_id FROM program_terms WHERE id = $1`, a.ProgramTermID).Scan(&programID); err != nil {
-		return false, fmt.Errorf("resolve application program for index refresh: %w", err)
-	}
-	if err := enqueueProgramIndexByID(ctx, tx, programID); err != nil {
 		return false, err
 	}
 	return true, nil

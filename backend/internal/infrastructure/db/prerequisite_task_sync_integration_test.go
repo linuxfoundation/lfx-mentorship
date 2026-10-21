@@ -240,7 +240,12 @@ func TestProgramRepositoryIntegration_UpdateFlagsApplicationCompletedByRemoval(t
 	s.task(sole, "Essay", "prerequisite", "incomplete")
 	none := s.apply(f.OpenTerm, "mentee", "pending")
 
+	before := programIndexGeneration(t, pool, f.ProgramID)
 	flagged := applyChanges(t, pool, f.ProgramID, models.PrerequisiteChanges{Removed: []string{"essay"}})
+	// The program's search document is refreshed once for the update, not once per application.
+	if got := programIndexGeneration(t, pool, f.ProgramID) - before; got != 1 {
+		t.Errorf("program index refreshes = %d; want 1", got)
+	}
 
 	slices.Sort(flagged)
 	want := []string{app, sole}
@@ -255,6 +260,37 @@ func TestProgramRepositoryIntegration_UpdateFlagsApplicationCompletedByRemoval(t
 	if !submitted {
 		t.Error("tasks_submitted = false; want true once the only outstanding prerequisite is removed")
 	}
+}
+
+// A submission outside a program update still refreshes the program's search document itself.
+func TestApplicationRepositoryIntegration_MarkTasksSubmittedRefreshesProgram(t *testing.T) {
+	pool := integrationPool(t)
+	f := seedIntegrationFixture(t, pool)
+	s := &syncSeeder{t: t, pool: pool}
+	app := s.apply(f.OpenTerm, "mentee", "pending")
+	s.task(app, "Essay", "prerequisite", "submitted")
+
+	before := programIndexGeneration(t, pool, f.ProgramID)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+	flipped, err := NewApplicationRepository(pool).MarkTasksSubmitted(ctx, app)
+	if err != nil || !flipped {
+		t.Fatalf("MarkTasksSubmitted = %v, %v; want true, nil", flipped, err)
+	}
+	if got := programIndexGeneration(t, pool, f.ProgramID) - before; got != 1 {
+		t.Errorf("program index refreshes = %d; want 1", got)
+	}
+}
+
+// programIndexGeneration counts the program's search document refreshes queued so far.
+func programIndexGeneration(t *testing.T, pool *pgxpool.Pool, programID string) int64 {
+	t.Helper()
+	var generation int64
+	if err := pool.QueryRow(context.Background(), `
+		SELECT COALESCE(MAX(generation), 0) FROM index_outbox
+		WHERE object_type = 'mentorship_program' AND object_uid = $1`, programID).Scan(&generation); err != nil {
+		t.Fatal(err)
+	}
+	return generation
 }
 
 func TestProgramRepositoryIntegration_UpdateWithoutPrerequisiteChangesLeavesTasks(t *testing.T) {
