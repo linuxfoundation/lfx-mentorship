@@ -92,11 +92,10 @@ type ProgramRepository interface {
 	ListAdministeredByUser(ctx context.Context, userID string, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error)
 	Create(ctx context.Context, input models.ProgramCreateInput) (*models.Program, error)
 	CreateEnrollment(ctx context.Context, input models.ProgramEnrollmentInput) (*models.Program, error)
-	Update(ctx context.Context, id string, input models.ProgramUpdateInput) (*models.Program, error)
-	// UpdateWithPrerequisites is Update that also applies changes to the prerequisite tasks of the
-	// program's pending mentee applications, in the same transaction. It returns the applications
-	// it flagged tasks_submitted.
-	UpdateWithPrerequisites(ctx context.Context, id string, input models.ProgramUpdateInput, changes models.PrerequisiteChanges) (*models.Program, []string, error)
+	// Update patches the program and applies changes to the prerequisite tasks of its pending
+	// mentee applications in the same transaction. It returns the applications it flagged
+	// tasks_submitted.
+	Update(ctx context.Context, id string, input models.ProgramUpdateInput, changes models.PrerequisiteChanges) (*models.Program, []string, error)
 	Delete(ctx context.Context, id string) error
 
 	// Skills

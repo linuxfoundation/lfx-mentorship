@@ -8,6 +8,7 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -85,7 +86,7 @@ func syncedTasks(t *testing.T, pool *pgxpool.Pool, appID string) map[string]sync
 func applyChanges(t *testing.T, pool *pgxpool.Pool, programID string, changes models.PrerequisiteChanges) []string {
 	t.Helper()
 	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
-	_, flagged, err := NewProgramRepository(pool).UpdateWithPrerequisites(ctx, programID, models.ProgramUpdateInput{}, changes)
+	_, flagged, err := NewProgramRepository(pool).Update(ctx, programID, models.ProgramUpdateInput{}, changes)
 	if err != nil {
 		t.Fatalf("update program: %v", err)
 	}
@@ -106,18 +107,38 @@ func TestProgramRepositoryIntegration_UpdateAppliesPrerequisiteChanges(t *testin
 		t.Fatal(err)
 	}
 	s.task(pending, "Portfolio", "prerequisite", "incomplete")
+	// An edit reaches a task the mentee uploaded a file for; only removal keeps it.
+	cv := s.task(pending, "CV", "prerequisite", "in_progress")
+	if _, err := pool.Exec(context.Background(), `UPDATE tasks SET file = 'attachments/cv.pdf' WHERE id = $1`, cv); err != nil {
+		t.Fatal(err)
+	}
 	s.task(pending, "Intro call", "non_prerequisite", "incomplete")
 	// A pending application on a closed term takes the changes too.
 	closedTerm := s.apply(f.ClosedTerm, "mentee", "pending")
 	s.task(closedTerm, "Resume", "prerequisite", "complete")
 	accepted := s.apply(f.OpenTerm, "mentee", "accepted")
 	s.task(accepted, "Essay", "prerequisite", "incomplete")
+	mentor := s.apply(f.OpenTerm, "mentor", "pending")
+	s.task(mentor, "Essay", "prerequisite", "incomplete")
+	const otherProgram = "00000000-0000-0000-0000-000000000798"
+	if _, err := pool.Exec(context.Background(), `INSERT INTO programs (id, lf_project_uid, name, slug, status) VALUES ($1, '00000000-0000-0000-0000-000000000097', 'Other Program', 'other-program', 'published')`, otherProgram); err != nil {
+		t.Fatal(err)
+	}
+	otherTerm := "00000000-0000-0000-0000-000000000796"
+	if _, err := pool.Exec(context.Background(), `INSERT INTO program_terms (id, program_id, name, status) VALUES ($1, $2, 'Other', 'open')`, otherTerm, otherProgram); err != nil {
+		t.Fatal(err)
+	}
+	other := s.apply(otherTerm, "mentee", "pending")
+	s.task(other, "Essay", "prerequisite", "incomplete")
 
 	description, required, due := "Upload a PDF", "required", "2030-01-31"
 	applyChanges(t, pool, f.ProgramID, models.PrerequisiteChanges{
 		Removed: []string{"essay", "video", "notes"},
-		Edited:  []models.PrerequisiteTemplate{{Name: "resume", Description: &description, SubmitFile: &required, DueDate: &due}},
-		Added:   []models.PrerequisiteTemplate{{Name: "Cover letter", Custom: true}},
+		Edited: []models.PrerequisiteTemplate{
+			{Name: "resume", Description: &description, SubmitFile: &required, DueDate: &due},
+			{Name: "CV", DueDate: &due},
+		},
+		Added: []models.PrerequisiteTemplate{{Name: "Cover letter", Custom: true}},
 	})
 
 	got := syncedTasks(t, pool, pending)
@@ -126,6 +147,7 @@ func TestProgramRepositoryIntegration_UpdateAppliesPrerequisiteChanges(t *testin
 		"Video":        "submitted",   // submitted work is kept
 		"Notes":        "in_progress", // so is an uploaded file
 		"Portfolio":    "incomplete",  // a prerequisite the edit did not touch
+		"CV":           "in_progress",
 		"Intro call":   "incomplete",
 		"Cover letter": "incomplete",
 	}
@@ -139,6 +161,9 @@ func TestProgramRepositoryIntegration_UpdateAppliesPrerequisiteChanges(t *testin
 	}
 	if resume := got["resume"]; deref(resume.Description) != description || deref(resume.SubmitFile) != required || deref(resume.Due) != due {
 		t.Errorf("unsubmitted task kept old content: %+v", resume)
+	}
+	if deref(got["CV"].Due) != due {
+		t.Errorf("edited task with an uploaded file kept its old due date: %+v", got["CV"])
 	}
 	if !got["Cover letter"].Custom {
 		t.Errorf("added task lost its custom flag: %+v", got["Cover letter"])
@@ -156,8 +181,10 @@ func TestProgramRepositoryIntegration_UpdateAppliesPrerequisiteChanges(t *testin
 	if _, ok := closed["Cover letter"]; !ok {
 		t.Errorf("closed-term pending application did not get the added prerequisite; tasks = %v", keys(closed))
 	}
-	if acc := syncedTasks(t, pool, accepted); len(acc) != 1 || deref(acc["Essay"].Description) != "Old description" {
-		t.Errorf("accepted application's tasks were changed: %v", acc)
+	for name, app := range map[string]string{"accepted": accepted, "mentor": mentor, "other program's": other} {
+		if got := syncedTasks(t, pool, app); len(got) != 1 || deref(got["Essay"].Description) != "Old description" {
+			t.Errorf("%s application's tasks were changed: %v", name, keys(got))
+		}
 	}
 
 	// The deleted task leaves the search index and loses its access.
@@ -209,7 +236,7 @@ func TestProgramRepositoryIntegration_UpdateWithoutPrerequisiteChangesLeavesTask
 
 	name := "Renamed Program"
 	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
-	if _, err := NewProgramRepository(pool).Update(ctx, f.ProgramID, models.ProgramUpdateInput{Name: &name, TaskTemplates: json.RawMessage(`[]`)}); err != nil {
+	if _, _, err := NewProgramRepository(pool).Update(ctx, f.ProgramID, models.ProgramUpdateInput{Name: &name, TaskTemplates: json.RawMessage(`[]`)}, models.PrerequisiteChanges{}); err != nil {
 		t.Fatal(err)
 	}
 	if got := syncedTasks(t, pool, app); len(got) != 1 {
@@ -230,4 +257,39 @@ func deref(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+func TestProgramRepositoryIntegration_UpdateRejectsConcurrentTemplateChange(t *testing.T) {
+	pool := integrationPool(t)
+	f := seedIntegrationFixture(t, pool)
+	s := &syncSeeder{t: t, pool: pool}
+	app := s.apply(f.OpenTerm, "mentee", "pending")
+	s.task(app, "Essay", "prerequisite", "incomplete")
+	if _, err := pool.Exec(context.Background(), `UPDATE programs SET task_templates = '[{"name":"Essay"},{"name":"X"}]' WHERE id = $1`, f.ProgramID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Diffed against a read from before X was added, so the save would drop X and keep its tasks.
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+	_, _, err := NewProgramRepository(pool).Update(ctx, f.ProgramID, models.ProgramUpdateInput{
+		TaskTemplates:         json.RawMessage(`[]`),
+		ExpectedTaskTemplates: json.RawMessage(`[{"name":"Essay"}]`),
+	}, models.PrerequisiteChanges{Removed: []string{"essay"}})
+	if !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("err = %v; want ErrConflict", err)
+	}
+	if got := syncedTasks(t, pool, app); len(got) != 1 {
+		t.Errorf("tasks = %v; want them kept when the update is refused", keys(got))
+	}
+
+	// Templates stored as JSONB compare by value, not by the formatting they were sent with.
+	if _, _, err := NewProgramRepository(pool).Update(ctx, f.ProgramID, models.ProgramUpdateInput{
+		TaskTemplates:         json.RawMessage(`[]`),
+		ExpectedTaskTemplates: json.RawMessage(`[ {"name": "Essay"}, {"name": "X"} ]`),
+	}, models.PrerequisiteChanges{Removed: []string{"essay", "x"}}); err != nil {
+		t.Fatalf("update from the current templates: %v", err)
+	}
+	if got := syncedTasks(t, pool, app); len(got) != 0 {
+		t.Errorf("tasks = %v; want the removed prerequisite's task deleted", keys(got))
+	}
 }

@@ -895,7 +895,11 @@ func updateTemplates(t *testing.T, current, templates string) models.Prerequisit
 		getByID: func(context.Context, string) (*models.Program, error) {
 			return &models.Program{ID: "prog-1", TaskTemplates: json.RawMessage(current)}, nil
 		},
-		updateWithPrerequisites: func(_ context.Context, _ string, _ models.ProgramUpdateInput, changes models.PrerequisiteChanges) (*models.Program, []string, error) {
+		updateWithPrerequisites: func(_ context.Context, _ string, input models.ProgramUpdateInput, changes models.PrerequisiteChanges) (*models.Program, []string, error) {
+			// The repository refuses the changes if the stored templates are no longer these.
+			if string(input.ExpectedTaskTemplates) != current {
+				t.Errorf("expected task templates = %s; want the %s the changes were diffed against", input.ExpectedTaskTemplates, current)
+			}
 			captured = changes
 			return &models.Program{ID: "prog-1"}, nil, nil
 		},

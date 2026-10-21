@@ -292,15 +292,15 @@ func TestProgramRepositoryIntegration_StatusChangeAppliesOnlyFromExpectedStatus(
 	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
 	repo := NewProgramRepository(pool)
 	published, hidden, archived := models.ProgramStatusPublished, models.ProgramStatusHidden, models.ProgramStatusArchived
-	if _, err := repo.Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &hidden, ExpectedStatus: &published}); err != nil {
+	if _, _, err := repo.Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &hidden, ExpectedStatus: &published}, models.PrerequisiteChanges{}); err != nil {
 		t.Fatalf("hide: %v", err)
 	}
 
 	// An unhide validated against hidden must not overwrite an archive that committed first.
-	if _, err := repo.Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &archived, ExpectedStatus: &hidden}); err != nil {
+	if _, _, err := repo.Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &archived, ExpectedStatus: &hidden}, models.PrerequisiteChanges{}); err != nil {
 		t.Fatalf("archive: %v", err)
 	}
-	if _, err := repo.Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &published, ExpectedStatus: &hidden}); !errors.Is(err, domain.ErrInvalidStateTransition) {
+	if _, _, err := repo.Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &published, ExpectedStatus: &hidden}, models.PrerequisiteChanges{}); !errors.Is(err, domain.ErrInvalidStateTransition) {
 		t.Fatalf("stale unhide err = %v; want ErrInvalidStateTransition", err)
 	}
 	var status models.ProgramStatus
@@ -330,7 +330,7 @@ func TestProgramRepositoryIntegration_HideWaitsForInFlightApplication(t *testing
 	published, hidden := models.ProgramStatusPublished, models.ProgramStatusHidden
 	hideErr := make(chan error, 1)
 	go func() {
-		_, err := NewProgramRepository(pool).Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &hidden, ExpectedStatus: &published})
+		_, _, err := NewProgramRepository(pool).Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &hidden, ExpectedStatus: &published}, models.PrerequisiteChanges{})
 		hideErr <- err
 	}()
 	waitForLockWait(t, pool, hideErr)
@@ -367,7 +367,7 @@ func TestProgramRepositoryIntegration_HideWaitsForApplicationStatusChange(t *tes
 	published, hidden := models.ProgramStatusPublished, models.ProgramStatusHidden
 	hideErr := make(chan error, 1)
 	go func() {
-		_, err := NewProgramRepository(pool).Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &hidden, ExpectedStatus: &published})
+		_, _, err := NewProgramRepository(pool).Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &hidden, ExpectedStatus: &published}, models.PrerequisiteChanges{})
 		hideErr <- err
 	}()
 	waitForLockWait(t, pool, hideErr)
@@ -433,7 +433,7 @@ func TestApplicationRepositoryIntegration_RefusesApplicationToUnpublishedProgram
 		t.Fatalf("insert withdrawn application: %v", err)
 	}
 	published, hidden := models.ProgramStatusPublished, models.ProgramStatusHidden
-	if _, err := NewProgramRepository(pool).Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &hidden, ExpectedStatus: &published}); err != nil {
+	if _, _, err := NewProgramRepository(pool).Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &hidden, ExpectedStatus: &published}, models.PrerequisiteChanges{}); err != nil {
 		t.Fatalf("hide: %v", err)
 	}
 

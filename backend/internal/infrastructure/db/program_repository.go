@@ -892,16 +892,9 @@ func (r *ProgramRepository) CreateEnrollment(ctx context.Context, input models.P
 	return program, nil
 }
 
-// Update patches the program and returns the updated record.
-func (r *ProgramRepository) Update(ctx context.Context, id string, input models.ProgramUpdateInput) (*models.Program, error) {
-	p, _, err := r.UpdateWithPrerequisites(ctx, id, input, models.PrerequisiteChanges{})
-	return p, err
-}
-
-// UpdateWithPrerequisites patches the program, applies changes to the prerequisite tasks of its
-// pending mentee applications, and returns the updated record and the applications it flagged
-// tasks_submitted.
-func (r *ProgramRepository) UpdateWithPrerequisites(ctx context.Context, id string, input models.ProgramUpdateInput, changes models.PrerequisiteChanges) (*models.Program, []string, error) {
+// Update patches the program, applies changes to the prerequisite tasks of its pending mentee
+// applications, and returns the updated record and the applications it flagged tasks_submitted.
+func (r *ProgramRepository) Update(ctx context.Context, id string, input models.ProgramUpdateInput, changes models.PrerequisiteChanges) (*models.Program, []string, error) {
 	ctx, span := programTracer.Start(ctx, "db.programs.Update")
 	defer span.End()
 	span.SetAttributes(attribute.String("db.program_id", id))
@@ -931,6 +924,19 @@ func (r *ProgramRepository) update(ctx context.Context, id string, input models.
 			if err := checkNoBlockingApplications(ctx, tx, id); err != nil {
 				return nil, nil, err
 			}
+		}
+	}
+	// The prerequisite changes were diffed against ExpectedTaskTemplates; they apply only while the
+	// row still holds them, or a concurrent edit would leave tasks no template accounts for.
+	if len(input.TaskTemplates) > 0 {
+		var unchanged bool
+		if err := tx.QueryRow(ctx, `SELECT task_templates IS NOT DISTINCT FROM $2::jsonb FROM programs WHERE id = $1 FOR UPDATE`,
+			id, nilIfEmpty(input.ExpectedTaskTemplates)).Scan(&unchanged); errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil, domain.ErrProgramNotFound
+		} else if err != nil {
+			return nil, nil, fmt.Errorf("lock program for task template change: %w", err)
+		} else if !unchanged {
+			return nil, nil, fmt.Errorf("%w: program task templates changed concurrently", domain.ErrConflict)
 		}
 	}
 

@@ -1116,8 +1116,10 @@ applications, in the same transaction. Templates and tasks are matched by name
 (ignoring case), and only what the edit changed is applied: a removed template deletes
 its tasks, an edited template rewrites them, and an added template becomes an
 `incomplete` task on every pending application without one of that name. A `submitted`
-or `complete` task is never changed, and neither is one the mentee has uploaded a file
-for. Renaming a template removes the old name and adds the new one. Saving unchanged
+or `complete` task is never changed, and a removed template keeps any task the mentee
+has uploaded a file for; an edited template still updates it. Renaming a template
+removes the old name and adds the new one. If another save changed the templates after
+this request read them, the update fails with `409`. Saving unchanged
 templates changes no task, so a task a reviewer deleted is not added back. Program
 admins are emailed for each application a removal left with every prerequisite task
 done, as they are when its last task is submitted. Accepted, declined, and withdrawn

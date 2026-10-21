@@ -8,8 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
 	"net/url"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -545,6 +545,7 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 		if prerequisiteChanges, err = diffPrerequisites(current.TaskTemplates, input.TaskTemplates); err != nil {
 			return nil, err
 		}
+		input.ExpectedTaskTemplates = current.TaskTemplates
 	}
 	if input.ProjectUID != nil || input.ProjectSlug != nil || input.ProjectName != nil || input.ProjectLogoURL != nil {
 		if input.ProjectUID == nil || strings.TrimSpace(*input.ProjectUID) == "" {
@@ -636,7 +637,7 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 		}
 	}
 
-	p, flagged, err := s.repo.UpdateWithPrerequisites(ctx, id, input, prerequisiteChanges)
+	p, flagged, err := s.repo.Update(ctx, id, input, prerequisiteChanges)
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("update program: %w", err)
@@ -676,7 +677,7 @@ func normalizeTaskTemplates(raw, current json.RawMessage) (json.RawMessage, erro
 	}
 	customByName := make(map[string]templateFlag, len(existing))
 	for _, template := range existing {
-		customByName[strings.ToLower(strings.TrimSpace(template.Name))] = template.Custom
+		customByName[models.PrerequisiteKey(template.Name)] = template.Custom
 	}
 	templates := make([]taskTemplate, 0, len(incoming))
 	seen := make(map[string]struct{}, len(incoming))
@@ -685,11 +686,12 @@ func normalizeTaskTemplates(raw, current json.RawMessage) (json.RawMessage, erro
 		if name == "" {
 			return nil, fmt.Errorf("%w: task template name is required", domain.ErrInvalidInput)
 		}
-		if _, dup := seen[strings.ToLower(name)]; dup {
+		key := models.PrerequisiteKey(name)
+		if _, dup := seen[key]; dup {
 			return nil, fmt.Errorf("%w: task template name %q is used more than once", domain.ErrInvalidInput, name)
 		}
-		seen[strings.ToLower(name)] = struct{}{}
-		template := taskTemplate{Name: name, Custom: customByName[strings.ToLower(name)]}
+		seen[key] = struct{}{}
+		template := taskTemplate{Name: name, Custom: customByName[key]}
 		if in.Custom != nil {
 			template.Custom = templateFlag(*in.Custom)
 		}
