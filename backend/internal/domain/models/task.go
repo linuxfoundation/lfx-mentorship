@@ -118,4 +118,7 @@ type TaskUpdateInput struct {
 	DueDate           *string            `json:"due_date,omitempty"`
 	// ActorID is the caller's user ID used for permission checks; not persisted.
 	ActorID string `json:"-"`
+	// FromStatus, when set, is the status the change was authorized from: the write fails with
+	// ErrConflict if the task no longer has it. Not persisted.
+	FromStatus *TaskStatus `json:"-"`
 }

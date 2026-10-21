@@ -157,15 +157,19 @@ curl -s -X POST $BASE/program-terms/<closed-window-term-id>/applications $AUTH \
 ```bash
 TASK_ID=<prerequisite task id>
 # Mentee: incomplete → in_progress
-curl -s -X PATCH $BASE/tasks/$TASK_ID $AUTH -d '{"status":"in_progress"}'
+curl -s -X PATCH $BASE/tasks/$TASK_ID/submission $AUTH -d '{"status":"in_progress"}'
 # Expected: 200
 
 # Mentee: in_progress → submitted (uploading a file to file-upload also submits the task)
-curl -s -X PATCH $BASE/tasks/$TASK_ID $AUTH -d '{"status":"submitted"}'
+curl -s -X PATCH $BASE/tasks/$TASK_ID/submission $AUTH -d '{"status":"submitted"}'
 # Expected: 200
 
 # Mentee: submitted → in_progress (back to work before review)
-curl -s -X PATCH $BASE/tasks/$TASK_ID $AUTH -d '{"status":"in_progress"}'
+curl -s -X PATCH $BASE/tasks/$TASK_ID/submission $AUTH -d '{"status":"in_progress"}'
+# Expected: 200
+
+# Mentee: submit again
+curl -s -X PATCH $BASE/tasks/$TASK_ID/submission $AUTH -d '{"status":"submitted"}'
 # Expected: 200
 
 # Verify tasks_submitted flag when last task submitted
@@ -177,11 +181,11 @@ curl -s $BASE/applications/$APP_ID | jq .tasks_submitted
 
 ```bash
 # Admin (program_admin): submitted → complete — OK
-curl -s -X PATCH $BASE/tasks/$TASK_ID $AUTH -d '{"status":"complete"}'
+curl -s -X PATCH $BASE/tasks/$TASK_ID/review $AUTH -d '{"status":"complete"}'
 # Expected: 200
 
 # Mentee caller tries to set complete directly — expect 403
-curl -s -X PATCH $BASE/tasks/$TASK_ID $MENTEE_AUTH -d '{"status":"complete"}'
+curl -s -X PATCH $BASE/tasks/$TASK_ID/review $MENTEE_AUTH -d '{"status":"complete"}'
 # Expected: 403
 ```
 
