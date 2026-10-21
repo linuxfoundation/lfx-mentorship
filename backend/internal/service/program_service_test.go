@@ -1682,6 +1682,9 @@ func TestProgramService_CreateEnrollment_RejectsInvalidInput(t *testing.T) {
 		"required prerequisite without description": func(in *models.ProgramEnrollmentInput) {
 			in.Prerequisites = json.RawMessage(`[{"name":"PR","required":true}]`)
 		},
+		"duplicate prerequisite name": func(in *models.ProgramEnrollmentInput) {
+			in.Prerequisites = json.RawMessage(`[{"name":"Essay","description":"Write","required":true},{"name":" essay ","description":"Write","required":true}]`)
+		},
 		"blank program name":   func(in *models.ProgramEnrollmentInput) { in.Program.Name = blank },
 		"blank slug":           func(in *models.ProgramEnrollmentInput) { in.Program.Slug = blank },
 		"missing project_uid":  func(in *models.ProgramEnrollmentInput) { in.Program.ProjectUID = nil },

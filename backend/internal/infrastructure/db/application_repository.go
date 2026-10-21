@@ -675,7 +675,7 @@ func (r *ApplicationRepository) MarkTasksSubmitted(ctx context.Context, id strin
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	flipped, err := markTasksSubmitted(ctx, tx, id)
+	flipped, err := markTasksSubmitted(ctx, tx, id, false)
 	if err != nil {
 		span.RecordError(err)
 		return false, err
@@ -689,7 +689,8 @@ func (r *ApplicationRepository) MarkTasksSubmitted(ctx context.Context, id strin
 // markTasksSubmitted is MarkTasksSubmitted inside the caller's transaction. The application row
 // is locked, then the prerequisite tasks, so a concurrent flip or task reset is decided against
 // one consistent state. The flag gates no access, so only the search documents are refreshed.
-func markTasksSubmitted(ctx context.Context, tx pgx.Tx, id string) (bool, error) {
+// An application with no prerequisite task is complete only when noneIsDone is set.
+func markTasksSubmitted(ctx context.Context, tx pgx.Tx, id string, noneIsDone bool) (bool, error) {
 	var submitted bool
 	if err := tx.QueryRow(ctx, `SELECT tasks_submitted FROM applications WHERE id = $1 FOR UPDATE`, id).Scan(&submitted); errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
@@ -706,7 +707,7 @@ func markTasksSubmitted(ctx context.Context, tx pgx.Tx, id string) (bool, error)
 		id).Scan(&total, &done); err != nil {
 		return false, fmt.Errorf("count prerequisite tasks: %w", err)
 	}
-	if total == 0 || done < total {
+	if (total == 0 && !noneIsDone) || done < total {
 		return false, nil
 	}
 

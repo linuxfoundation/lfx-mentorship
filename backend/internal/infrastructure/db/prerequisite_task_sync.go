@@ -15,7 +15,9 @@ import (
 
 // applyPrerequisiteChanges applies an edit to the program's prerequisites to the prerequisite tasks
 // of its pending mentee applications, inside the caller's transaction, and returns the
-// applications it flagged tasks_submitted. Tasks are matched to prerequisites by PrerequisiteKey.
+// applications it flagged tasks_submitted. Tasks are matched to prerequisites by PrerequisiteKey;
+// only tasks cloned from a template are, which have no owner or are owned by their assignee, so a
+// task a reviewer created for one applicant is never changed.
 // Submitted and complete tasks are kept as they are. An unsubmitted task takes its edited
 // prerequisite's content, and is deleted with its removed prerequisite unless the mentee has
 // uploaded a file for it. An added prerequisite becomes an incomplete task on every application
@@ -23,6 +25,11 @@ import (
 func applyPrerequisiteChanges(ctx context.Context, tx pgx.Tx, programID string, changes models.PrerequisiteChanges) ([]string, error) {
 	if changes.IsEmpty() {
 		return nil, nil
+	}
+	// Lock the terms before the applications, as closing a term does, since inserting a task
+	// key-share-locks its term; the other order lets the two deadlock.
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM program_terms WHERE program_id = $1 FOR KEY SHARE`, programID); err != nil {
+		return nil, fmt.Errorf("lock program terms for prerequisite changes: %w", err)
 	}
 	// Locking the applications first orders this write against task writes, which share-lock them.
 	rows, err := tx.Query(ctx, `
@@ -49,6 +56,7 @@ func applyPrerequisiteChanges(ctx context.Context, tx pgx.Tx, programID string, 
 	rows, err = tx.Query(ctx, `
 		SELECT `+taskCols+` FROM tasks
 		WHERE application_id = ANY($1) AND category = $2
+		  AND (owner_id IS NULL OR owner_id = assignee_id)
 		FOR UPDATE`, ids, models.TaskCategoryPrerequisite)
 	if err != nil {
 		return nil, fmt.Errorf("lock prerequisite tasks for changes: %w", err)
@@ -107,9 +115,10 @@ func applyPrerequisiteChanges(ctx context.Context, tx pgx.Tx, programID string, 
 			return nil, err
 		}
 		// Only a deletion can complete the set; the flag records the first completion and is never
-		// cleared, so an added task leaves it as it is.
+		// cleared, so an added task leaves it as it is. A deletion that leaves no prerequisite has
+		// removed the last one outstanding, so that completes the set too.
 		if deleted {
-			flipped, err := markTasksSubmitted(ctx, tx, a.ID)
+			flipped, err := markTasksSubmitted(ctx, tx, a.ID, true)
 			if err != nil {
 				return nil, err
 			}

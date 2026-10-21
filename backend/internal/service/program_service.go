@@ -364,7 +364,13 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 			}
 			templates = append(templates, taskTemplate{Name: prerequisite.Name, Description: prerequisite.Description, SubmitFile: submitFile, DueDate: prerequisite.DueDate})
 		}
-		input.Prerequisites, _ = json.Marshal(templates)
+		marshaled, _ := json.Marshal(templates)
+		// The same rules a program update applies, so names are unique as the sync matches them.
+		normalized, err := normalizeTaskTemplates(marshaled, nil)
+		if err != nil {
+			return nil, err
+		}
+		input.Prerequisites = normalized
 	}
 	if strings.TrimSpace(input.Program.Name) == "" {
 		return nil, fmt.Errorf("%w: name is required", domain.ErrInvalidInput)

@@ -10,7 +10,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
@@ -51,6 +53,14 @@ func (s *syncSeeder) task(appID, name, category, status string) string {
 		s.t.Fatal(err)
 	}
 	return id
+}
+
+// own makes a task owned by userID, as one a reviewer created is.
+func (s *syncSeeder) own(taskID, userID string) {
+	s.t.Helper()
+	if _, err := s.pool.Exec(context.Background(), `UPDATE tasks SET owner_id = $2 WHERE id = $1`, taskID, userID); err != nil {
+		s.t.Fatal(err)
+	}
 }
 
 type syncedTask struct {
@@ -107,6 +117,12 @@ func TestProgramRepositoryIntegration_UpdateAppliesPrerequisiteChanges(t *testin
 		t.Fatal(err)
 	}
 	s.task(pending, "Portfolio", "prerequisite", "incomplete")
+	// A task a reviewer created is never synced; a legacy clone, owned by its assignee, is.
+	s.own(s.task(pending, "Brief", "prerequisite", "incomplete"), f.UserID)
+	legacy := s.task(pending, "Legacy", "prerequisite", "incomplete")
+	if _, err := pool.Exec(context.Background(), `UPDATE tasks SET owner_id = assignee_id WHERE id = $1`, legacy); err != nil {
+		t.Fatal(err)
+	}
 	// An edit reaches a task the mentee uploaded a file for; only removal keeps it.
 	cv := s.task(pending, "CV", "prerequisite", "in_progress")
 	if _, err := pool.Exec(context.Background(), `UPDATE tasks SET file = 'attachments/cv.pdf' WHERE id = $1`, cv); err != nil {
@@ -133,7 +149,7 @@ func TestProgramRepositoryIntegration_UpdateAppliesPrerequisiteChanges(t *testin
 
 	description, required, due := "Upload a PDF", "required", "2030-01-31"
 	applyChanges(t, pool, f.ProgramID, models.PrerequisiteChanges{
-		Removed: []string{"essay", "video", "notes"},
+		Removed: []string{"essay", "video", "notes", "brief", "legacy"},
 		Edited: []models.PrerequisiteTemplate{
 			{Name: "resume", Description: &description, SubmitFile: &required, DueDate: &due},
 			{Name: "CV", DueDate: &due},
@@ -147,6 +163,7 @@ func TestProgramRepositoryIntegration_UpdateAppliesPrerequisiteChanges(t *testin
 		"Video":        "submitted",   // submitted work is kept
 		"Notes":        "in_progress", // so is an uploaded file
 		"Portfolio":    "incomplete",  // a prerequisite the edit did not touch
+		"Brief":        "incomplete",  // a reviewer created it
 		"CV":           "in_progress",
 		"Intro call":   "incomplete",
 		"Cover letter": "incomplete",
@@ -211,11 +228,17 @@ func TestProgramRepositoryIntegration_UpdateFlagsApplicationCompletedByRemoval(t
 	outstanding := s.apply(f.OpenTerm, "mentee", "pending")
 	s.task(outstanding, "Resume", "prerequisite", "incomplete")
 	s.task(outstanding, "Essay", "prerequisite", "incomplete")
+	sole := s.apply(f.OpenTerm, "mentee", "pending")
+	s.task(sole, "Essay", "prerequisite", "incomplete")
+	none := s.apply(f.OpenTerm, "mentee", "pending")
 
 	flagged := applyChanges(t, pool, f.ProgramID, models.PrerequisiteChanges{Removed: []string{"essay"}})
 
-	if len(flagged) != 1 || flagged[0] != app {
-		t.Fatalf("flagged = %v; want only %s, whose last outstanding prerequisite was removed", flagged, app)
+	slices.Sort(flagged)
+	want := []string{app, sole}
+	slices.Sort(want)
+	if !slices.Equal(flagged, want) {
+		t.Fatalf("flagged = %v; want %v, whose last outstanding prerequisite was removed (not %s or %s)", flagged, want, outstanding, none)
 	}
 	var submitted bool
 	if err := pool.QueryRow(context.Background(), `SELECT tasks_submitted FROM applications WHERE id = $1`, app).Scan(&submitted); err != nil {
@@ -291,5 +314,47 @@ func TestProgramRepositoryIntegration_UpdateRejectsConcurrentTemplateChange(t *t
 	}
 	if got := syncedTasks(t, pool, app); len(got) != 0 {
 		t.Errorf("tasks = %v; want the removed prerequisite's task deleted", keys(got))
+	}
+}
+
+// Closing a term locks it and then its applications. A prerequisite change, whose task inserts
+// key-share-lock the term, must take the terms first too, or the two can deadlock.
+func TestProgramRepositoryIntegration_UpdateLocksTermsBeforeApplications(t *testing.T) {
+	pool := integrationPool(t)
+	f := seedIntegrationFixture(t, pool)
+	s := &syncSeeder{t: t, pool: pool}
+	s.apply(f.OpenTerm, "mentee", "pending")
+
+	ctx := context.Background()
+	closing, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = closing.Rollback(ctx) }()
+	if _, err := closing.Exec(ctx, `SELECT 1 FROM program_terms WHERE id = $1 FOR UPDATE`, f.OpenTerm); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+		_, _, err := NewProgramRepository(pool).Update(ctx, f.ProgramID, models.ProgramUpdateInput{},
+			models.PrerequisiteChanges{Added: []models.PrerequisiteTemplate{{Name: "Cover letter"}}})
+		done <- err
+	}()
+	// Let the update reach the term lock the closing transaction holds.
+	time.Sleep(500 * time.Millisecond)
+
+	if _, err := closing.Exec(ctx, `SET LOCAL lock_timeout = '5s'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := closing.Exec(ctx, `SELECT 1 FROM applications WHERE program_term_id = $1 FOR UPDATE`, f.OpenTerm); err != nil {
+		t.Fatalf("closing transaction could not lock the term's applications: %v", err)
+	}
+	if err := closing.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("prerequisite change: %v", err)
 	}
 }
