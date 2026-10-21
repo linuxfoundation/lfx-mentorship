@@ -5,6 +5,7 @@ package models
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -103,15 +104,54 @@ type TaskCreateInput struct {
 	CreatedBy     *string       `json:"created_by,omitempty"`
 }
 
-// PrerequisiteTemplate is one entry of a program's task_templates as the service normalizes it,
-// the content its applications' prerequisite tasks carry. Name identifies it, ignoring case and
-// surrounding space.
+// PrerequisiteTemplate is one of a program's prerequisites, the content its applications'
+// prerequisite tasks are cloned from. Its PrerequisiteKey identifies it.
 type PrerequisiteTemplate struct {
-	Name        string  `json:"name"`
-	Description *string `json:"description"`
-	SubmitFile  *string `json:"submitFile"`
-	DueDate     *string `json:"dueDate"`
-	Custom      bool    `json:"custom"`
+	Name        string
+	Description *string
+	SubmitFile  *string
+	DueDate     *string
+	Custom      bool
+}
+
+// PrerequisiteKey is the name a prerequisite and its tasks are matched by: case and surrounding
+// space are ignored.
+func PrerequisiteKey(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
+}
+
+// NewTask returns the incomplete prerequisite task, with the given ID, that clones p for an applicant.
+func (p PrerequisiteTemplate) NewTask(id, programTermID, applicantID string) TaskCreateInput {
+	category := TaskCategoryPrerequisite
+	name, createdBy := p.Name, applicantID
+	return TaskCreateInput{
+		ID:            id,
+		ProgramTermID: &programTermID,
+		AssigneeID:    applicantID,
+		Name:          &name,
+		Description:   p.Description,
+		SubmitFile:    p.SubmitFile,
+		DueDate:       p.DueDate,
+		Custom:        p.Custom,
+		Category:      &category,
+		Status:        TaskStatusIncomplete,
+		CreatedBy:     &createdBy,
+	}
+}
+
+// PrerequisiteChanges is an edit to a program's prerequisites, as the prerequisite tasks of its
+// pending applications take it.
+type PrerequisiteChanges struct {
+	// Removed holds the PrerequisiteKey of each removed prerequisite.
+	Removed []string
+	// Edited holds each prerequisite whose content changed; Added each new one.
+	Edited []PrerequisiteTemplate
+	Added  []PrerequisiteTemplate
+}
+
+// IsEmpty reports whether the edit changes no prerequisite.
+func (c PrerequisiteChanges) IsEmpty() bool {
+	return len(c.Removed) == 0 && len(c.Edited) == 0 && len(c.Added) == 0
 }
 
 // TaskUpdateInput is the request body for updating a task. A nil field is left unchanged; an

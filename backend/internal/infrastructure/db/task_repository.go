@@ -273,27 +273,33 @@ func (r *TaskRepository) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("load task before delete: %w", err)
 	}
 
-	cmd, err := tx.Exec(ctx, `DELETE FROM tasks WHERE id = $1`, id)
-	if err != nil {
+	if err := deleteTaskInTx(ctx, tx, current); err != nil {
 		span.RecordError(err)
-		return fmt.Errorf("delete task: %w", err)
-	}
-	if cmd.RowsAffected() == 0 {
-		return domain.ErrTaskNotFound
-	}
-	if err := queueObjectDeletions(ctx, tx, domain.ObjectBucketAttachments, current.File); err != nil {
-		return err
-	}
-	if err := enqueueTaskMarker(ctx, tx, current, "delete_access"); err != nil {
-		return err
-	}
-	if err := enqueueIndexDelete(ctx, tx, "mentorship_task", current.ID); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit delete task transaction: %w", err)
 	}
 	return nil
+}
+
+// deleteTaskInTx deletes a task locked by the caller's transaction and queues the deletion of
+// its file, its access, and its search document.
+func deleteTaskInTx(ctx context.Context, tx pgx.Tx, t *models.Task) error {
+	cmd, err := tx.Exec(ctx, `DELETE FROM tasks WHERE id = $1`, t.ID)
+	if err != nil {
+		return fmt.Errorf("delete task: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return domain.ErrTaskNotFound
+	}
+	if err := queueObjectDeletions(ctx, tx, domain.ObjectBucketAttachments, t.File); err != nil {
+		return err
+	}
+	if err := enqueueTaskMarker(ctx, tx, t, deleteAccessOperation); err != nil {
+		return err
+	}
+	return enqueueIndexDelete(ctx, tx, "mentorship_task", t.ID)
 }
 
 // errWithdrawnTaskLocked rejects a write to a task whose application is withdrawn. Withdrawn is

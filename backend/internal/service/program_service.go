@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"net/url"
 	"sort"
 	"strings"
@@ -531,6 +532,7 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 			return nil, err
 		}
 	}
+	var prerequisiteChanges models.PrerequisiteChanges
 	if len(input.TaskTemplates) > 0 {
 		current, err := s.repo.GetByID(ctx, id)
 		if err != nil {
@@ -538,6 +540,9 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 			return nil, fmt.Errorf("get program for update: %w", err)
 		}
 		if input.TaskTemplates, err = normalizeTaskTemplates(input.TaskTemplates, current.TaskTemplates); err != nil {
+			return nil, err
+		}
+		if prerequisiteChanges, err = diffPrerequisites(current.TaskTemplates, input.TaskTemplates); err != nil {
 			return nil, err
 		}
 	}
@@ -631,13 +636,17 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 		}
 	}
 
-	p, err := s.repo.Update(ctx, id, input)
+	p, flagged, err := s.repo.UpdateWithPrerequisites(ctx, id, input, prerequisiteChanges)
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("update program: %w", err)
 	}
 	if input.EditorID != "" {
 		s.notifier.NotifyProgramUpdated(ctx, id, input.EditorID)
+	}
+	// Removing a prerequisite completed these applicants' tasks, as their last submission would have.
+	for _, applicationID := range flagged {
+		s.notifier.NotifyAdminTasksSubmitted(ctx, applicationID)
 	}
 	return p, nil
 }
@@ -703,6 +712,64 @@ func normalizeTaskTemplates(raw, current json.RawMessage) (json.RawMessage, erro
 		templates = append(templates, template)
 	}
 	return json.Marshal(templates)
+}
+
+// diffPrerequisites compares a program's current task templates with the normalized templates
+// replacing them, matching each by its PrerequisiteKey. Content is compared as applications
+// clone it, so a template stored before normalization is not edited just by being saved again.
+func diffPrerequisites(current, next json.RawMessage) (models.PrerequisiteChanges, error) {
+	before, err := decodePrerequisites(current)
+	if err != nil {
+		return models.PrerequisiteChanges{}, fmt.Errorf("decode current task templates: %w", err)
+	}
+	after, err := decodePrerequisites(next)
+	if err != nil {
+		return models.PrerequisiteChanges{}, fmt.Errorf("decode task templates: %w", err)
+	}
+	beforeByKey := make(map[string]models.PrerequisiteTemplate, len(before))
+	for _, p := range before {
+		beforeByKey[models.PrerequisiteKey(p.Name)] = p
+	}
+	var changes models.PrerequisiteChanges
+	kept := make(map[string]bool, len(after))
+	for _, p := range after {
+		key := models.PrerequisiteKey(p.Name)
+		kept[key] = true
+		old, ok := beforeByKey[key]
+		switch {
+		case !ok:
+			changes.Added = append(changes.Added, p)
+		case !reflect.DeepEqual(old, p):
+			changes.Edited = append(changes.Edited, p)
+		}
+	}
+	for _, p := range before {
+		if key := models.PrerequisiteKey(p.Name); !kept[key] {
+			kept[key] = true // a name stored twice is removed once
+			changes.Removed = append(changes.Removed, key)
+		}
+	}
+	return changes, nil
+}
+
+// decodePrerequisites decodes stored or normalized task templates into prerequisites, skipping
+// any without a name.
+func decodePrerequisites(raw json.RawMessage) ([]models.PrerequisiteTemplate, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var templates []taskTemplate
+	if err := json.Unmarshal(raw, &templates); err != nil {
+		return nil, err
+	}
+	prerequisites := make([]models.PrerequisiteTemplate, 0, len(templates))
+	for _, t := range templates {
+		if strings.TrimSpace(t.Name) == "" {
+			continue
+		}
+		prerequisites = append(prerequisites, t.prerequisite())
+	}
+	return prerequisites, nil
 }
 
 // validateOpenTerms checks a program update's open-term set and trims term names

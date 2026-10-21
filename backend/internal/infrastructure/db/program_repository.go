@@ -894,26 +894,42 @@ func (r *ProgramRepository) CreateEnrollment(ctx context.Context, input models.P
 
 // Update patches the program and returns the updated record.
 func (r *ProgramRepository) Update(ctx context.Context, id string, input models.ProgramUpdateInput) (*models.Program, error) {
+	p, _, err := r.UpdateWithPrerequisites(ctx, id, input, models.PrerequisiteChanges{})
+	return p, err
+}
+
+// UpdateWithPrerequisites patches the program, applies changes to the prerequisite tasks of its
+// pending mentee applications, and returns the updated record and the applications it flagged
+// tasks_submitted.
+func (r *ProgramRepository) UpdateWithPrerequisites(ctx context.Context, id string, input models.ProgramUpdateInput, changes models.PrerequisiteChanges) (*models.Program, []string, error) {
 	ctx, span := programTracer.Start(ctx, "db.programs.Update")
 	defer span.End()
 	span.SetAttributes(attribute.String("db.program_id", id))
+	p, flagged, err := r.update(ctx, id, input, changes)
+	if err != nil {
+		span.RecordError(err)
+	}
+	return p, flagged, err
+}
+
+func (r *ProgramRepository) update(ctx context.Context, id string, input models.ProgramUpdateInput, changes models.PrerequisiteChanges) (*models.Program, []string, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("begin update program transaction: %w", err)
+		return nil, nil, fmt.Errorf("begin update program transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if input.Status != nil {
 		var current models.ProgramStatus
 		if err := tx.QueryRow(ctx, `SELECT status FROM programs WHERE id = $1 FOR UPDATE`, id).Scan(&current); errors.Is(err, pgx.ErrNoRows) {
-			return nil, domain.ErrProgramNotFound
+			return nil, nil, domain.ErrProgramNotFound
 		} else if err != nil {
-			return nil, fmt.Errorf("lock program for status change: %w", err)
+			return nil, nil, fmt.Errorf("lock program for status change: %w", err)
 		} else if input.ExpectedStatus != nil && current != *input.ExpectedStatus {
-			return nil, fmt.Errorf("%w: program status changed concurrently", domain.ErrInvalidStateTransition)
+			return nil, nil, fmt.Errorf("%w: program status changed concurrently", domain.ErrInvalidStateTransition)
 		}
 		if *input.Status == models.ProgramStatusHidden {
 			if err := checkNoBlockingApplications(ctx, tx, id); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		}
 	}
@@ -957,61 +973,49 @@ func (r *ProgramRepository) Update(ctx context.Context, id string, input models.
 		nilIfEmpty(input.MenteeNeeds), nilIfEmpty(input.TaskTemplates),
 	).Scan(&updatedID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, domain.ErrProgramNotFound
+		return nil, nil, domain.ErrProgramNotFound
 	}
 	if err != nil {
-		span.RecordError(err)
-		return nil, fmt.Errorf("update program: %w", err)
+		return nil, nil, fmt.Errorf("update program: %w", err)
 	}
 	if input.ProjectUID != nil {
 		if _, err := tx.Exec(ctx, `
 			UPDATE programs SET lf_project_uid = $2, lf_project_slug = $3, lf_project_name = $4, lf_project_logo_url = $5
 			WHERE id = $1`, updatedID, input.ProjectUID, input.ProjectSlug, input.ProjectName, input.ProjectLogoURL); err != nil {
-			span.RecordError(err)
-			return nil, fmt.Errorf("update program project: %w", err)
+			return nil, nil, fmt.Errorf("update program project: %w", err)
 		}
 	}
 	if input.Skills != nil {
 		if err := replaceProgramSkills(ctx, tx, updatedID, input.Skills); err != nil {
-			span.RecordError(err)
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	// The UPDATE above holds the program row lock that replaceOpenTerms requires.
 	if input.Terms != nil {
 		if err := replaceOpenTerms(ctx, tx, updatedID, input.Terms); err != nil {
-			span.RecordError(err)
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
-	// The service normalized the templates; a new list reaches the pending applications' tasks too.
-	if len(input.TaskTemplates) > 0 {
-		var prerequisites []models.PrerequisiteTemplate
-		if err := json.Unmarshal(input.TaskTemplates, &prerequisites); err != nil {
-			return nil, fmt.Errorf("decode task templates for prerequisite sync: %w", err)
-		}
-		if err := syncPrerequisiteTasks(ctx, tx, updatedID, prerequisites); err != nil {
-			span.RecordError(err)
-			return nil, err
-		}
+	flagged, err := applyPrerequisiteChanges(ctx, tx, updatedID, changes)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	p, err := scanProgram(tx.QueryRow(ctx, `SELECT`+programSelectCols+programsWithFundingFrom+` WHERE programs.id = $1`, updatedID))
 	if err != nil {
-		span.RecordError(err)
-		return nil, fmt.Errorf("reload updated program: %w", err)
+		return nil, nil, fmt.Errorf("reload updated program: %w", err)
 	}
 	if err := enqueueObjectMarker(ctx, tx, "mentorship_program", updatedID, updateAccessOperation); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := enqueueProgramIndex(ctx, tx, p, "updated"); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit update program transaction: %w", err)
+		return nil, nil, fmt.Errorf("commit update program transaction: %w", err)
 	}
-	return p, nil
+	return p, flagged, nil
 }
 
 // Delete removes the program with the given ID.

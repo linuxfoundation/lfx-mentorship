@@ -59,6 +59,22 @@ func (f *templateFlag) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// prerequisite returns the template as applications clone it.
+func (t taskTemplate) prerequisite() models.PrerequisiteTemplate {
+	var description *string
+	if t.Description != nil && strings.TrimSpace(*t.Description) != "" {
+		trimmed := strings.TrimSpace(*t.Description)
+		description = &trimmed
+	}
+	return models.PrerequisiteTemplate{
+		Name:        strings.TrimSpace(t.Name),
+		Description: description,
+		SubmitFile:  cloneSubmitFile(t.SubmitFile),
+		DueDate:     cloneDueDate(t.DueDate),
+		Custom:      bool(t.Custom),
+	}
+}
+
 // cloneSubmitFile keeps a template's submitFile only when it is "required". Templates saved before
 // the migration and update normalized them may hold "" or another value, cloned as no upload.
 func cloneSubmitFile(value *string) *string {
@@ -357,33 +373,14 @@ func (s *ApplicationService) prerequisiteTasks(ctx context.Context, programTermI
 	if len(prog.TaskTemplates) == 0 {
 		return nil, nil
 	}
-	var templates []taskTemplate
-	if err := json.Unmarshal(prog.TaskTemplates, &templates); err != nil {
+	// Program update requires a name; decodePrerequisites skips one saved before it did.
+	prerequisites, err := decodePrerequisites(prog.TaskTemplates)
+	if err != nil {
 		return nil, fmt.Errorf("decode program task templates: %w", err)
 	}
-	tasks := make([]models.TaskCreateInput, 0, len(templates))
-	for _, tmpl := range templates {
-		// Program update requires a name; one saved before it did would clone a blank task.
-		if strings.TrimSpace(tmpl.Name) == "" {
-			continue
-		}
-		category := models.TaskCategoryPrerequisite
-		termID := programTermID
-		createdBy := input.UserID
-		name := tmpl.Name
-		tasks = append(tasks, models.TaskCreateInput{
-			ID:            uuid.New().String(),
-			ProgramTermID: &termID,
-			AssigneeID:    input.UserID,
-			Name:          &name,
-			Description:   tmpl.Description,
-			SubmitFile:    cloneSubmitFile(tmpl.SubmitFile),
-			DueDate:       cloneDueDate(tmpl.DueDate),
-			Custom:        bool(tmpl.Custom),
-			Category:      &category,
-			Status:        models.TaskStatusIncomplete,
-			CreatedBy:     &createdBy,
-		})
+	tasks := make([]models.TaskCreateInput, 0, len(prerequisites))
+	for _, p := range prerequisites {
+		tasks = append(tasks, p.NewTask(uuid.New().String(), programTermID, input.UserID))
 	}
 	return tasks, nil
 }

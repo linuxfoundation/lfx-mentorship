@@ -1111,13 +1111,17 @@ Blank values are stored as `null`. Names must be unique, ignoring case. An entry
 leaves out `custom` keeps the flag of the current template with the same name (ignoring
 case), or `false` for a new one. Omit `task_templates` to leave them unchanged.
 
-The prerequisite tasks of the program's pending mentee applications follow the new list
-in the same transaction, matched to a template by name (ignoring case): a task the
-mentee has not submitted takes its template's content, or is deleted when its template
-was removed; a `submitted` or `complete` task is kept as it is; and a template no task
-matches is added as an `incomplete` task. Renaming a template therefore replaces its
-unsubmitted tasks. An application left with every prerequisite task done is flagged
-`tasks_submitted`. Accepted, declined, and withdrawn applications keep their tasks.
+The edit also reaches the prerequisite tasks of the program's pending mentee
+applications, in the same transaction. Templates and tasks are matched by name
+(ignoring case), and only what the edit changed is applied: a removed template deletes
+its tasks, an edited template rewrites them, and an added template becomes an
+`incomplete` task on every pending application without one of that name. A `submitted`
+or `complete` task is never changed, and neither is one the mentee has uploaded a file
+for. Renaming a template removes the old name and adds the new one. Saving unchanged
+templates changes no task, so a task a reviewer deleted is not added back. Program
+admins are emailed for each application a removal left with every prerequisite task
+done, as they are when its last task is submitted. Accepted, declined, and withdrawn
+applications keep their tasks.
 
 **Response** `200` → `<Program>`  
 **Errors** `400` (including an `id` that is not an open term of the program, or a

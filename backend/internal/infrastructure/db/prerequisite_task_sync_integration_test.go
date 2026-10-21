@@ -82,19 +82,17 @@ func syncedTasks(t *testing.T, pool *pgxpool.Pool, appID string) map[string]sync
 	return got
 }
 
-func updateTemplates(t *testing.T, pool *pgxpool.Pool, programID string, prerequisites []models.PrerequisiteTemplate) {
+func applyChanges(t *testing.T, pool *pgxpool.Pool, programID string, changes models.PrerequisiteChanges) []string {
 	t.Helper()
-	raw, err := json.Marshal(prerequisites)
-	if err != nil {
-		t.Fatal(err)
-	}
 	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
-	if _, err := NewProgramRepository(pool).Update(ctx, programID, models.ProgramUpdateInput{TaskTemplates: raw}); err != nil {
+	_, flagged, err := NewProgramRepository(pool).UpdateWithPrerequisites(ctx, programID, models.ProgramUpdateInput{}, changes)
+	if err != nil {
 		t.Fatalf("update program: %v", err)
 	}
+	return flagged
 }
 
-func TestProgramRepositoryIntegration_UpdateSyncsPendingPrerequisiteTasks(t *testing.T) {
+func TestProgramRepositoryIntegration_UpdateAppliesPrerequisiteChanges(t *testing.T) {
 	pool := integrationPool(t)
 	f := seedIntegrationFixture(t, pool)
 	s := &syncSeeder{t: t, pool: pool}
@@ -103,47 +101,52 @@ func TestProgramRepositoryIntegration_UpdateSyncsPendingPrerequisiteTasks(t *tes
 	s.task(pending, "Resume", "prerequisite", "incomplete")
 	essay := s.task(pending, "Essay", "prerequisite", "in_progress")
 	s.task(pending, "Video", "prerequisite", "submitted")
+	uploaded := s.task(pending, "Notes", "prerequisite", "in_progress")
+	if _, err := pool.Exec(context.Background(), `UPDATE tasks SET file = 'attachments/notes.pdf' WHERE id = $1`, uploaded); err != nil {
+		t.Fatal(err)
+	}
+	s.task(pending, "Portfolio", "prerequisite", "incomplete")
 	s.task(pending, "Intro call", "non_prerequisite", "incomplete")
-	// A pending application on a closed term is still synced.
+	// A pending application on a closed term takes the changes too.
 	closedTerm := s.apply(f.ClosedTerm, "mentee", "pending")
 	s.task(closedTerm, "Resume", "prerequisite", "complete")
 	accepted := s.apply(f.OpenTerm, "mentee", "accepted")
 	s.task(accepted, "Essay", "prerequisite", "incomplete")
 
 	description, required, due := "Upload a PDF", "required", "2030-01-31"
-	updateTemplates(t, pool, f.ProgramID, []models.PrerequisiteTemplate{
-		{Name: "resume", Description: &description, SubmitFile: &required, DueDate: &due},
-		{Name: "Cover letter", Custom: true},
+	applyChanges(t, pool, f.ProgramID, models.PrerequisiteChanges{
+		Removed: []string{"essay", "video", "notes"},
+		Edited:  []models.PrerequisiteTemplate{{Name: "resume", Description: &description, SubmitFile: &required, DueDate: &due}},
+		Added:   []models.PrerequisiteTemplate{{Name: "Cover letter", Custom: true}},
 	})
 
 	got := syncedTasks(t, pool, pending)
-	want := map[string]syncedTask{
-		"resume":       {Name: "resume", Status: "incomplete", Description: &description, SubmitFile: &required, Due: &due},
-		"Video":        {Name: "Video", Status: "submitted"},
-		"Intro call":   {Name: "Intro call", Status: "incomplete"},
-		"Cover letter": {Name: "Cover letter", Status: "incomplete", Custom: true},
+	want := map[string]string{
+		"resume":       "incomplete",
+		"Video":        "submitted",   // submitted work is kept
+		"Notes":        "in_progress", // so is an uploaded file
+		"Portfolio":    "incomplete",  // a prerequisite the edit did not touch
+		"Intro call":   "incomplete",
+		"Cover letter": "incomplete",
 	}
 	if len(got) != len(want) {
-		t.Fatalf("pending application tasks = %v; want %v", keys(got), keys(want))
+		t.Fatalf("pending application tasks = %v; want %v", keys(got), want)
 	}
-	for name, w := range want {
-		g, ok := got[name]
-		if !ok {
-			t.Fatalf("pending application has no task %q; tasks = %v", name, keys(got))
-		}
-		if g.Status != w.Status || g.Custom != w.Custom {
-			t.Errorf("task %q status/custom = %s/%v; want %s/%v", name, g.Status, g.Custom, w.Status, w.Custom)
+	for name, status := range want {
+		if g, ok := got[name]; !ok || g.Status != status {
+			t.Errorf("task %q = %+v; want status %s", name, g, status)
 		}
 	}
-	resume := got["resume"]
-	if deref(resume.Description) != description || deref(resume.SubmitFile) != required || deref(resume.Due) != due {
+	if resume := got["resume"]; deref(resume.Description) != description || deref(resume.SubmitFile) != required || deref(resume.Due) != due {
 		t.Errorf("unsubmitted task kept old content: %+v", resume)
 	}
-	if video := got["Video"]; deref(video.Description) != "Old description" || deref(video.Due) != "2020-01-01" {
-		t.Errorf("submitted task was changed: %+v", video)
+	if !got["Cover letter"].Custom {
+		t.Errorf("added task lost its custom flag: %+v", got["Cover letter"])
 	}
-	if intro := got["Intro call"]; deref(intro.Description) != "Old description" {
-		t.Errorf("non-prerequisite task was changed: %+v", intro)
+	for _, name := range []string{"Video", "Portfolio", "Intro call"} {
+		if deref(got[name].Description) != "Old description" {
+			t.Errorf("task %q was changed: %+v", name, got[name])
+		}
 	}
 
 	closed := syncedTasks(t, pool, closedTerm)
@@ -151,22 +154,22 @@ func TestProgramRepositoryIntegration_UpdateSyncsPendingPrerequisiteTasks(t *tes
 		t.Errorf("complete task was changed: %+v", r)
 	}
 	if _, ok := closed["Cover letter"]; !ok {
-		t.Errorf("closed-term pending application did not get the new prerequisite; tasks = %v", keys(closed))
+		t.Errorf("closed-term pending application did not get the added prerequisite; tasks = %v", keys(closed))
 	}
 	if acc := syncedTasks(t, pool, accepted); len(acc) != 1 || deref(acc["Essay"].Description) != "Old description" {
-		t.Errorf("accepted application's tasks were synced: %v", acc)
+		t.Errorf("accepted application's tasks were changed: %v", acc)
 	}
 
-	// The removed task leaves the search index and loses its access.
+	// The deleted task leaves the search index and loses its access.
 	var indexAction, fgaOperation string
 	if err := pool.QueryRow(context.Background(), `SELECT action FROM index_outbox WHERE object_uid = $1 ORDER BY created_on DESC LIMIT 1`, essay).Scan(&indexAction); err != nil {
-		t.Fatalf("index outbox for removed task: %v", err)
+		t.Fatalf("index outbox for deleted task: %v", err)
 	}
 	if err := pool.QueryRow(context.Background(), `SELECT desired_operation FROM fga_outbox WHERE object_uid = $1`, essay).Scan(&fgaOperation); err != nil {
-		t.Fatalf("FGA outbox for removed task: %v", err)
+		t.Fatalf("FGA outbox for deleted task: %v", err)
 	}
 	if indexAction != "deleted" || fgaOperation != "delete_access" {
-		t.Errorf("removed task index/FGA = %s/%s; want deleted/delete_access", indexAction, fgaOperation)
+		t.Errorf("deleted task index/FGA = %s/%s; want deleted/delete_access", indexAction, fgaOperation)
 	}
 }
 
@@ -178,9 +181,15 @@ func TestProgramRepositoryIntegration_UpdateFlagsApplicationCompletedByRemoval(t
 	app := s.apply(f.OpenTerm, "mentee", "pending")
 	s.task(app, "Resume", "prerequisite", "submitted")
 	s.task(app, "Essay", "prerequisite", "incomplete")
+	outstanding := s.apply(f.OpenTerm, "mentee", "pending")
+	s.task(outstanding, "Resume", "prerequisite", "incomplete")
+	s.task(outstanding, "Essay", "prerequisite", "incomplete")
 
-	updateTemplates(t, pool, f.ProgramID, []models.PrerequisiteTemplate{{Name: "Resume"}})
+	flagged := applyChanges(t, pool, f.ProgramID, models.PrerequisiteChanges{Removed: []string{"essay"}})
 
+	if len(flagged) != 1 || flagged[0] != app {
+		t.Fatalf("flagged = %v; want only %s, whose last outstanding prerequisite was removed", flagged, app)
+	}
 	var submitted bool
 	if err := pool.QueryRow(context.Background(), `SELECT tasks_submitted FROM applications WHERE id = $1`, app).Scan(&submitted); err != nil {
 		t.Fatal(err)
@@ -190,7 +199,7 @@ func TestProgramRepositoryIntegration_UpdateFlagsApplicationCompletedByRemoval(t
 	}
 }
 
-func TestProgramRepositoryIntegration_UpdateWithoutPrerequisitesLeavesTasks(t *testing.T) {
+func TestProgramRepositoryIntegration_UpdateWithoutPrerequisiteChangesLeavesTasks(t *testing.T) {
 	pool := integrationPool(t)
 	f := seedIntegrationFixture(t, pool)
 	s := &syncSeeder{t: t, pool: pool}
@@ -200,11 +209,11 @@ func TestProgramRepositoryIntegration_UpdateWithoutPrerequisitesLeavesTasks(t *t
 
 	name := "Renamed Program"
 	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
-	if _, err := NewProgramRepository(pool).Update(ctx, f.ProgramID, models.ProgramUpdateInput{Name: &name}); err != nil {
+	if _, err := NewProgramRepository(pool).Update(ctx, f.ProgramID, models.ProgramUpdateInput{Name: &name, TaskTemplates: json.RawMessage(`[]`)}); err != nil {
 		t.Fatal(err)
 	}
 	if got := syncedTasks(t, pool, app); len(got) != 1 {
-		t.Errorf("tasks = %v; want the task kept when templates are not edited", keys(got))
+		t.Errorf("tasks = %v; want the task kept when no prerequisite change is passed", keys(got))
 	}
 }
 
