@@ -31,6 +31,15 @@ No Kubernetes resource is rendered; this file only produces errors.
 {{- end }}
 {{- end }}
 
+{{- if .Values.approverTeam.enabled }}
+{{- if not .Values.approverTeam.members }}
+{{- fail "\n\nvalues.yaml: approverTeam.members must list at least one LFID when approverTeam.enabled=true; an empty list would remove every approver. Set approverTeam.enabled=false instead." }}
+{{- end }}
+{{- if not .Values.secretName }}
+{{- fail "\n\nvalues.yaml: secretName is required when approverTeam.enabled=true (the sync Job reads the database connection from it)." }}
+{{- end }}
+{{- end }}
+
 {{/*
 Auth bypass guard.
 

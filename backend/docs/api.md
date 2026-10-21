@@ -52,6 +52,51 @@ owners approve an edge relation for LF-staff roster administration. A backend
 scope is not an edge authorization decision and Heimdall does not synthesize
 these scopes unless a rule explicitly configures them.
 
+Until then the roster is managed from inside the cluster with
+`/app/approver-admin`, shipped in the backend image. It writes through the same
+repository as the routes above, so each change lands with its FGA marker in one
+transaction.
+
+- **Declared in Helm values (normal path).** Set `approverTeam.enabled: true`
+  and list the LFIDs in `approverTeam.members` in the environment's values file
+  in lfx-v2-argocd. A post-install/post-upgrade Job runs
+  `approver-admin sync <lfid>...`, adding the missing members and removing any
+  not listed, so the values file is the record of who may publish or reject
+  programs. Changing the roster is an ArgoCD PR.
+- **One-off.** Run the same binary as a Job built from the backend Deployment,
+  which has the image, the Secret and the pod security settings. (The sync Job
+  itself is deleted once it succeeds, so it cannot be copied.) The recipe below
+  lists the roster; change the `command` for `add`, `remove` or `sync`. A
+  finished Job is immutable and `apply` would reuse it, so each run deletes the
+  previous one first:
+
+  ```bash
+  NS=mentorship-backend
+  kubectl -n "$NS" delete job approver-admin --ignore-not-found
+  kubectl -n "$NS" get deploy lfx-mentorship-backend -o json | jq '{
+    apiVersion: "batch/v1", kind: "Job",
+    metadata: {name: "approver-admin", namespace: .metadata.namespace},
+    spec: {backoffLimit: 0, ttlSecondsAfterFinished: 3600, template: {spec: {
+      restartPolicy: "Never",
+      automountServiceAccountToken: false,
+      securityContext: .spec.template.spec.securityContext,
+      imagePullSecrets: (.spec.template.spec.imagePullSecrets // []),
+      containers: [.spec.template.spec.containers[0]
+        | {name: "approver-admin", image, imagePullPolicy, securityContext, env, envFrom,
+           command: ["/app/approver-admin", "list"]}]}}}}' \
+    | kubectl create -f -
+  kubectl -n "$NS" wait --for=condition=complete --timeout=120s job/approver-admin
+  kubectl -n "$NS" logs job/approver-admin
+  ```
+
+  Subcommands: `list`, `add <lfid>...`, `remove <lfid>...`, `sync <lfid>...`.
+  Make lasting changes in the values file: a one-off `add` is undone by the next
+  sync unless the LFID is also in `approverTeam.members`.
+
+An LFID must already have a Mentorship user: each approver signs in to Self
+Serve once first. The command applies every other change, then exits non-zero
+naming the LFIDs it could not find. `sync` refuses an empty list.
+
 For local PostgreSQL-backed outbox tests, start `docker compose up -d`, create
 an isolated `mentorship_test` database, and run:
 
