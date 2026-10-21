@@ -62,7 +62,11 @@ transaction.
   in lfx-v2-argocd. A post-install/post-upgrade Job runs
   `approver-admin sync <lfid>...`, adding the missing members and removing any
   not listed, so the values file is the record of who may publish or reject
-  programs. Changing the roster is an ArgoCD PR.
+  programs. Changing the roster is an ArgoCD PR. The Deployment carries a
+  `checksum/approver-team` annotation over the list, so a roster-only change
+  shows as OutOfSync and the hook runs on the next sync; ArgoCD does not
+  count hooks themselves when deciding that. Check the hook Job's result after
+  each roster change.
 - **One-off.** Run the same binary as a Job built from the backend Deployment,
   which has the image, the Secret and the pod security settings. (The sync Job
   itself is deleted once it succeeds, so it cannot be copied.) The recipe below
