@@ -972,6 +972,52 @@ func TestProgramService_Update_WithoutTaskTemplatesChangesNoTasks(t *testing.T) 
 	}
 }
 
+func TestProgramService_Update_KeepsLFIDOnceSet(t *testing.T) {
+	stored := "Alice"
+	cases := []struct {
+		name    string
+		current *string
+		sent    string
+		want    string
+		invalid bool
+	}{
+		{name: "set while empty", current: nil, sent: " alice ", want: "alice"},
+		{name: "set while blank", current: new(string), sent: "alice", want: "alice"},
+		{name: "same value", current: &stored, sent: "Alice", want: "Alice"},
+		{name: "other case and space keep the stored value", current: &stored, sent: " ALICE ", want: "Alice"},
+		{name: "another lfid", current: &stored, sent: "bob", invalid: true},
+		{name: "cleared", current: &stored, sent: "", invalid: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var captured *string
+			repo := &stubProgRepo{
+				getByID: func(context.Context, string) (*models.Program, error) {
+					return &models.Program{ID: "prog-1", LFID: tc.current}, nil
+				},
+				update: func(_ context.Context, _ string, input models.ProgramUpdateInput) (*models.Program, error) {
+					captured = input.LFID
+					return &models.Program{ID: "prog-1"}, nil
+				},
+			}
+			sent := tc.sent
+			_, err := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{}).Update(context.Background(), "prog-1", models.ProgramUpdateInput{LFID: &sent})
+			if tc.invalid {
+				if !errors.Is(err, domain.ErrInvalidInput) {
+					t.Fatalf("err = %v; want ErrInvalidInput", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if captured == nil || *captured != tc.want {
+				t.Fatalf("stored lfid = %v; want %q", captured, tc.want)
+			}
+		})
+	}
+}
+
 func TestProgramService_Update_RejectsInvalidTaskTemplates(t *testing.T) {
 	cases := map[string]string{
 		"not an array":   `{"name":"Resume"}`,

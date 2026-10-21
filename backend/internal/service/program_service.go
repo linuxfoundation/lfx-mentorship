@@ -553,6 +553,16 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 		}
 		input.ExpectedTaskTemplates = current.TaskTemplates
 	}
+	if input.LFID != nil {
+		current, err := s.repo.GetByID(ctx, id)
+		if err != nil {
+			span.RecordError(err)
+			return nil, fmt.Errorf("get program for update: %w", err)
+		}
+		if input.LFID, err = keepProgramLFID(current.LFID, *input.LFID); err != nil {
+			return nil, err
+		}
+	}
 	if input.ProjectUID != nil || input.ProjectSlug != nil || input.ProjectName != nil || input.ProjectLogoURL != nil {
 		if input.ProjectUID == nil || strings.TrimSpace(*input.ProjectUID) == "" {
 			return nil, fmt.Errorf("%w: project_uid is required when changing the project", domain.ErrInvalidInput)
@@ -720,6 +730,22 @@ func normalizeTaskTemplates(raw, current json.RawMessage) (json.RawMessage, erro
 		templates = append(templates, template)
 	}
 	return json.Marshal(templates)
+}
+
+// keepProgramLFID returns the lfid a program update may store. lfid records the program's creator,
+// who owns it (FR-009) and whom legacy prerequisite clones are recognized by, so it can be set while
+// empty but not changed once set. The stored LFID resent in another case or with surrounding space
+// keeps the stored value, since a different spelling would stop matching those clones. The
+// repository re-checks under the program lock.
+func keepProgramLFID(current *string, next string) (*string, error) {
+	next = strings.TrimSpace(next)
+	if current == nil || strings.TrimSpace(*current) == "" {
+		return &next, nil
+	}
+	if strings.EqualFold(strings.TrimSpace(*current), next) {
+		return current, nil
+	}
+	return nil, fmt.Errorf("%w: lfid records the program's creator and cannot be changed once set", domain.ErrInvalidInput)
 }
 
 // diffPrerequisites compares a program's current task templates with the normalized templates

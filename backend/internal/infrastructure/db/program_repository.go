@@ -940,7 +940,9 @@ func (r *ProgramRepository) update(ctx context.Context, id string, input models.
 		}
 	}
 	// lfid records the program's creator, which legacy prerequisite clones are recognized by
-	// (clonedFromTemplate), so it can be set while empty but never changed.
+	// (clonedFromTemplate), so it can be set while empty but never changed. The service has
+	// already normalized it to the stored value; this re-check under the lock stops a concurrent
+	// update from setting it first.
 	if input.LFID != nil {
 		var current *string
 		if err := tx.QueryRow(ctx, `SELECT lfid FROM programs WHERE id = $1 FOR UPDATE`, id).Scan(&current); errors.Is(err, pgx.ErrNoRows) {
