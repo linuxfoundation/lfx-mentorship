@@ -886,6 +886,138 @@ func TestProgramService_Update_EmptyTaskTemplatesClear(t *testing.T) {
 	}
 }
 
+// updateTemplates saves templates over the current ones and returns the prerequisite changes the
+// repository was asked to apply.
+func updateTemplates(t *testing.T, current, templates string) models.PrerequisiteChanges {
+	t.Helper()
+	var captured models.PrerequisiteChanges
+	repo := &stubProgRepo{
+		getByID: func(context.Context, string) (*models.Program, error) {
+			return &models.Program{ID: "prog-1", TaskTemplates: json.RawMessage(current)}, nil
+		},
+		updateWithPrerequisites: func(_ context.Context, _ string, input models.ProgramUpdateInput, changes models.PrerequisiteChanges) (*models.Program, []string, error) {
+			// The repository refuses the changes if the stored templates are no longer these.
+			if string(input.ExpectedTaskTemplates) != current {
+				t.Errorf("expected task templates = %s; want the %s the changes were diffed against", input.ExpectedTaskTemplates, current)
+			}
+			captured = changes
+			return &models.Program{ID: "prog-1"}, nil, nil
+		},
+	}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	if _, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{TaskTemplates: json.RawMessage(templates)}); err != nil {
+		t.Fatal(err)
+	}
+	return captured
+}
+
+func TestProgramService_Update_DiffsPrerequisites(t *testing.T) {
+	changes := updateTemplates(t,
+		`[{"name":"Resume","dueDate":"2020-01-01"},{"name":"Essay"},{"name":"Video","description":"Record it"}]`,
+		`[{"name":"resume","dueDate":"2030-01-31"},{"name":"Video","description":"Record it"},{"name":"Cover letter","custom":true}]`)
+
+	due := "2030-01-31"
+	want := models.PrerequisiteChanges{
+		Removed: []string{"essay"},
+		Edited:  []models.PrerequisiteTemplate{{Name: "resume", DueDate: &due}},
+		Added:   []models.PrerequisiteTemplate{{Name: "Cover letter", Custom: true}},
+	}
+	if !reflect.DeepEqual(changes, want) {
+		t.Fatalf("changes = %+v; want %+v", changes, want)
+	}
+}
+
+func TestProgramService_Update_UnchangedTemplatesChangeNoTasks(t *testing.T) {
+	// Stored before normalization: a legacy custom string, a blank submitFile, padded text.
+	changes := updateTemplates(t,
+		`[{"name":" Essay ","description":" Write it ","submitFile":"","custom":"true"}]`,
+		`[{"name":"Essay","description":"Write it"}]`)
+	if !changes.IsEmpty() {
+		t.Fatalf("changes = %+v; want none for a re-save of the same templates", changes)
+	}
+}
+
+func TestProgramService_Update_NotifiesAdminsOfCompletedApplications(t *testing.T) {
+	repo := &stubProgRepo{
+		getByID: func(context.Context, string) (*models.Program, error) {
+			return &models.Program{ID: "prog-1", TaskTemplates: json.RawMessage(`[{"name":"Essay"}]`)}, nil
+		},
+		updateWithPrerequisites: func(context.Context, string, models.ProgramUpdateInput, models.PrerequisiteChanges) (*models.Program, []string, error) {
+			return &models.Program{ID: "prog-1"}, []string{"app-1", "app-2"}, nil
+		},
+	}
+	n := &stubNotifier{}
+	svc := newProgramSvcWithNotifier(repo, &stubTermRepo{}, &stubAppRepo{}, n)
+	if _, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{TaskTemplates: json.RawMessage(`[]`)}); err != nil {
+		t.Fatal(err)
+	}
+	if n.tasksSubmittedCalls != 2 {
+		t.Fatalf("tasks submitted notifications = %d; want one per application the removal completed", n.tasksSubmittedCalls)
+	}
+}
+
+func TestProgramService_Update_WithoutTaskTemplatesChangesNoTasks(t *testing.T) {
+	changes := models.PrerequisiteChanges{Removed: []string{"sentinel"}}
+	repo := &stubProgRepo{updateWithPrerequisites: func(_ context.Context, _ string, _ models.ProgramUpdateInput, c models.PrerequisiteChanges) (*models.Program, []string, error) {
+		changes = c
+		return &models.Program{ID: "prog-1"}, nil, nil
+	}}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	name := "Renamed"
+	if _, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Name: &name}); err != nil {
+		t.Fatal(err)
+	}
+	if !changes.IsEmpty() {
+		t.Fatalf("changes = %+v; want none when task_templates is not sent", changes)
+	}
+}
+
+func TestProgramService_Update_KeepsLFIDOnceSet(t *testing.T) {
+	stored := "Alice"
+	cases := []struct {
+		name    string
+		current *string
+		sent    string
+		want    string
+		invalid bool
+	}{
+		{name: "set while empty", current: nil, sent: " alice ", want: "alice"},
+		{name: "set while blank", current: new(string), sent: "alice", want: "alice"},
+		{name: "same value", current: &stored, sent: "Alice", want: "Alice"},
+		{name: "other case and space keep the stored value", current: &stored, sent: " ALICE ", want: "Alice"},
+		{name: "another lfid", current: &stored, sent: "bob", invalid: true},
+		{name: "cleared", current: &stored, sent: "", invalid: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var captured *string
+			repo := &stubProgRepo{
+				getByID: func(context.Context, string) (*models.Program, error) {
+					return &models.Program{ID: "prog-1", LFID: tc.current}, nil
+				},
+				update: func(_ context.Context, _ string, input models.ProgramUpdateInput) (*models.Program, error) {
+					captured = input.LFID
+					return &models.Program{ID: "prog-1"}, nil
+				},
+			}
+			sent := tc.sent
+			_, err := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{}).Update(context.Background(), "prog-1", models.ProgramUpdateInput{LFID: &sent})
+			if tc.invalid {
+				if !errors.Is(err, domain.ErrInvalidInput) {
+					t.Fatalf("err = %v; want ErrInvalidInput", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if captured == nil || *captured != tc.want {
+				t.Fatalf("stored lfid = %v; want %q", captured, tc.want)
+			}
+		})
+	}
+}
+
 func TestProgramService_Update_RejectsInvalidTaskTemplates(t *testing.T) {
 	cases := map[string]string{
 		"not an array":   `{"name":"Resume"}`,
@@ -893,6 +1025,7 @@ func TestProgramService_Update_RejectsInvalidTaskTemplates(t *testing.T) {
 		"blank name":     `[{"name":" "}]`,
 		"unknown submit": `[{"name":"Resume","submitFile":"yes"}]`,
 		"bad due date":   `[{"name":"Resume","dueDate":"05/01/2026"}]`,
+		"duplicate name": `[{"name":"Resume"},{"name":" resume "}]`,
 	}
 	for name, templates := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -1594,6 +1727,9 @@ func TestProgramService_CreateEnrollment_RejectsInvalidInput(t *testing.T) {
 		"prerequisites not JSON": func(in *models.ProgramEnrollmentInput) { in.Prerequisites = json.RawMessage(`{`) },
 		"required prerequisite without description": func(in *models.ProgramEnrollmentInput) {
 			in.Prerequisites = json.RawMessage(`[{"name":"PR","required":true}]`)
+		},
+		"duplicate prerequisite name": func(in *models.ProgramEnrollmentInput) {
+			in.Prerequisites = json.RawMessage(`[{"name":"Essay","description":"Write","required":true},{"name":" essay ","description":"Write","required":true}]`)
 		},
 		"blank program name":   func(in *models.ProgramEnrollmentInput) { in.Program.Name = blank },
 		"blank slug":           func(in *models.ProgramEnrollmentInput) { in.Program.Slug = blank },

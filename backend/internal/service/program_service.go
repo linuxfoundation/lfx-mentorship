@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -363,7 +364,13 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 			}
 			templates = append(templates, taskTemplate{Name: prerequisite.Name, Description: prerequisite.Description, SubmitFile: submitFile, DueDate: prerequisite.DueDate})
 		}
-		input.Prerequisites, _ = json.Marshal(templates)
+		marshaled, _ := json.Marshal(templates)
+		// The same rules a program update applies, so names are unique as the sync matches them.
+		normalized, err := normalizeTaskTemplates(marshaled, nil)
+		if err != nil {
+			return nil, err
+		}
+		input.Prerequisites = normalized
 	}
 	if strings.TrimSpace(input.Program.Name) == "" {
 		return nil, fmt.Errorf("%w: name is required", domain.ErrInvalidInput)
@@ -531,6 +538,7 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 			return nil, err
 		}
 	}
+	var prerequisiteChanges models.PrerequisiteChanges
 	if len(input.TaskTemplates) > 0 {
 		current, err := s.repo.GetByID(ctx, id)
 		if err != nil {
@@ -538,6 +546,20 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 			return nil, fmt.Errorf("get program for update: %w", err)
 		}
 		if input.TaskTemplates, err = normalizeTaskTemplates(input.TaskTemplates, current.TaskTemplates); err != nil {
+			return nil, err
+		}
+		if prerequisiteChanges, err = diffPrerequisites(current.TaskTemplates, input.TaskTemplates); err != nil {
+			return nil, err
+		}
+		input.ExpectedTaskTemplates = current.TaskTemplates
+	}
+	if input.LFID != nil {
+		current, err := s.repo.GetByID(ctx, id)
+		if err != nil {
+			span.RecordError(err)
+			return nil, fmt.Errorf("get program for update: %w", err)
+		}
+		if input.LFID, err = keepProgramLFID(current.LFID, *input.LFID); err != nil {
 			return nil, err
 		}
 	}
@@ -631,7 +653,7 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 		}
 	}
 
-	p, err := s.repo.Update(ctx, id, input)
+	p, flagged, err := s.repo.Update(ctx, id, input, prerequisiteChanges)
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("update program: %w", err)
@@ -639,13 +661,18 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 	if input.EditorID != "" {
 		s.notifier.NotifyProgramUpdated(ctx, id, input.EditorID)
 	}
+	// Removing a prerequisite completed these applicants' tasks, as their last submission would have.
+	for _, applicationID := range flagged {
+		s.notifier.NotifyAdminTasksSubmitted(ctx, applicationID)
+	}
 	return p, nil
 }
 
 // normalizeTaskTemplates validates a program update's task templates and returns them in the
 // shape applications clone: a blank submitFile or dueDate is cleared, and submitFile may only be
 // "required". A template that leaves custom out keeps the flag of the current template with the
-// same name (ignoring case), so an edit that does not send it keeps the migrated value.
+// same name (ignoring case), so an edit that does not send it keeps the migrated value. Names must
+// be unique, ignoring case: the name is what matches a template to its applicants' tasks.
 func normalizeTaskTemplates(raw, current json.RawMessage) (json.RawMessage, error) {
 	var incoming []struct {
 		Name        string  `json:"name"`
@@ -666,15 +693,21 @@ func normalizeTaskTemplates(raw, current json.RawMessage) (json.RawMessage, erro
 	}
 	customByName := make(map[string]templateFlag, len(existing))
 	for _, template := range existing {
-		customByName[strings.ToLower(strings.TrimSpace(template.Name))] = template.Custom
+		customByName[models.PrerequisiteKey(template.Name)] = template.Custom
 	}
 	templates := make([]taskTemplate, 0, len(incoming))
+	seen := make(map[string]struct{}, len(incoming))
 	for _, in := range incoming {
 		name := strings.TrimSpace(in.Name)
 		if name == "" {
 			return nil, fmt.Errorf("%w: task template name is required", domain.ErrInvalidInput)
 		}
-		template := taskTemplate{Name: name, Custom: customByName[strings.ToLower(name)]}
+		key := models.PrerequisiteKey(name)
+		if _, dup := seen[key]; dup {
+			return nil, fmt.Errorf("%w: task template name %q is used more than once", domain.ErrInvalidInput, name)
+		}
+		seen[key] = struct{}{}
+		template := taskTemplate{Name: name, Custom: customByName[key]}
 		if in.Custom != nil {
 			template.Custom = templateFlag(*in.Custom)
 		}
@@ -697,6 +730,80 @@ func normalizeTaskTemplates(raw, current json.RawMessage) (json.RawMessage, erro
 		templates = append(templates, template)
 	}
 	return json.Marshal(templates)
+}
+
+// keepProgramLFID returns the lfid a program update may store. lfid records the program's creator,
+// who owns it (FR-009) and whom legacy prerequisite clones are recognized by, so it can be set while
+// empty but not changed once set. The stored LFID resent in another case or with surrounding space
+// keeps the stored value, since a different spelling would stop matching those clones. The
+// repository re-checks under the program lock.
+func keepProgramLFID(current *string, next string) (*string, error) {
+	next = strings.TrimSpace(next)
+	if current == nil || strings.TrimSpace(*current) == "" {
+		return &next, nil
+	}
+	if strings.EqualFold(strings.TrimSpace(*current), next) {
+		return current, nil
+	}
+	return nil, fmt.Errorf("%w: lfid records the program's creator and cannot be changed once set", domain.ErrInvalidInput)
+}
+
+// diffPrerequisites compares a program's current task templates with the normalized templates
+// replacing them, matching each by its PrerequisiteKey. Content is compared as applications
+// clone it, so a template stored before normalization is not edited just by being saved again.
+func diffPrerequisites(current, next json.RawMessage) (models.PrerequisiteChanges, error) {
+	before, err := decodePrerequisites(current)
+	if err != nil {
+		return models.PrerequisiteChanges{}, fmt.Errorf("decode current task templates: %w", err)
+	}
+	after, err := decodePrerequisites(next)
+	if err != nil {
+		return models.PrerequisiteChanges{}, fmt.Errorf("decode task templates: %w", err)
+	}
+	beforeByKey := make(map[string]models.PrerequisiteTemplate, len(before))
+	for _, p := range before {
+		beforeByKey[models.PrerequisiteKey(p.Name)] = p
+	}
+	var changes models.PrerequisiteChanges
+	kept := make(map[string]bool, len(after))
+	for _, p := range after {
+		key := models.PrerequisiteKey(p.Name)
+		kept[key] = true
+		old, ok := beforeByKey[key]
+		switch {
+		case !ok:
+			changes.Added = append(changes.Added, p)
+		case !reflect.DeepEqual(old, p):
+			changes.Edited = append(changes.Edited, p)
+		}
+	}
+	for _, p := range before {
+		if key := models.PrerequisiteKey(p.Name); !kept[key] {
+			kept[key] = true // a name stored twice is removed once
+			changes.Removed = append(changes.Removed, key)
+		}
+	}
+	return changes, nil
+}
+
+// decodePrerequisites decodes stored or normalized task templates into prerequisites, skipping
+// any without a name.
+func decodePrerequisites(raw json.RawMessage) ([]models.PrerequisiteTemplate, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var templates []taskTemplate
+	if err := json.Unmarshal(raw, &templates); err != nil {
+		return nil, err
+	}
+	prerequisites := make([]models.PrerequisiteTemplate, 0, len(templates))
+	for _, t := range templates {
+		if strings.TrimSpace(t.Name) == "" {
+			continue
+		}
+		prerequisites = append(prerequisites, t.prerequisite())
+	}
+	return prerequisites, nil
 }
 
 // validateOpenTerms checks a program update's open-term set and trims term names

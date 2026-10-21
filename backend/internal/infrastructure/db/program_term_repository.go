@@ -226,13 +226,21 @@ func (r *ProgramTermRepository) Update(ctx context.Context, id string, input mod
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if input.Status != nil && *input.Status == models.ProgramTermStatusOpen {
+		// Lock the program before the term, the order a program update takes them in; a term's
+		// program never changes, so it is read before either lock is held.
 		var programID string
-		if err := tx.QueryRow(ctx, `SELECT program_id FROM program_terms WHERE id = $1 FOR UPDATE`, id).Scan(&programID); errors.Is(err, pgx.ErrNoRows) {
+		if err := tx.QueryRow(ctx, `SELECT program_id FROM program_terms WHERE id = $1`, id).Scan(&programID); errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrProgramTermNotFound
 		} else if err != nil {
 			return nil, fmt.Errorf("load program for term update: %w", err)
-		} else if err := lockProgramAndCheckOpenTerms(ctx, tx, programID, id); err != nil {
+		}
+		if err := lockProgramAndCheckOpenTerms(ctx, tx, programID, id); err != nil {
 			return nil, err
+		}
+		if err := tx.QueryRow(ctx, `SELECT id FROM program_terms WHERE id = $1 FOR UPDATE`, id).Scan(new(string)); errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrProgramTermNotFound
+		} else if err != nil {
+			return nil, fmt.Errorf("lock program term for update: %w", err)
 		}
 	}
 

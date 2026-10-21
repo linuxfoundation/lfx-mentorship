@@ -1083,7 +1083,7 @@ The backend reads the project's slug, name, and logo from Project Service by `pr
 ```
 
 **Response** `201` → `<Program>`  
-**Errors** `400` (including a `projectId` with no Project Service project), `409` (duplicate name or slug), `503` (Project Service unavailable)
+**Errors** `400` (including a `projectId` with no Project Service project, or two required prerequisites with the same name ignoring case), `409` (duplicate name or slug), `503` (Project Service unavailable)
 
 ---
 
@@ -1100,7 +1100,7 @@ Update program fields. Status cannot be changed here: a body with `status` retur
   "name":        "Updated Name",
   "description": "Updated description", // at most 18,000 characters
   "repo_link":   "https://...",
-  "lfid":        "alice",
+  "lfid":        "alice", // the program's creator: set while empty; once set, the same LFID in any case is kept and another is a 400
   "skills":      ["Go", "Kubernetes"],
   "terms": [
     {
@@ -1152,15 +1152,33 @@ term close and reopen routes. Omit `terms` to leave them unchanged. The
 mentee application clones into `prerequisite` tasks. Each entry is
 `{name, description, submitFile, dueDate, custom}`: `name` is required and trimmed,
 `submitFile` is `"required"` or blank, and `dueDate` is a `YYYY-MM-DD` date or blank.
-Blank values are stored as `null`. An entry that leaves out `custom` keeps the flag of
-the current template with the same name (ignoring case), or `false` for a new one.
-Tasks already cloned for existing applications are not changed. Omit
-`task_templates` to leave them unchanged.
+Blank values are stored as `null`. Names must be unique, ignoring case. An entry that
+leaves out `custom` keeps the flag of the current template with the same name (ignoring
+case), or `false` for a new one. Omit `task_templates` to leave them unchanged.
+
+The edit also reaches the prerequisite tasks of the program's pending mentee
+applications, in the same transaction. Templates and tasks are matched by name
+(ignoring case), and only what the edit changed is applied: a removed template deletes
+its tasks, an edited template rewrites them, and an added template becomes an
+`incomplete` task on every pending application without one of that name. A `submitted`
+or `complete` task is never changed, and neither is a task a mentor, program admin, or
+service created for one applicant; only tasks cloned from the templates are, and a task of
+the same name already present, however it was created, keeps an added template from
+adding another. A removed template keeps any task the mentee has uploaded a
+file for; an edited template still updates it. Renaming a template
+removes the old name and adds the new one. If another save changed the templates after
+this request read them, the update fails with `409`. Saving unchanged
+templates changes no task, so a task a reviewer deleted is not added back. Program
+admins are emailed for each application a removal left with every prerequisite task
+done, or with none left, as they are when its last task is submitted. Accepted, declined, and withdrawn
+applications keep their tasks.
 
 **Response** `200` → `<Program>`  
-**Errors** `400` (including an `id` that is not an open term of the program, or a
-`project_uid` with no Project Service project), `404`, `409` (removing an open term
-that has applications), `503` (Project Service unavailable)
+**Errors** `400` (including an `id` that is not an open term of the program, a
+`project_uid` with no Project Service project, two `task_templates` with the same name
+ignoring case, or an `lfid` other than the one already set), `404`, `409` (removing an
+open term that has applications, or `task_templates` changed by another save after this
+request read them), `503` (Project Service unavailable)
 
 ---
 
@@ -1962,7 +1980,7 @@ Submit an application to a term.
 7. The program must be `published`.
 8. The caller holds no other mentee application `accepted` in a term that has not ended, and none `graduated` in any term.
 
-**After creation**: The program's `task_templates` JSONB array is cloned as individual `prerequisite` tasks linked to the new application.
+**After creation**: The program's `task_templates` JSONB array is cloned as individual `prerequisite` tasks linked to the new application. While the application is pending, later template edits reach those tasks too; see [`PATCH /v1/programs/{id}`](#patch-v1programsid-).
 
 **Reapplication** creates a new `pending` application under a new ID and keeps
 the withdrawn one, unchanged, as history — its reviewer note, evaluation, and
@@ -2041,7 +2059,7 @@ Read-only list of accepted/graduated mentees for a (typically closed) term.
 
 Tasks represent units of work assigned to a mentee. They are either:
 
-- **prerequisite** — cloned from `program.task_templates` when an application is created; must all reach `submitted` or `complete` before `tasks_submitted` is set.
+- **prerequisite** — cloned from `program.task_templates` when an application is created, and kept in step with template edits while it is pending; must all reach `submitted` or `complete` before `tasks_submitted` is set.
 - **non_prerequisite** — assigned manually by a program_admin or mentor to an accepted mentee.
 
 ### Task Object
@@ -2404,7 +2422,7 @@ incomplete ──► in_progress ──► submitted ──► complete
 | FR-029 | New applications start at status=pending | `ApplicationService.Create` |
 | FR-030 | No reapplication from declined; withdrawn OK while window open | `ApplicationService.Create` |
 | — | Mentee accepted/graduated on one program cannot apply to another | `ApplicationService.Create` |
-| FR-032 | Task templates cloned on application create | `ApplicationService.Create` |
+| FR-032 | Task templates cloned on application create, and template edits applied to pending applications | `ApplicationService.Create`, `ProgramService.Update` |
 | FR-033 | Task status transitions restricted by actor role | `TaskService.Update` |
 | FR-034 | tasks_submitted auto-set + admin notified when all prereqs done | `TaskService.Update` |
 | FR-035 | Task completion never changes application status | `TaskService.Update` |

@@ -575,6 +575,21 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 			userID     string
 			previous   models.ApplicationStatus
 		)
+		// Accepting a mentor adds a membership, whose insert key-share-locks the program, so lock
+		// the program before the term and application, the order a program update takes them in;
+		// the other order deadlocks with a prerequisite change. An application's term, program and
+		// role never change, so they are read before any lock is held.
+		var programID string
+		if err := tx.QueryRow(ctx, `SELECT pt.program_id, a.role FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE a.id = $1`, id).Scan(&programID, &role); errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrApplicationNotFound
+		} else if err != nil {
+			return nil, fmt.Errorf("resolve application program for acceptance: %w", err)
+		}
+		if role == models.ApplicationRoleMentor {
+			if _, err := tx.Exec(ctx, `SELECT 1 FROM programs WHERE id = $1 FOR KEY SHARE`, programID); err != nil {
+				return nil, fmt.Errorf("lock program for mentor acceptance: %w", err)
+			}
+		}
 		if err := tx.QueryRow(ctx, `SELECT pt.status, a.role, a.user_id, a.status FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE a.id = $1 FOR UPDATE OF pt, a`, id).Scan(&termStatus, &role, &userID, &previous); errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrApplicationNotFound
 		} else if err != nil {
@@ -664,9 +679,7 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 }
 
 // MarkTasksSubmitted sets tasks_submitted once every prerequisite task is submitted or complete,
-// and reports whether this call flipped it. The application row is locked, then the prerequisite
-// tasks, so a concurrent flip or task reset is decided against one consistent state. The flag
-// gates no access, so only the search documents are refreshed.
+// and reports whether this call flipped it.
 func (r *ApplicationRepository) MarkTasksSubmitted(ctx context.Context, id string) (bool, error) {
 	ctx, span := applicationTracer.Start(ctx, "db.applications.MarkTasksSubmitted")
 	defer span.End()
@@ -677,11 +690,38 @@ func (r *ApplicationRepository) MarkTasksSubmitted(ctx context.Context, id strin
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	flipped, err := markTasksSubmitted(ctx, tx, id, false)
+	if err != nil {
+		span.RecordError(err)
+		return false, err
+	}
+	if flipped {
+		var programID string
+		if err := tx.QueryRow(ctx, `
+			SELECT pt.program_id FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id
+			WHERE a.id = $1`, id).Scan(&programID); err != nil {
+			return false, fmt.Errorf("resolve application program for index refresh: %w", err)
+		}
+		if err := enqueueProgramIndexByID(ctx, tx, programID); err != nil {
+			return false, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit mark tasks submitted transaction: %w", err)
+	}
+	return flipped, nil
+}
+
+// markTasksSubmitted is MarkTasksSubmitted inside the caller's transaction. The application row
+// is locked, then the prerequisite tasks, so a concurrent flip or task reset is decided against
+// one consistent state. The flag gates no access, so only the application's search document is
+// refreshed here; refreshing its program's is left to the caller, so a bulk caller does it once.
+// An application with no prerequisite task is complete only when noneIsDone is set.
+func markTasksSubmitted(ctx context.Context, tx pgx.Tx, id string, noneIsDone bool) (bool, error) {
 	var submitted bool
 	if err := tx.QueryRow(ctx, `SELECT tasks_submitted FROM applications WHERE id = $1 FOR UPDATE`, id).Scan(&submitted); errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	} else if err != nil {
-		span.RecordError(err)
 		return false, fmt.Errorf("lock application for tasks submitted: %w", err)
 	}
 	if submitted {
@@ -692,30 +732,18 @@ func (r *ApplicationRepository) MarkTasksSubmitted(ctx context.Context, id strin
 		SELECT COUNT(*), COUNT(*) FILTER (WHERE status IN ('submitted', 'complete'))
 		FROM (SELECT status FROM tasks WHERE application_id = $1 AND category = 'prerequisite' FOR SHARE) prerequisites`,
 		id).Scan(&total, &done); err != nil {
-		span.RecordError(err)
 		return false, fmt.Errorf("count prerequisite tasks: %w", err)
 	}
-	if total == 0 || done < total {
+	if (total == 0 && !noneIsDone) || done < total {
 		return false, nil
 	}
 
 	a, err := scanApplication(tx.QueryRow(ctx, `UPDATE applications SET tasks_submitted = true WHERE id = $1 RETURNING `+applicationCols, id))
 	if err != nil {
-		span.RecordError(err)
 		return false, fmt.Errorf("mark tasks submitted: %w", err)
 	}
 	if err := enqueueApplicationIndex(ctx, tx, a, "updated"); err != nil {
 		return false, err
-	}
-	var programID string
-	if err := tx.QueryRow(ctx, `SELECT program_id FROM program_terms WHERE id = $1`, a.ProgramTermID).Scan(&programID); err != nil {
-		return false, fmt.Errorf("resolve application program for index refresh: %w", err)
-	}
-	if err := enqueueProgramIndexByID(ctx, tx, programID); err != nil {
-		return false, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return false, fmt.Errorf("commit mark tasks submitted transaction: %w", err)
 	}
 	return true, nil
 }
