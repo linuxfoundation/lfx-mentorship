@@ -478,3 +478,46 @@ func TestProgramRepositoryIntegration_UpdateKeepsLFIDOnceSet(t *testing.T) {
 		t.Errorf("tasks = %v; want the legacy clone removed, still recognized by the unchanged lfid", keys(got))
 	}
 }
+
+// A template save holds the program before a prerequisite change key-share-locks its terms.
+// Accepting a mentor, whose membership insert key-share-locks the program, must take the program
+// before the term too, or the two can deadlock.
+func TestApplicationRepositoryIntegration_MentorAcceptanceLocksProgramBeforeTerm(t *testing.T) {
+	pool := integrationPool(t)
+	f := seedIntegrationFixture(t, pool)
+	s := &syncSeeder{t: t, pool: pool}
+	mentor := s.apply(f.OpenTerm, "mentor", "pending")
+
+	ctx := context.Background()
+	saving, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = saving.Rollback(ctx) }()
+	if _, err := saving.Exec(ctx, `SELECT 1 FROM programs WHERE id = $1 FOR UPDATE`, f.ProgramID); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+		accepted := models.ApplicationStatusAccepted
+		_, err := NewApplicationRepository(pool).Update(ctx, mentor, models.ApplicationUpdateInput{Status: &accepted})
+		done <- err
+	}()
+	// Let the acceptance reach the program lock the saving transaction holds.
+	time.Sleep(500 * time.Millisecond)
+
+	if _, err := saving.Exec(ctx, `SET LOCAL lock_timeout = '5s'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := saving.Exec(ctx, `SELECT 1 FROM program_terms WHERE program_id = $1 FOR KEY SHARE`, f.ProgramID); err != nil {
+		t.Fatalf("saving transaction could not lock the program's terms: %v", err)
+	}
+	if err := saving.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("accept mentor: %v", err)
+	}
+}

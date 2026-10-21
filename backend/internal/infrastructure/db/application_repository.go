@@ -575,6 +575,21 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 			userID     string
 			previous   models.ApplicationStatus
 		)
+		// Accepting a mentor adds a membership, whose insert key-share-locks the program, so lock
+		// the program before the term and application, the order a program update takes them in;
+		// the other order deadlocks with a prerequisite change. An application's term, program and
+		// role never change, so they are read before any lock is held.
+		var programID string
+		if err := tx.QueryRow(ctx, `SELECT pt.program_id, a.role FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE a.id = $1`, id).Scan(&programID, &role); errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrApplicationNotFound
+		} else if err != nil {
+			return nil, fmt.Errorf("resolve application program for acceptance: %w", err)
+		}
+		if role == models.ApplicationRoleMentor {
+			if _, err := tx.Exec(ctx, `SELECT 1 FROM programs WHERE id = $1 FOR KEY SHARE`, programID); err != nil {
+				return nil, fmt.Errorf("lock program for mentor acceptance: %w", err)
+			}
+		}
 		if err := tx.QueryRow(ctx, `SELECT pt.status, a.role, a.user_id, a.status FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE a.id = $1 FOR UPDATE OF pt, a`, id).Scan(&termStatus, &role, &userID, &previous); errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrApplicationNotFound
 		} else if err != nil {
