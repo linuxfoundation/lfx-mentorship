@@ -24,6 +24,8 @@ type programMemberService interface {
 	ListMine(ctx context.Context, userID string, filter models.ProgramMemberFilter) ([]*models.ProgramMembership, *models.PaginationMeta, error)
 	RequestMentorship(ctx context.Context, programID string, user models.UserPrincipal) (*models.ProgramMember, error)
 	WithdrawMine(ctx context.Context, id, userID string) error
+	AcceptMineInvite(ctx context.Context, id, userID string) error
+	DeclineMineInvite(ctx context.Context, id, userID string) error
 }
 
 func (h *ProgramMemberHandler) ListMentorManagement(w http.ResponseWriter, r *http.Request) {
@@ -235,6 +237,30 @@ func (h *ProgramMemberHandler) WithdrawMine(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if err := h.svc.WithdrawMine(r.Context(), chi.URLParam(r, "id"), principal.UserID); err != nil {
+		Error(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// AcceptMineInvite handles POST /v1/me/program-memberships/{id}/accept.
+func (h *ProgramMemberHandler) AcceptMineInvite(w http.ResponseWriter, r *http.Request) {
+	h.respondMine(w, r, h.svc.AcceptMineInvite)
+}
+
+// DeclineMineInvite handles POST /v1/me/program-memberships/{id}/decline.
+func (h *ProgramMemberHandler) DeclineMineInvite(w http.ResponseWriter, r *http.Request) {
+	h.respondMine(w, r, h.svc.DeclineMineInvite)
+}
+
+// respondMine runs a self-service action on the caller's membership {id} and answers 204.
+func (h *ProgramMemberHandler) respondMine(w http.ResponseWriter, r *http.Request, action func(ctx context.Context, id, userID string) error) {
+	principal := auth.PrincipalFromContext(r.Context())
+	if principal == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	if err := action(r.Context(), chi.URLParam(r, "id"), principal.UserID); err != nil {
 		Error(w, err)
 		return
 	}
