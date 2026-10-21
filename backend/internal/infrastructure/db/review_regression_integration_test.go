@@ -639,6 +639,32 @@ func waitForLockWait(t *testing.T, pool *pgxpool.Pool, done <-chan error) {
 	t.Fatal("timed out waiting for the operation to block on a lock")
 }
 
+// A transition is authorized against a status read before the write, so a review that lands in
+// between must not be overwritten: the assignee reopening a task the reviewer just completed fails.
+func TestTaskRepositoryIntegration_UpdateRejectsStaleSourceStatus(t *testing.T) {
+	pool, _ := fileIntegrationPool(t)
+	ctx := context.Background()
+	tasks := NewTaskRepository(pool)
+	if _, err := pool.Exec(ctx, `UPDATE tasks SET status = 'complete' WHERE id = $1`, fileTestTask); err != nil {
+		t.Fatal(err)
+	}
+
+	authorized, reopen := models.TaskStatusSubmitted, models.TaskStatusInProgress
+	if _, err := tasks.Update(ctx, fileTestTask, models.TaskUpdateInput{Status: &reopen, FromStatus: &authorized}); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("stale reopen err = %v; want ErrConflict", err)
+	}
+	var status models.TaskStatus
+	if err := pool.QueryRow(ctx, `SELECT status FROM tasks WHERE id = $1`, fileTestTask).Scan(&status); err != nil || status != models.TaskStatusComplete {
+		t.Fatalf("status = %q (err %v); the completed review must stand", status, err)
+	}
+
+	authorized = models.TaskStatusComplete
+	got, err := tasks.Update(ctx, fileTestTask, models.TaskUpdateInput{Status: &reopen, FromStatus: &authorized})
+	if err != nil || got.Status != models.TaskStatusInProgress {
+		t.Fatalf("current-source update = %+v, %v; want in_progress", got, err)
+	}
+}
+
 // A withdrawn application is kept as history when its applicant reapplies, so its tasks and their
 // files cannot change. The check reads the application itself, not the task's denormalised status.
 func TestTaskRepositoryIntegration_WithdrawnApplicationTasksAreLocked(t *testing.T) {

@@ -228,15 +228,17 @@ func (r *TaskRepository) Update(ctx context.Context, id string, input models.Tas
 		  AND NOT (COALESCE($5, CASE WHEN $9::text IS NOT NULL THEN status END, '') = $12
 		           AND COALESCE($9, submit_file, '') <> ''
 		           AND COALESCE($10, file, '') = '')
+		  -- A transition authorized from one status must not land on a task that has since left it.
+		  AND ($13::text IS NULL OR status = $13)
 		RETURNING ` + taskCols
 
 	t, err := scanTask(tx.QueryRow(ctx, q,
 		id, input.Name, input.Description, input.Category, input.Status,
 		input.ApplicationStatus, input.ProgramTermStatus, input.Custom,
-		input.SubmitFile, input.File, input.DueDate, models.TaskStatusSubmitted,
+		input.SubmitFile, input.File, input.DueDate, models.TaskStatusSubmitted, input.FromStatus,
 	))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, missOrRequiredFile(ctx, tx, id)
+		return nil, missedUpdate(ctx, tx, id, input.FromStatus)
 	}
 	if err != nil {
 		span.RecordError(err)
@@ -320,15 +322,18 @@ func lockTaskApplication(ctx context.Context, tx pgx.Tx, taskID string) error {
 	return nil
 }
 
-// missOrRequiredFile resolves an update that matched no row into not-found or a submitted task
-// left without its required file.
-func missOrRequiredFile(ctx context.Context, tx pgx.Tx, id string) error {
-	var exists bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM tasks WHERE id = $1)`, id).Scan(&exists); err != nil {
-		return fmt.Errorf("check task after missed update: %w", err)
-	}
-	if !exists {
+// missedUpdate resolves an update that matched no row into not-found, a status that changed
+// since the transition was authorized, or a submitted task left without its required file.
+func missedUpdate(ctx context.Context, tx pgx.Tx, id string, from *models.TaskStatus) error {
+	var status models.TaskStatus
+	err := tx.QueryRow(ctx, `SELECT status FROM tasks WHERE id = $1`, id).Scan(&status)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
 		return domain.ErrTaskNotFound
+	case err != nil:
+		return fmt.Errorf("check task after missed update: %w", err)
+	case from != nil && status != *from:
+		return fmt.Errorf("%w: task status changed from %q to %q", domain.ErrConflict, *from, status)
 	}
 	return fmt.Errorf("%w: a submitted task that requires a file must have one uploaded", domain.ErrInvalidInput)
 }

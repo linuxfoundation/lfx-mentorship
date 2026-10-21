@@ -174,7 +174,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	rosterSvc := service.NewRosterService(rosterRepo)
 	fundingStatsSvc := service.NewFundingStatsService(programRepo)
 	objectDeletions := db.NewObjectDeletionRepository(pool)
-	fileSvc := service.NewFileService(db.NewFileRepository(pool), objectDeletions, programRepo, taskSvc, logoBucket, attachments)
+	fileSvc := service.NewFileService(db.NewFileRepository(pool), objectDeletions, programRepo, taskSvc, taskSvc, logoBucket, attachments)
 
 	relayCtx, relayCancel := context.WithCancel(ctx)
 	if logoStore != nil || attachmentStore != nil {

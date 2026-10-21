@@ -213,7 +213,8 @@ func validateTaskUpdate(input models.TaskUpdateInput) error {
 
 // Update applies the assignee's submission or a reviewer's review to a task.
 // Permission rules:
-//   - Only the task's assignee may mark it in_progress/submitted, moving forward one step.
+//   - Only the task's assignee may mark it in_progress/submitted, moving forward one step or
+//     taking a submitted task back to in_progress.
 //   - Only an active reviewer who is not the assignee may mark it complete, reset it to
 //     incomplete, or set its denormalised application and program term statuses.
 //   - When every prerequisite task is submitted or complete, the application is flagged
@@ -231,10 +232,12 @@ func (s *TaskService) Update(ctx context.Context, id string, input models.TaskUp
 	}
 
 	if input.ActorID != "" {
-		if err := s.authorizeUpdate(ctx, id, input); err != nil {
+		from, err := s.authorizeUpdate(ctx, id, input)
+		if err != nil {
 			span.RecordError(err)
 			return nil, err
 		}
+		input.FromStatus = from
 	}
 
 	t, err := s.repo.Update(ctx, id, input)
@@ -252,25 +255,27 @@ func (s *TaskService) Update(ctx context.Context, id string, input models.TaskUp
 }
 
 // authorizeUpdate enforces FR-033 for Update: the status transition guard and who may make it.
-func (s *TaskService) authorizeUpdate(ctx context.Context, id string, input models.TaskUpdateInput) error {
+// It returns the status the transition was authorized from, which the write must still find, or
+// nil when the request leaves status alone.
+func (s *TaskService) authorizeUpdate(ctx context.Context, id string, input models.TaskUpdateInput) (*models.TaskStatus, error) {
 	current, err := s.repo.GetByID(ctx, id)
 	if err != nil {
-		return fmt.Errorf("get task for permission check: %w", err)
+		return nil, fmt.Errorf("get task for permission check: %w", err)
 	}
 	// The denormalised application and program term statuses are reviewer-owned whatever status
 	// the request carries, and a review that leaves status alone can only be setting them.
 	reviewerOnly := input.Status == nil || input.ApplicationStatus != nil || input.ProgramTermStatus != nil
 	if reviewerOnly {
 		if err := s.assertNonAssigneeReviewer(ctx, current, input.ActorID); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if input.Status == nil {
-		return nil
+		return nil, nil
 	}
 	next := *input.Status
 	if next == models.TaskStatusSubmitted && current.SubmitFile != nil && *current.SubmitFile != "" && (current.File == nil || *current.File == "") {
-		return fmt.Errorf("%w: upload the required file before submitting", domain.ErrInvalidInput)
+		return nil, fmt.Errorf("%w: upload the required file before submitting", domain.ErrInvalidInput)
 	}
 
 	// State transition guard: only incomplete (reset) is unrestricted direction-wise.
@@ -282,25 +287,28 @@ func (s *TaskService) authorizeUpdate(ctx context.Context, id string, input mode
 		case models.TaskStatusInProgress:
 			validTransition = next == models.TaskStatusSubmitted
 		case models.TaskStatusSubmitted:
-			validTransition = next == models.TaskStatusComplete
+			validTransition = next == models.TaskStatusComplete || next == models.TaskStatusInProgress
 		}
 		if !validTransition {
-			return fmt.Errorf("%w: cannot transition task from %q to %q", domain.ErrInvalidStateTransition, current.Status, next)
+			return nil, fmt.Errorf("%w: cannot transition task from %q to %q", domain.ErrInvalidStateTransition, current.Status, next)
 		}
 	}
 
-	// Actor permission: mentee (assignee) may only advance; reviewer may complete or reset.
+	// Actor permission: mentee (assignee) moves between in_progress and submitted; reviewer may
+	// complete or reset.
 	switch next {
 	case models.TaskStatusInProgress, models.TaskStatusSubmitted:
 		if current.AssigneeID != input.ActorID {
-			return fmt.Errorf("%w: only the task assignee may mark it %s", domain.ErrForbidden, next)
+			return nil, fmt.Errorf("%w: only the task assignee may mark it %s", domain.ErrForbidden, next)
 		}
 	case models.TaskStatusComplete, models.TaskStatusIncomplete:
 		if !reviewerOnly {
-			return s.assertNonAssigneeReviewer(ctx, current, input.ActorID)
+			if err := s.assertNonAssigneeReviewer(ctx, current, input.ActorID); err != nil {
+				return nil, err
+			}
 		}
 	}
-	return nil
+	return &current.Status, nil
 }
 
 // Edit applies a reviewer's full edit of a task: any field, and any status from any status, with
@@ -345,6 +353,14 @@ func (s *TaskService) Edit(ctx context.Context, id string, input models.TaskUpda
 		s.markTasksSubmitted(ctx, *t.ApplicationID)
 	}
 	return t, nil
+}
+
+// TaskSubmitted runs the tasks_submitted side effect for a task submitted outside Update,
+// such as by its file upload.
+func (s *TaskService) TaskSubmitted(ctx context.Context, t *models.Task) {
+	if t.ApplicationID != nil {
+		s.markTasksSubmitted(ctx, *t.ApplicationID)
+	}
 }
 
 // markTasksSubmitted flags the application once every prerequisite task is submitted or

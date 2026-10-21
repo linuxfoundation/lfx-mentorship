@@ -121,7 +121,15 @@ func TestE2EMenteeJourney(t *testing.T) {
 		// The task requires a file, so it cannot be submitted without one.
 		mentee.call(t, http.MethodPatch, "/tasks/"+prereq.ID+"/submission", map[string]any{"status": "submitted"}).expect(http.StatusBadRequest)
 		mentor.call(t, http.MethodPatch, "/tasks/"+prereq.ID+"/submission", map[string]any{"status": "submitted"}).expect(http.StatusBadRequest)
+		// Uploading the file submits the task.
 		uploadTaskFile(t, mentee, prereq.ID, "intro.pdf", pdfBytes()).expect(http.StatusCreated)
+		mentee.mustJSON(t, http.MethodGet, "/tasks/"+prereq.ID, nil, http.StatusOK, &prereq)
+		if prereq.Status != "submitted" {
+			t.Fatalf("after upload: %+v", prereq)
+		}
+		// Only the assignee may take a submitted task back to in_progress and submit it again.
+		mentor.call(t, http.MethodPatch, "/tasks/"+prereq.ID+"/submission", map[string]any{"status": "in_progress"}).expect(http.StatusForbidden)
+		mentee.mustJSON(t, http.MethodPatch, "/tasks/"+prereq.ID+"/submission", map[string]any{"status": "in_progress"}, http.StatusOK, &prereq)
 		mentor.call(t, http.MethodPatch, "/tasks/"+prereq.ID+"/submission", map[string]any{"status": "submitted"}).expect(http.StatusForbidden)
 		mentee.mustJSON(t, http.MethodPatch, "/tasks/"+prereq.ID+"/submission", map[string]any{"status": "submitted"}, http.StatusOK, &prereq)
 
