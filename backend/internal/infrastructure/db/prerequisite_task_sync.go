@@ -15,9 +15,9 @@ import (
 
 // applyPrerequisiteChanges applies an edit to the program's prerequisites to the prerequisite tasks
 // of its pending mentee applications, inside the caller's transaction, and returns the
-// applications it flagged tasks_submitted. Tasks are matched to prerequisites by PrerequisiteKey;
-// only tasks cloned from a template are, which have no owner or are owned by their assignee, so a
-// task a reviewer created for one applicant is never changed.
+// applications it flagged tasks_submitted. Tasks are matched to prerequisites by PrerequisiteKey.
+// Only tasks cloned from a template are changed (see clonedFromTemplate), so a task a reviewer or
+// service created for one applicant never is, though its name still counts as present.
 // Submitted and complete tasks are kept as they are. An unsubmitted task takes its edited
 // prerequisite's content, and is deleted with its removed prerequisite unless the mentee has
 // uploaded a file for it. An added prerequisite becomes an incomplete task on every application
@@ -30,6 +30,10 @@ func applyPrerequisiteChanges(ctx context.Context, tx pgx.Tx, programID string, 
 	// key-share-locks its term; the other order lets the two deadlock.
 	if _, err := tx.Exec(ctx, `SELECT 1 FROM program_terms WHERE program_id = $1 FOR KEY SHARE`, programID); err != nil {
 		return nil, fmt.Errorf("lock program terms for prerequisite changes: %w", err)
+	}
+	var legacyCreator *string
+	if err := tx.QueryRow(ctx, `SELECT lfid FROM programs WHERE id = $1`, programID).Scan(&legacyCreator); err != nil {
+		return nil, fmt.Errorf("load program creator for prerequisite changes: %w", err)
 	}
 	// Locking the applications first orders this write against task writes, which share-lock them.
 	rows, err := tx.Query(ctx, `
@@ -56,7 +60,6 @@ func applyPrerequisiteChanges(ctx context.Context, tx pgx.Tx, programID string, 
 	rows, err = tx.Query(ctx, `
 		SELECT `+taskCols+` FROM tasks
 		WHERE application_id = ANY($1) AND category = $2
-		  AND (owner_id IS NULL OR owner_id = assignee_id)
 		FOR UPDATE`, ids, models.TaskCategoryPrerequisite)
 	if err != nil {
 		return nil, fmt.Errorf("lock prerequisite tasks for changes: %w", err)
@@ -90,7 +93,7 @@ func applyPrerequisiteChanges(ctx context.Context, tx pgx.Tx, programID string, 
 				key = models.PrerequisiteKey(*t.Name)
 			}
 			present[key] = true
-			if t.Status == models.TaskStatusSubmitted || t.Status == models.TaskStatusComplete {
+			if !clonedFromTemplate(t, legacyCreator) || t.Status == models.TaskStatusSubmitted || t.Status == models.TaskStatusComplete {
 				continue
 			}
 			if p, ok := edited[key]; ok {
@@ -128,6 +131,21 @@ func applyPrerequisiteChanges(ctx context.Context, tx pgx.Tx, programID string, 
 		}
 	}
 	return flagged, nil
+}
+
+// clonedFromTemplate reports whether a prerequisite task was cloned from its program's templates.
+// A clone made here has no owner and was created by its applicant (models.PrerequisiteTemplate.NewTask),
+// which no task route can produce: a route records its caller as creator, and as owner unless the
+// caller is a service. Legacy cloned templates as the program's creator, whose LFID it recorded as
+// created_by and the program keeps as lfid; tasks created through routes record a user ID instead.
+func clonedFromTemplate(t *models.Task, legacyCreator *string) bool {
+	if t.CreatedBy == nil {
+		return false
+	}
+	if t.OwnerID == nil && *t.CreatedBy == t.AssigneeID {
+		return true
+	}
+	return legacyCreator != nil && *legacyCreator != "" && *t.CreatedBy == *legacyCreator
 }
 
 // updatePrerequisiteTask writes an edited prerequisite's content to its task, when any of it differs.

@@ -47,18 +47,19 @@ func (s *syncSeeder) task(appID, name, category, status string) string {
 	s.seq++
 	id := fmt.Sprintf("00000000-0000-0000-0003-%012d", s.seq)
 	if _, err := s.pool.Exec(context.Background(), `
-		INSERT INTO tasks (id, application_id, program_term_id, assignee_id, name, description, category, status, due_date)
-		SELECT $1, a.id, a.program_term_id, a.user_id, $2, 'Old description', $3, $4, '2020-01-01' FROM applications a WHERE a.id = $5`,
+		INSERT INTO tasks (id, application_id, program_term_id, assignee_id, name, description, category, status, due_date, created_by)
+		SELECT $1, a.id, a.program_term_id, a.user_id, $2, 'Old description', $3, $4, '2020-01-01', a.user_id::text FROM applications a WHERE a.id = $5`,
 		id, name, category, status, appID); err != nil {
 		s.t.Fatal(err)
 	}
 	return id
 }
 
-// own makes a task owned by userID, as one a reviewer created is.
-func (s *syncSeeder) own(taskID, userID string) {
+// createdBy records who created a task, and its owner; a seeded task is otherwise a clone made
+// when its applicant applied.
+func (s *syncSeeder) createdBy(taskID, creator string, ownerID *string) {
 	s.t.Helper()
-	if _, err := s.pool.Exec(context.Background(), `UPDATE tasks SET owner_id = $2 WHERE id = $1`, taskID, userID); err != nil {
+	if _, err := s.pool.Exec(context.Background(), `UPDATE tasks SET created_by = $2, owner_id = $3 WHERE id = $1`, taskID, creator, ownerID); err != nil {
 		s.t.Fatal(err)
 	}
 }
@@ -117,12 +118,16 @@ func TestProgramRepositoryIntegration_UpdateAppliesPrerequisiteChanges(t *testin
 		t.Fatal(err)
 	}
 	s.task(pending, "Portfolio", "prerequisite", "incomplete")
-	// A task a reviewer created is never synced; a legacy clone, owned by its assignee, is.
-	s.own(s.task(pending, "Brief", "prerequisite", "incomplete"), f.UserID)
-	legacy := s.task(pending, "Legacy", "prerequisite", "incomplete")
-	if _, err := pool.Exec(context.Background(), `UPDATE tasks SET owner_id = assignee_id WHERE id = $1`, legacy); err != nil {
+	// Tasks a reviewer or a service created are never changed, and their names still count as
+	// present. A legacy clone, created as the program's creator, is changed.
+	reviewer := f.UserID
+	s.createdBy(s.task(pending, "Brief", "prerequisite", "incomplete"), reviewer, &reviewer)
+	s.createdBy(s.task(pending, "Bot task", "prerequisite", "incomplete"), "00000000-0000-0000-0000-0000000000aa", nil)
+	s.createdBy(s.task(pending, "Mentor task", "prerequisite", "complete"), reviewer, &reviewer)
+	if _, err := pool.Exec(context.Background(), `UPDATE programs SET lfid = 'legacy-creator' WHERE id = $1`, f.ProgramID); err != nil {
 		t.Fatal(err)
 	}
+	s.createdBy(s.task(pending, "Legacy", "prerequisite", "incomplete"), "legacy-creator", &reviewer)
 	// An edit reaches a task the mentee uploaded a file for; only removal keeps it.
 	cv := s.task(pending, "CV", "prerequisite", "in_progress")
 	if _, err := pool.Exec(context.Background(), `UPDATE tasks SET file = 'attachments/cv.pdf' WHERE id = $1`, cv); err != nil {
@@ -153,8 +158,9 @@ func TestProgramRepositoryIntegration_UpdateAppliesPrerequisiteChanges(t *testin
 		Edited: []models.PrerequisiteTemplate{
 			{Name: "resume", Description: &description, SubmitFile: &required, DueDate: &due},
 			{Name: "CV", DueDate: &due},
+			{Name: "Bot task", DueDate: &due},
 		},
-		Added: []models.PrerequisiteTemplate{{Name: "Cover letter", Custom: true}},
+		Added: []models.PrerequisiteTemplate{{Name: "Cover letter", Custom: true}, {Name: "mentor task"}},
 	})
 
 	got := syncedTasks(t, pool, pending)
@@ -164,6 +170,8 @@ func TestProgramRepositoryIntegration_UpdateAppliesPrerequisiteChanges(t *testin
 		"Notes":        "in_progress", // so is an uploaded file
 		"Portfolio":    "incomplete",  // a prerequisite the edit did not touch
 		"Brief":        "incomplete",  // a reviewer created it
+		"Bot task":     "incomplete",  // a service created it
+		"Mentor task":  "complete",    // not added again under the same name
 		"CV":           "in_progress",
 		"Intro call":   "incomplete",
 		"Cover letter": "incomplete",
@@ -185,7 +193,7 @@ func TestProgramRepositoryIntegration_UpdateAppliesPrerequisiteChanges(t *testin
 	if !got["Cover letter"].Custom {
 		t.Errorf("added task lost its custom flag: %+v", got["Cover letter"])
 	}
-	for _, name := range []string{"Video", "Portfolio", "Intro call"} {
+	for _, name := range []string{"Video", "Portfolio", "Intro call", "Brief", "Bot task", "Mentor task"} {
 		if deref(got[name].Description) != "Old description" {
 			t.Errorf("task %q was changed: %+v", name, got[name])
 		}
@@ -356,5 +364,45 @@ func TestProgramRepositoryIntegration_UpdateLocksTermsBeforeApplications(t *test
 	}
 	if err := <-done; err != nil {
 		t.Fatalf("prerequisite change: %v", err)
+	}
+}
+
+// A program update holds the program before a prerequisite change key-share-locks its terms.
+// Reopening a term must take the program first too, or the two can deadlock.
+func TestProgramTermRepositoryIntegration_ReopenLocksProgramBeforeTerm(t *testing.T) {
+	pool := integrationPool(t)
+	f := seedIntegrationFixture(t, pool)
+
+	ctx := context.Background()
+	editing, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = editing.Rollback(ctx) }()
+	if _, err := editing.Exec(ctx, `SELECT 1 FROM programs WHERE id = $1 FOR UPDATE`, f.ProgramID); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+		open := models.ProgramTermStatusOpen
+		_, err := NewProgramTermRepository(pool).Update(ctx, f.ClosedTerm, models.ProgramTermUpdateInput{Status: &open})
+		done <- err
+	}()
+	// Let the reopen reach the program lock the editing transaction holds.
+	time.Sleep(500 * time.Millisecond)
+
+	if _, err := editing.Exec(ctx, `SET LOCAL lock_timeout = '5s'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := editing.Exec(ctx, `SELECT 1 FROM program_terms WHERE program_id = $1 FOR KEY SHARE`, f.ProgramID); err != nil {
+		t.Fatalf("editing transaction could not lock the program's terms: %v", err)
+	}
+	if err := editing.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("reopen term: %v", err)
 	}
 }
