@@ -39,18 +39,18 @@ Related: [08 runbook](./08-prod-migration-runbook.md) holds the commands; this p
 3. **Restore program approvers:** the wipe removes them. Approvers who are not legacy users sign in to Self Serve again, then re-sync the `lfx-mentorship-backend` app in ArgoCD (runbook Phase 4, step 8).
 4. **Verify:** runbook Phase 5. Both verifiers must pass, and the outboxes must drain, which covers the approvers too.
 5. **Go/no-go:** runbook Phase 6, step 1.
-6. **Lock the legacy uploads bucket:** runbook Phase 6, step 2.
-7. **Email to everyone:** remove `EMAIL_ALLOWED_RECIPIENTS` and wait for the rollout, runbook Phase 6, step 3.
-8. **Self Serve to everyone:** turn `mentorship-enabled` on for all users.
-9. **Redirect the legacy host** (DevOps), re-run the legacy-link test, then announce "we're live" with the new URL.
+6. **Email to everyone:** remove `EMAIL_ALLOWED_RECIPIENTS` and wait for the rollout, runbook Phase 6, step 3.
+7. **Self Serve to everyone:** turn `mentorship-enabled` on for all users.
+8. **Redirect the legacy host** (DevOps), re-run the legacy-link test, then announce "we're live" with the new URL.
 
-**Rollback:** clean until step 8, the first step that lets everyone write (redeploy both legacy repos with the maintenance flag off, restore the allowlist, lift the bucket block). From step 8 on, fix forward.
+**Rollback:** clean until step 7, the first step that lets everyone write (redeploy both legacy repos with the maintenance flag off, restore the allowlist). From step 7 on, fix forward.
 
 ## After release
 
 - [ ] Keep legacy in maintenance mode until decommission. It also keeps the legacy reminder cron off, so mentees don't get two reminders now that the new reminder CronJob runs in prod ([lfx-v2-argocd#1846](https://github.com/linuxfoundation/lfx-v2-argocd/pull/1846))
 - [ ] Revert the FGA relay throttle once the import's FGA outbox has drained: in `values/prod/lfx-mentorship-backend.yaml`, remove `FGA_RELAY_BATCH_SIZE: "10"` (default 50) and `autoscaling.maxReplicas: 2` (default 10), set in [lfx-v2-argocd#1824](https://github.com/linuxfoundation/lfx-v2-argocd/pull/1824). It keeps the import's ~330k markers at 20 messages/s so the shared fga-sync consumer doesn't back up, but it also caps the API at 2 pods, which live traffic may need (Eng)
-- [ ] Snowflake reads Postgres: Fivetran connector and dbt models ([lfx-self-serve#1532](https://github.com/linuxfoundation/lfx-self-serve/issues/1532), [#1537](https://github.com/linuxfoundation/lfx-self-serve/issues/1537)), within 2–3 days; check Crowdfunding's sync creates no duplicate initiatives
+- [ ] Day after: lock the legacy uploads bucket, S3 Block Public Access on `jobspring-prod-uploads` in the legacy account (runbook Phase 6, step 2). Nothing writes to it once legacy is in maintenance mode, and it has been public for years, so it can wait (DevOps)
+- [ ] Day after: Fivetran connector from the Mentorship Postgres database to Snowflake ([lfx-self-serve#1532](https://github.com/linuxfoundation/lfx-self-serve/issues/1532), DevOps), then the dbt models read it ([lfx-self-serve#1537](https://github.com/linuxfoundation/lfx-self-serve/issues/1537), Eng); check Crowdfunding's sync creates no duplicate initiatives
 - [ ] Links we control point at the new host: LFX header, Crowdfunding footer and tools menu; they redirect until then
 - [ ] Legacy decommission per [03](./03-migration-plan.md) Phase 5
 - [ ] Follow up with CNCF on automating program creation
