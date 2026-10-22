@@ -1,0 +1,204 @@
+<!-- Copyright The Linux Foundation and each contributor to LFX. -->
+<!-- SPDX-License-Identifier: MIT -->
+
+# LFX Mentorship: E2E Test Plan and Results
+
+End-to-end test cases for the new Mentorship platform (the public site plus the Mentorship module in LFX Self Serve), with the results of the last run.
+
+| | DEV | PROD |
+|---|---|---|
+| Public site | https://mentorship.dev.lfx.dev | https://mentorship.linuxfoundation.org |
+| Self Serve | https://app.dev.lfx.dev/mentorship | https://app.lfx.dev/mentorship |
+
+**Last run:** 2026-10-22, driven through Playwright MCP.
+
+- **DEV:** full program lifecycle.
+- **PROD:** public site and logged-out checks only. The Self Serve part is blocked because the `mentorship-enabled` feature flag is on for one test user only (see [PROD](#9-prod)).
+
+---
+
+## How to run
+
+1. Start Playwright MCP with `--isolated`, so that sessions don't share a browser profile.
+2. Give each test user their own browser context: `browser.newContext()` in `browser_run_code_unsafe`. A banner injected into each context names the user to sign in as. Sign in by hand; never put credentials in the chat or in this file.
+3. Save each signed-in context with `context.storageState()` to a scratch directory, and keep only LFX and Auth0 cookies. Do not commit these files.
+4. Upload fixtures must live under `.playwright-mcp/`, which is gitignored. The run used these generated files:
+
+   | File | Purpose |
+   |---|---|
+   | 420×420 PNG | Valid program logo |
+   | 1200×1200 PNG, 4.3 MB | Logo over the 2 MB limit |
+   | SVG | Logo of a disallowed type |
+   | Small PDF | Valid task file |
+   | 21 MB PDF | Task file over the 20 MB limit |
+   | TXT | Task file (plain text is allowed) |
+
+5. Prefix all test data with `E2E` so it is easy to find and clean up.
+
+### Test users
+
+| User | DEV role in the run | Notes |
+|---|---|---|
+| `michal` | Program Admin, approver | Admin of Fruit Program and of the E2E program. Approver team member. |
+| `mlehotskyh` | Mentor | Already a graduate, so it cannot apply as a mentee. |
+| `mlehotskynet` | Graduate (eligibility check) | Already a graduate. |
+| `mlehotskyh2` | Mentee 1 (full lifecycle) | Had no mentee profile before the run. |
+| `mlehotskyh3` | Mentor request, non-approver, mentee 2 (declined) | Had no profiles before the run. |
+
+The test accounts use external inboxes, so the run did not check emails.
+
+### Test data created on DEV
+
+| Item | ID | State after the run |
+|---|---|---|
+| E2E Test Program 2026-10-21 | `a444c9eb-3183-4fc2-b563-8492e23bfac4` | Published. `mlehotskyh` mentor, `mlehotskyh2` graduated, `mlehotskyh3` declined. Reusable for the next run. |
+| E2E Pending Program 2026-10-22 | `89355b93-6692-4d82-b217-e2b064df1b53` | Rejected |
+| E2E Term Oct 2026 on Fruit Program | `902ea779-2974-432d-8057-d40d37848737` | Closed |
+
+---
+
+## Status legend
+
+| Symbol | Meaning |
+|---|---|
+| ✅ | Passed |
+| ❌ | Failed (see [Findings](#findings)) |
+| ⚠️ | Passed with a caveat, or a known limitation |
+| — | Not tested |
+
+---
+
+## 1. Public site (logged out)
+
+| # | Case | Expected | DEV | PROD |
+|---|---|---|---|---|
+| 1.1 | Landing page | Stats from `/api/summary`; Become a Mentor and My Mentorship link to Self Serve | ✅ | ✅ |
+| 1.2 | Programs list | Published programs only; All / Accepting / In progress / Completed tabs; search and empty state; skill filter; sort; Load More pages by 15 with no duplicates | ✅ | ✅ (counts and first page only) |
+| 1.3 | Program detail | Opens by slug and by UUID; Overview, Terms, Mentors, Mentees and Sponsors tabs; no emails shown | ❌ Sponsors tab ([F1](#findings)) | ✅ |
+| 1.4 | Apply while logged out | "Sign in to apply" dialog, then Self Serve `/mentorship/mentee/apply` with `programId` and `programTermId` | ✅ | — |
+| 1.5 | Donate | Opens the program's Crowdfunding initiative | ❌ 404 for programs without an initiative ([F1](#findings)) | — |
+| 1.6 | Mentor and mentee directories | Search, Load More, mentee status tabs, profile pages, no contact details; an unknown ID gives 404 | ✅ | ✅ |
+| 1.7 | Enroll page | "Enroll a Program in LFX" opens Self Serve `/mentorship/admin/enroll` | ✅ | — |
+| 1.8 | Unknown program | 404 page | ✅ | ✅ |
+| 1.9 | Mobile, 390 px wide | No horizontal scroll on landing, programs, detail, mentors, mentees and enroll | ✅ | — |
+| 1.10 | Hidden program | 404 by slug and by UUID; visible again after unhide | ✅ | — |
+| 1.11 | Pending program | Not public | ⚠️ 404 by slug, but readable by UUID ([F3](#findings), known) | — |
+
+## 2. Enrollment and approval
+
+| # | Case | Expected | DEV |
+|---|---|---|---|
+| 2.1 | Step 1 validation | Required fields flagged; SVG logo rejected ("not the right file type"); logo over 2 MB rejected; PNG accepted and previewed | ✅ |
+| 2.2 | Term dialog validation | Required fields; application end date before start date rejected | ✅ |
+| 2.3 | Step 3 validation | Submit is blocked without the terms accepted and without at least one prerequisite | ⚠️ A missing prerequisite shows only the generic banner ([F7](#findings)) |
+| 2.4 | Submit | Program created as `pending`; owner's list shows "Pending Review" | ✅ |
+| 2.5 | Logo upload after submit | Logo stored in the same submit | ❌ 403 in 1 of 2 enrollments; Retry later succeeds ([F2](#findings)) |
+| 2.6 | Approve from the review page | Approver confirms; program `published` and public | ✅ |
+| 2.7 | Approve as a non-approver | 403 and "You don't have permission to review programs" | ✅ |
+| 2.8 | Reject | Approver confirms; program `rejected`; owner sees "Rejected" | ✅ |
+| 2.9 | Review page for a reviewed program | "This program has already been reviewed" | ✅ |
+
+## 3. Program management (Program Admin)
+
+| # | Case | Expected | DEV |
+|---|---|---|---|
+| 3.1 | Edit program | Stepper opens with the program's data; Update saves | ✅ |
+| 3.2 | Terms | Create, edit and close a term; closing declines its pending applications | ✅ |
+| 3.3 | Invite a mentor | Typeahead finds by name or LFID; row shows Invited | ✅ |
+| 3.4 | Mentor request | Requested row offers Approve and Decline; Decline sets Declined | ✅ |
+| 3.5 | Hide and unhide | Hidden program returns 404 publicly; unhide restores it | ✅ |
+| 3.6 | Hide with active applications | Refused with 409 and a clear message | ✅ |
+| 3.7 | Remove a mentor | Mentor removed from the roster | — |
+| 3.8 | Delete a program | — | — (no Delete in the UI) |
+
+## 4. Mentor
+
+| # | Case | Expected | DEV |
+|---|---|---|---|
+| 4.1 | Accept an invitation in Self Serve | Edit Mentor Profile drawer lists the invite; Accept sets Approved; program appears in My Programs | ✅ |
+| 4.2 | Accept an invitation from the email link | `/mentorship/mentor/invites?token=` | — (test inboxes not reachable) |
+| 4.3 | Become a Mentor with a program request | Profile saved and the picked program requested | ⚠️ Request not sent after Withdraw and re-pick ([F4](#findings), unconfirmed) |
+| 4.4 | Request to join from the profile drawer | Request sent; Requested on the admin's Mentors tab | ✅ |
+| 4.5 | My Programs | Cards show mentees, tasks to review and applicants | ✅ |
+| 4.6 | Applicants tab | Status pills; reviewer note and View Tasks only, no accept or decline | ✅ |
+| 4.7 | Reviewer note | Saved and visible to the Program Admin | ✅ |
+| 4.8 | Applicant files | Download returns the mentee's file | ✅ |
+| 4.9 | Create a task for a mentee | Task created | ✅ |
+| 4.10 | Review tasks | Approve completes the task; Request Changes returns it to the mentee | ⚠️ No feedback text ([F5](#findings)) |
+
+## 5. Mentee
+
+| # | Case | Expected | DEV |
+|---|---|---|---|
+| 5.1 | Register | Validation; Submit lands on the overview; `/mentorship/mentee` then redirects to the overview | ✅ |
+| 5.2 | Apply page | Shows the LFX profile, mentee profile, demographics, Before You Apply and terms; Submit stays disabled until all are confirmed | ✅ |
+| 5.3 | Submit an application | Overview shows the application under review | ⚠️ "Forbidden" for about 10 s right after submitting ([F2](#findings)) |
+| 5.4 | Prerequisite uploads | PNG rejected (type); 21 MB rejected; PDF and TXT accepted; upload marks the task submitted; Replace works | ✅ |
+| 5.5 | Withdraw a pending application | Moves to Past Applications as Withdrawn | ✅ |
+| 5.6 | Reapply after withdrawing | New application with fresh prerequisite tasks | ✅ |
+| 5.7 | Apply as a graduate | Refused: "You have already graduated from a mentorship" | ✅ (shown only after Submit) |
+| 5.8 | Work on tasks once accepted | Program shows Active; upload; To Do → In Progress → Submitted | ✅ |
+| 5.9 | Approved task | Shows as completed | ⚠️ Shows "Submitted" ([F6](#findings)) |
+| 5.10 | Edit mentee profile | Saved and shown | ✅ |
+| 5.11 | Graduation on the public site | Graduate listed on the program's Mentees tab and in the directory | ✅ |
+
+## 6. Admin decisions
+
+| # | Case | Expected | DEV |
+|---|---|---|---|
+| 6.1 | Accept | Attendance type required; status Accepted | ✅ |
+| 6.2 | Decline by Term | Declines every pending application in the term; accepted ones untouched | ✅ |
+| 6.3 | Create a task | Name, description, due date, file required | ✅ |
+| 6.4 | Download By Status | CSV with name, email, status, term and tasks submitted | ✅ |
+| 6.5 | Graduate | Status Graduated | ✅ |
+| 6.6 | Withdraw for a mentee | Application withdrawn by the admin | — |
+
+## 7. Access control
+
+| # | Case | Expected | DEV | PROD |
+|---|---|---|---|---|
+| 7.1 | Logged out, Self Serve Mentorship routes | Redirect to Auth0 or SSO login | ✅ | ✅ |
+| 7.2 | Mentee opens a program's admin page | "No access to this program" (403) | ✅ | — |
+| 7.3 | Mentor calls the admin-only status change | 403 | ✅ | — |
+| 7.4 | Mentee downloads another mentee's task file | 403 | ✅ | — |
+| 7.5 | Non-approver records a program decision | 403 | ✅ | — |
+
+## 8. Emails
+
+Not tested: the test accounts' inboxes are not reachable from the test run. A shared inbox for the test accounts would make the invite link (4.2) and the notification emails testable.
+
+## 9. PROD
+
+- **Public site:** sections 1.1–1.3, 1.6, 1.8 and 7.1 pass. Totals at run time: 1,303 programs, 2 accepting, 1,002 mentors.
+- **Self Serve:** Mentorship is gated by the `mentorship-enabled` LaunchDarkly flag ([`mentorship-enabled.guard.ts`](https://github.com/linuxfoundation/lfx-self-serve/blob/main/apps/lfx-one/src/app/shared/guards/mentorship-enabled.guard.ts)). It is on for `michal` only, so `mlehotskyh` and `mlehotskynet` are redirected to the dashboard. The PROD lifecycle needs the flag turned on for the test accounts.
+
+---
+
+## Findings
+
+| # | Finding | Env | Severity | Ticket |
+|---|---|---|---|---|
+| F1 | Sponsors tab shows "Unable to load sponsors" (503) and Donate opens a Crowdfunding 404 when a program has no Crowdfunding initiative. Every program created in the new system is affected. | DEV, new PROD programs | Medium | [linuxfoundation/lfx-mentorship#355](https://github.com/linuxfoundation/lfx-mentorship/issues/355) |
+| F2 | Right after a create, the new object is denied until its FGA tuples sync: the logo upload gets 403 (intermittent), and the mentee overview shows "Forbidden" for about 10 s after applying. | DEV | Medium | [linuxfoundation/lfx-mentorship#354](https://github.com/linuxfoundation/lfx-mentorship/issues/354) |
+| F3 | A pending program is readable by UUID on the public site. This is intentional for now: the review email links there. | DEV, PROD | Known | [linuxfoundation/lfx-mentorship#343](https://github.com/linuxfoundation/lfx-mentorship/issues/343) |
+| F4 | Become a Mentor form: after withdrawing a picked program and picking it again, no request was sent on Submit. The picker does not reset after a pick. Seen once; re-test with a new account. | DEV | Low | — |
+| F5 | Request Changes on a task carries no feedback, and the mentee sees the task back at To Do with no reason. | DEV | Low | — |
+| F6 | A task the mentor approved still shows "Submitted" to the mentee. | DEV | Low | — |
+| F7 | Enrollment step 3 with no prerequisite selected shows only the generic "form incomplete" banner; nothing points to the prerequisites. | DEV | Low | — |
+| F8 | The `/programs` header hard-codes "42 foundations" ([`programs-header.config.ts`](../../frontend/app/components/modules/programs/config/programs-header.config.ts)). | DEV, PROD | Low | — |
+| F9 | The landing page logs a Vue hydration mismatch. | DEV, PROD | Low | — |
+
+**Info, no action proposed:**
+- The landing page counts 5 graduated mentees on DEV, while the directory's Graduated tab lists 4.
+- The public "Sign in to apply" dialog appears even when the user is already signed in to Self Serve.
+- A graduate finds out they cannot apply only after filling in the apply form.
+- Program filters and sort are not kept in the URL.
+- An approver can approve a program they administer. This is by design: approval checks approver-team membership only.
+- Declining a mentor request shows no toast.
+- One PROD mentee's display name is their email address. It is data they entered; the API returns no email field.
+
+## Follow-ups
+
+- Turn on `mentorship-enabled` for the PROD test accounts, then run sections 2–7 on PROD.
+- After [#343](https://github.com/linuxfoundation/lfx-mentorship/issues/343) ships, re-test 1.11: a pending program should return 404 publicly and show on the Self Serve review page.
+- Re-test F4 with a new account, and run 3.7, 4.2 and 6.6.
