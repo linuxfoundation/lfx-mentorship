@@ -14,8 +14,9 @@ import (
 )
 
 // applyPrerequisiteChanges applies an edit to the program's prerequisites to the prerequisite tasks
-// of its pending mentee applications, inside the caller's transaction, and returns the
-// applications it flagged tasks_submitted. Tasks are matched to prerequisites by PrerequisiteKey.
+// of the pending mentee applications on its open terms, inside the caller's transaction, and
+// returns the applications it flagged tasks_submitted. Closing a term declines its pending
+// applications, so one still pending on a closed term is stale imported data and is left alone. Tasks are matched to prerequisites by PrerequisiteKey.
 // Only tasks cloned from a template are changed (see clonedFromTemplate), so a task a reviewer or
 // service created for one applicant never is, though its name still counts as present.
 // Submitted and complete tasks are kept as they are. An unsubmitted task takes its edited
@@ -36,9 +37,10 @@ func applyPrerequisiteChanges(ctx context.Context, tx pgx.Tx, programID string, 
 		return nil, fmt.Errorf("load program creator for prerequisite changes: %w", err)
 	}
 	// Locking the applications first orders this write against task writes, which share-lock them.
+	// The term lock above holds off a concurrent close, which locks its term for update.
 	rows, err := tx.Query(ctx, `
 		SELECT `+applicationCols+` FROM applications
-		WHERE program_term_id IN (SELECT id FROM program_terms WHERE program_id = $1)
+		WHERE program_term_id IN (SELECT id FROM program_terms WHERE program_id = $1 AND status = 'open')
 		  AND role = $2 AND status = $3
 		FOR UPDATE`, programID, models.ApplicationRoleMentee, models.ApplicationStatusPending)
 	if err != nil {
