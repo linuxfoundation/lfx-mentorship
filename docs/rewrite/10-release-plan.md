@@ -3,7 +3,7 @@
 
 # Mentorship Rewrite — 10: Release Plan
 
-Status: Draft. Target release: **2026-10-26**, time TBD.
+Status: Draft. Target release: **early in the week of 2026-10-26**, day and time decided at the release-readiness review on **Friday 2026-10-23**.
 Related: [08 runbook](./08-prod-migration-runbook.md) holds the commands; this page holds the order and the owners.
 
 ## Approach
