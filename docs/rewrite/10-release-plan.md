@@ -14,7 +14,7 @@ Related: [08 runbook](./08-prod-migration-runbook.md) holds the commands; this p
 ## Before release
 
 - [x] Runbook 08 updated: Phase 1 and the no-go step describe the test import and the `TRUNCATE` ([#290](https://github.com/linuxfoundation/lfx-mentorship/pull/290), Eng)
-- [ ] Test import into prod, in-cluster, off-hours, platform team warned: about 330k FGA and 330k index messages (Eng)
+- [x] Test import into prod, in-cluster, off-hours, platform team warned: about 330k FGA and 330k index messages (Eng)
 - [ ] Import and outbox-drain time measured; it sets the downtime window (Eng)
 - [ ] Duplicate legacy identities resolved: the importer keeps a shared email or LFID on one user and clears it on the others, which then cannot use Mentorship; get the counts from the test import, then merge at import or fix by hand (Eng)
 - [ ] Data exceptions from the test import reviewed: programs with no LF project or no admin, pending mentor rows, quarantined tasks (Product, Eng)
@@ -23,11 +23,12 @@ Related: [08 runbook](./08-prod-migration-runbook.md) holds the commands; this p
 - [x] Legacy-link forwarding in the frontend, live in prod, as in [lfx-crowdfunding#358](https://github.com/linuxfoundation/lfx-crowdfunding/pull/358): `/project/{id}[/…]` → `/programs/{id}`, `/mentee/{id}[,{projectId}]` → `/mentees/{id}`, `/mentor/{id}` → `/mentors/{id}`, other legacy pages → `/` ([#290](https://github.com/linuxfoundation/lfx-mentorship/pull/290), Eng)
 - [x] Legacy links tested on prod with the legacy path on the new host (2026-10-21): all 197 program links in the [CNCF 2026 term docs](https://github.com/cncf/mentoring/tree/main/programs/lfx-mentorship) redirect to `/programs/{id}`; 192 open, and the other 5 are past-term programs hidden in legacy, which the new site does not show (Eng)
 - [ ] CNCF `/lfx-url` bot accepts the new URL shape: PR to `cncf/mentoring` accepting both shapes (Eng, CNCF review)
-- [ ] Legacy API consumers found and handled before it is switched off: CNCF automation, and legacy Crowdfunding (`LFF`), which calls `/users/external/{lfid}` (Eng)
-- [ ] Maintenance switch ready and tried on dev (frontend in prod as `v1.5.5`; jobspring still to merge, try on dev and tag), as Crowdfunding did ([lfx-crowdfunding-upgrade#48](https://github.com/linuxfoundation/lfx-crowdfunding-upgrade/pull/48)): a `maintenanceMode` flag in `lfx-mentorship-upgrade` that shows a "being upgraded" page ([#200](https://github.com/linuxfoundation/lfx-mentorship-upgrade/pull/200)), and the same flag in `jobspring` that answers 503 on the API (except `/health`) and pauses the cron jobs and the SQS consumer ([#2281](https://github.com/linuxfoundation/jobspring/pull/2281)) (Eng)
-- [ ] Host redirect `mentorship.lfx.linuxfoundation.org` → `mentorship.linuxfoundation.org`, path kept, with a contact on the day (DevOps, Cloudflare)
+- [ ] Legacy API consumers found and handled before it is switched off: CNCF automation does not call it (checked); still open is legacy Crowdfunding (`LFF`), which calls `/users/external/{lfid}` (Eng)
+- [ ] Maintenance switch ready and tried on dev (frontend in prod as `v1.5.5`; jobspring merged, still to try on dev and tag), as Crowdfunding did ([lfx-crowdfunding-upgrade#48](https://github.com/linuxfoundation/lfx-crowdfunding-upgrade/pull/48)): a `maintenanceMode` flag in `lfx-mentorship-upgrade` that shows a "being upgraded" page ([#200](https://github.com/linuxfoundation/lfx-mentorship-upgrade/pull/200)), and the same flag in `jobspring` that answers 503 on the API (except `/health`) and pauses the cron jobs and the SQS consumer ([#2281](https://github.com/linuxfoundation/jobspring/pull/2281)) (Eng)
+- [ ] Host redirect `mentorship.lfx.linuxfoundation.org` → `mentorship.linuxfoundation.org`, path kept, with a contact on the day ([requested](https://linuxfoundation.slack.com/archives/C02RMNFE9FF/p1792698887269559), DevOps, Cloudflare)
 - [x] Email: every email is copied to one staff inbox per environment, `EMAIL_COPY_INBOX`, which is `lfx-mentorship-sent@` in prod ([#335](https://github.com/linuxfoundation/lfx-mentorship/pull/335), [lfx-v2-argocd#1860](https://github.com/linuxfoundation/lfx-v2-argocd/pull/1860), DevOps, Eng)
-- [ ] Approvers ready: the team is listed in prod values ([lfx-v2-argocd#1874](https://github.com/linuxfoundation/lfx-v2-argocd/pull/1874)), each approver has signed in to Self Serve on prod once, and someone with prod ArgoCD sync rights is on hand for release day (Eng, CloudOps)
+- [ ] Approvers ready: the team is listed in prod values ([lfx-v2-argocd#1874](https://github.com/linuxfoundation/lfx-v2-argocd/pull/1874), merged), and each approver has signed in to Self Serve on prod once (Eng)
+- [ ] Testing findings fixed and retested ([#347](https://github.com/linuxfoundation/lfx-mentorship/pull/347), [#349](https://github.com/linuxfoundation/lfx-mentorship/pull/349), [#351](https://github.com/linuxfoundation/lfx-mentorship/pull/351); Sameh)
 - [ ] Release tagged and pinned in [lfx-v2-argocd](https://github.com/linuxfoundation/lfx-v2-argocd) (Eng)
 - [x] Program admins told in [#mentorship_admins](https://linuxfoundation.slack.com/archives/CT3NP3UDU/p1792695758113669) (2026-10-22), without the new address; it is shared once live (Product)
 - [ ] Mentees told: Intercom banner on the legacy site with the downtime day (Support)
@@ -36,7 +37,7 @@ Related: [08 runbook](./08-prod-migration-runbook.md) holds the commands; this p
 
 1. **Freeze legacy:** announce "downtime starts" on Slack and the banner, then deploy `lfx-mentorship-upgrade` and `jobspring` with the maintenance flag on (`jobspring`: also `sqsConsumerEnabled: false`). Wait 15 minutes, the cron timeout, so API requests and cron jobs already running finish before the import reads DynamoDB.
 2. **Wipe, copy, import:** runbook Phases 2–4. The wipe is in Phase 4: `TRUNCATE` every table in the `mentorship` schema, outboxes included, leaving `public.schema_migrations` alone.
-3. **Restore program approvers:** the wipe removes them. Approvers who are not legacy users sign in to Self Serve again, then re-sync the `lfx-mentorship-backend` app in ArgoCD (runbook Phase 4, step 8).
+3. **Restore program approvers:** the wipe removes them. Approvers who are not legacy users sign in to Self Serve again, then re-run the approver sync: the one-off Job in `backend/docs/api.md`, or a manual ArgoCD sync of `lfx-mentorship-backend` with DevOps on standby (runbook Phase 4, step 8).
 4. **Verify:** runbook Phase 5. Both verifiers must pass, and the outboxes must drain, which covers the approvers too.
 5. **Go/no-go:** runbook Phase 6, step 1.
 6. **Email to everyone:** remove `EMAIL_ALLOWED_RECIPIENTS` and wait for the rollout, runbook Phase 6, step 3.
