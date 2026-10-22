@@ -61,7 +61,7 @@ The test accounts use external inboxes, so the run did not check emails.
 
 | Item | ID | State after the run |
 |---|---|---|
-| E2E Test Program (do not apply) 2026-10-22 | `456c2394-3041-49a9-b2eb-270d407932bc` | Published, term closed, so it is listed as Completed. It can't be hidden ([F11](#findings)) and the UI has no delete. |
+| E2E Test Program (do not apply) 2026-10-22 | `456c2394-3041-49a9-b2eb-270d407932bc` | Published, term closed, so it is listed as Completed. It can't be hidden (a program with graduates stays visible, by design). PROD data is truncated before the final DB import. |
 
 ---
 
@@ -189,7 +189,7 @@ Not tested: the test accounts' inboxes are not reachable from the test run. A sh
 | 2.6 | Approve | ✅ `michal` is in the PROD approver team |
 | 3.3, 4.1 | Invite a mentor; mentor accepts from the profile drawer without a mentor profile | ✅ |
 | 3.5 | Hide while published with no applications; public 404; unhide | ✅ |
-| 3.6 | Hide with a graduated mentee | ⚠️ Refused ([F11](#findings)) |
+| 3.6 | Hide with a graduated mentee | ✅ Refused, by design |
 | 3.2 | Close the term | ✅ |
 | 5.1, 5.2 | Register two new mentees and apply | ✅ |
 | 5.3 | Overview right after applying | ⚠️ "Forbidden" for both mentees ([F2](#findings)) |
@@ -217,7 +217,6 @@ Not tested: the test accounts' inboxes are not reachable from the test run. A sh
 | F8 | The `/programs` header hard-codes "42 foundations" ([`programs-header.config.ts`](../../frontend/app/components/modules/programs/config/programs-header.config.ts)). | DEV, PROD | Low | — |
 | F9 | The landing page logs a Vue hydration mismatch. | DEV, PROD | Low | — |
 | F10 | Mentees whose accounts are new to Mentorship have no name in the admin and mentor lists, and the public site shows them as "Mentee". Their LFX profiles have names. Not reproduced on DEV. | PROD | High | [linuxfoundation/lfx-mentorship#357](https://github.com/linuxfoundation/lfx-mentorship/issues/357) |
-| F11 | A program with any graduated mentee can't be hidden: `blockingApplicationStatuses` includes `graduated`, while the function comment says "non-terminal". Intended? | DEV, PROD | Question | — |
 
 **Info, no action proposed:**
 - The landing page counts 5 graduated mentees on DEV, while the directory's Graduated tab lists 4.
@@ -226,10 +225,10 @@ Not tested: the test accounts' inboxes are not reachable from the test run. A sh
 - Program filters and sort are not kept in the URL.
 - An approver can approve a program they administer. This is by design: approval checks approver-team membership only.
 - Declining a mentor request shows no toast.
+- A program with graduates can't be hidden. This is by design, though the comment on `CountBlockingAppsForProgram` says "non-terminal".
 - One PROD mentee's display name is their email address. It is data they entered; the API returns no email field.
 
 ## Follow-ups
 
-- Remove the PROD test program `456c2394-3041-49a9-b2eb-270d407932bc`. It can't be hidden ([F11](#findings)) and the UI has no delete.
 - After [#343](https://github.com/linuxfoundation/lfx-mentorship/issues/343) ships, re-test 1.11: a pending program should return 404 publicly and show on the Self Serve review page.
 - Re-test F4 with a new account, and run 3.7, 4.2 and 6.6.
