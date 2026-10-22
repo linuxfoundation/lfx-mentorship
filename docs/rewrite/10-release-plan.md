@@ -29,7 +29,8 @@ Related: [08 runbook](./08-prod-migration-runbook.md) holds the commands; this p
 - [x] Email: every email is copied to one staff inbox per environment, `EMAIL_COPY_INBOX`, which is `lfx-mentorship-sent@` in prod ([#335](https://github.com/linuxfoundation/lfx-mentorship/pull/335), [lfx-v2-argocd#1860](https://github.com/linuxfoundation/lfx-v2-argocd/pull/1860), DevOps, Eng)
 - [ ] Approvers ready: the team is listed in prod values ([lfx-v2-argocd#1874](https://github.com/linuxfoundation/lfx-v2-argocd/pull/1874)), each approver has signed in to Self Serve on prod once, and someone with prod ArgoCD sync rights is on hand for release day (Eng, CloudOps)
 - [ ] Release tagged and pinned in [lfx-v2-argocd](https://github.com/linuxfoundation/lfx-v2-argocd) (Eng)
-- [ ] Program admins and mentees told two weeks ahead: Intercom banner on the legacy site, Slack where they are (CNCF `#mentoring`, LF Slack), email to program admins; say that legacy invitation links sent in the last week stop working after the switch (Product, Support)
+- [x] Program admins told in [#mentorship_admins](https://linuxfoundation.slack.com/archives/CT3NP3UDU/p1792695758113669) (2026-10-22), without the new address; it is shared once live (Product)
+- [ ] Mentees told: Intercom banner on the legacy site with the downtime day (Support)
 
 ## Release day
 
