@@ -13,7 +13,7 @@ End-to-end test cases for the new Mentorship platform (the public site plus the 
 **Last run:** 2026-10-22, driven through Playwright MCP.
 
 - **DEV:** full program lifecycle.
-- **PROD:** public site and logged-out checks only. The Self Serve part is blocked because the `mentorship-enabled` feature flag is on for one test user only (see [PROD](#9-prod)).
+- **PROD:** public site, plus a shorter lifecycle in Self Serve (see [PROD](#9-prod)).
 
 ---
 
@@ -45,6 +45,8 @@ End-to-end test cases for the new Mentorship platform (the public site plus the 
 | `mlehotskyh2` | Mentee 1 (full lifecycle) | Had no mentee profile before the run. |
 | `mlehotskyh3` | Mentor request, non-approver, mentee 2 (declined) | Had no profiles before the run. |
 
+On PROD, `michal` was Program Admin and approver, `mlehotskyh` mentor, and `mlehotsky1` and `mlehotsky2` mentees (accepted then graduated, and declined). Every PROD test account must be in the `mentorship-enabled` LaunchDarkly flag, or Self Serve redirects it to the dashboard.
+
 The test accounts use external inboxes, so the run did not check emails.
 
 ### Test data created on DEV
@@ -54,6 +56,12 @@ The test accounts use external inboxes, so the run did not check emails.
 | E2E Test Program 2026-10-21 | `a444c9eb-3183-4fc2-b563-8492e23bfac4` | Published. `mlehotskyh` mentor, `mlehotskyh2` graduated, `mlehotskyh3` declined. Reusable for the next run. |
 | E2E Pending Program 2026-10-22 | `89355b93-6692-4d82-b217-e2b064df1b53` | Rejected |
 | E2E Term Oct 2026 on Fruit Program | `902ea779-2974-432d-8057-d40d37848737` | Closed |
+
+### Test data created on PROD
+
+| Item | ID | State after the run |
+|---|---|---|
+| E2E Test Program (do not apply) 2026-10-22 | `456c2394-3041-49a9-b2eb-270d407932bc` | Published, term closed, so it is listed as Completed. It can't be hidden ([F11](#findings)) and the UI has no delete. |
 
 ---
 
@@ -152,6 +160,7 @@ The test accounts use external inboxes, so the run did not check emails.
 | 6.4 | Download By Status | CSV with name, email, status, term and tasks submitted | ✅ |
 | 6.5 | Graduate | Status Graduated | ✅ |
 | 6.6 | Withdraw for a mentee | Application withdrawn by the admin | — |
+| 6.7 | Decline a single application | Status Declined; the confirmation says the mentee is told | — (PROD ✅) |
 
 ## 7. Access control
 
@@ -169,8 +178,28 @@ Not tested: the test accounts' inboxes are not reachable from the test run. A sh
 
 ## 9. PROD
 
-- **Public site:** sections 1.1–1.3, 1.6, 1.8 and 7.1 pass. Totals at run time: 1,303 programs, 2 accepting, 1,002 mentors.
-- **Self Serve:** Mentorship is gated by the `mentorship-enabled` LaunchDarkly flag ([`mentorship-enabled.guard.ts`](https://github.com/linuxfoundation/lfx-self-serve/blob/main/apps/lfx-one/src/app/shared/guards/mentorship-enabled.guard.ts)). It is on for `michal` only, so `mlehotskyh` and `mlehotskynet` are redirected to the dashboard. The PROD lifecycle needs the flag turned on for the test accounts.
+**Public site:** cases 1.1–1.3, 1.6, 1.8 and 7.1 pass. Totals at run time: 1,303 programs, 2 accepting, 1,002 mentors.
+
+**Self Serve:** Mentorship is gated by the `mentorship-enabled` LaunchDarkly flag ([`mentorship-enabled.guard.ts`](https://github.com/linuxfoundation/lfx-self-serve/blob/main/apps/lfx-one/src/app/shared/guards/mentorship-enabled.guard.ts)). Accounts outside the flag are redirected to the dashboard.
+
+| # | Case | PROD |
+|---|---|---|
+| 2.4 | Enroll; pending program not listed publicly, slug gives 404 | ✅ |
+| 2.5 | Logo upload after submit | ❌ 403 on all four tries; Retry later succeeds ([F2](#findings)) |
+| 2.6 | Approve | ✅ `michal` is in the PROD approver team |
+| 3.3, 4.1 | Invite a mentor; mentor accepts from the profile drawer without a mentor profile | ✅ |
+| 3.5 | Hide while published with no applications; public 404; unhide | ✅ |
+| 3.6 | Hide with a graduated mentee | ⚠️ Refused ([F11](#findings)) |
+| 3.2 | Close the term | ✅ |
+| 5.1, 5.2 | Register two new mentees and apply | ✅ |
+| 5.3 | Overview right after applying | ⚠️ "Forbidden" for both mentees ([F2](#findings)) |
+| 5.4 | Prerequisite upload | ✅ |
+| 6.1 | Accept (part time) | ✅ |
+| 6.7 | Decline a single application | ✅ |
+| 6.3, 5.8, 4.10, 6.5 | Create task, submit, mentor approves, graduate | ✅ |
+| 5.11 | Graduate on the public site | ❌ Listed as "Mentee" with no name ([F10](#findings)) |
+| 4.6, 6.1 | Mentee names in the mentor's and admin's lists | ❌ Blank ([F10](#findings)) |
+| 7.2 | Mentee opens the program's admin page | ✅ "No access to this program" |
 
 ---
 
@@ -179,7 +208,7 @@ Not tested: the test accounts' inboxes are not reachable from the test run. A sh
 | # | Finding | Env | Severity | Ticket |
 |---|---|---|---|---|
 | F1 | Sponsors tab shows "Unable to load sponsors" (503) and Donate opens a Crowdfunding 404 when a program has no Crowdfunding initiative. Every program created in the new system is affected. | DEV, new PROD programs | Medium | [linuxfoundation/lfx-mentorship#355](https://github.com/linuxfoundation/lfx-mentorship/issues/355) |
-| F2 | Right after a create, the new object is denied until its FGA tuples sync: the logo upload gets 403 (intermittent), and the mentee overview shows "Forbidden" for about 10 s after applying. | DEV | Medium | [linuxfoundation/lfx-mentorship#354](https://github.com/linuxfoundation/lfx-mentorship/issues/354) |
+| F2 | Right after a create, the new object is denied until its FGA tuples sync: the logo upload gets 403 (intermittent), and the mentee overview shows "Forbidden" for about 10 s after applying. | DEV, PROD | Medium | [linuxfoundation/lfx-mentorship#354](https://github.com/linuxfoundation/lfx-mentorship/issues/354) |
 | F3 | A pending program is readable by UUID on the public site. This is intentional for now: the review email links there. | DEV, PROD | Known | [linuxfoundation/lfx-mentorship#343](https://github.com/linuxfoundation/lfx-mentorship/issues/343) |
 | F4 | Become a Mentor form: after withdrawing a picked program and picking it again, no request was sent on Submit. The picker does not reset after a pick. Seen once; re-test with a new account. | DEV | Low | — |
 | F5 | Request Changes on a task carries no feedback, and the mentee sees the task back at To Do with no reason. | DEV | Low | — |
@@ -187,6 +216,8 @@ Not tested: the test accounts' inboxes are not reachable from the test run. A sh
 | F7 | Enrollment step 3 with no prerequisite selected shows only the generic "form incomplete" banner; nothing points to the prerequisites. | DEV | Low | — |
 | F8 | The `/programs` header hard-codes "42 foundations" ([`programs-header.config.ts`](../../frontend/app/components/modules/programs/config/programs-header.config.ts)). | DEV, PROD | Low | — |
 | F9 | The landing page logs a Vue hydration mismatch. | DEV, PROD | Low | — |
+| F10 | Mentees whose accounts are new to Mentorship have no name in the admin and mentor lists, and the public site shows them as "Mentee". Their LFX profiles have names. Not reproduced on DEV. | PROD | High | [linuxfoundation/lfx-mentorship#357](https://github.com/linuxfoundation/lfx-mentorship/issues/357) |
+| F11 | A program with any graduated mentee can't be hidden: `blockingApplicationStatuses` includes `graduated`, while the function comment says "non-terminal". Intended? | DEV, PROD | Question | — |
 
 **Info, no action proposed:**
 - The landing page counts 5 graduated mentees on DEV, while the directory's Graduated tab lists 4.
@@ -199,6 +230,6 @@ Not tested: the test accounts' inboxes are not reachable from the test run. A sh
 
 ## Follow-ups
 
-- Turn on `mentorship-enabled` for the PROD test accounts, then run sections 2–7 on PROD.
+- Remove the PROD test program `456c2394-3041-49a9-b2eb-270d407932bc`. It can't be hidden ([F11](#findings)) and the UI has no delete.
 - After [#343](https://github.com/linuxfoundation/lfx-mentorship/issues/343) ships, re-test 1.11: a pending program should return 404 publicly and show on the Self Serve review page.
 - Re-test F4 with a new account, and run 3.7, 4.2 and 6.6.
