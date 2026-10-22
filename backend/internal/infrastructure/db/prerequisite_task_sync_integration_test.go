@@ -134,9 +134,9 @@ func TestProgramRepositoryIntegration_UpdateAppliesPrerequisiteChanges(t *testin
 		t.Fatal(err)
 	}
 	s.task(pending, "Intro call", "non_prerequisite", "incomplete")
-	// A pending application on a closed term takes the changes too.
+	// A pending application on a closed term is stale imported data and takes no changes.
 	closedTerm := s.apply(f.ClosedTerm, "mentee", "pending")
-	s.task(closedTerm, "Resume", "prerequisite", "complete")
+	s.task(closedTerm, "Essay", "prerequisite", "incomplete")
 	accepted := s.apply(f.OpenTerm, "mentee", "accepted")
 	s.task(accepted, "Essay", "prerequisite", "incomplete")
 	mentor := s.apply(f.OpenTerm, "mentor", "pending")
@@ -199,14 +199,7 @@ func TestProgramRepositoryIntegration_UpdateAppliesPrerequisiteChanges(t *testin
 		}
 	}
 
-	closed := syncedTasks(t, pool, closedTerm)
-	if r := closed["Resume"]; r.Status != "complete" || deref(r.Description) != "Old description" {
-		t.Errorf("complete task was changed: %+v", r)
-	}
-	if _, ok := closed["Cover letter"]; !ok {
-		t.Errorf("closed-term pending application did not get the added prerequisite; tasks = %v", keys(closed))
-	}
-	for name, app := range map[string]string{"accepted": accepted, "mentor": mentor, "other program's": other} {
+	for name, app := range map[string]string{"closed-term": closedTerm, "accepted": accepted, "mentor": mentor, "other program's": other} {
 		if got := syncedTasks(t, pool, app); len(got) != 1 || deref(got["Essay"].Description) != "Old description" {
 			t.Errorf("%s application's tasks were changed: %v", name, keys(got))
 		}
@@ -239,6 +232,9 @@ func TestProgramRepositoryIntegration_UpdateFlagsApplicationCompletedByRemoval(t
 	sole := s.apply(f.OpenTerm, "mentee", "pending")
 	s.task(sole, "Essay", "prerequisite", "incomplete")
 	none := s.apply(f.OpenTerm, "mentee", "pending")
+	// A stale pending application on a closed term is neither changed nor flagged.
+	stale := s.apply(f.ClosedTerm, "mentee", "pending")
+	s.task(stale, "Essay", "prerequisite", "incomplete")
 
 	before := programIndexGeneration(t, pool, f.ProgramID)
 	flagged := applyChanges(t, pool, f.ProgramID, models.PrerequisiteChanges{Removed: []string{"essay"}})
@@ -251,7 +247,7 @@ func TestProgramRepositoryIntegration_UpdateFlagsApplicationCompletedByRemoval(t
 	want := []string{app, sole}
 	slices.Sort(want)
 	if !slices.Equal(flagged, want) {
-		t.Fatalf("flagged = %v; want %v, whose last outstanding prerequisite was removed (not %s or %s)", flagged, want, outstanding, none)
+		t.Fatalf("flagged = %v; want %v, whose last outstanding prerequisite was removed (not %s, %s or closed-term %s)", flagged, want, outstanding, none, stale)
 	}
 	var submitted bool
 	if err := pool.QueryRow(context.Background(), `SELECT tasks_submitted FROM applications WHERE id = $1`, app).Scan(&submitted); err != nil {
