@@ -116,7 +116,7 @@ The test accounts use external inboxes, so the run did not check emails.
 | 3.4 | Mentor request | Requested row offers Approve and Decline; Decline sets Declined | ✅ |
 | 3.5 | Hide and unhide | Hidden program returns 404 publicly; unhide restores it | ✅ |
 | 3.6 | Hide with active applications | Refused with 409 and a clear message | ✅ |
-| 3.7 | Remove a mentor | Mentor removed from the roster | — |
+| 3.7 | Remove a mentor | Mentor shows as Withdrawn and loses access (404); re-inviting resets them to Invited, and access returns after they accept | ✅ |
 | 3.8 | Delete a program | — | — (no Delete in the UI) |
 
 ## 4. Mentor
@@ -159,7 +159,7 @@ The test accounts use external inboxes, so the run did not check emails.
 | 6.3 | Create a task | Name, description, due date, file required | ✅ |
 | 6.4 | Download By Status | CSV with name, email, status, term and tasks submitted | ✅ |
 | 6.5 | Graduate | Status Graduated | ✅ |
-| 6.6 | Withdraw for a mentee | Application withdrawn by the admin | — |
+| 6.6 | Withdraw for a mentee | Application withdrawn by the admin | ✅ |
 | 6.7 | Decline a single application | Status Declined; the confirmation says the mentee is told | — (PROD ✅) |
 
 ## 7. Access control
@@ -243,6 +243,15 @@ PROD runs `v0.1.10` (backend, cron jobs and frontend), which includes [#358](htt
 | [#361](https://github.com/linuxfoundation/lfx-mentorship/pull/361)–[#365](https://github.com/linuxfoundation/lfx-mentorship/pull/365) (F10) | ✅ A brand-new user (`mlehotsky1`) has a name in the admin and mentor lists. The backend sends their emails, and the copies in `EMAIL_COPY_INBOX` are correct |
 | F12 | ❌ Still reproduces: 5 of 5 times on idle DEV sessions. PROD RUM, last 30 days: 17 guard timeouts in 17 sessions, 9 of them `mentorshipEnabledGuard` |
 
+| # | Re-test or new check (2026-10-23, DEV) | Result |
+|---|---|---|
+| 7.6 | Stored script or HTML in the program description and mentee introduction, sent past the editor | ✅ Never runs on the public site or in Self Serve. The backend stores and returns raw HTML, so both frontends must keep sanitizing it |
+| 7.7 | HTML file renamed `.pdf` and uploaded as a task file | ✅ Accepted as plain text, but served as a `text/plain` download renamed `.txt`, with `nosniff` |
+| 5.12 | An accepted mentee applies to another program | ✅ Refused: "You are already in a mentorship" |
+| 5.13 | Double-click on Submit Application | ✅ One application created |
+| 5.14 | More than 3 active applications | ❌ The 4th is accepted; legacy refused it ([F15](#findings)) |
+| 3.9 | Close a term that has a pending application | ✅ The pending application becomes Declined |
+
 Emails:
 
 - PROD before the fix: all 8 mentee emails failed with `user … has no email address` (Datadog), confirming F10.
@@ -265,6 +274,8 @@ Emails:
 | F10 | Mentees whose accounts are new to Mentorship have no name or email in Mentorship: blank in the admin and mentor lists, "Mentee" on the public site, "A mentee" in admin emails, and no mentee emails at all. Their LFX profiles have both. Not reproduced on DEV. | PROD | High | [linuxfoundation/lfx-mentorship#357](https://github.com/linuxfoundation/lfx-mentorship/issues/357), root cause [#360](https://github.com/linuxfoundation/lfx-mentorship/issues/360): fixed on DEV, PROD pending release and `user-backfill` |
 | F12 | Mentorship pages forward to the dashboard after about 10 s on an idle session. The server-side render treats an expired access token as signed out without refreshing it, so LaunchDarkly never gets the user and the flag guard times out. Other flag-gated pages (for example EasyCLA in the Org lens) share the cause. | DEV, PROD | High (launch) | [linuxfoundation/lfx-self-serve#4179](https://github.com/linuxfoundation/lfx-self-serve/issues/4179) |
 | F13 | The legacy paths `/mentee` and `/mentor` with no ID return 404 instead of redirecting. | PROD | Low | — |
+| F15 | A mentee can have more than 3 active applications. Legacy refused a fourth, and the public site still promises the limit. | DEV | Medium | [linuxfoundation/lfx-mentorship#368](https://github.com/linuxfoundation/lfx-mentorship/issues/368) |
+| F16 | Legacy email links for approvers, program admins and invited mentors land on the public site after cutover, instead of the Self Serve page where they can act. Filed by Michal; re-test before the 2026-10-27 cutover. | PROD | High (cutover) | [linuxfoundation/lfx-mentorship#367](https://github.com/linuxfoundation/lfx-mentorship/issues/367) |
 | F14 | A first-time applicant who registers from an Apply link stays on the registration form after the profile is saved, with no message and no move on to the application. | DEV | High (launch) | [linuxfoundation/lfx-self-serve#4232](https://github.com/linuxfoundation/lfx-self-serve/issues/4232) |
 
 **Info, no action proposed:**
