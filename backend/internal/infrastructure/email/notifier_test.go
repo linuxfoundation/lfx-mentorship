@@ -166,12 +166,17 @@ func (r *taskRepoStub) ListByApplication(_ context.Context, _ string, filter mod
 type profileRepoStub struct {
 	domain.UserProfileRepository
 	address json.RawMessage
-	err     error
+	// byUser holds the profiles of any type that a lookup by user alone returns.
+	byUser map[string][]*models.UserProfile
+	err    error
 }
 
 func (r *profileRepoStub) List(_ context.Context, filter models.UserProfileFilter) ([]*models.UserProfile, *models.PaginationMeta, error) {
 	if r.err != nil {
 		return nil, nil, r.err
+	}
+	if filter.ProfileType == "" {
+		return r.byUser[filter.UserID], &models.PaginationMeta{}, nil
 	}
 	if filter.ProfileType != string(models.UserProfileTypeMentee) || r.address == nil {
 		return nil, &models.PaginationMeta{}, nil
@@ -873,6 +878,44 @@ func TestNotifyProfileCreated(t *testing.T) {
 			}
 			mustContain(t, "text", sent[0].Text, tc.want...)
 		})
+	}
+}
+
+func TestNotifyFallsBackToProfileForMissingNameAndEmail(t *testing.T) {
+	f := newFixture()
+	f.users.users["bare"] = &models.User{ID: "bare"}
+	f.profiles.byUser = map[string][]*models.UserProfile{"bare": {
+		{UserID: "bare", ProfileType: string(models.UserProfileTypeMentor)},
+		{UserID: "bare", ProfileType: string(models.UserProfileTypeMentee), FirstName: strPtr("Ada"), LastName: strPtr("Lovelace"), Email: strPtr("ada@example.org")},
+	}}
+	f.n.NotifyProfileCreated(context.Background(), "bare", models.UserProfileTypeMentee)
+
+	sent := f.wait(t)
+	if len(sent) != 1 || sent[0].To != "ada@example.org" || !strings.HasPrefix(sent[0].Text, "Hi Ada!") {
+		t.Fatalf("sent = %+v, want one email to the profile address greeting Ada", sent)
+	}
+}
+
+func TestNotifyKeepsAccountNameAndEmailOverProfile(t *testing.T) {
+	f := newFixture()
+	f.profiles.byUser = map[string][]*models.UserProfile{"mentee": {
+		{UserID: "mentee", FirstName: strPtr("Other"), Email: strPtr("other@example.org")},
+	}}
+	f.n.NotifyProfileCreated(context.Background(), "mentee", models.UserProfileTypeMentee)
+
+	sent := f.wait(t)
+	if len(sent) != 1 || sent[0].To != "mentee@linuxfoundation.org" || !strings.HasPrefix(sent[0].Text, "Hi Mia!") {
+		t.Fatalf("sent = %+v, want the account's address and name", sent)
+	}
+}
+
+func TestNotifySkipsUserWithoutEmailWhenProfileLookupFails(t *testing.T) {
+	f := newFixture()
+	f.n.repos.Profiles = &profileRepoStub{err: errors.New("db down")}
+	f.n.NotifyProfileCreated(context.Background(), "noaddr", models.UserProfileTypeMentee)
+
+	if sent := f.wait(t); len(sent) != 0 {
+		t.Fatalf("sent = %+v, want nothing for a user with no address anywhere", sent)
 	}
 }
 
