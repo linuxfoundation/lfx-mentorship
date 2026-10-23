@@ -6,6 +6,7 @@ import { flushPromises } from '@vue/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { defineComponent, h } from 'vue';
 import DesktopNav from './components/desktop-nav.vue';
+import HelpButton from './components/help-button.vue';
 import MentorshipFooter from './footer.vue';
 import MentorshipHeader from './header.vue';
 import ErrorPage from '~/error.vue';
@@ -50,13 +51,13 @@ describe('DesktopNav', () => {
   });
 });
 
-describe('MentorshipFooter', () => {
-  const button = (label: string) =>
-    [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
-      (b) => b.textContent?.trim() === label,
-    )!;
-  const dialog = () => document.body.querySelector('[role="dialog"]');
+const button = (label: string) =>
+  [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+    (b) => b.textContent?.trim() === label,
+  )!;
+const dialog = () => document.body.querySelector('[role="dialog"]');
 
+describe('MentorshipFooter', () => {
   it('points support requests to Self Serve, where chat is available', async () => {
     const open = vi.spyOn(window, 'open').mockImplementation(() => null);
     const wrapper = await mountSuspended(MentorshipFooter, { attachTo: document.body });
@@ -89,6 +90,17 @@ describe('MentorshipFooter', () => {
     await flushPromises();
     expect(dialog()).toBeNull();
     expect(open).not.toHaveBeenCalled();
+  });
+});
+
+describe('HelpButton', () => {
+  it('opens the support popup', async () => {
+    await mountSuspended(HelpButton, { attachTo: document.body });
+    expect(dialog()).toBeNull();
+
+    button('Help').click();
+    await flushPromises();
+    expect(dialog()?.textContent).toContain('sign in to LFX Self Serve');
   });
 });
 
