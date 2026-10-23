@@ -38,7 +38,7 @@ Related: [08 runbook](./08-prod-migration-runbook.md) holds the commands; this p
 5. **Go/no-go:** runbook Phase 6, step 1.
 6. **Email to everyone:** remove `EMAIL_ALLOWED_RECIPIENTS` and wait for the rollout, runbook Phase 6, step 3.
 7. **Self Serve to everyone:** turn `mentorship-enabled` on for all users.
-8. **Redirect the legacy host** (DevOps), re-run the legacy-link test, then announce "we're live" with the new URL.
+8. **Redirect the legacy host** (DevOps), re-run the legacy-link test, then announce "we're live" with the new URL. Then send CNCF the one-line PR pointing the verification link in `lfx-proposal-validate.yml` at the new host.
 
 **Rollback:** clean until step 7, the first step that lets everyone write (redeploy both legacy repos with the maintenance flag off, restore the allowlist). From step 7 on, fix forward.
 
