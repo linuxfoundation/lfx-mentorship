@@ -6,10 +6,10 @@ package clients
 import (
 	"context"
 	"errors"
-	"net"
+	"io"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
+	"strings"
 	"testing"
 	"time"
 
@@ -59,33 +59,45 @@ func TestCrowdfundingClient_GetCategorizedTransactions_UsesGatewayPathAnonymousl
 func TestCrowdfundingClient_GetCategorizedTransactions_NotFoundIsInitiativeNotFound(t *testing.T) {
 	t.Parallel()
 
-	var newConns atomic.Int32
-	apiServer := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
-	}))
-	apiServer.Config.ConnState = func(_ net.Conn, state http.ConnState) {
-		if state == http.StateNew {
-			newConns.Add(1)
-		}
-	}
-	apiServer.Start()
-	defer apiServer.Close()
-
-	client := NewCrowdfundingClient(CrowdfundingConfig{
-		BaseURL: apiServer.URL,
-		Timeout: 2 * time.Second,
+	// A missing initiative is a normal answer, so its connection must stay reusable: net/http reuses
+	// one only when the body is read to EOF and closed. Counting server connections instead races
+	// the transport returning the connection to its pool.
+	body := &trackedBody{Reader: strings.NewReader(`{"error":"not found"}`)}
+	client := NewCrowdfundingClient(CrowdfundingConfig{BaseURL: "http://crowdfunding.test", Timeout: 2 * time.Second}).(*crowdfundingHTTPClient)
+	client.httpClient.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusNotFound, Body: body, Header: http.Header{}, Request: r}, nil
 	})
 
-	// A missing initiative is a normal answer, so the drained connection must be reused.
-	for range 2 {
-		_, err := client.GetCategorizedTransactions(context.Background(), "initiative-1", "", false, 10, 0)
-		if !errors.Is(err, domain.ErrInitiativeNotFound) {
-			t.Fatalf("err = %v; want ErrInitiativeNotFound", err)
-		}
+	_, err := client.GetCategorizedTransactions(context.Background(), "initiative-1", "", false, 10, 0)
+	if !errors.Is(err, domain.ErrInitiativeNotFound) {
+		t.Fatalf("err = %v; want ErrInitiativeNotFound", err)
 	}
-	if got := newConns.Load(); got != 1 {
-		t.Fatalf("opened %d connections; want 1 reused across both requests", got)
+	if !body.eof || !body.closed {
+		t.Fatalf("body read to EOF = %v, closed = %v; want both so the connection is reused", body.eof, body.closed)
 	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// trackedBody records whether a response body was read to EOF and closed.
+type trackedBody struct {
+	io.Reader
+	eof, closed bool
+}
+
+func (b *trackedBody) Read(p []byte) (int, error) {
+	n, err := b.Reader.Read(p)
+	if errors.Is(err, io.EOF) {
+		b.eof = true
+	}
+	return n, err
+}
+
+func (b *trackedBody) Close() error {
+	b.closed = true
+	return nil
 }
 
 func TestCrowdfundingClient_GetCategorizedTransactions_NonOKIsUpstreamUnavailable(t *testing.T) {
