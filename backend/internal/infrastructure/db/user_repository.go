@@ -25,6 +25,11 @@ const (
 	usersEmailKey   = "users_email_key"
 )
 
+// sqlUserDisplayName is the name to show for users u: the account's name, else the first and last
+// name on their profile joined as up. A sign-in without name claims leaves the account's name NULL
+// while the profile holds what the user typed.
+const sqlUserDisplayName = `NULLIF(TRIM(COALESCE(NULLIF(TRIM(u.name), ''), CONCAT_WS(' ', up.first_name, up.last_name))), '')`
+
 // UserRepository implements domain.UserRepository against PostgreSQL.
 type UserRepository struct {
 	pool *pgxpool.Pool

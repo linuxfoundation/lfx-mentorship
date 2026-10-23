@@ -166,12 +166,19 @@ func (r *taskRepoStub) ListByApplication(_ context.Context, _ string, filter mod
 type profileRepoStub struct {
 	domain.UserProfileRepository
 	address json.RawMessage
-	err     error
+	// byUser holds the profiles of any type that a lookup by user alone returns.
+	byUser map[string][]*models.UserProfile
+	err    error
 }
 
 func (r *profileRepoStub) List(_ context.Context, filter models.UserProfileFilter) ([]*models.UserProfile, *models.PaginationMeta, error) {
 	if r.err != nil {
 		return nil, nil, r.err
+	}
+	if filter.ProfileType == "" {
+		all := r.byUser[filter.UserID]
+		page := all[min(filter.Offset, len(all)):min(filter.Offset+filter.Limit, len(all))]
+		return page, &models.PaginationMeta{Total: len(all), Limit: filter.Limit, Offset: filter.Offset}, nil
 	}
 	if filter.ProfileType != string(models.UserProfileTypeMentee) || r.address == nil {
 		return nil, &models.PaginationMeta{}, nil
@@ -873,6 +880,90 @@ func TestNotifyProfileCreated(t *testing.T) {
 			}
 			mustContain(t, "text", sent[0].Text, tc.want...)
 		})
+	}
+}
+
+func TestNotifyFallsBackToProfileForMissingNameAndEmail(t *testing.T) {
+	f := newFixture()
+	f.users.users["bare"] = &models.User{ID: "bare"}
+	f.profiles.byUser = map[string][]*models.UserProfile{"bare": {
+		{UserID: "bare", ProfileType: string(models.UserProfileTypeMentor)},
+		{UserID: "bare", ProfileType: string(models.UserProfileTypeMentee), FirstName: strPtr("Ada"), LastName: strPtr("Lovelace"), Email: strPtr("ada@example.org")},
+	}}
+	f.n.NotifyProfileCreated(context.Background(), "bare", models.UserProfileTypeMentee)
+
+	sent := f.wait(t)
+	if len(sent) != 1 || sent[0].To != "ada@example.org" || !strings.HasPrefix(sent[0].Text, "Hi Ada!") {
+		t.Fatalf("sent = %+v, want one email to the profile address greeting Ada", sent)
+	}
+}
+
+func TestNotifyKeepsAccountNameAndEmailOverProfile(t *testing.T) {
+	f := newFixture()
+	f.profiles.byUser = map[string][]*models.UserProfile{"mentee": {
+		{UserID: "mentee", FirstName: strPtr("Other"), Email: strPtr("other@example.org")},
+	}}
+	f.n.NotifyProfileCreated(context.Background(), "mentee", models.UserProfileTypeMentee)
+
+	sent := f.wait(t)
+	if len(sent) != 1 || sent[0].To != "mentee@linuxfoundation.org" || !strings.HasPrefix(sent[0].Text, "Hi Mia!") {
+		t.Fatalf("sent = %+v, want the account's address and name", sent)
+	}
+}
+
+func TestNotifierUser_ReadsProfilesBeyondTheFirstPage(t *testing.T) {
+	f := newFixture()
+	f.users.users["bare"] = &models.User{ID: "bare"}
+	profiles := make([]*models.UserProfile, profilePageSize+20)
+	for i := range profiles {
+		profiles[i] = &models.UserProfile{UserID: "bare", ProfileType: string(models.UserProfileTypeMentor)}
+	}
+	profiles[profilePageSize+10].Email = strPtr("older@example.org")
+	f.profiles.byUser = map[string][]*models.UserProfile{"bare": profiles}
+
+	user, err := f.n.user(context.Background(), "bare")
+	if err != nil || deref(user.Email) != "older@example.org" {
+		t.Fatalf("user = %+v, err = %v; want the email from the second page", user, err)
+	}
+}
+
+func TestNotifierUser_FillsNamePartsIndependently(t *testing.T) {
+	for name, tc := range map[string]struct {
+		account       models.User
+		profile       models.UserProfile
+		given, family string
+	}{
+		"account has only a family name": {
+			account: models.User{ID: "partial", FamilyName: strPtr("Hopper")},
+			profile: models.UserProfile{FirstName: strPtr("Grace")},
+			given:   "Grace", family: "Hopper",
+		},
+		"account has only a given name": {
+			account: models.User{ID: "partial", GivenName: strPtr("Grace")},
+			profile: models.UserProfile{FirstName: strPtr("Other"), LastName: strPtr("Hopper")},
+			given:   "Grace", family: "Hopper",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture()
+			f.users.users["partial"] = &tc.account
+			f.profiles.byUser = map[string][]*models.UserProfile{"partial": {&tc.profile}}
+
+			user, err := f.n.user(context.Background(), "partial")
+			if err != nil || deref(user.GivenName) != tc.given || deref(user.FamilyName) != tc.family {
+				t.Fatalf("given/family = %q/%q, err = %v; want %q/%q", deref(user.GivenName), deref(user.FamilyName), err, tc.given, tc.family)
+			}
+		})
+	}
+}
+
+func TestNotifySkipsUserWithoutEmailWhenProfileLookupFails(t *testing.T) {
+	f := newFixture()
+	f.n.repos.Profiles = &profileRepoStub{err: errors.New("db down")}
+	f.n.NotifyProfileCreated(context.Background(), "noaddr", models.UserProfileTypeMentee)
+
+	if sent := f.wait(t); len(sent) != 0 {
+		t.Fatalf("sent = %+v, want nothing for a user with no address anywhere", sent)
 	}
 }
 

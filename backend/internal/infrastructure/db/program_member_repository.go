@@ -184,6 +184,10 @@ func (r *ProgramMemberRepository) ListByProgram(ctx context.Context, programID s
 	return members, &models.PaginationMeta{Total: total, Limit: limit, Offset: offset}, nil
 }
 
+// mentorEmail is the address to show for a mentor: the invitation's, else the account's, else the
+// one on their mentor profile (joined as up).
+const mentorEmail = `COALESCE(pm.email, NULLIF(u.email, ''), NULLIF(up.email, ''))`
+
 func (r *ProgramMemberRepository) ListMentorManagement(ctx context.Context, programID string, filter models.ProgramMemberFilter) ([]*models.ProgramMentorManagementRow, *models.PaginationMeta, error) {
 	limit, offset := filter.Limit, filter.Offset
 	if limit <= 0 || limit > 50 {
@@ -200,14 +204,18 @@ func (r *ProgramMemberRepository) ListMentorManagement(ctx context.Context, prog
 	}
 	if filter.Search != "" {
 		args = append(args, "%"+filter.Search+"%")
-		where += fmt.Sprintf(` AND (u.name ILIKE $%d OR u.email ILIKE $%d OR u.lfid ILIKE $%d)`, len(args), len(args), len(args))
+		where += fmt.Sprintf(` AND (`+sqlUserDisplayName+` ILIKE $%d OR `+mentorEmail+` ILIKE $%d OR u.lfid ILIKE $%d)`, len(args), len(args), len(args))
 	}
+	// The mentor's latest profile backs the name, email and avatar the account lacks.
+	const from = ` FROM program_members pm JOIN users u ON u.id = pm.user_id
+		LEFT JOIN LATERAL (SELECT id, first_name, last_name, email, logo_url FROM user_profiles
+			WHERE user_id = pm.user_id AND profile_type = 'mentor' ORDER BY updated_on DESC LIMIT 1) up ON true`
 	var total int
-	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM program_members pm JOIN users u ON u.id = pm.user_id`+where, args...).Scan(&total); err != nil {
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*)`+from+where, args...).Scan(&total); err != nil {
 		return nil, nil, fmt.Errorf("count mentor management: %w", err)
 	}
 	args = append(args, limit, offset)
-	q := `SELECT pm.id, pm.user_id, u.name, COALESCE(pm.email, u.email), u.lfid, COALESCE((SELECT NULLIF(up.logo_url, '') FROM user_profiles up WHERE up.user_id = pm.user_id AND up.profile_type = 'mentor' ORDER BY up.updated_on DESC LIMIT 1), u.avatar_url), pm.status, pm.created_on, pm.updated_on, EXISTS(SELECT 1 FROM user_profiles up WHERE up.user_id = pm.user_id AND up.profile_type = 'mentor')` + ` FROM program_members pm JOIN users u ON u.id = pm.user_id` + where + fmt.Sprintf(` ORDER BY pm.created_on DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
+	q := `SELECT pm.id, pm.user_id, ` + sqlUserDisplayName + `, ` + mentorEmail + `, u.lfid, COALESCE(NULLIF(up.logo_url, ''), u.avatar_url), pm.status, pm.created_on, pm.updated_on, up.id IS NOT NULL` + from + where + fmt.Sprintf(` ORDER BY pm.created_on DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
 	rows, err := r.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("list mentor management: %w", err)

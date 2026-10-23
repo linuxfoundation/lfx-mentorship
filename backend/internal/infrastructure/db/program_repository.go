@@ -604,12 +604,12 @@ func (r *ProgramRepository) ListCatalogMentees(ctx context.Context, programID st
 	span.SetAttributes(attribute.String("db.program_id", programID))
 
 	rows, err := r.pool.Query(ctx, `
-		SELECT a.user_id, u.name, COALESCE(NULLIF(up.logo_url, ''), u.avatar_url), up.introduction, a.status, pt.id, pt.name
+		SELECT a.user_id, `+sqlUserDisplayName+`, COALESCE(NULLIF(up.logo_url, ''), u.avatar_url), up.introduction, a.status, pt.id, pt.name
 		FROM applications a
 		JOIN program_terms pt ON pt.id = a.program_term_id
 		LEFT JOIN users u ON u.id = a.user_id
 		LEFT JOIN LATERAL (
-			SELECT introduction, logo_url
+			SELECT introduction, logo_url, first_name, last_name
 			FROM user_profiles
 			WHERE user_id = a.user_id
 			  AND profile_type = 'mentee'
@@ -621,7 +621,7 @@ func (r *ProgramRepository) ListCatalogMentees(ctx context.Context, programID st
 		  AND a.role = 'mentee'
 		  AND a.status IN ('accepted', 'graduated')
 		ORDER BY CASE WHEN a.status = 'graduated' THEN 1 ELSE 0 END,
-		         u.name NULLS LAST,
+		         `+sqlUserDisplayName+` NULLS LAST,
 		         pt.start_date_time DESC NULLS LAST`, programID)
 	if err != nil {
 		span.RecordError(err)
@@ -743,11 +743,11 @@ func (r *ProgramRepository) loadCatalogTerms(ctx context.Context, ids []string) 
 func (r *ProgramRepository) loadCatalogMentors(ctx context.Context, ids []string) (map[string][]models.ProgramCatalogMentor, error) {
 	out := map[string][]models.ProgramCatalogMentor{}
 	rows, err := r.pool.Query(ctx, `
-		SELECT pm.id, pm.program_id, pm.user_id, u.name, COALESCE(NULLIF(up.logo_url, ''), u.avatar_url), up.introduction
+		SELECT pm.id, pm.program_id, pm.user_id, `+sqlUserDisplayName+`, COALESCE(NULLIF(up.logo_url, ''), u.avatar_url), up.introduction
 		FROM program_members pm
 		LEFT JOIN users u ON u.id = pm.user_id
 		LEFT JOIN LATERAL (
-			SELECT introduction, logo_url
+			SELECT introduction, logo_url, first_name, last_name
 			FROM user_profiles
 			WHERE user_id = pm.user_id
 			  AND profile_type = 'mentor'
@@ -757,7 +757,7 @@ func (r *ProgramRepository) loadCatalogMentors(ctx context.Context, ids []string
 		WHERE pm.program_id = ANY($1::uuid[])
 		  AND pm.member_type = 'mentor'
 		  AND pm.status = 'approved'
-		ORDER BY u.name NULLS LAST, pm.created_on`, ids)
+		ORDER BY `+sqlUserDisplayName+` NULLS LAST, pm.created_on`, ids)
 	if err != nil {
 		return nil, fmt.Errorf("list catalog mentors: %w", err)
 	}
