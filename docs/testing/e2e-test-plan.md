@@ -239,7 +239,7 @@ PROD runs `v0.1.10` (backend, cron jobs and frontend), which includes [#358](htt
 |---|---|
 | [#359](https://github.com/linuxfoundation/lfx-mentorship/pull/359) (F1) | ✅ No initiative means `200` with no sponsors, "No sponsors listed yet", and Donate disabled with a tooltip |
 | [#358](https://github.com/linuxfoundation/lfx-mentorship/pull/358) (F2, logo) | ✅ Logo uploaded on the first try (1 run) |
-| [#358](https://github.com/linuxfoundation/lfx-mentorship/pull/358) (F2, apply) | ⚠️ Submit now takes about 10 s, while the access wait times out. On 1 of 3 runs the overview still showed "Forbidden"; access appeared about 15 s after Submit |
+| [#358](https://github.com/linuxfoundation/lfx-mentorship/pull/358) (F2, apply) | ⚠️ Submit now takes about 10 s, while the access wait times out. On 1 of 2 runs the overview still showed "Forbidden"; access appeared about 15 s after Submit |
 | [#361](https://github.com/linuxfoundation/lfx-mentorship/pull/361)–[#365](https://github.com/linuxfoundation/lfx-mentorship/pull/365) (F10) | ✅ A brand-new user (`mlehotsky1`) has a name in the admin and mentor lists. The backend sends their emails, and the copies in `EMAIL_COPY_INBOX` are correct |
 | F12 | ❌ Still reproduces: 5 of 5 times on idle DEV sessions. PROD RUM, last 30 days: 17 guard timeouts in 17 sessions, 9 of them `mentorshipEnabledGuard` |
 
