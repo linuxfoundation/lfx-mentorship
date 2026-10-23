@@ -154,22 +154,18 @@ spec:
             values:
               aud: {{ .Values.app.audience | quote }}
 
-    # Authenticated routes without an object in the path. The by-id profile
-    # routes check ownership in the service. PUT /me creates the local user
-    # from the token, so this rule runs the oidc_contextualizer: without it the
-    # JWT carries no email and new users are stored with none (issue #360).
-    - id: rule:lfx:lfx-mentorship-backend:identity
+    # PUT /me creates the local user from the token, so this rule runs the
+    # oidc_contextualizer: without it the JWT carries no email and new users
+    # are stored with none (issue #360). Only this route and the mentorship
+    # request below run it: each run is an IdP userinfo call, which Auth0
+    # limits per user to a burst of 10 and 5 a minute, shared with every
+    # other caller, and Self Serve reads several /me routes per page.
+    - id: rule:lfx:lfx-mentorship-backend:identity-bootstrap
       allow_encoded_slashes: "off"
       match:
-        methods: [GET, PUT, PATCH, DELETE, POST]
+        methods: [PUT]
         routes:
           - path: /mentorship/v1/me
-          - path: /mentorship/v1/me/profiles
-          - path: /mentorship/v1/me/profiles/:profileType
-          - path: /mentorship/v1/me/profiles/by-id/:id
-          - path: /mentorship/v1/me/applications
-          - path: /mentorship/v1/me/programs
-          - path: /mentorship/v1/me/mentor-programs
       execute:
         - authenticator: oidc
         {{- if .Values.app.use_oidc_contextualizer }}
@@ -181,12 +177,64 @@ spec:
             values:
               aud: {{ .Values.app.audience | quote }}
 
+    # Authenticated routes without an object in the path. The by-id profile
+    # routes check ownership in the service. /me itself is matched by method:
+    # PUT is the bootstrap rule above, the rest are here.
+    - id: rule:lfx:lfx-mentorship-backend:identity
+      allow_encoded_slashes: "off"
+      match:
+        methods: [GET, PATCH, DELETE]
+        routes:
+          - path: /mentorship/v1/me
+      execute:
+        - authenticator: oidc
+        - authorizer: allow_all
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    - id: rule:lfx:lfx-mentorship-backend:identity-collections
+      allow_encoded_slashes: "off"
+      match:
+        methods: [GET, PUT, PATCH, DELETE, POST]
+        routes:
+          - path: /mentorship/v1/me/profiles
+          - path: /mentorship/v1/me/profiles/:profileType
+          - path: /mentorship/v1/me/profiles/by-id/:id
+          - path: /mentorship/v1/me/applications
+          - path: /mentorship/v1/me/programs
+          - path: /mentorship/v1/me/mentor-programs
+      execute:
+        - authenticator: oidc
+        - authorizer: allow_all
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
     # A mentor's own program memberships. No FGA program relation: the service
     # takes the user from the principal and scopes every read and write to it.
     - id: rule:lfx:lfx-mentorship-backend:me-program-memberships
       allow_encoded_slashes: "off"
       match:
-        methods: [GET, POST]
+        methods: [GET]
+        routes:
+          - path: /mentorship/v1/me/program-memberships
+      execute:
+        - authenticator: oidc
+        - authorizer: allow_all
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    # Requesting to mentor matches the caller's email against pending invites,
+    # so this route runs the oidc_contextualizer for the email claim.
+    - id: rule:lfx:lfx-mentorship-backend:me-program-membership-request
+      allow_encoded_slashes: "off"
+      match:
+        methods: [POST]
         routes:
           - path: /mentorship/v1/me/program-memberships
       execute:

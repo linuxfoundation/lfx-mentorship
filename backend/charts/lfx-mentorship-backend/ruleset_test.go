@@ -311,30 +311,31 @@ func TestMentorCandidatesRequiresProgramWriter(t *testing.T) {
 // The caller's program lists take the user from the principal, so the gateway
 // needs only a signed-in user.
 func TestMeProgramListsNeedOnlyASignedInUser(t *testing.T) {
-	block := ruleBlock(t, "identity")
+	block := ruleBlock(t, "identity-collections")
 	for _, route := range []string{
 		"/mentorship/v1/me/programs",
 		"/mentorship/v1/me/mentor-programs",
 	} {
 		if !strings.Contains(block, "- path: "+route+"\n") {
-			t.Errorf("identity rule is missing %q:\n%s", route, block)
+			t.Errorf("identity-collections rule is missing %q:\n%s", route, block)
 		}
 	}
 	expected := `      execute:
         - authenticator: oidc
         - authorizer: allow_all
         - finalizer: create_jwt`
-	if !strings.Contains(withoutContextualizer(block), expected) {
-		t.Errorf("identity rule lacks oidc -> allow_all -> create_jwt sequence:\n%s", block)
+	if !strings.Contains(block, expected) {
+		t.Errorf("identity-collections rule lacks oidc -> allow_all -> create_jwt sequence:\n%s", block)
 	}
 	if strings.Contains(block, "anonymous_authenticator") {
-		t.Errorf("identity rule must not admit anonymous callers:\n%s", block)
+		t.Errorf("identity-collections rule must not admit anonymous callers:\n%s", block)
 	}
 }
 
 func TestMeProgramMembershipRulesNeedOnlyASignedInUser(t *testing.T) {
 	for id, route := range map[string]string{
 		"me-program-memberships":         "/mentorship/v1/me/program-memberships",
+		"me-program-membership-request":  "/mentorship/v1/me/program-memberships",
 		"me-program-membership-withdraw": "/mentorship/v1/me/program-memberships/:id/withdraw",
 		"me-program-membership-accept":   "/mentorship/v1/me/program-memberships/:id/accept",
 		"me-program-membership-decline":  "/mentorship/v1/me/program-memberships/:id/decline",
@@ -367,9 +368,10 @@ func withoutContextualizer(block string) string {
 
 // The handlers behind PUT /me and POST /me/program-memberships read the token's
 // email claim, which Heimdall emits only when the pipeline ran the
-// oidc_contextualizer (issue #360). It runs on just those rules: it costs a
-// userinfo call per request, and no other handler reads the claim.
-func TestRuleSetRunsOIDCContextualizerOnlyWhereEmailIsRead(t *testing.T) {
+// oidc_contextualizer (issue #360). It runs on exactly those two routes, each in
+// its own rule: every run is an IdP userinfo call that Auth0 limits per user to
+// a burst of 10 and 5 a minute, and Self Serve reads several /me routes a page.
+func TestRuleSetRunsOIDCContextualizerOnlyOnBootstrapRoutes(t *testing.T) {
 	contents, err := os.ReadFile("templates/ruleset.yaml")
 	if err != nil {
 		t.Fatalf("read RuleSet: %v", err)
@@ -379,16 +381,32 @@ func TestRuleSetRunsOIDCContextualizerOnlyWhereEmailIsRead(t *testing.T) {
         - contextualizer: oidc_contextualizer
         {{- end }}
         - authorizer: allow_all`
-	for _, id := range []string{"identity", "me-program-memberships"} {
+	for id, want := range map[string]struct{ method, path string }{
+		"identity-bootstrap":            {"PUT", "/mentorship/v1/me"},
+		"me-program-membership-request": {"POST", "/mentorship/v1/me/program-memberships"},
+	} {
 		block := ruleBlock(t, id)
+		if !strings.Contains(block, "methods: ["+want.method+"]\n") || strings.Count(block, "- path:") != 1 || !strings.Contains(block, "- path: "+want.path+"\n") {
+			t.Errorf("rule %q must match only %s %s:\n%s", id, want.method, want.path, block)
+		}
 		if !strings.Contains(block, "- authenticator: oidc\n"+contextualizer) {
 			t.Errorf("rule %q lacks oidc -> oidc_contextualizer -> allow_all:\n%s", id, block)
 		}
 	}
 	if got := strings.Count(ruleset, "contextualizer: oidc_contextualizer"); got != 2 {
-		t.Errorf("oidc_contextualizer appears %d times; want 2 (identity and me-program-memberships only)", got)
+		t.Errorf("oidc_contextualizer appears %d times; want 2", got)
 	}
-	if !strings.Contains(ruleBlock(t, "identity"), "- path: /mentorship/v1/me\n") {
-		t.Error("identity rule no longer covers /mentorship/v1/me, where the user row is created")
+	// The other /me rules read no claim and must not spend the user's userinfo budget.
+	for _, id := range []string{"identity", "identity-collections", "me-program-memberships"} {
+		if strings.Contains(ruleBlock(t, id), "- contextualizer: oidc_contextualizer") {
+			t.Errorf("rule %q runs the oidc_contextualizer; only the two bootstrap routes may", id)
+		}
+	}
+	// /me is split by method, so the two rules together still cover every verb the API serves.
+	if block := ruleBlock(t, "identity"); !strings.Contains(block, "methods: [GET, PATCH, DELETE]\n") || !strings.Contains(block, "- path: /mentorship/v1/me\n") {
+		t.Errorf("identity rule must cover GET, PATCH and DELETE on /mentorship/v1/me:\n%s", block)
+	}
+	if block := ruleBlock(t, "me-program-memberships"); !strings.Contains(block, "methods: [GET]\n") {
+		t.Errorf("me-program-memberships rule must cover only GET:\n%s", block)
 	}
 }
