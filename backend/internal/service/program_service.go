@@ -1032,8 +1032,9 @@ func aggregateProgramSponsors(transactions []models.ProgramTransaction) []models
 	return out
 }
 
-// GetProgramSponsors returns backend-aggregated sponsor cards for a program.
-func (s *ProgramService) GetProgramSponsors(ctx context.Context, programID, categoryType string, subscriptionOnly bool, aggregate bool) ([]models.ProgramSponsor, error) {
+// GetProgramSponsors returns backend-aggregated sponsor cards for a program. A
+// program with no crowdfunding initiative yet has no sponsors rather than an error.
+func (s *ProgramService) GetProgramSponsors(ctx context.Context, programID, categoryType string, subscriptionOnly bool, aggregate bool) (*models.ProgramSponsors, error) {
 	ctx, span := programSvcTracer.Start(ctx, "ProgramService.GetProgramSponsors")
 	defer span.End()
 
@@ -1052,6 +1053,9 @@ func (s *ProgramService) GetProgramSponsors(ctx context.Context, programID, cate
 	all := make([]models.ProgramTransaction, 0, pageSize)
 
 	firstPage, err := s.cfClient.GetCategorizedTransactions(ctx, programID, categoryType, subscriptionOnly, pageSize, 0)
+	if errors.Is(err, domain.ErrInitiativeNotFound) {
+		return &models.ProgramSponsors{Data: []models.ProgramSponsor{}}, nil
+	}
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("get sponsors transactions page: %w", err)
@@ -1059,7 +1063,7 @@ func (s *ProgramService) GetProgramSponsors(ctx context.Context, programID, cate
 	all = append(all, firstPage.OrganizationTransactions...)
 	all = append(all, firstPage.IndividualTransactions...)
 	if !aggregate {
-		return aggregateProgramSponsors(all), nil
+		return withInitiative(aggregateProgramSponsors(all)), nil
 	}
 
 	effectivePageSize := firstPage.Limit
@@ -1069,7 +1073,7 @@ func (s *ProgramService) GetProgramSponsors(ctx context.Context, programID, cate
 
 	totalCount := firstPage.TotalCount
 	if totalCount <= effectivePageSize {
-		return aggregateProgramSponsors(all), nil
+		return withInitiative(aggregateProgramSponsors(all)), nil
 	}
 
 	const aggregateWorkers = 4
@@ -1124,5 +1128,10 @@ func (s *ProgramService) GetProgramSponsors(ctx context.Context, programID, cate
 	default:
 	}
 
-	return aggregateProgramSponsors(all), nil
+	return withInitiative(aggregateProgramSponsors(all)), nil
+}
+
+// withInitiative wraps the sponsors of a program that has a crowdfunding initiative.
+func withInitiative(sponsors []models.ProgramSponsor) *models.ProgramSponsors {
+	return &models.ProgramSponsors{Data: sponsors, CrowdfundingInitiative: true}
 }

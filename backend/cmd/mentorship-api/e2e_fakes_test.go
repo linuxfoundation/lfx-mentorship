@@ -316,15 +316,20 @@ func reply(msg *nats.Msg, body any) {
 }
 
 // crowdfundingHandler serves GET /initiatives/{id}/transactions from the configured transactions.
+// Like crowdfunding, it answers 404 for an initiative it has no transactions configured for.
 func (f *fakes) crowdfundingHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /initiatives/{id}/transactions", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		down := f.crowdfundingDown
-		txns := f.transactions[r.PathValue("id")]
+		txns, ok := f.transactions[r.PathValue("id")]
 		f.mu.Unlock()
 		if down {
 			http.Error(w, "upstream down", http.StatusBadGateway)
+			return
+		}
+		if !ok {
+			http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
 			return
 		}
 		if txns == nil {

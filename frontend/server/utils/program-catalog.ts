@@ -72,6 +72,7 @@ export interface ProgramCatalogSponsor {
 
 export interface ProgramCatalogSponsorsResponse {
   data: ProgramCatalogSponsor[];
+  crowdfunding_initiative?: boolean;
 }
 
 export interface ProgramCatalogListResponse {

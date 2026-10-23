@@ -116,9 +116,10 @@ registerEndpoint('/api/programs/p1/mentees', () => [
   { id: 'u1', name: 'Ada Lovelace', status: 'active', termId: 't1', termLabel: 'Fall 2026' },
   { id: 'u2', name: 'Alan Turing', status: 'graduated', termId: 't0', termLabel: 'Spring 2025' },
 ]);
-registerEndpoint('/api/programs/p1/sponsors', () => [
-  { id: 's1', name: 'ACME Corp', amountCents: 500000 },
-]);
+registerEndpoint('/api/programs/p1/sponsors', () => ({
+  sponsors: [{ id: 's1', name: 'ACME Corp', amountCents: 500000 }],
+  crowdfundingInitiative: true,
+}));
 registerEndpoint('/api/mentees', () => mentees);
 registerEndpoint('/api/mentees/summary', () => ({ menteeCount: 1, programCount: 1 }));
 registerEndpoint('/api/mentees/u1', () => menteeDetail);

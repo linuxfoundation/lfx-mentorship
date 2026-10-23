@@ -6,8 +6,10 @@ package clients
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -54,11 +56,43 @@ func TestCrowdfundingClient_GetCategorizedTransactions_UsesGatewayPathAnonymousl
 	}
 }
 
+func TestCrowdfundingClient_GetCategorizedTransactions_NotFoundIsInitiativeNotFound(t *testing.T) {
+	t.Parallel()
+
+	var newConns atomic.Int32
+	apiServer := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+	}))
+	apiServer.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			newConns.Add(1)
+		}
+	}
+	apiServer.Start()
+	defer apiServer.Close()
+
+	client := NewCrowdfundingClient(CrowdfundingConfig{
+		BaseURL: apiServer.URL,
+		Timeout: 2 * time.Second,
+	})
+
+	// A missing initiative is a normal answer, so the drained connection must be reused.
+	for range 2 {
+		_, err := client.GetCategorizedTransactions(context.Background(), "initiative-1", "", false, 10, 0)
+		if !errors.Is(err, domain.ErrInitiativeNotFound) {
+			t.Fatalf("err = %v; want ErrInitiativeNotFound", err)
+		}
+	}
+	if got := newConns.Load(); got != 1 {
+		t.Fatalf("opened %d connections; want 1 reused across both requests", got)
+	}
+}
+
 func TestCrowdfundingClient_GetCategorizedTransactions_NonOKIsUpstreamUnavailable(t *testing.T) {
 	t.Parallel()
 
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "not found", http.StatusNotFound)
+		http.Error(w, "bad gateway", http.StatusBadGateway)
 	}))
 	defer apiServer.Close()
 
