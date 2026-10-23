@@ -89,7 +89,17 @@ flowchart LR
 4. The public slug resolver uses `allow_all`; UID-addressed routes use an
   OpenFGA relation from the route matrix.
 5. Heimdall creates a PS256 JWT with audience `lfx-mentorship-backend` and a
-   `principal` claim.
+   `principal` claim. On the `identity` and `me-program-memberships` rules the
+   pipeline also runs the platform's `oidc_contextualizer` (chart value
+   `app.use_oidc_contextualizer`, on by default), which calls the IdP's
+   `userinfo` endpoint so `create_jwt` adds the caller's verified `email`; the
+   gateway denies the request if the address is unverified. `PUT /me` creates
+   the local user from these claims, so without the contextualizer new users
+   are stored with no email or name ([#360](https://github.com/linuxfoundation/lfx-mentorship/issues/360)).
+   The backend also reads `name`, `given_name`, `family_name` and `picture`
+   claims; the platform's finalizer does not emit them yet (lfx-v2-helm maps
+   only `email` from the contextualizer), so until it does Self Serve sends the
+   name in the `PUT /me` body.
 6. The backend validates the JWT against the cluster-internal Heimdall JWKS.
 7. Handlers execute workflow logic without repeating the edge authorization
    decision.
@@ -278,6 +288,7 @@ These are Helm values, not process environment variables:
 | `heimdall.url` | Platform Heimdall main endpoint, normally port `4456` |
 | `openfga.enabled` | `true`; chart consistency gate for Heimdall activation |
 | `app.audience` | `lfx-mentorship-backend` |
+| `app.use_oidc_contextualizer` | `true` (default) to run the platform's `oidc_contextualizer` on the `/me` rules so the JWT carries the caller's verified `email`; `false` leaves new users without one |
 | `lfx.domain` | Environment domain used to form `lfx-api.{domain}` |
 | `traefik.gateway.name` | Shared gateway name |
 | `traefik.gateway.namespace` | Shared gateway namespace |

@@ -50,6 +50,11 @@ service:
 # values are approved together.
 app:
   audience: lfx-mentorship-backend
+  # Runs Heimdall's oidc_contextualizer on the /me routes so the JWT carries the
+  # caller's verified email (and name claims once the platform emits them). The
+  # backend fills a new user's row from these on sign-in; without it the row has
+  # no email or name. Costs one userinfo call per request on those routes.
+  use_oidc_contextualizer: true
 
 lfx:
   domain: ""

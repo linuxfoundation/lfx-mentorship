@@ -324,7 +324,7 @@ func TestMeProgramListsNeedOnlyASignedInUser(t *testing.T) {
         - authenticator: oidc
         - authorizer: allow_all
         - finalizer: create_jwt`
-	if !strings.Contains(block, expected) {
+	if !strings.Contains(withoutContextualizer(block), expected) {
 		t.Errorf("identity rule lacks oidc -> allow_all -> create_jwt sequence:\n%s", block)
 	}
 	if strings.Contains(block, "anonymous_authenticator") {
@@ -347,11 +347,48 @@ func TestMeProgramMembershipRulesNeedOnlyASignedInUser(t *testing.T) {
         - authenticator: oidc
         - authorizer: allow_all
         - finalizer: create_jwt`
-		if !strings.Contains(block, expected) {
+		if !strings.Contains(withoutContextualizer(block), expected) {
 			t.Errorf("%s rule lacks oidc -> allow_all -> create_jwt sequence", id)
 		}
 		if strings.Contains(block, "anonymous_authenticator") {
 			t.Errorf("%s rule must not admit anonymous callers", id)
 		}
+	}
+}
+
+// withoutContextualizer removes the optional oidc_contextualizer step, so a
+// rule's base pipeline can be asserted whether or not it runs the contextualizer.
+func withoutContextualizer(block string) string {
+	return strings.ReplaceAll(block, `        {{- if .Values.app.use_oidc_contextualizer }}
+        - contextualizer: oidc_contextualizer
+        {{- end }}
+`, "")
+}
+
+// The handlers behind PUT /me and POST /me/program-memberships read the token's
+// email claim, which Heimdall emits only when the pipeline ran the
+// oidc_contextualizer (issue #360). It runs on just those rules: it costs a
+// userinfo call per request, and no other handler reads the claim.
+func TestRuleSetRunsOIDCContextualizerOnlyWhereEmailIsRead(t *testing.T) {
+	contents, err := os.ReadFile("templates/ruleset.yaml")
+	if err != nil {
+		t.Fatalf("read RuleSet: %v", err)
+	}
+	ruleset := string(contents)
+	const contextualizer = `        {{- if .Values.app.use_oidc_contextualizer }}
+        - contextualizer: oidc_contextualizer
+        {{- end }}
+        - authorizer: allow_all`
+	for _, id := range []string{"identity", "me-program-memberships"} {
+		block := ruleBlock(t, id)
+		if !strings.Contains(block, "- authenticator: oidc\n"+contextualizer) {
+			t.Errorf("rule %q lacks oidc -> oidc_contextualizer -> allow_all:\n%s", id, block)
+		}
+	}
+	if got := strings.Count(ruleset, "contextualizer: oidc_contextualizer"); got != 2 {
+		t.Errorf("oidc_contextualizer appears %d times; want 2 (identity and me-program-memberships only)", got)
+	}
+	if !strings.Contains(ruleBlock(t, "identity"), "- path: /mentorship/v1/me\n") {
+		t.Error("identity rule no longer covers /mentorship/v1/me, where the user row is created")
 	}
 }
