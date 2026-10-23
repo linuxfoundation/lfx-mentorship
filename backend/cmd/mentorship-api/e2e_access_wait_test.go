@@ -7,6 +7,7 @@ package main
 
 import (
 	"net/http"
+	"slices"
 	"testing"
 	"time"
 )
@@ -34,6 +35,15 @@ func TestE2ECreateWaitsForCreatorAccess(t *testing.T) {
 		}
 		if want := "mentorship_program:" + p.ID + "#writer@user:wait-admin"; checks[0].Check != want {
 			t.Fatalf("checked %q; want %q", checks[0].Check, want)
+		}
+		// The creator's membership arrives as member_put, whose relations are an
+		// array, unlike update_access; the fake must accept both grant shapes.
+		var memberPut bool
+		for _, g := range e2e.fakes.grantsFor("mentorship_program:" + p.ID) {
+			memberPut = memberPut || (g.Operation == "member_put" && slices.Contains(g.Users, "wait-admin"))
+		}
+		if !memberPut {
+			t.Fatalf("grants = %+v; want the creator's member_put accepted", e2e.fakes.grantsFor("mentorship_program:"+p.ID))
 		}
 		// The whole point: the logo upload right after the create goes through first time.
 		uploadLogo(t, admin, p.ID).expect(http.StatusCreated)
