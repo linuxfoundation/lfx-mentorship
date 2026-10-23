@@ -15,7 +15,7 @@ Related: [08 runbook](./08-prod-migration-runbook.md) holds the commands; this p
 
 - [x] Runbook 08 updated: Phase 1 and the no-go step describe the test import and the `TRUNCATE` ([#290](https://github.com/linuxfoundation/lfx-mentorship/pull/290), Eng)
 - [x] Test import into prod, in-cluster, off-hours, platform team warned: about 330k FGA and 330k index messages (Eng)
-- [x] Import and outbox-drain time measured: the import takes minutes; the FGA outbox drains in about 4.6 hours at the throttled 20 messages/s (330k markers). OpenFGA already holds the test import's tuples under the same ids, so unchanged objects lose nothing while they wait. But the relay works through the queue by object type, not by time: applications first (76k, about an hour), then programs (1.5k, a minute), then tasks (253k, about 3.5 hours). Anything written after go-live takes its type's place in that order, so a new applicant's tasks would wait behind the import's tasks. The drain is therefore part of the window (release day, step 6). The index outbox is first-in, first-out at the same rate, which only delays global search (Eng)
+- [x] Import and outbox-drain time measured: the import takes minutes; the FGA outbox drains in about 4.6 hours at the throttled 20 messages/s (330k markers). OpenFGA already holds the test import's tuples under the same ids, so unchanged objects lose nothing while they wait. But the relay works through the queue by object type, not by time: applications first (76k, about an hour), then programs (1.5k, a minute), then tasks (253k, about 3.5 hours). Anything written after go-live takes its type's place in that order, so a new applicant's tasks would wait behind the import's tasks. The drain is therefore part of the window. If the window has to be shorter, go live once the applications and programs are through, about an hour in, and accept that new tasks may wait up to 3.5 hours for their permissions. The index outbox is first-in, first-out at the same rate, which only delays global search (Eng)
 - [ ] Duplicate legacy identities resolved: the importer keeps a shared email or LFID on one user and clears it on the others, which then cannot use Mentorship; get the counts from the test import, then merge at import or fix by hand (Eng)
 - [ ] Data exceptions from the test import reviewed: programs with no LF project or no admin, pending mentor rows, quarantined tasks (Product, Eng)
 - [x] Legacy-link forwarding in the frontend, live in prod, as in [lfx-crowdfunding#358](https://github.com/linuxfoundation/lfx-crowdfunding/pull/358): `/project/{id}[/…]` → `/programs/{id}`, `/mentee/{id}[,{projectId}]` → `/mentees/{id}`, `/mentor/{id}` → `/mentors/{id}`, other legacy pages → `/` ([#290](https://github.com/linuxfoundation/lfx-mentorship/pull/290), Eng)
@@ -33,17 +33,23 @@ Related: [08 runbook](./08-prod-migration-runbook.md) holds the commands; this p
 
 ## Release day
 
-1. **Freeze legacy:** announce "downtime starts" on Slack and the banner, then deploy `lfx-mentorship-upgrade` and `jobspring` with the maintenance flag on (`jobspring`: also `sqsConsumerEnabled: false`). Wait 15 minutes, the cron timeout, so API requests and cron jobs already running finish before the import reads DynamoDB.
-2. **Wipe, copy, import:** runbook Phases 2–4, in this order. Rebuild the runner (SSO login, legacy secret, scripts ConfigMap at the recorded commit, pod). Copy the file delta, about 20 minutes: it re-reads every file reference from the frozen DynamoDB, copies only what the new buckets lack, re-evaluates the quarantine and writes the manifest the import needs. `TRUNCATE` every table in the `mentorship` schema, outboxes included, leaving `public.schema_migrations` alone; this is Postgres only, OpenFGA keeps its tuples, and it is instant whatever the row count. Import without `--test-run`, about 16 minutes, with `USER_FIXES` if there are duplicates; a missing file now aborts the import, which is what we want. The import queues the 330k FGA markers inside its transaction, and the API pods start sending them at commit, at the 20 messages/s already set in prod.
-3. **Restore program approvers:** the wipe removes them. Approvers who are not legacy users sign in to Self Serve again, then re-run the approver sync: the one-off Job in `backend/docs/api.md`, or a manual ArgoCD sync of `lfx-mentorship-backend` with DevOps on standby (runbook Phase 4, step 8).
-4. **Verify:** runbook Phase 5. Both verifiers must pass. Don't wait for the outboxes here.
-5. **Go/no-go:** runbook Phase 6, step 1.
-6. **Drain:** wait until the FGA outbox is empty, about 4.6 hours from the import's commit, with no `dead_letter`; the approvers' team tuples go out with it, after the applications. Watch `fga_outbox` by state, the fga-sync consumer's backlog, backend errors and RDS CPU, as on the test drain. The relay works by object type (applications, programs, tasks), so anything written after go-live would otherwise wait behind the import's 253k tasks: a new applicant would be denied on their task uploads for up to 3.5 hours. If the window has to be shorter, go live once the applications and programs are through, about an hour in, and accept that task lag. Raising the relay rate doesn't help: fga-sync handles about 40 messages/s for the whole platform, one at a time, and its owners agreed to the import on condition it stays throttled.
-7. **Email to everyone:** remove `EMAIL_ALLOWED_RECIPIENTS` and wait for the rollout, runbook Phase 6, step 3.
-8. **Self Serve to everyone:** turn `mentorship-enabled` on for all users.
-9. **Redirect the legacy host** (DevOps), re-run the legacy-link test, then announce "we're live" with the new URL. Then send CNCF the one-line PR pointing the verification link in `lfx-proposal-validate.yml` at the new host.
+Times are from the freeze (T); commands are in runbook 08. The drain is inside the window: see "Import and outbox-drain time measured" above.
 
-**Rollback:** clean until step 8, the first step that lets everyone write (redeploy both legacy repos with the maintenance flag off, restore the allowlist). From step 8 on, fix forward.
+- [ ] **T+0 Freeze legacy** (Eng): announce downtime on Slack and the banner, deploy `lfx-mentorship-upgrade` and `jobspring` with `maintenanceMode` on (`jobspring` also `sqsConsumerEnabled: false`), wait 15 min for running cron jobs
+- [ ] **T+15m Migrate** (Eng), runbook Phases 2–4:
+  - [ ] Rebuild the runner pod: SSO login, legacy secret, scripts ConfigMap, pod (10 min)
+  - [ ] Copy the S3 delta (20 min)
+  - [ ] `TRUNCATE` the `mentorship` schema
+  - [ ] Import without `--test-run`, with `USER_FIXES` if needed (16 min); the FGA drain starts at commit
+- [ ] **T+1h Approvers** (Eng): non-legacy approvers sign in to Self Serve, re-run the sync, check `approver-admin list`
+- [ ] **T+1h Verify** (Eng): both verifiers pass, UI spot checks (Phase 5)
+- [ ] **Go/no-go** (Eng, Product): Phase 6, step 1
+- [ ] **T+1h → T+5h Drain** (Eng): FGA outbox empty, no `dead_letter`; watch the fga-sync backlog, backend errors, RDS CPU. Don't raise the rate: fga-sync's owners agreed on condition it stays throttled
+- [ ] **T+5h Email to everyone** (Eng): remove `EMAIL_ALLOWED_RECIPIENTS`, wait for the rollout
+- [ ] **Self Serve to everyone** (Eng): `mentorship-enabled` on for all users
+- [ ] **Redirect the legacy host** (DevOps), re-test legacy links, announce "we're live", send CNCF the one-line PR
+
+**Rollback:** clean until "Self Serve to everyone". After that, fix forward.
 
 ## After release
 
