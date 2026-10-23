@@ -30,7 +30,7 @@ func TestUserRepository_UpsertByLFID_EmailInUse(t *testing.T) {
 		t.Fatalf("UpsertByLFID err = %v; want ErrEmailInUse", err)
 	}
 	// Bootstrap releases an address only from another LF account, never from a legacy row.
-	if _, err := repo.BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email}); !errors.Is(err, domain.ErrEmailInUse) {
+	if _, err := repo.BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email}, models.UserIdentityFill{}); !errors.Is(err, domain.ErrEmailInUse) {
 		t.Fatalf("BootstrapByLFID err = %v; want ErrEmailInUse", err)
 	}
 }
@@ -47,7 +47,7 @@ func TestUserRepository_BootstrapByLFID_ReleasesEmailFromAnotherAccount(t *testi
 		_, _ = pool.Exec(context.Background(), `DELETE FROM users WHERE lfid IN ('squatter_lfid', 'owner_lfid')`)
 	})
 	lfid, email := "owner_lfid", "owner.release@example.org"
-	u, err := NewUserRepository(pool).BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email})
+	u, err := NewUserRepository(pool).BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email}, models.UserIdentityFill{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,8 +73,10 @@ func TestUserRepository_BootstrapByLFID_KeepsEmailWithoutClaim(t *testing.T) {
 	})
 	repo := NewUserRepository(pool)
 	for lfid, upsert := range map[string]func(context.Context, models.UserCreateInput) (*models.User, error){
-		"noclaim_upsert":    repo.UpsertByLFID,
-		"noclaim_bootstrap": repo.BootstrapByLFID,
+		"noclaim_upsert": repo.UpsertByLFID,
+		"noclaim_bootstrap": func(ctx context.Context, in models.UserCreateInput) (*models.User, error) {
+			return repo.BootstrapByLFID(ctx, in, models.UserIdentityFill{})
+		},
 	} {
 		stored := lfid + ".stored@example.org"
 		if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, lfid) VALUES (gen_random_uuid(), $1, $2)`, stored, lfid); err != nil {
@@ -193,7 +195,7 @@ func TestUserRepository_BootstrapByLFID_SwappedAddressesConcurrently(t *testing.
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				_, err := repo.BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email})
+				_, err := repo.BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email}, models.UserIdentityFill{})
 				errs <- err
 			}()
 		}

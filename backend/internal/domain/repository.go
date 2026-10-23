@@ -18,8 +18,9 @@ type UserRepository interface {
 	Create(ctx context.Context, input models.UserCreateInput) (*models.User, error)
 	UpsertByLFID(ctx context.Context, input models.UserCreateInput) (*models.User, error)
 	// BootstrapByLFID upserts the caller's own row from their verified identity, taking the email
-	// back from any other LF account's row that still holds it.
-	BootstrapByLFID(ctx context.Context, input models.UserCreateInput) (*models.User, error)
+	// back from any other LF account's row that still holds it. fill sets only columns still NULL
+	// at write time and never takes an email from another row (ErrEmailInUse instead).
+	BootstrapByLFID(ctx context.Context, input models.UserCreateInput, fill models.UserIdentityFill) (*models.User, error)
 	// SearchCandidates matches part of a name or an LFID prefix, never an email.
 	SearchCandidates(ctx context.Context, query string, limit int) ([]*models.User, error)
 	Update(ctx context.Context, id string, input models.UserUpdateInput) (*models.User, error)

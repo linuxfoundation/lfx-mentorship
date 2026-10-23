@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
 	"gopkg.in/go-jose/go-jose.v2"
 )
 
@@ -125,10 +126,65 @@ func TestGatewayMiddlewareValidatesPS256HeimdallToken(t *testing.T) {
 }
 
 type heimdallTokenClaims struct {
-	Issuer    string `json:"iss"`
-	Audience  string `json:"aud"`
-	ExpiresAt int64  `json:"exp"`
-	Principal string `json:"principal"`
+	Issuer     string `json:"iss"`
+	Audience   string `json:"aud"`
+	ExpiresAt  int64  `json:"exp"`
+	Principal  string `json:"principal"`
+	Email      string `json:"email,omitempty"`
+	Name       string `json:"name,omitempty"`
+	GivenName  string `json:"given_name,omitempty"`
+	FamilyName string `json:"family_name,omitempty"`
+	Picture    string `json:"picture,omitempty"`
+}
+
+// The oidc_contextualizer adds identity claims to the token on the /me routes;
+// they must reach the principal so PUT /me can fill the new user's row (#360).
+func TestGatewayMiddlewareCarriesIdentityClaimsOntoPrincipal(t *testing.T) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate RSA key: %v", err)
+	}
+	jwksServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{
+			Key: &privateKey.PublicKey, KeyID: "test-key", Algorithm: string(jose.PS256), Use: "sig",
+		}}})
+	}))
+	defer jwksServer.Close()
+	authenticator, err := NewJWTAuthenticator(context.Background(), JWTAuthConfig{
+		HeimdallJWKSURL: jwksServer.URL, HeimdallAudience: "lfx-mentorship-backend", HeimdallIssuer: "heimdall",
+	}, slog.Default())
+	if err != nil {
+		t.Fatalf("new authenticator: %v", err)
+	}
+	for name, claims := range map[string]heimdallTokenClaims{
+		"with identity claims": {
+			Issuer: "heimdall", Audience: "lfx-mentorship-backend", ExpiresAt: time.Now().Add(time.Hour).Unix(), Principal: "alice",
+			Email: "alice@example.org", Name: "Alice Liddell", GivenName: "Alice", FamilyName: "Liddell", Picture: "https://img.example.org/alice.png",
+		},
+		"principal only": {Issuer: "heimdall", Audience: "lfx-mentorship-backend", ExpiresAt: time.Now().Add(time.Hour).Unix(), Principal: "alice"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var got *models.Principal
+			handler := authenticator.GatewayMiddleware(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				got = PrincipalFromContext(req.Context())
+				w.WriteHeader(http.StatusOK)
+			}))
+			request := httptest.NewRequest(http.MethodPut, "/mentorship/v1/me", nil)
+			request.Header.Set("Authorization", "Bearer "+signedHeimdallToken(t, privateKey, jose.PS256, claims))
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("status %d; want 200", response.Code)
+			}
+			want := &models.Principal{
+				UserID: "alice", Username: "alice", Email: claims.Email,
+				Name: claims.Name, GivenName: claims.GivenName, FamilyName: claims.FamilyName, Picture: claims.Picture,
+			}
+			if *got != *want {
+				t.Fatalf("principal = %+v; want %+v", *got, *want)
+			}
+		})
+	}
 }
 
 func signedHeimdallToken(t *testing.T, privateKey *rsa.PrivateKey, algorithm jose.SignatureAlgorithm, claims heimdallTokenClaims) string {
