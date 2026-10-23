@@ -97,9 +97,12 @@ flowchart LR
    the local user from these claims, so without the contextualizer new users
    are stored with no email or name ([#360](https://github.com/linuxfoundation/lfx-mentorship/issues/360)).
    The backend also reads `name`, `given_name`, `family_name` and `picture`
-   claims; the platform's finalizer does not emit them yet (lfx-v2-helm maps
-   only `email` from the contextualizer), so until it does Self Serve sends the
-   name in the `PUT /me` body.
+   claims ([lfx-v2-helm#190](https://github.com/linuxfoundation/lfx-v2-helm/pull/190)
+   adds them to the finalizer). Whatever the token and the request body leave
+   out, `UserService.Bootstrap` fills from lfx-v2-auth-service over NATS
+   (`user_metadata.read`, `user_emails.read`), the same sign-in sync
+   lfx-crowdfunding does; a failed lookup is logged and never fails the
+   sign-in.
 6. The backend validates the JWT against the cluster-internal Heimdall JWKS.
 7. Handlers execute workflow logic without repeating the edge authorization
    decision.
