@@ -172,9 +172,17 @@ The test accounts use external inboxes, so the run did not check emails.
 | 7.4 | Mentee downloads another mentee's task file | 403 | ✅ | — |
 | 7.5 | Non-approver records a program decision | 403 | ✅ | — |
 
-## 8. Emails
+## 8. Emails (PROD)
 
-Not tested: the test accounts' inboxes are not reachable from the test run. A shared inbox for the test accounts would make the invite link (4.2) and the notification emails testable.
+PROD sends only to `EMAIL_ALLOWED_RECIPIENTS`. A plus-address matches its base address, so `mlehotsky+1@` and `mlehotsky+2@` are allowed through `mlehotsky@`.
+
+| # | Email | Expected | PROD |
+|---|---|---|---|
+| 8.1 | Program submitted: to the admin, and to the review inbox with View, Approve and Reject links | Sent; links point to PROD domains | ✅ |
+| 8.2 | Program approved; mentor accepted the invitation | Sent to the admin | ✅ |
+| 8.3 | New application with tasks complete; mentee accepted (admin and HR) | Sent, naming the mentee | ⚠️ Sent, but the mentee is "A mentee" ([F10](#findings)) |
+| 8.4 | Mentee emails: profile created, application received, accepted, declined, task, graduated | Sent to the mentee and copied to `EMAIL_COPY_INBOX` | ❌ None sent ([F10](#findings)) |
+| 8.5 | Mentor invite email link (`/mentorship/mentor/invites?token=`) | — | — (the mentor's inbox is not reachable) |
 
 ## 9. PROD
 
@@ -201,6 +209,26 @@ Not tested: the test accounts' inboxes are not reachable from the test run. A sh
 | 4.6, 6.1 | Mentee names in the mentor's and admin's lists | ❌ Blank ([F10](#findings)) |
 | 7.2 | Mentee opens the program's admin page | ✅ "No access to this program" |
 
+## 10. Migrated data (PROD vs legacy)
+
+Compared 25 programs sampled across the PROD list with the legacy API (`api.mentorship.lfx.linuxfoundation.org`). Program IDs are kept by the import.
+
+| Check | Result |
+|---|---|
+| Name, term count, logo present, logo URL loads | ✅ 25 of 25 |
+| Slug | ✅ 25 of 25. Elsewhere, `meshery` became `meshery-1`; old links use the ID, so they still resolve |
+| Mentor names | ✅ 23 of 25. The 2 differences are a duplicate legacy row and a mentor that legacy `/mentors` omits but `/member` counts |
+| Skills | ⚠️ Mostly equal (legacy skills contain commas). One program lost "Profiling Tools"; unconfirmed |
+
+## 11. Legacy URL redirects (PROD)
+
+| Legacy path | Result |
+|---|---|
+| `/project/{id}`, `/project/{id}/detail` | ✅ 301 to `/programs/{id}` |
+| `/mentee/{id}`, `/mentee/{id},{programId}`, `/mentor/{id}` | ✅ 301 to the new profile |
+| `/participate/*`, `/profile`, `/email/process-approval?…` | ✅ 301 to `/` |
+| `/mentee`, `/mentor` with no ID | ⚠️ 404 ([F13](#findings)) |
+
 ---
 
 ## Findings
@@ -216,7 +244,9 @@ Not tested: the test accounts' inboxes are not reachable from the test run. A sh
 | F7 | Enrollment step 3 with no prerequisite selected shows only the generic "form incomplete" banner; nothing points to the prerequisites. | DEV | Low | — |
 | F8 | The `/programs` header hard-codes "42 foundations" ([`programs-header.config.ts`](../../frontend/app/components/modules/programs/config/programs-header.config.ts)). | DEV, PROD | Low | — |
 | F9 | The landing page logs a Vue hydration mismatch. | DEV, PROD | Low | — |
-| F10 | Mentees whose accounts are new to Mentorship have no name in the admin and mentor lists, and the public site shows them as "Mentee". Their LFX profiles have names. Not reproduced on DEV. | PROD | High | [linuxfoundation/lfx-mentorship#357](https://github.com/linuxfoundation/lfx-mentorship/issues/357) |
+| F10 | Mentees whose accounts are new to Mentorship have no name or email in Mentorship: blank in the admin and mentor lists, "Mentee" on the public site, "A mentee" in admin emails, and no mentee emails at all. Their LFX profiles have both. Not reproduced on DEV. | PROD | High | [linuxfoundation/lfx-mentorship#357](https://github.com/linuxfoundation/lfx-mentorship/issues/357) |
+| F12 | Mentorship pages forward to the dashboard after about 10 s on an idle session. The server-side render treats an expired access token as signed out without refreshing it, so LaunchDarkly never gets the user and the flag guard times out. Other flag-gated pages (for example EasyCLA in the Org lens) share the cause. | DEV | Medium | [linuxfoundation/lfx-self-serve#4179](https://github.com/linuxfoundation/lfx-self-serve/issues/4179) |
+| F13 | The legacy paths `/mentee` and `/mentor` with no ID return 404 instead of redirecting. | PROD | Low | — |
 
 **Info, no action proposed:**
 - The landing page counts 5 graduated mentees on DEV, while the directory's Graduated tab lists 4.
