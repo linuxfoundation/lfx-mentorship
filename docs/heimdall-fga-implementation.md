@@ -356,6 +356,25 @@ application and deleting its quarantine row.
 The relays must be running before the seed commits so that new writes and seed
 markers converge through the same path.
 
+## User Identity Backfill
+
+Users who signed in before the identity fixes in
+[#362](https://github.com/linuxfoundation/lfx-mentorship/pull/362) have rows
+with no email or name ([#360](https://github.com/linuxfoundation/lfx-mentorship/issues/360)).
+`/app/user-backfill` completes them from the LF directory through the same
+`COALESCE` upsert a sign-in uses, so stored values are never overwritten. It
+needs the database settings and `FGA_NATS_URL`, so run it in the cluster from
+the backend image, as a one-off Job or from the runner pod:
+
+```bash
+/app/user-backfill                 # dry run: reports what --apply would write
+/app/user-backfill --apply         # write; exit 1 if any row failed
+/app/user-backfill --apply --limit 200
+```
+
+Each row is reported as `completed`, `filled … still missing N` (the directory
+lacks some fields too), `unchanged` or `FAILED`. Re-running is safe.
+
 ## Dead-Letter Recovery
 
 After correcting the source data or platform dependency, requeue one exact

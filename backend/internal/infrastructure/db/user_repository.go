@@ -147,6 +147,42 @@ func (r *UserRepository) upsertByLFID(ctx context.Context, input models.UserCrea
 	return &u, nil
 }
 
+// ListIncompleteIdentities returns up to limit signed-in users whose row still
+// lacks an email or a name field, oldest first. It serves the user-backfill
+// command and is not part of the domain repository interface.
+func (r *UserRepository) ListIncompleteIdentities(ctx context.Context, limit int) ([]*models.User, error) {
+	ctx, span := userTracer.Start(ctx, "db.users.ListIncompleteIdentities")
+	defer span.End()
+
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, email, lfid, name, given_name, family_name, avatar_url, created_on, updated_on
+		FROM users
+		WHERE lfid IS NOT NULL
+		  AND (email IS NULL OR name IS NULL OR given_name IS NULL OR family_name IS NULL OR avatar_url IS NULL)
+		ORDER BY created_on, id
+		LIMIT $1`, limit)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("list incomplete users: %w", err)
+	}
+	defer rows.Close()
+
+	users := []*models.User{}
+	for rows.Next() {
+		var u models.User
+		if err := rows.Scan(&u.ID, &u.Email, &u.LFID, &u.Name, &u.GivenName, &u.FamilyName, &u.AvatarURL, &u.CreatedOn, &u.UpdatedOn); err != nil {
+			span.RecordError(err)
+			return nil, fmt.Errorf("scan incomplete user: %w", err)
+		}
+		users = append(users, &u)
+	}
+	if err := rows.Err(); err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("iterate incomplete users: %w", err)
+	}
+	return users, nil
+}
+
 // SearchCandidates returns up to limit users for the invite typeahead.
 func (r *UserRepository) SearchCandidates(ctx context.Context, query string, limit int) ([]*models.User, error) {
 	ctx, span := userTracer.Start(ctx, "db.users.SearchCandidates")
