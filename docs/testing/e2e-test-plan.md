@@ -258,6 +258,17 @@ Emails:
 - DEV after the fix: SES delivered every mentee and admin email (13 of 13, no bounces). The direct copies to a plus address (`mlehotsky+1@`) never reached Gmail, while mail to the base address did. This looks like Google Workspace filtering of the DEV sender domain, not Mentorship; re-check on PROD, which uses a different sender.
 - PROD SES: healthy, DKIM passing, 50,000 sends a day, 0.9% rolling bounce rate. The account is shared by every LFX v2 service, so a bounce spike from stale legacy addresses at launch would affect them all.
 
+## 13. Legacy parity checks (2026-10-23)
+
+| # | Check | Result |
+|---|---|---|
+| 13.1 | Ended terms close on their own, as the legacy `update-program-terms-active` job did | ❌ Nothing closes them. On PROD, 123 ended terms are still open, and their programs show "In progress" ([F17](#findings)) |
+| 13.2 | The admin "tasks submitted" email is sent once per application (legacy `adminNotified`) | ✅ DEV: sent once, when the 4th prerequisite was uploaded; replacing 2 files afterwards sent nothing |
+| 13.3 | The backend enforces the application window while the term is still `open` | ✅ DEV: `POST /api/mentorship/mentee/apply` to two open terms past their deadline returns 422 "application window has closed" |
+| 13.4 | Funding matches legacy (PROD) | ✅ Neither UI shows a per-program amount raised, and legacy `amountRaised` is 0 for 59 of 60 sampled programs. The Sponsors tab reads Crowdfunding and lists more sponsors than legacy did. Site totals: stipends paid $4.18M against legacy $4.02M (not investigated); 1,510 graduates (distinct mentees) against 1,621 legacy graduated applications |
+| 13.5 | HR gets the mentee-accepted notice (PROD) | ✅ Sent to `EMAIL_COPY_INBOX` (`lfx-mentorship-sent@`) on 2026-10-22, as decided in [07-email-delivery.md](../rewrite/07-email-delivery.md) |
+| 13.6 | Public "Contact support" sends users to the Self Serve chat (release plan) | ⚠️ Opens the Intercom messenger on DEV and PROD; [#366](https://github.com/linuxfoundation/lfx-mentorship/pull/366) moves it to Self Serve |
+
 ## Findings
 
 | # | Finding | Env | Severity | Ticket |
@@ -277,6 +288,7 @@ Emails:
 | F15 | A mentee can have more than 3 active applications. Legacy refused a fourth, and the public site still promises the limit. | DEV | Medium | [linuxfoundation/lfx-mentorship#368](https://github.com/linuxfoundation/lfx-mentorship/issues/368) |
 | F16 | Legacy email links for approvers, program admins and invited mentors land on the public site after cutover, instead of the Self Serve page where they can act. Filed by Michal; re-test before the 2026-10-27 cutover. | PROD | High (cutover) | [linuxfoundation/lfx-mentorship#367](https://github.com/linuxfoundation/lfx-mentorship/issues/367) |
 | F14 | A first-time applicant who registers from an Apply link stays on the registration form after the profile is saved, with no message and no move on to the application. | DEV | High (launch) | [linuxfoundation/lfx-self-serve#4232](https://github.com/linuxfoundation/lfx-self-serve/issues/4232) |
+| F17 | Ended terms never close. Legacy closed them automatically once no applications were active. 123 ended PROD terms are still open, so their programs show "In progress", and they count toward the cap of 4 open terms per program. | PROD | Medium | [linuxfoundation/lfx-mentorship#369](https://github.com/linuxfoundation/lfx-mentorship/issues/369) |
 
 **Info, no action proposed:**
 - The landing page counts 5 graduated mentees on DEV, while the directory's Graduated tab lists 4.
