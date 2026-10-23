@@ -176,7 +176,9 @@ func (r *profileRepoStub) List(_ context.Context, filter models.UserProfileFilte
 		return nil, nil, r.err
 	}
 	if filter.ProfileType == "" {
-		return r.byUser[filter.UserID], &models.PaginationMeta{}, nil
+		all := r.byUser[filter.UserID]
+		page := all[min(filter.Offset, len(all)):min(filter.Offset+filter.Limit, len(all))]
+		return page, &models.PaginationMeta{Total: len(all), Limit: filter.Limit, Offset: filter.Offset}, nil
 	}
 	if filter.ProfileType != string(models.UserProfileTypeMentee) || r.address == nil {
 		return nil, &models.PaginationMeta{}, nil
@@ -906,6 +908,52 @@ func TestNotifyKeepsAccountNameAndEmailOverProfile(t *testing.T) {
 	sent := f.wait(t)
 	if len(sent) != 1 || sent[0].To != "mentee@linuxfoundation.org" || !strings.HasPrefix(sent[0].Text, "Hi Mia!") {
 		t.Fatalf("sent = %+v, want the account's address and name", sent)
+	}
+}
+
+func TestNotifierUser_ReadsProfilesBeyondTheFirstPage(t *testing.T) {
+	f := newFixture()
+	f.users.users["bare"] = &models.User{ID: "bare"}
+	profiles := make([]*models.UserProfile, profilePageSize+20)
+	for i := range profiles {
+		profiles[i] = &models.UserProfile{UserID: "bare", ProfileType: string(models.UserProfileTypeMentor)}
+	}
+	profiles[profilePageSize+10].Email = strPtr("older@example.org")
+	f.profiles.byUser = map[string][]*models.UserProfile{"bare": profiles}
+
+	user, err := f.n.user(context.Background(), "bare")
+	if err != nil || deref(user.Email) != "older@example.org" {
+		t.Fatalf("user = %+v, err = %v; want the email from the second page", user, err)
+	}
+}
+
+func TestNotifierUser_FillsNamePartsIndependently(t *testing.T) {
+	for name, tc := range map[string]struct {
+		account       models.User
+		profile       models.UserProfile
+		given, family string
+	}{
+		"account has only a family name": {
+			account: models.User{ID: "partial", FamilyName: strPtr("Hopper")},
+			profile: models.UserProfile{FirstName: strPtr("Grace")},
+			given:   "Grace", family: "Hopper",
+		},
+		"account has only a given name": {
+			account: models.User{ID: "partial", GivenName: strPtr("Grace")},
+			profile: models.UserProfile{FirstName: strPtr("Other"), LastName: strPtr("Hopper")},
+			given:   "Grace", family: "Hopper",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture()
+			f.users.users["partial"] = &tc.account
+			f.profiles.byUser = map[string][]*models.UserProfile{"partial": {&tc.profile}}
+
+			user, err := f.n.user(context.Background(), "partial")
+			if err != nil || deref(user.GivenName) != tc.given || deref(user.FamilyName) != tc.family {
+				t.Fatalf("given/family = %q/%q, err = %v; want %q/%q", deref(user.GivenName), deref(user.FamilyName), err, tc.given, tc.family)
+			}
+		})
 	}
 }
 

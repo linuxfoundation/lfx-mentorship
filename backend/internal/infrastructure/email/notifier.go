@@ -37,9 +37,8 @@ const sendConcurrency = 5
 // bulk operation that notifies hundreds of mentees cannot exhaust the database pool or flood NATS.
 const maxConcurrentDispatches = 10
 
-// maxProfilesPerUser bounds the profiles read to fill a user's missing name or email: one mentee
-// profile plus a few mentor ones.
-const maxProfilesPerUser = 10
+// profilePageSize is the largest page the profile listing serves.
+const profilePageSize = 100
 
 var notifierTracer = otel.Tracer("email-notifier")
 
@@ -975,34 +974,55 @@ func adminContacts(admins []recipientUser) []adminContact {
 	return contacts
 }
 
-// user returns userID's account, filling a missing name or email from their newest profile that
-// has one: a sign-in without identity claims leaves the account's NULL while the profile holds what
-// the user typed. A failed profile lookup leaves the account as it is.
+// user returns userID's account, filling each missing email, given name and family name from the
+// newest profile that has it: a sign-in without identity claims leaves the account's NULL while the
+// profile holds what the user typed. An account with a full name needs no name parts. A failed
+// profile lookup keeps what was filled so far.
 func (n *Notifier) user(ctx context.Context, userID string) (*models.User, error) {
 	user, err := n.repos.Users.GetByID(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
-	needEmail := strings.TrimSpace(deref(user.Email)) == ""
-	needName := strings.TrimSpace(deref(user.Name)) == "" && strings.TrimSpace(deref(user.GivenName)) == ""
-	if !needEmail && !needName {
-		return user, nil
-	}
-	profiles, _, err := n.repos.Profiles.List(ctx, models.UserProfileFilter{UserID: userID, Limit: maxProfilesPerUser})
-	if err != nil {
-		n.logger.WarnContext(ctx, "profile fallback unavailable", "user_id", userID, "error", err)
-		return user, nil
-	}
 	filled := *user
-	for _, p := range profiles {
-		if email := strings.TrimSpace(deref(p.Email)); needEmail && email != "" {
-			filled.Email, needEmail = &email, false
+	fields := []profileFallback{{&filled.Email, func(p *models.UserProfile) *string { return p.Email }}}
+	if strings.TrimSpace(deref(user.Name)) == "" {
+		fields = append(fields,
+			profileFallback{&filled.GivenName, func(p *models.UserProfile) *string { return p.FirstName }},
+			profileFallback{&filled.FamilyName, func(p *models.UserProfile) *string { return p.LastName }})
+	}
+	missing := func() bool {
+		for _, f := range fields {
+			if strings.TrimSpace(deref(*f.account)) == "" {
+				return true
+			}
 		}
-		if first, last := strings.TrimSpace(deref(p.FirstName)), strings.TrimSpace(deref(p.LastName)); needName && first+last != "" {
-			filled.GivenName, filled.FamilyName, needName = &first, &last, false
+		return false
+	}
+	for offset := 0; missing(); {
+		page, meta, err := n.repos.Profiles.List(ctx, models.UserProfileFilter{UserID: userID, Limit: profilePageSize, Offset: offset})
+		if err != nil {
+			n.logger.WarnContext(ctx, "profile fallback unavailable", "user_id", userID, "error", err)
+			break
+		}
+		for _, p := range page {
+			for _, f := range fields {
+				if v := strings.TrimSpace(deref(f.profile(p))); v != "" && strings.TrimSpace(deref(*f.account)) == "" {
+					*f.account = &v
+				}
+			}
+		}
+		offset += len(page)
+		if len(page) == 0 || meta == nil || offset >= meta.Total {
+			break
 		}
 	}
 	return &filled, nil
+}
+
+// profileFallback pairs a user field with the profile field that fills it when it is blank.
+type profileFallback struct {
+	account **string
+	profile func(*models.UserProfile) *string
 }
 
 func (n *Notifier) recipient(ctx context.Context, userID string) (*models.User, string, error) {
