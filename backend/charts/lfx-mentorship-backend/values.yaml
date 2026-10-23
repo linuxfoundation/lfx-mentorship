@@ -167,6 +167,9 @@ config:
   FGA_RELAY_INTERVAL: "1s"
   FGA_RELAY_RETRY_DELAY: "1m"
   FGA_RELAY_MAX_ATTEMPTS: "10"
+  # How long a program or application create waits for its creator's FGA
+  # relation, so the client's next request passes the gateway; 0 disables, max 15s.
+  FGA_ACCESS_WAIT_TIMEOUT: "10s"
   INDEX_RELAY_RETRY_DELAY: "1m"
   INDEX_RELAY_MAX_ATTEMPTS: "10"
   # Notification email goes out via lfx-v2-email-service whenever FGA_NATS_URL is set; these are then required.
