@@ -30,6 +30,7 @@ type ApplicationService struct {
 	memberRepo  domain.ProgramMemberRepository
 	profileRepo domain.UserProfileRepository
 	notifier    domain.Notifier
+	access      domain.AccessWaiter
 }
 
 // taskTemplate mirrors the shape stored in programs.task_templates JSONB.
@@ -104,6 +105,12 @@ func NewApplicationService(
 	notifier domain.Notifier,
 ) *ApplicationService {
 	return &ApplicationService{repo: repo, taskRepo: taskRepo, termRepo: termRepo, programRepo: programRepo, memberRepo: memberRepo, profileRepo: profileRepo, notifier: notifier}
+}
+
+// SetAccessWaiter makes Create respond only once the applicant can read the
+// new application, or the waiter gives up.
+func (s *ApplicationService) SetAccessWaiter(access domain.AccessWaiter) {
+	s.access = access
 }
 
 func (s *ApplicationService) isActiveReviewer(ctx context.Context, programID, actorID string) (bool, error) {
@@ -348,6 +355,7 @@ func (s *ApplicationService) Create(ctx context.Context, programTermID string, i
 			return nil, fmt.Errorf("reapply application: %w", err)
 		}
 		s.notifier.NotifyMenteeApplicationReceived(ctx, a.ID)
+		awaitCreatorAccess(ctx, s.access, applicationFGAObjectPrefix+a.ID, applicationCreatorRelation)
 		return a, nil
 	}
 
@@ -362,6 +370,7 @@ func (s *ApplicationService) Create(ctx context.Context, programTermID string, i
 		return nil, fmt.Errorf("create application: %w", err)
 	}
 	s.notifier.NotifyMenteeApplicationReceived(ctx, a.ID)
+	awaitCreatorAccess(ctx, s.access, applicationFGAObjectPrefix+a.ID, applicationCreatorRelation)
 	return a, nil
 }
 

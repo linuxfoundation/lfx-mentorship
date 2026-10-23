@@ -16,6 +16,14 @@ import (
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/auth"
 )
 
+// A create waits up to defaultAccessWaitTimeout for its creator's FGA relation.
+// The cap keeps the wait well inside the request timeout (80% of the 30s write
+// timeout), which also covers the create's own work and upstream lookups.
+const (
+	defaultAccessWaitTimeout = 10 * time.Second
+	maxAccessWaitTimeout     = 15 * time.Second
+)
+
 // Config holds all runtime configuration for the service.
 type Config struct {
 	Server       ServerConfig
@@ -81,6 +89,9 @@ type FGAConfig struct {
 	RelayInterval    time.Duration
 	RelayRetryDelay  time.Duration
 	RelayMaxAttempts int
+	// AccessWaitTimeout bounds how long a create waits for its creator's
+	// relation to reach OpenFGA; zero disables the wait.
+	AccessWaitTimeout time.Duration
 }
 
 // IndexerConfig configures authenticated index publishing and retry behavior.
@@ -189,6 +200,13 @@ func loadConfig() (*Config, error) {
 			return nil, fmt.Errorf("FGA_RELAY_RETRY_DELAY: must be a positive duration")
 		}
 	}
+	accessWaitTimeout := defaultAccessWaitTimeout
+	if v := os.Getenv("FGA_ACCESS_WAIT_TIMEOUT"); v != "" {
+		accessWaitTimeout, err = time.ParseDuration(v)
+		if err != nil || accessWaitTimeout < 0 || accessWaitTimeout > maxAccessWaitTimeout {
+			return nil, fmt.Errorf("FGA_ACCESS_WAIT_TIMEOUT: must be a duration from 0 (off) to %s", maxAccessWaitTimeout)
+		}
+	}
 	indexRetryDelay := time.Minute
 	if v := os.Getenv("INDEX_RELAY_RETRY_DELAY"); v != "" {
 		indexRetryDelay, err = time.ParseDuration(v)
@@ -240,11 +258,12 @@ func loadConfig() (*Config, error) {
 			HeimdallIssuer:   heimdallIssuer,
 		},
 		FGA: FGAConfig{
-			NATSURL:          os.Getenv("FGA_NATS_URL"),
-			RelayBatch:       relayBatch,
-			RelayInterval:    relayInterval,
-			RelayRetryDelay:  relayRetryDelay,
-			RelayMaxAttempts: relayMaxAttempts,
+			NATSURL:           os.Getenv("FGA_NATS_URL"),
+			RelayBatch:        relayBatch,
+			RelayInterval:     relayInterval,
+			RelayRetryDelay:   relayRetryDelay,
+			RelayMaxAttempts:  relayMaxAttempts,
+			AccessWaitTimeout: accessWaitTimeout,
 		},
 		Indexer: IndexerConfig{
 			ServiceToken: os.Getenv("INDEXER_SERVICE_TOKEN"),

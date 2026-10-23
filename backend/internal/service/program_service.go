@@ -48,6 +48,7 @@ type ProgramService struct {
 	notifier   domain.Notifier
 	cfClient   clients.CrowdfundingClient
 	projects   domain.ProjectLookup
+	access     domain.AccessWaiter
 }
 
 // NewProgramService returns a ProgramService.
@@ -66,6 +67,12 @@ func (s *ProgramService) SetCrowdfundingClient(client clients.CrowdfundingClient
 // are stored, which only local development without NATS relies on.
 func (s *ProgramService) SetProjectLookup(projects domain.ProjectLookup) {
 	s.projects = projects
+}
+
+// SetAccessWaiter makes CreateEnrollment respond only once the creator can
+// write to the new program, or the waiter gives up.
+func (s *ProgramService) SetAccessWaiter(access domain.AccessWaiter) {
+	s.access = access
 }
 
 // programTransitions defines the valid next states for each program status.
@@ -413,6 +420,7 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 		return nil, err
 	}
 	s.notifier.NotifyProgramSubmitted(ctx, p.ID, input.Program.CreatorUserID)
+	awaitCreatorAccess(ctx, s.access, programFGAObjectPrefix+p.ID, programCreatorRelation)
 	return p, nil
 }
 
