@@ -361,19 +361,27 @@ markers converge through the same path.
 Users who signed in before the identity fixes in
 [#362](https://github.com/linuxfoundation/lfx-mentorship/pull/362) have rows
 with no email or name ([#360](https://github.com/linuxfoundation/lfx-mentorship/issues/360)).
-`/app/user-backfill` completes them from the LF directory through the same
-`COALESCE` upsert a sign-in uses, so stored values are never overwritten. It
-needs the database settings and `FGA_NATS_URL`, so run it in the cluster from
-the backend image, as a one-off Job or from the runner pod:
+`/app/user-backfill` completes them from the LF directory. For each row it
+asks the directory only for what is missing, then sets only the columns still
+`NULL` at write time, so a value stored since the row was read is kept, and it
+never touches another row: an email already held elsewhere is reported as a
+failure, not taken. It needs the database settings and `FGA_NATS_URL`, so run
+it in the cluster from the backend image, as a one-off Job or from the runner
+pod:
 
 ```bash
-/app/user-backfill                 # dry run: reports what --apply would write
-/app/user-backfill --apply         # write; exit 1 if any row failed
-/app/user-backfill --apply --limit 200
+/app/user-backfill                        # dry run: reports what --apply would write
+/app/user-backfill --apply                # write; exit 1 if any row failed
+/app/user-backfill --apply --limit 200    # bounded run; prints a --cursor to continue
+/app/user-backfill --apply --cursor 2026-01-01T00:00:00Z/<id>
 ```
 
-Each row is reported as `completed`, `filled … still missing N` (the directory
-lacks some fields too), `unchanged` or `FAILED`. Re-running is safe.
+Rows are visited oldest first. Each is reported as `completed`, `filled … still
+missing N` (the directory lacks some fields too), `unchanged` (the directory
+has nothing more) or `FAILED` (a write error, or the directory did not
+answer). Rows the directory cannot complete stay incomplete, so a bounded run
+prints the position to continue from rather than re-visiting them; a run that
+reaches the end prints no cursor. Re-running is safe.
 
 ## Dead-Letter Recovery
 

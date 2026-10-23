@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -147,20 +148,51 @@ func (r *UserRepository) upsertByLFID(ctx context.Context, input models.UserCrea
 	return &u, nil
 }
 
+// UserCursor is a keyset position in the (created_on, id) order ListIncompleteIdentities uses.
+type UserCursor struct {
+	CreatedOn time.Time
+	ID        string
+}
+
+// String encodes the cursor as "<RFC3339Nano created_on>/<id>", the form ParseUserCursor reads.
+func (c UserCursor) String() string {
+	return c.CreatedOn.UTC().Format(time.RFC3339Nano) + "/" + c.ID
+}
+
+// ParseUserCursor decodes a cursor printed by UserCursor.String.
+func ParseUserCursor(value string) (UserCursor, error) {
+	createdOn, id, ok := strings.Cut(value, "/")
+	if !ok || id == "" {
+		return UserCursor{}, fmt.Errorf("cursor %q: want <created_on>/<id>", value)
+	}
+	at, err := time.Parse(time.RFC3339Nano, createdOn)
+	if err != nil {
+		return UserCursor{}, fmt.Errorf("cursor %q: created_on: %w", value, err)
+	}
+	return UserCursor{CreatedOn: at, ID: id}, nil
+}
+
 // ListIncompleteIdentities returns up to limit signed-in users whose row still
-// lacks an email or a name field, oldest first. It serves the user-backfill
-// command and is not part of the domain repository interface.
-func (r *UserRepository) ListIncompleteIdentities(ctx context.Context, limit int) ([]*models.User, error) {
+// lacks an email or a name field, oldest first, starting after the cursor when
+// one is given. It serves the user-backfill command and is not part of the
+// domain repository interface.
+func (r *UserRepository) ListIncompleteIdentities(ctx context.Context, after *UserCursor, limit int) ([]*models.User, error) {
 	ctx, span := userTracer.Start(ctx, "db.users.ListIncompleteIdentities")
 	defer span.End()
 
+	var afterCreatedOn *time.Time
+	var afterID *string
+	if after != nil {
+		afterCreatedOn, afterID = &after.CreatedOn, &after.ID
+	}
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, email, lfid, name, given_name, family_name, avatar_url, created_on, updated_on
 		FROM users
 		WHERE lfid IS NOT NULL
 		  AND (email IS NULL OR name IS NULL OR given_name IS NULL OR family_name IS NULL OR avatar_url IS NULL)
+		  AND ($1::timestamptz IS NULL OR (created_on, id) > ($1::timestamptz, $2::uuid))
 		ORDER BY created_on, id
-		LIMIT $1`, limit)
+		LIMIT $3`, afterCreatedOn, afterID, limit)
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("list incomplete users: %w", err)
@@ -181,6 +213,41 @@ func (r *UserRepository) ListIncompleteIdentities(ctx context.Context, limit int
 		return nil, fmt.Errorf("iterate incomplete users: %w", err)
 	}
 	return users, nil
+}
+
+// FillMissingIdentity sets only the identity columns that are NULL on the row
+// at write time, so a value stored since the row was read is kept, and never
+// touches another row: an email already held elsewhere returns ErrEmailInUse.
+// It serves the user-backfill command and is not part of the domain interface.
+func (r *UserRepository) FillMissingIdentity(ctx context.Context, id string, input models.UserUpdateInput) (*models.User, error) {
+	ctx, span := userTracer.Start(ctx, "db.users.FillMissingIdentity")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.user_id", id))
+
+	var u models.User
+	err := r.pool.QueryRow(ctx, `
+		UPDATE users SET
+			email = COALESCE(users.email, $2),
+			name = COALESCE(users.name, $3),
+			given_name = COALESCE(users.given_name, $4),
+			family_name = COALESCE(users.family_name, $5),
+			avatar_url = COALESCE(users.avatar_url, $6),
+			updated_on = NOW()
+		WHERE id = $1
+		RETURNING id, email, lfid, name, given_name, family_name, avatar_url, created_on, updated_on`,
+		id, input.Email, input.Name, input.GivenName, input.FamilyName, input.AvatarURL,
+	).Scan(&u.ID, &u.Email, &u.LFID, &u.Name, &u.GivenName, &u.FamilyName, &u.AvatarURL, &u.CreatedOn, &u.UpdatedOn)
+	if pgErr := (*pgconn.PgError)(nil); errors.As(err, &pgErr) && pgErr.Code == uniqueViolation && pgErr.ConstraintName == usersEmailKey {
+		return nil, domain.ErrEmailInUse
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrUserNotFound
+	}
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("fill missing identity: %w", err)
+	}
+	return &u, nil
 }
 
 // SearchCandidates returns up to limit users for the invite typeahead.
