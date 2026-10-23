@@ -7,7 +7,6 @@ type FakeWindow = {
   setTimeout: typeof setTimeout;
   dataLayer?: Record<string, unknown>[];
   airgap?: { getConsent?: () => { purposes?: Record<string, boolean | string> } | undefined };
-  Intercom?: (...args: unknown[]) => void;
 };
 
 let win: FakeWindow;
@@ -36,15 +35,11 @@ const consent = (analytics: boolean | string) => ({
 });
 
 describe('trackFunnelEvent', () => {
-  it('sends to the dataLayer and Intercom once analytics consent is given', async () => {
+  it('sends to the dataLayer once analytics consent is given', async () => {
     const { trackFunnelEvent, FunnelEvent } = await load();
     win.airgap = consent(true);
-    win.Intercom = vi.fn();
     trackFunnelEvent(FunnelEvent.ProgramDetailViewed, { program_id: 'p1' });
     expect(win.dataLayer).toEqual([{ event: 'program_detail_viewed', program_id: 'p1' }]);
-    expect(win.Intercom).toHaveBeenCalledWith('trackEvent', 'program_detail_viewed', {
-      program_id: 'p1',
-    });
   });
 
   it.each([
@@ -57,16 +52,6 @@ describe('trackFunnelEvent', () => {
     win.airgap = airgap;
     trackFunnelEvent(FunnelEvent.ApplyStarted);
     expect(win.dataLayer).toBeUndefined();
-  });
-
-  it('keeps the dataLayer event when Intercom throws', async () => {
-    const { trackFunnelEvent, FunnelEvent } = await load();
-    win.airgap = consent(true);
-    win.Intercom = () => {
-      throw new Error('not booted');
-    };
-    trackFunnelEvent(FunnelEvent.ApplyStarted);
-    expect(win.dataLayer).toHaveLength(1);
   });
 
   it('fires a once-keyed event only once', async () => {
