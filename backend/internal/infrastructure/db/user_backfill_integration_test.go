@@ -44,6 +44,35 @@ func TestUserBackfillIntegration(t *testing.T) {
 		}
 	}
 
+	t.Run("legacy rows with NULL timestamps are read and ordered first", func(t *testing.T) {
+		const legacy = "00000000-0000-0000-0000-0000000000b0"
+		if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, created_on, updated_on) VALUES ($1, 'legacy', NULL, NULL)`, legacy); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, legacy) })
+
+		first, err := repo.ListIncompleteIdentities(ctx, nil, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(first) != 1 || first[0].ID != legacy || !first[0].CreatedOn.Equal(time.Unix(0, 0)) {
+			t.Fatalf("first page = %v (created %v); want the NULL-timestamp row first, read as the epoch", ids(first), first[0].CreatedOn)
+		}
+		// Crossing the page boundary from the legacy row must reach the dated rows.
+		cursor := UserCursor{CreatedOn: first[0].CreatedOn, ID: first[0].ID}
+		next, err := repo.ListIncompleteIdentities(ctx, &cursor, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(next) != 1 || next[0].ID != ada {
+			t.Fatalf("after legacy cursor = %v; want ada", ids(next))
+		}
+		got, err := repo.FillMissingIdentity(ctx, legacy, models.UserUpdateInput{Name: str("Legacy")})
+		if err != nil || *got.Name != "Legacy" || got.UpdatedOn.IsZero() {
+			t.Fatalf("fill on a NULL-timestamp row: %+v %v; want it written and scanned", got, err)
+		}
+	})
+
 	t.Run("list pages incomplete signed-in rows oldest first", func(t *testing.T) {
 		first, err := repo.ListIncompleteIdentities(ctx, nil, 2)
 		if err != nil {

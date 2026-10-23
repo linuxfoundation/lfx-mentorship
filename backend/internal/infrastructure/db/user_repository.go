@@ -148,7 +148,15 @@ func (r *UserRepository) upsertByLFID(ctx context.Context, input models.UserCrea
 	return &u, nil
 }
 
-// UserCursor is a keyset position in the (created_on, id) order ListIncompleteIdentities uses.
+// backfillColumns reads a user for the backfill. Rows imported from the legacy
+// platform may have NULL timestamps, which models.User cannot hold, so the
+// creation time falls back to the epoch (the same key the ordering and cursor
+// use) and the update time to the creation time.
+const backfillColumns = `id, email, lfid, name, given_name, family_name, avatar_url,
+	COALESCE(created_on, 'epoch'::timestamptz), COALESCE(updated_on, created_on, 'epoch'::timestamptz)`
+
+// UserCursor is a keyset position in the order ListIncompleteIdentities uses:
+// created_on with NULL read as the epoch, then id.
 type UserCursor struct {
 	CreatedOn time.Time
 	ID        string
@@ -186,12 +194,12 @@ func (r *UserRepository) ListIncompleteIdentities(ctx context.Context, after *Us
 		afterCreatedOn, afterID = &after.CreatedOn, &after.ID
 	}
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, email, lfid, name, given_name, family_name, avatar_url, created_on, updated_on
+		SELECT `+backfillColumns+`
 		FROM users
 		WHERE lfid IS NOT NULL
 		  AND (email IS NULL OR name IS NULL OR given_name IS NULL OR family_name IS NULL OR avatar_url IS NULL)
-		  AND ($1::timestamptz IS NULL OR (created_on, id) > ($1::timestamptz, $2::uuid))
-		ORDER BY created_on, id
+		  AND ($1::timestamptz IS NULL OR (COALESCE(created_on, 'epoch'::timestamptz), id) > ($1::timestamptz, $2::uuid))
+		ORDER BY COALESCE(created_on, 'epoch'::timestamptz), id
 		LIMIT $3`, afterCreatedOn, afterID, limit)
 	if err != nil {
 		span.RecordError(err)
@@ -234,7 +242,7 @@ func (r *UserRepository) FillMissingIdentity(ctx context.Context, id string, inp
 			avatar_url = COALESCE(users.avatar_url, $6),
 			updated_on = NOW()
 		WHERE id = $1
-		RETURNING id, email, lfid, name, given_name, family_name, avatar_url, created_on, updated_on`,
+		RETURNING `+backfillColumns,
 		id, input.Email, input.Name, input.GivenName, input.FamilyName, input.AvatarURL,
 	).Scan(&u.ID, &u.Email, &u.LFID, &u.Name, &u.GivenName, &u.FamilyName, &u.AvatarURL, &u.CreatedOn, &u.UpdatedOn)
 	if pgErr := (*pgconn.PgError)(nil); errors.As(err, &pgErr) && pgErr.Code == uniqueViolation && pgErr.ConstraintName == usersEmailKey {
