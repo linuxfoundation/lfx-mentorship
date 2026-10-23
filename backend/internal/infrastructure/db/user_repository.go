@@ -85,18 +85,21 @@ func (r *UserRepository) GetByLFID(ctx context.Context, lfid string) (*models.Us
 
 // UpsertByLFID atomically creates or refreshes the local user for a gateway principal.
 func (r *UserRepository) UpsertByLFID(ctx context.Context, input models.UserCreateInput) (*models.User, error) {
-	return r.upsertByLFID(ctx, input, false)
+	return r.upsertByLFID(ctx, input, models.UserIdentityFill{}, false)
 }
 
 // BootstrapByLFID is UpsertByLFID for the caller's own sign-in, whose email is the verified token
 // claim: another LF account's row still holding that address is stale and gives it up. A legacy
 // row without an LFID keeps it, and the call returns ErrEmailInUse. Without a claim the stored
 // email is kept.
-func (r *UserRepository) BootstrapByLFID(ctx context.Context, input models.UserCreateInput) (*models.User, error) {
-	return r.upsertByLFID(ctx, input, true)
+func (r *UserRepository) BootstrapByLFID(ctx context.Context, input models.UserCreateInput, fill models.UserIdentityFill) (*models.User, error) {
+	return r.upsertByLFID(ctx, input, fill, true)
 }
 
-func (r *UserRepository) upsertByLFID(ctx context.Context, input models.UserCreateInput, bootstrap bool) (*models.User, error) {
+// upsertByLFID writes input values over stored ones and fill values only where
+// the stored column is still NULL, in one statement, so the two precedences
+// hold against concurrent edits. Only input.Email is released from other rows.
+func (r *UserRepository) upsertByLFID(ctx context.Context, input models.UserCreateInput, fill models.UserIdentityFill, bootstrap bool) (*models.User, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin upsert user transaction: %w", err)
@@ -119,15 +122,18 @@ func (r *UserRepository) upsertByLFID(ctx context.Context, input models.UserCrea
 	var u models.User
 	err = tx.QueryRow(ctx, `
 		INSERT INTO users (id, email, lfid, name, given_name, family_name, avatar_url)
-		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6)
+		VALUES (gen_random_uuid(),
+			COALESCE($1::text, $7::text), $2,
+			COALESCE($3::text, $8::text), COALESCE($4::text, $9::text), COALESCE($5::text, $10::text), COALESCE($6::text, $11::text))
 		ON CONFLICT (lfid) DO UPDATE SET
-			email = COALESCE(EXCLUDED.email, users.email),
-			name = COALESCE(EXCLUDED.name, users.name),
-			given_name = COALESCE(EXCLUDED.given_name, users.given_name),
-			family_name = COALESCE(EXCLUDED.family_name, users.family_name),
-			avatar_url = COALESCE(EXCLUDED.avatar_url, users.avatar_url), updated_on = NOW()
+			email = COALESCE($1::text, users.email, $7::text),
+			name = COALESCE($3::text, users.name, $8::text),
+			given_name = COALESCE($4::text, users.given_name, $9::text),
+			family_name = COALESCE($5::text, users.family_name, $10::text),
+			avatar_url = COALESCE($6::text, users.avatar_url, $11::text), updated_on = NOW()
 		RETURNING id, email, lfid, name, given_name, family_name, avatar_url, created_on, updated_on`,
 		input.Email, input.LFID, input.Name, input.GivenName, input.FamilyName, input.AvatarURL,
+		fill.Email, fill.Name, fill.GivenName, fill.FamilyName, fill.AvatarURL,
 	).Scan(&u.ID, &u.Email, &u.LFID, &u.Name, &u.GivenName, &u.FamilyName, &u.AvatarURL, &u.CreatedOn, &u.UpdatedOn)
 	if pgErr := (*pgconn.PgError)(nil); errors.As(err, &pgErr) && pgErr.Code == uniqueViolation && pgErr.ConstraintName == usersEmailKey {
 		return nil, domain.ErrEmailInUse

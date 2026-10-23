@@ -38,14 +38,16 @@ func (s *UserService) SetAccountDirectory(directory domain.AccountDirectory) {
 
 // Bootstrap resolves or creates the local user for a Heimdall LFID. Identity
 // comes from the token and the body first; the LF directory fills only what
-// those and the stored row all lack, so a directory value never replaces an
-// edit made through PATCH /me. A failed lookup leaves those fields empty and
-// is logged; it never fails the sign-in, and a later sign-in completes the row.
+// those and the stored row all lack. The directory's values are written as a
+// fill, which the repository applies only to columns still NULL in the same
+// statement, so an edit made through PATCH /me while the lookup was in flight
+// is never replaced. A failed lookup leaves those fields empty and is logged;
+// it never fails the sign-in, and a later sign-in completes the row.
 //
 // A token email is verified at the gateway, so it reclaims the address from
-// any stale row (BootstrapByLFID). The directory does not report whether the
-// primary email is verified, so an address from there is stored only while no
-// other row holds it: on conflict it is left unset rather than taken.
+// any stale row. The directory does not report whether the primary email is
+// verified, so an address from there is stored only while no other row holds
+// it: on conflict it is left unset rather than taken.
 func (s *UserService) Bootstrap(ctx context.Context, lfid string, input models.UserUpdateInput) (*models.User, error) {
 	if lfid == "" {
 		return nil, fmt.Errorf("%w: principal is required", domain.ErrInvalidInput)
@@ -54,34 +56,28 @@ func (s *UserService) Bootstrap(ctx context.Context, lfid string, input models.U
 	defer span.End()
 
 	write := models.UserCreateInput{LFID: &lfid, Email: input.Email, Name: input.Name, GivenName: input.GivenName, FamilyName: input.FamilyName, AvatarURL: input.AvatarURL}
-	emailFromDirectory := false
+	var fill models.UserIdentityFill
 	if s.directory != nil {
 		known := s.knownIdentity(ctx, lfid, input)
 		resolved, err := s.ResolveIdentity(ctx, lfid, known)
 		if err != nil {
 			slog.WarnContext(ctx, "directory lookup failed; bootstrapping with the token's identity only", "error", err)
 		}
-		// Only what the directory added is written; stored values are not re-sent.
-		fillMissing(&write.Name, newlyFilled(known.Name, resolved.Name))
-		fillMissing(&write.GivenName, newlyFilled(known.GivenName, resolved.GivenName))
-		fillMissing(&write.FamilyName, newlyFilled(known.FamilyName, resolved.FamilyName))
-		fillMissing(&write.AvatarURL, newlyFilled(known.AvatarURL, resolved.AvatarURL))
-		if email := newlyFilled(known.Email, resolved.Email); email != nil {
-			write.Email, emailFromDirectory = email, true
+		fill = models.UserIdentityFill{
+			Email:      newlyFilled(known.Email, resolved.Email),
+			Name:       newlyFilled(known.Name, resolved.Name),
+			GivenName:  newlyFilled(known.GivenName, resolved.GivenName),
+			FamilyName: newlyFilled(known.FamilyName, resolved.FamilyName),
+			AvatarURL:  newlyFilled(known.AvatarURL, resolved.AvatarURL),
 		}
 	}
 
-	var user *models.User
-	var err error
-	if emailFromDirectory {
-		user, err = s.repo.UpsertByLFID(ctx, write)
-		if errors.Is(err, domain.ErrEmailInUse) {
-			slog.WarnContext(ctx, "directory email already belongs to another user; bootstrapping without email")
-			write.Email = nil
-			user, err = s.repo.UpsertByLFID(ctx, write)
-		}
-	} else {
-		user, err = s.repo.BootstrapByLFID(ctx, write)
+	user, err := s.repo.BootstrapByLFID(ctx, write, fill)
+	if errors.Is(err, domain.ErrEmailInUse) && fill.Email != nil {
+		// Only a fill email can collide: the token's was released first.
+		slog.WarnContext(ctx, "directory email already belongs to another user; bootstrapping without email")
+		fill.Email = nil
+		user, err = s.repo.BootstrapByLFID(ctx, write, fill)
 	}
 	if err != nil {
 		span.RecordError(err)
@@ -91,8 +87,9 @@ func (s *UserService) Bootstrap(ctx context.Context, lfid string, input models.U
 }
 
 // knownIdentity merges the sign-in input with the stored row, so the directory
-// is asked only for fields neither has. A missing row (first sign-in) or a
-// failed read leaves the input as is.
+// is asked only for fields neither has. It saves lookups; correctness against
+// a concurrent edit comes from the repository's fill semantics, not from this
+// read. A missing row (first sign-in) or a failed read leaves the input as is.
 func (s *UserService) knownIdentity(ctx context.Context, lfid string, input models.UserUpdateInput) models.UserUpdateInput {
 	existing, err := s.repo.GetByLFID(ctx, lfid)
 	if err != nil {

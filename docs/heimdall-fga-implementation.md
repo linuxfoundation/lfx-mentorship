@@ -101,8 +101,10 @@ flowchart LR
    adds them to the finalizer). Whatever the token, the request body and the
    stored row all lack, `UserService.Bootstrap` fills from lfx-v2-auth-service
    over NATS (`user_metadata.read`, `user_emails.read`), the same sign-in sync
-   lfx-crowdfunding does; a directory value never replaces a stored one, and a
-   failed lookup is logged and never fails the sign-in. A token email is
+   lfx-crowdfunding does. Directory values are written as a fill the
+   repository applies only to columns still `NULL`, in the same statement as
+   the sign-in's own values, so an edit made while the lookup was in flight is
+   never replaced; a failed lookup is logged and never fails the sign-in. A token email is
    verified at the gateway and reclaims the address from a stale row; a
    directory email is not, so it is stored only while no other row holds it.
 6. The backend validates the JWT against the cluster-internal Heimdall JWKS.
