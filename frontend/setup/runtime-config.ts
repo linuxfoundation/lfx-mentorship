@@ -32,7 +32,5 @@ export default {
     appUrl,
     selfServeUrl,
     crowdfundingUrl,
-    intercomAppId:
-      process.env.NUXT_PUBLIC_INTERCOM_APP_ID || (isProduction ? 'w29sqomy' : 'mxl90k6y'),
   },
 };
