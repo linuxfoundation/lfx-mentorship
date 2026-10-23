@@ -96,15 +96,23 @@ SPDX-License-Identifier: MIT
               button-style="rounded"
               @click="$emit('open-repository')"
             />
-            <lfx-button
+            <lfx-tooltip
               v-if="program.slug"
-              label="Donate"
-              icon="heart"
-              icon-type="solid"
-              type="transparent"
-              button-style="rounded"
-              @click="$emit('donate')"
-            />
+              :content="PROGRAM_DONATE_UNAVAILABLE"
+              :disabled="!donateDisabled"
+              class="inline-flex"
+            >
+              <lfx-button
+                label="Donate"
+                icon="heart"
+                icon-type="solid"
+                type="transparent"
+                button-style="rounded"
+                :disabled="donateDisabled"
+                :class="{ 'pointer-events-none': donateDisabled }"
+                @click="$emit('donate')"
+              />
+            </lfx-tooltip>
           </div>
         </div>
       </div>
@@ -159,11 +167,13 @@ SPDX-License-Identifier: MIT
 
 <script setup lang="ts">
 import { PROGRAM_STATUS_CONFIG } from '../config/program-card.config';
+import { PROGRAM_DONATE_UNAVAILABLE } from '../config/program-detail.config';
 import { AppRoute } from '~/config/routes';
 import type { Program, ProgramTerm } from '~/types/program.types';
 import { formatTermLabel } from '~/utils/program-terms';
 
-const props = defineProps<{ program: Program }>();
+// donateDisabled: the program has no LFX Crowdfunding initiative to donate to yet.
+const props = defineProps<{ program: Program; donateDisabled?: boolean }>();
 
 defineEmits<{
   (e: 'open-repository' | 'donate'): void;

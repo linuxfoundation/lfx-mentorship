@@ -101,9 +101,10 @@ describe('ProgramDetailView', () => {
       { id: 'u1', name: 'Ada Lovelace', status: 'active', termLabel: 'Fall 2026' },
       { id: 'u2', name: 'Alan Turing', status: 'graduated', termLabel: 'Spring 2025' },
     ]);
-    registerEndpoint('/api/programs/tabs/sponsors', () => [
-      { id: 's1', name: 'ACME Corp', amountCents: 250000 },
-    ]);
+    registerEndpoint('/api/programs/tabs/sponsors', () => ({
+      sponsors: [{ id: 's1', name: 'ACME Corp', amountCents: 250000 }],
+      crowdfundingInitiative: true,
+    }));
     const wrapper = await mountProgram('tabs');
     expect(wrapper.text()).toContain('About the program');
 
@@ -183,6 +184,23 @@ describe('ProgramDetailView', () => {
       '_blank',
       'noopener,noreferrer',
     );
+  });
+
+  it('disables Donate and shows no sponsors when the program has no Crowdfunding initiative', async () => {
+    registerEndpoint('/api/programs/unfunded', () => program('unfunded'));
+    registerEndpoint('/api/programs/unfunded/sponsors', () => ({
+      sponsors: [],
+      crowdfundingInitiative: false,
+    }));
+    const wrapper = await mountProgram('unfunded');
+    const donate = () => wrapper.findAll('button').find((b) => b.text().includes('Donate'))!;
+    await vi.waitFor(() => expect(donate().attributes('disabled')).toBeDefined());
+    await donate().trigger('click');
+    expect(openSpy).not.toHaveBeenCalled();
+
+    await tab(wrapper, 'Sponsors');
+    expect(wrapper.text()).toContain('No sponsors listed yet.');
+    expect(wrapper.text()).not.toContain('Unable to load sponsors.');
   });
 
   it('returns to the overview when the program changes', async () => {

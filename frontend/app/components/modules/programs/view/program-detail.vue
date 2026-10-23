@@ -22,6 +22,7 @@ SPDX-License-Identifier: MIT
     <template v-else>
       <program-detail-header
         :program="program"
+        :donate-disabled="!hasCrowdfundingInitiative"
         @open-repository="openRepository"
         @donate="openDonate"
         @apply="onApply"
@@ -138,17 +139,12 @@ watch(error, (err) => {
 
 const activeTab = ref(DEFAULT_PROGRAM_DETAIL_TAB);
 const menteesEnabled = computed(() => activeTab.value === 'mentees');
-const sponsorsEnabled = computed(() => activeTab.value === 'sponsors');
 const {
   data: mentees,
   isLoading: isMenteesLoading,
   error: menteesError,
 } = useProgramMentees(programId, menteesEnabled);
-const {
-  data: sponsors,
-  isLoading: isSponsorsLoading,
-  error: sponsorsError,
-} = useProgramSponsors(programId, sponsorsEnabled);
+const { data: sponsors, isLoading: isSponsorsLoading, error: sponsorsError } = useProgramSponsors(programId); // eager: Donate needs to know whether a Crowdfunding initiative exists
 
 watch(menteesError, (err) => {
   if (!import.meta.client || !err) return;
@@ -156,13 +152,15 @@ watch(menteesError, (err) => {
 });
 
 watch(sponsorsError, (err) => {
-  if (!import.meta.client || !err) return;
+  if (!import.meta.client || !err || activeTab.value !== 'sponsors') return;
   showToast(getFetchErrorMessage(err, 'Failed to load sponsors. Please try again.'), ToastTypesEnum.negative);
 });
 
 const currentMentees = computed(() => mentees.value?.filter((mentee) => mentee.status === 'active') ?? []);
 const graduatedMentees = computed(() => mentees.value?.filter((mentee) => mentee.status === 'graduated') ?? []);
-const sponsorList = computed(() => sponsors.value ?? []);
+const sponsorList = computed(() => sponsors.value?.sponsors ?? []);
+// Donate stays available while sponsors load or fail; only a confirmed missing initiative disables it.
+const hasCrowdfundingInitiative = computed(() => sponsors.value?.crowdfundingInitiative ?? true);
 
 watch(programId, () => {
   activeTab.value = DEFAULT_PROGRAM_DETAIL_TAB;
@@ -176,7 +174,7 @@ function openRepository() {
 
 function openDonate() {
   const id = program.value?.id;
-  if (!id || !import.meta.client) return;
+  if (!id || !hasCrowdfundingInitiative.value || !import.meta.client) return;
 
   const base = String(crowdfundingUrl).replace(/\/$/, '');
   window.open(`${base}/initiatives/${id}`, '_blank', 'noopener,noreferrer');

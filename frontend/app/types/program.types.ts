@@ -76,6 +76,12 @@ export interface ProgramSponsor {
   amountCents: number;
 }
 
+export interface ProgramSponsorsResponse {
+  sponsors: ProgramSponsor[];
+  /** False when the program has no LFX Crowdfunding initiative yet, so it cannot take donations. */
+  crowdfundingInitiative: boolean;
+}
+
 export interface Program {
   id: string;
   slug: string;

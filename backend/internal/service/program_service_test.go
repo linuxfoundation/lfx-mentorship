@@ -1231,6 +1231,38 @@ func TestProgramService_GetProgramSponsors_ClientNotConfigured(t *testing.T) {
 	}
 }
 
+func TestProgramService_GetProgramSponsors_NoInitiativeIsEmpty(t *testing.T) {
+	svc := newProgramSvc(&stubProgRepo{}, &stubTermRepo{}, &stubAppRepo{})
+	svc.SetCrowdfundingClient(&fakeCrowdfundingClient{
+		getCategorizedTransactions: func(context.Context, string, string, bool, int, int) (*models.ProgramCategorizedTransactions, error) {
+			return nil, domain.ErrInitiativeNotFound
+		},
+	})
+
+	for _, aggregate := range []bool{false, true} {
+		out, err := svc.GetProgramSponsors(context.Background(), "prog-1", "mentorship", false, aggregate)
+		if err != nil {
+			t.Fatalf("aggregate=%t: GetProgramSponsors: %v", aggregate, err)
+		}
+		if out.CrowdfundingInitiative || out.Data == nil || len(out.Data) != 0 {
+			t.Errorf("aggregate=%t: got %+v; want no initiative and no sponsors", aggregate, out)
+		}
+	}
+}
+
+func TestProgramService_GetProgramSponsors_UpstreamErrorPropagates(t *testing.T) {
+	svc := newProgramSvc(&stubProgRepo{}, &stubTermRepo{}, &stubAppRepo{})
+	svc.SetCrowdfundingClient(&fakeCrowdfundingClient{
+		getCategorizedTransactions: func(context.Context, string, string, bool, int, int) (*models.ProgramCategorizedTransactions, error) {
+			return nil, domain.ErrUpstreamUnavailable
+		},
+	})
+
+	if _, err := svc.GetProgramSponsors(context.Background(), "prog-1", "mentorship", false, false); !errors.Is(err, domain.ErrUpstreamUnavailable) {
+		t.Errorf("expected ErrUpstreamUnavailable, got %v", err)
+	}
+}
+
 func TestProgramService_GetProgramSponsors_AggregatesOrgsAndIndividuals(t *testing.T) {
 	svc := newProgramSvc(&stubProgRepo{}, &stubTermRepo{}, &stubAppRepo{})
 
@@ -1267,10 +1299,14 @@ func TestProgramService_GetProgramSponsors_AggregatesOrgsAndIndividuals(t *testi
 		},
 	})
 
-	out, err := svc.GetProgramSponsors(context.Background(), "prog-1", "", true, false)
+	sponsors, err := svc.GetProgramSponsors(context.Background(), "prog-1", "", true, false)
 	if err != nil {
 		t.Fatalf("GetProgramSponsors: %v", err)
 	}
+	if !sponsors.CrowdfundingInitiative {
+		t.Error("CrowdfundingInitiative = false; want true")
+	}
+	out := sponsors.Data
 	if calls != 1 {
 		t.Fatalf("calls = %d; want 1", calls)
 	}
@@ -1336,10 +1372,14 @@ func TestProgramService_GetProgramSponsors_AggregatePagesAllTransactions(t *test
 		},
 	})
 
-	out, err := svc.GetProgramSponsors(context.Background(), "prog-1", "mentorship", false, true)
+	sponsors, err := svc.GetProgramSponsors(context.Background(), "prog-1", "mentorship", false, true)
 	if err != nil {
 		t.Fatalf("GetProgramSponsors: %v", err)
 	}
+	if !sponsors.CrowdfundingInitiative {
+		t.Error("CrowdfundingInitiative = false; want true")
+	}
+	out := sponsors.Data
 	if len(callArgs) != 2 {
 		t.Fatalf("calls = %d; want 2", len(callArgs))
 	}
@@ -1400,10 +1440,14 @@ func TestProgramService_GetProgramSponsors_AggregateDoesNotStopOnEmptyPage(t *te
 		},
 	})
 
-	out, err := svc.GetProgramSponsors(context.Background(), "prog-1", "mentorship", false, true)
+	sponsors, err := svc.GetProgramSponsors(context.Background(), "prog-1", "mentorship", false, true)
 	if err != nil {
 		t.Fatalf("GetProgramSponsors: %v", err)
 	}
+	if !sponsors.CrowdfundingInitiative {
+		t.Error("CrowdfundingInitiative = false; want true")
+	}
+	out := sponsors.Data
 	if len(callArgs) != 2 {
 		t.Fatalf("calls = %d; want 2", len(callArgs))
 	}
@@ -1467,10 +1511,14 @@ func TestProgramService_GetProgramSponsors_AggregateUsesReturnedLimitForOffsets(
 		},
 	})
 
-	out, err := svc.GetProgramSponsors(context.Background(), "prog-1", "mentorship", false, true)
+	sponsors, err := svc.GetProgramSponsors(context.Background(), "prog-1", "mentorship", false, true)
 	if err != nil {
 		t.Fatalf("GetProgramSponsors: %v", err)
 	}
+	if !sponsors.CrowdfundingInitiative {
+		t.Error("CrowdfundingInitiative = false; want true")
+	}
+	out := sponsors.Data
 	if len(callArgs) != 3 {
 		t.Fatalf("calls = %d; want 3", len(callArgs))
 	}
