@@ -886,6 +886,138 @@ func TestProgramService_Update_EmptyTaskTemplatesClear(t *testing.T) {
 	}
 }
 
+// updateTemplates saves templates over the current ones and returns the prerequisite changes the
+// repository was asked to apply.
+func updateTemplates(t *testing.T, current, templates string) models.PrerequisiteChanges {
+	t.Helper()
+	var captured models.PrerequisiteChanges
+	repo := &stubProgRepo{
+		getByID: func(context.Context, string) (*models.Program, error) {
+			return &models.Program{ID: "prog-1", TaskTemplates: json.RawMessage(current)}, nil
+		},
+		updateWithPrerequisites: func(_ context.Context, _ string, input models.ProgramUpdateInput, changes models.PrerequisiteChanges) (*models.Program, []string, error) {
+			// The repository refuses the changes if the stored templates are no longer these.
+			if string(input.ExpectedTaskTemplates) != current {
+				t.Errorf("expected task templates = %s; want the %s the changes were diffed against", input.ExpectedTaskTemplates, current)
+			}
+			captured = changes
+			return &models.Program{ID: "prog-1"}, nil, nil
+		},
+	}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	if _, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{TaskTemplates: json.RawMessage(templates)}); err != nil {
+		t.Fatal(err)
+	}
+	return captured
+}
+
+func TestProgramService_Update_DiffsPrerequisites(t *testing.T) {
+	changes := updateTemplates(t,
+		`[{"name":"Resume","dueDate":"2020-01-01"},{"name":"Essay"},{"name":"Video","description":"Record it"}]`,
+		`[{"name":"resume","dueDate":"2030-01-31"},{"name":"Video","description":"Record it"},{"name":"Cover letter","custom":true}]`)
+
+	due := "2030-01-31"
+	want := models.PrerequisiteChanges{
+		Removed: []string{"essay"},
+		Edited:  []models.PrerequisiteTemplate{{Name: "resume", DueDate: &due}},
+		Added:   []models.PrerequisiteTemplate{{Name: "Cover letter", Custom: true}},
+	}
+	if !reflect.DeepEqual(changes, want) {
+		t.Fatalf("changes = %+v; want %+v", changes, want)
+	}
+}
+
+func TestProgramService_Update_UnchangedTemplatesChangeNoTasks(t *testing.T) {
+	// Stored before normalization: a legacy custom string, a blank submitFile, padded text.
+	changes := updateTemplates(t,
+		`[{"name":" Essay ","description":" Write it ","submitFile":"","custom":"true"}]`,
+		`[{"name":"Essay","description":"Write it"}]`)
+	if !changes.IsEmpty() {
+		t.Fatalf("changes = %+v; want none for a re-save of the same templates", changes)
+	}
+}
+
+func TestProgramService_Update_NotifiesAdminsOfCompletedApplications(t *testing.T) {
+	repo := &stubProgRepo{
+		getByID: func(context.Context, string) (*models.Program, error) {
+			return &models.Program{ID: "prog-1", TaskTemplates: json.RawMessage(`[{"name":"Essay"}]`)}, nil
+		},
+		updateWithPrerequisites: func(context.Context, string, models.ProgramUpdateInput, models.PrerequisiteChanges) (*models.Program, []string, error) {
+			return &models.Program{ID: "prog-1"}, []string{"app-1", "app-2"}, nil
+		},
+	}
+	n := &stubNotifier{}
+	svc := newProgramSvcWithNotifier(repo, &stubTermRepo{}, &stubAppRepo{}, n)
+	if _, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{TaskTemplates: json.RawMessage(`[]`)}); err != nil {
+		t.Fatal(err)
+	}
+	if n.tasksSubmittedCalls != 2 {
+		t.Fatalf("tasks submitted notifications = %d; want one per application the removal completed", n.tasksSubmittedCalls)
+	}
+}
+
+func TestProgramService_Update_WithoutTaskTemplatesChangesNoTasks(t *testing.T) {
+	changes := models.PrerequisiteChanges{Removed: []string{"sentinel"}}
+	repo := &stubProgRepo{updateWithPrerequisites: func(_ context.Context, _ string, _ models.ProgramUpdateInput, c models.PrerequisiteChanges) (*models.Program, []string, error) {
+		changes = c
+		return &models.Program{ID: "prog-1"}, nil, nil
+	}}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	name := "Renamed"
+	if _, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Name: &name}); err != nil {
+		t.Fatal(err)
+	}
+	if !changes.IsEmpty() {
+		t.Fatalf("changes = %+v; want none when task_templates is not sent", changes)
+	}
+}
+
+func TestProgramService_Update_KeepsLFIDOnceSet(t *testing.T) {
+	stored := "Alice"
+	cases := []struct {
+		name    string
+		current *string
+		sent    string
+		want    string
+		invalid bool
+	}{
+		{name: "set while empty", current: nil, sent: " alice ", want: "alice"},
+		{name: "set while blank", current: new(string), sent: "alice", want: "alice"},
+		{name: "same value", current: &stored, sent: "Alice", want: "Alice"},
+		{name: "other case and space keep the stored value", current: &stored, sent: " ALICE ", want: "Alice"},
+		{name: "another lfid", current: &stored, sent: "bob", invalid: true},
+		{name: "cleared", current: &stored, sent: "", invalid: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var captured *string
+			repo := &stubProgRepo{
+				getByID: func(context.Context, string) (*models.Program, error) {
+					return &models.Program{ID: "prog-1", LFID: tc.current}, nil
+				},
+				update: func(_ context.Context, _ string, input models.ProgramUpdateInput) (*models.Program, error) {
+					captured = input.LFID
+					return &models.Program{ID: "prog-1"}, nil
+				},
+			}
+			sent := tc.sent
+			_, err := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{}).Update(context.Background(), "prog-1", models.ProgramUpdateInput{LFID: &sent})
+			if tc.invalid {
+				if !errors.Is(err, domain.ErrInvalidInput) {
+					t.Fatalf("err = %v; want ErrInvalidInput", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if captured == nil || *captured != tc.want {
+				t.Fatalf("stored lfid = %v; want %q", captured, tc.want)
+			}
+		})
+	}
+}
+
 func TestProgramService_Update_RejectsInvalidTaskTemplates(t *testing.T) {
 	cases := map[string]string{
 		"not an array":   `{"name":"Resume"}`,
@@ -893,6 +1025,7 @@ func TestProgramService_Update_RejectsInvalidTaskTemplates(t *testing.T) {
 		"blank name":     `[{"name":" "}]`,
 		"unknown submit": `[{"name":"Resume","submitFile":"yes"}]`,
 		"bad due date":   `[{"name":"Resume","dueDate":"05/01/2026"}]`,
+		"duplicate name": `[{"name":"Resume"},{"name":" resume "}]`,
 	}
 	for name, templates := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -1098,6 +1231,38 @@ func TestProgramService_GetProgramSponsors_ClientNotConfigured(t *testing.T) {
 	}
 }
 
+func TestProgramService_GetProgramSponsors_NoInitiativeIsEmpty(t *testing.T) {
+	svc := newProgramSvc(&stubProgRepo{}, &stubTermRepo{}, &stubAppRepo{})
+	svc.SetCrowdfundingClient(&fakeCrowdfundingClient{
+		getCategorizedTransactions: func(context.Context, string, string, bool, int, int) (*models.ProgramCategorizedTransactions, error) {
+			return nil, domain.ErrInitiativeNotFound
+		},
+	})
+
+	for _, aggregate := range []bool{false, true} {
+		out, err := svc.GetProgramSponsors(context.Background(), "prog-1", "mentorship", false, aggregate)
+		if err != nil {
+			t.Fatalf("aggregate=%t: GetProgramSponsors: %v", aggregate, err)
+		}
+		if out.CrowdfundingInitiative || out.Data == nil || len(out.Data) != 0 {
+			t.Errorf("aggregate=%t: got %+v; want no initiative and no sponsors", aggregate, out)
+		}
+	}
+}
+
+func TestProgramService_GetProgramSponsors_UpstreamErrorPropagates(t *testing.T) {
+	svc := newProgramSvc(&stubProgRepo{}, &stubTermRepo{}, &stubAppRepo{})
+	svc.SetCrowdfundingClient(&fakeCrowdfundingClient{
+		getCategorizedTransactions: func(context.Context, string, string, bool, int, int) (*models.ProgramCategorizedTransactions, error) {
+			return nil, domain.ErrUpstreamUnavailable
+		},
+	})
+
+	if _, err := svc.GetProgramSponsors(context.Background(), "prog-1", "mentorship", false, false); !errors.Is(err, domain.ErrUpstreamUnavailable) {
+		t.Errorf("expected ErrUpstreamUnavailable, got %v", err)
+	}
+}
+
 func TestProgramService_GetProgramSponsors_AggregatesOrgsAndIndividuals(t *testing.T) {
 	svc := newProgramSvc(&stubProgRepo{}, &stubTermRepo{}, &stubAppRepo{})
 
@@ -1134,10 +1299,14 @@ func TestProgramService_GetProgramSponsors_AggregatesOrgsAndIndividuals(t *testi
 		},
 	})
 
-	out, err := svc.GetProgramSponsors(context.Background(), "prog-1", "", true, false)
+	sponsors, err := svc.GetProgramSponsors(context.Background(), "prog-1", "", true, false)
 	if err != nil {
 		t.Fatalf("GetProgramSponsors: %v", err)
 	}
+	if !sponsors.CrowdfundingInitiative {
+		t.Error("CrowdfundingInitiative = false; want true")
+	}
+	out := sponsors.Data
 	if calls != 1 {
 		t.Fatalf("calls = %d; want 1", calls)
 	}
@@ -1203,10 +1372,14 @@ func TestProgramService_GetProgramSponsors_AggregatePagesAllTransactions(t *test
 		},
 	})
 
-	out, err := svc.GetProgramSponsors(context.Background(), "prog-1", "mentorship", false, true)
+	sponsors, err := svc.GetProgramSponsors(context.Background(), "prog-1", "mentorship", false, true)
 	if err != nil {
 		t.Fatalf("GetProgramSponsors: %v", err)
 	}
+	if !sponsors.CrowdfundingInitiative {
+		t.Error("CrowdfundingInitiative = false; want true")
+	}
+	out := sponsors.Data
 	if len(callArgs) != 2 {
 		t.Fatalf("calls = %d; want 2", len(callArgs))
 	}
@@ -1267,10 +1440,14 @@ func TestProgramService_GetProgramSponsors_AggregateDoesNotStopOnEmptyPage(t *te
 		},
 	})
 
-	out, err := svc.GetProgramSponsors(context.Background(), "prog-1", "mentorship", false, true)
+	sponsors, err := svc.GetProgramSponsors(context.Background(), "prog-1", "mentorship", false, true)
 	if err != nil {
 		t.Fatalf("GetProgramSponsors: %v", err)
 	}
+	if !sponsors.CrowdfundingInitiative {
+		t.Error("CrowdfundingInitiative = false; want true")
+	}
+	out := sponsors.Data
 	if len(callArgs) != 2 {
 		t.Fatalf("calls = %d; want 2", len(callArgs))
 	}
@@ -1334,10 +1511,14 @@ func TestProgramService_GetProgramSponsors_AggregateUsesReturnedLimitForOffsets(
 		},
 	})
 
-	out, err := svc.GetProgramSponsors(context.Background(), "prog-1", "mentorship", false, true)
+	sponsors, err := svc.GetProgramSponsors(context.Background(), "prog-1", "mentorship", false, true)
 	if err != nil {
 		t.Fatalf("GetProgramSponsors: %v", err)
 	}
+	if !sponsors.CrowdfundingInitiative {
+		t.Error("CrowdfundingInitiative = false; want true")
+	}
+	out := sponsors.Data
 	if len(callArgs) != 3 {
 		t.Fatalf("calls = %d; want 3", len(callArgs))
 	}
@@ -1595,6 +1776,9 @@ func TestProgramService_CreateEnrollment_RejectsInvalidInput(t *testing.T) {
 		"required prerequisite without description": func(in *models.ProgramEnrollmentInput) {
 			in.Prerequisites = json.RawMessage(`[{"name":"PR","required":true}]`)
 		},
+		"duplicate prerequisite name": func(in *models.ProgramEnrollmentInput) {
+			in.Prerequisites = json.RawMessage(`[{"name":"Essay","description":"Write","required":true},{"name":" essay ","description":"Write","required":true}]`)
+		},
 		"blank program name":   func(in *models.ProgramEnrollmentInput) { in.Program.Name = blank },
 		"blank slug":           func(in *models.ProgramEnrollmentInput) { in.Program.Slug = blank },
 		"missing project_uid":  func(in *models.ProgramEnrollmentInput) { in.Program.ProjectUID = nil },
@@ -1794,5 +1978,56 @@ func TestProgramService_Update_PropagatesRepositoryErrors(t *testing.T) {
 				t.Fatalf("err = %v; want the repository error", err)
 			}
 		})
+	}
+}
+
+func TestProgramService_DescriptionLengthCapped(t *testing.T) {
+	// Multi-byte characters: the cap counts characters, not bytes.
+	atCap, overCap := strings.Repeat("é", 18_000), strings.Repeat("<", 18_001)
+	writes := 0
+	repo := &stubProgRepo{
+		update: func(_ context.Context, id string, _ models.ProgramUpdateInput) (*models.Program, error) {
+			writes++
+			return &models.Program{ID: id}, nil
+		},
+		create: func(_ context.Context, in models.ProgramCreateInput) (*models.Program, error) {
+			writes++
+			return &models.Program{ID: in.ID}, nil
+		},
+		createEnrollment: func(context.Context, models.ProgramEnrollmentInput) (*models.Program, error) {
+			writes++
+			return &models.Program{ID: "prog-1"}, nil
+		},
+	}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+
+	// Each write differs only in its description, so the cap is the one check that can refuse it.
+	for _, tc := range []struct {
+		description string
+		wantErr     bool
+	}{{atCap, false}, {overCap, true}} {
+		description := tc.description
+		enrollment := validEnrollment()
+		enrollment.Program.Description = &description
+		ops := map[string]func() error{
+			"update": func() error {
+				_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{Description: &description})
+				return err
+			},
+			"enrollment": func() error { _, err := svc.CreateEnrollment(context.Background(), enrollment); return err },
+			"create":     func() error { _, err := svc.Create(context.Background(), enrollment.Program); return err },
+		}
+		for op, write := range ops {
+			err := write()
+			if tc.wantErr && !errors.Is(err, domain.ErrInvalidInput) {
+				t.Errorf("%s over the cap: expected ErrInvalidInput, got %v", op, err)
+			}
+			if !tc.wantErr && err != nil {
+				t.Errorf("%s at the cap: %v", op, err)
+			}
+		}
+	}
+	if writes != 3 {
+		t.Errorf("repository writes = %d; want only the three at the cap", writes)
 	}
 }

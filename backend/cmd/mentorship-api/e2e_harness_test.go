@@ -36,7 +36,7 @@ const (
 	e2eAudience     = "lfx-mentorship-e2e"
 	e2eKeyID        = "e2e-key"
 	e2eInviteSecret = "e2e-invite-secret"
-	e2eHRInbox      = "hr@e2e.example.org"
+	e2eCopyInbox    = "copies@e2e.example.org"
 	e2eReviewInbox  = "review@e2e.example.org"
 	e2eSiteURL      = "https://mentorship.e2e.example.org"
 	e2eSelfServeURL = "https://selfserve.e2e.example.org"
@@ -44,6 +44,8 @@ const (
 	e2eLogosBucket  = "e2e-logos"
 	e2eFilesBucket  = "e2e-attachments"
 	apiPrefix       = "/mentorship/v1"
+	// e2eAccessWaitTimeout bounds a create's wait for the fake fga-sync to grant the creator access.
+	e2eAccessWaitTimeout = time.Second
 )
 
 // e2e is the process-wide environment: one API server and its fake dependencies, shared by every test.
@@ -164,10 +166,10 @@ func startEnvironment(ctx context.Context, dsn string) (*environment, func(), er
 		JWT:      JWTConfig{HeimdallJWKSURL: jwks.URL, HeimdallAudience: e2eAudience, HeimdallIssuer: e2eIssuer},
 		FGA: FGAConfig{
 			NATSURL: ns.ClientURL(), RelayBatch: 50, RelayInterval: 50 * time.Millisecond,
-			RelayRetryDelay: time.Second, RelayMaxAttempts: 3,
+			RelayRetryDelay: time.Second, RelayMaxAttempts: 3, AccessWaitTimeout: e2eAccessWaitTimeout,
 		},
 		Indexer:      IndexerConfig{ServiceToken: "e2e-indexer-token", RetryDelay: time.Second, MaxAttempts: 3},
-		Email:        EmailConfig{PublicSiteURL: e2eSiteURL, SelfServeURL: e2eSelfServeURL, HRInbox: e2eHRInbox, ReviewInboxes: []string{e2eReviewInbox}},
+		Email:        EmailConfig{PublicSiteURL: e2eSiteURL, SelfServeURL: e2eSelfServeURL, CopyInbox: e2eCopyInbox, ReviewInboxes: []string{e2eReviewInbox}},
 		Crowdfunding: CrowdfundingConfig{BaseURL: crowdfunding.URL, Timeout: 5 * time.Second},
 		Storage: StorageConfig{
 			Region:      "us-east-1",

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
@@ -289,5 +290,51 @@ func assertSkillSetErr(t *testing.T, op string, err error, wantErr bool) {
 	}
 	if !wantErr && err != nil {
 		t.Errorf("%s: unexpected error %v", op, err)
+	}
+}
+
+func TestUserProfileService_IntroductionLengthCapped(t *testing.T) {
+	// Multi-byte characters: the cap counts characters, not bytes.
+	atCap, overCap := strings.Repeat("é", 18_000), strings.Repeat("<", 18_001)
+	writes := 0
+	repo := &stubUserProfileRepo{
+		create: func(_ context.Context, in models.UserProfileCreateInput) (*models.UserProfile, error) {
+			writes++
+			return &models.UserProfile{UserID: in.UserID}, nil
+		},
+		upsertByUserAndType: func(_ context.Context, in models.UserProfileCreateInput) (*models.UserProfile, bool, error) {
+			writes++
+			return &models.UserProfile{UserID: in.UserID}, true, nil
+		},
+		update: func(_ context.Context, id string, _ models.UserProfileUpdateInput) (*models.UserProfile, error) {
+			writes++
+			return &models.UserProfile{ID: id}, nil
+		},
+	}
+	svc := newUserProfileSvc(repo)
+	for _, tc := range []struct {
+		intro   string
+		wantErr bool
+	}{{atCap, false}, {overCap, true}} {
+		intro := tc.intro
+		_, err := svc.Create(context.Background(), models.UserProfileCreateInput{UserID: "u1", ProfileType: "mentor", Introduction: &intro})
+		assertIntroductionErr(t, "Create", err, tc.wantErr)
+		_, _, err = svc.Upsert(context.Background(), models.UserProfileCreateInput{UserID: "u1", ProfileType: "mentor", Introduction: &intro})
+		assertIntroductionErr(t, "Upsert", err, tc.wantErr)
+		_, err = svc.Update(context.Background(), "p1", models.UserProfileUpdateInput{Introduction: &intro})
+		assertIntroductionErr(t, "Update", err, tc.wantErr)
+	}
+	if writes != 3 {
+		t.Errorf("repository writes = %d; want only the three at the cap", writes)
+	}
+}
+
+func assertIntroductionErr(t *testing.T, op string, err error, wantErr bool) {
+	t.Helper()
+	if wantErr && !errors.Is(err, domain.ErrInvalidInput) {
+		t.Errorf("%s over the cap: expected ErrInvalidInput, got %v", op, err)
+	}
+	if !wantErr && err != nil {
+		t.Errorf("%s at the cap: %v", op, err)
 	}
 }

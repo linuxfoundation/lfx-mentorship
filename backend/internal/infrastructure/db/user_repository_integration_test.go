@@ -30,7 +30,7 @@ func TestUserRepository_UpsertByLFID_EmailInUse(t *testing.T) {
 		t.Fatalf("UpsertByLFID err = %v; want ErrEmailInUse", err)
 	}
 	// Bootstrap releases an address only from another LF account, never from a legacy row.
-	if _, err := repo.BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email}); !errors.Is(err, domain.ErrEmailInUse) {
+	if _, err := repo.BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email}, models.UserIdentityFill{}); !errors.Is(err, domain.ErrEmailInUse) {
 		t.Fatalf("BootstrapByLFID err = %v; want ErrEmailInUse", err)
 	}
 }
@@ -47,7 +47,7 @@ func TestUserRepository_BootstrapByLFID_ReleasesEmailFromAnotherAccount(t *testi
 		_, _ = pool.Exec(context.Background(), `DELETE FROM users WHERE lfid IN ('squatter_lfid', 'owner_lfid')`)
 	})
 	lfid, email := "owner_lfid", "owner.release@example.org"
-	u, err := NewUserRepository(pool).BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email})
+	u, err := NewUserRepository(pool).BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email}, models.UserIdentityFill{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,31 +63,31 @@ func TestUserRepository_BootstrapByLFID_ReleasesEmailFromAnotherAccount(t *testi
 	}
 }
 
-// Bootstrap stores only the token's claim: with no claim, an email written before the account
-// email was bound to the claim is cleared, while UpsertByLFID keeps the stored one.
-func TestUserRepository_BootstrapByLFID_ClearsEmailWithoutClaim(t *testing.T) {
+// A sign-in with no verified email keeps the stored one, as UpsertByLFID does: clearing it would
+// cut the user off from notifications and email invites.
+func TestUserRepository_BootstrapByLFID_KeepsEmailWithoutClaim(t *testing.T) {
 	pool := integrationPool(t)
 	ctx := context.Background()
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM users WHERE lfid IN ('noclaim_upsert', 'noclaim_bootstrap')`)
 	})
 	repo := NewUserRepository(pool)
-	for lfid, tc := range map[string]struct {
-		upsert func(context.Context, models.UserCreateInput) (*models.User, error)
-		want   *string
-	}{
-		"noclaim_upsert":    {repo.UpsertByLFID, ptrTo("noclaim_upsert.forged@example.org")},
-		"noclaim_bootstrap": {repo.BootstrapByLFID, nil},
+	for lfid, upsert := range map[string]func(context.Context, models.UserCreateInput) (*models.User, error){
+		"noclaim_upsert": repo.UpsertByLFID,
+		"noclaim_bootstrap": func(ctx context.Context, in models.UserCreateInput) (*models.User, error) {
+			return repo.BootstrapByLFID(ctx, in, models.UserIdentityFill{})
+		},
 	} {
-		if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, lfid) VALUES (gen_random_uuid(), $1, $2)`, lfid+".forged@example.org", lfid); err != nil {
+		stored := lfid + ".stored@example.org"
+		if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, lfid) VALUES (gen_random_uuid(), $1, $2)`, stored, lfid); err != nil {
 			t.Fatal(err)
 		}
-		u, err := tc.upsert(ctx, models.UserCreateInput{LFID: &lfid})
+		u, err := upsert(ctx, models.UserCreateInput{LFID: &lfid})
 		if err != nil {
 			t.Fatalf("%s: %v", lfid, err)
 		}
-		if (u.Email == nil) != (tc.want == nil) || (tc.want != nil && *u.Email != *tc.want) {
-			t.Fatalf("%s: email = %v; want %v", lfid, u.Email, tc.want)
+		if u.Email == nil || *u.Email != stored {
+			t.Fatalf("%s: email = %v; want the stored %q", lfid, u.Email, stored)
 		}
 	}
 }
@@ -195,7 +195,7 @@ func TestUserRepository_BootstrapByLFID_SwappedAddressesConcurrently(t *testing.
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				_, err := repo.BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email})
+				_, err := repo.BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email}, models.UserIdentityFill{})
 				errs <- err
 			}()
 		}

@@ -177,27 +177,42 @@ func TestE2EFunding(t *testing.T) {
 		anon.call(t, http.MethodGet, "/programs/"+p.ID+"/transactions?limit=x", nil).expect(http.StatusBadRequest)
 	})
 
+	type sponsorsBody struct {
+		Data []struct {
+			ID          string `json:"id"`
+			Name        string `json:"name"`
+			AmountCents int64  `json:"amount_cents"`
+			LogoURL     string `json:"logo_url"`
+		} `json:"data"`
+		CrowdfundingInitiative bool `json:"crowdfunding_initiative"`
+	}
+
 	t.Run("sponsors aggregate organizations and collapse individuals", func(t *testing.T) {
-		var sponsors struct {
-			Data []struct {
-				ID          string `json:"id"`
-				Name        string `json:"name"`
-				AmountCents int64  `json:"amount_cents"`
-				LogoURL     string `json:"logo_url"`
-			} `json:"data"`
-		}
 		for _, q := range []string{"", "?aggregate", "?aggregate=true", "?aggregate=no&categoryType=mentorship"} {
+			var sponsors sponsorsBody
 			anon.mustJSON(t, http.MethodGet, "/programs/"+p.ID+"/sponsors"+q, nil, http.StatusOK, &sponsors)
 			if len(sponsors.Data) != 2 || sponsors.Data[0].ID != "acme" || sponsors.Data[0].AmountCents != 7500 || sponsors.Data[0].LogoURL == "" ||
-				sponsors.Data[1].ID != "individual-donors" || sponsors.Data[1].AmountCents != 1700 {
+				sponsors.Data[1].ID != "individual-donors" || sponsors.Data[1].AmountCents != 1700 || !sponsors.CrowdfundingInitiative {
 				t.Fatalf("sponsors%s: %+v", q, sponsors)
 			}
 		}
 		other := publishProgram(t, admin, "No Sponsors Program")
+		e2e.fakes.setTransactions(other.ID, []map[string]any{})
+		var sponsors sponsorsBody
 		anon.mustJSON(t, http.MethodGet, "/programs/"+other.ID+"/sponsors", nil, http.StatusOK, &sponsors)
-		if sponsors.Data == nil || len(sponsors.Data) != 0 {
+		if sponsors.Data == nil || len(sponsors.Data) != 0 || !sponsors.CrowdfundingInitiative {
 			t.Fatalf("empty sponsors: %+v", sponsors)
 		}
+	})
+
+	t.Run("a program without a crowdfunding initiative has no sponsors", func(t *testing.T) {
+		uninitiated := publishProgram(t, admin, "No Initiative Program")
+		var sponsors sponsorsBody
+		anon.mustJSON(t, http.MethodGet, "/programs/"+uninitiated.ID+"/sponsors?aggregate=true", nil, http.StatusOK, &sponsors)
+		if sponsors.Data == nil || len(sponsors.Data) != 0 || sponsors.CrowdfundingInitiative {
+			t.Fatalf("sponsors without initiative: %+v", sponsors)
+		}
+		anon.call(t, http.MethodGet, "/programs/"+uninitiated.ID+"/transactions", nil).expect(http.StatusNotFound)
 	})
 
 	t.Run("crowdfunding outage is a 503", func(t *testing.T) {

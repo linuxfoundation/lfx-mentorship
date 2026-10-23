@@ -186,6 +186,9 @@ func TestE2ETaskFiles(t *testing.T) {
 	})
 
 	t.Run("the assignee removes an unsubmitted file", func(t *testing.T) {
+		// The upload submitted the task, so its file can only be replaced until it is reopened.
+		mentee.call(t, http.MethodDelete, filePath+"/file", nil).expect(http.StatusConflict)
+		mentee.call(t, http.MethodPatch, filePath+"/submission", map[string]any{"status": "in_progress"}).expect(http.StatusOK)
 		admin.call(t, http.MethodDelete, filePath+"/file", nil).expect(http.StatusForbidden)
 		mentee.call(t, http.MethodDelete, filePath+"/file", nil).expect(http.StatusNoContent)
 		mentee.call(t, http.MethodDelete, filePath+"/file", nil).expect(http.StatusNoContent)

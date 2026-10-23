@@ -140,10 +140,10 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 		}, email.NotifierConfig{
 			PublicSiteURL: cfg.Email.PublicSiteURL,
 			SelfServeURL:  cfg.Email.SelfServeURL,
-			HRInbox:       cfg.Email.HRInbox,
 			ReviewInboxes: cfg.Email.ReviewInboxes,
 
 			AllowedRecipients: cfg.Email.AllowedRecipients,
+			CopyInbox:         cfg.Email.CopyInbox,
 		}, logger)
 		notifier = emailNotifier
 		if len(cfg.Email.AllowedRecipients) > 0 {
@@ -153,6 +153,9 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 
 	// Services
 	userSvc := service.NewUserService(userRepo)
+	if accounts != nil {
+		userSvc.SetAccountDirectory(accounts)
+	}
 	userProfileSvc := service.NewUserProfileService(userProfileRepo, notifier)
 	programSvc := service.NewProgramService(programRepo, programTermRepo, applicationRepo, programMemberRepo, notifier)
 	if cfg.Crowdfunding.IsConfigured() {
@@ -167,6 +170,11 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	programTermSvc := service.NewProgramTermService(programTermRepo, applicationRepo, notifier)
 	programMemberSvc := service.NewProgramMemberService(programMemberRepo, programRepo, userRepo, accounts, notifier, cfg.Local.InviteSecret)
 	applicationSvc := service.NewApplicationService(applicationRepo, taskRepo, programTermRepo, programRepo, programMemberRepo, userProfileRepo, notifier)
+	if natsConn != nil && cfg.FGA.AccessWaitTimeout > 0 {
+		accessWaiter := fga.NewAccessWaiter(natsConn, cfg.FGA.AccessWaitTimeout)
+		programSvc.SetAccessWaiter(accessWaiter)
+		applicationSvc.SetAccessWaiter(accessWaiter)
+	}
 	taskSvc := service.NewTaskService(taskRepo, applicationRepo, programTermRepo, programMemberRepo, notifier)
 	menteeSvc := service.NewMenteeService(menteeRepo)
 	mentorSvc := service.NewMentorService(mentorRepo)
@@ -174,7 +182,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	rosterSvc := service.NewRosterService(rosterRepo)
 	fundingStatsSvc := service.NewFundingStatsService(programRepo)
 	objectDeletions := db.NewObjectDeletionRepository(pool)
-	fileSvc := service.NewFileService(db.NewFileRepository(pool), objectDeletions, programRepo, taskSvc, logoBucket, attachments)
+	fileSvc := service.NewFileService(db.NewFileRepository(pool), objectDeletions, programRepo, taskSvc, taskSvc, logoBucket, attachments)
 
 	relayCtx, relayCancel := context.WithCancel(ctx)
 	if logoStore != nil || attachmentStore != nil {
@@ -326,6 +334,8 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			r.Get("/me/program-memberships", programMemberH.ListMine)
 			r.Post("/me/program-memberships", programMemberH.RequestMine)
 			r.Post("/me/program-memberships/{id}/withdraw", programMemberH.WithdrawMine)
+			r.Post("/me/program-memberships/{id}/accept", programMemberH.AcceptMineInvite)
+			r.Post("/me/program-memberships/{id}/decline", programMemberH.DeclineMineInvite)
 
 			// User profiles
 			r.Get("/me/profiles", userProfileH.ListMe)

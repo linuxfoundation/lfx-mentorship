@@ -18,8 +18,9 @@ type UserRepository interface {
 	Create(ctx context.Context, input models.UserCreateInput) (*models.User, error)
 	UpsertByLFID(ctx context.Context, input models.UserCreateInput) (*models.User, error)
 	// BootstrapByLFID upserts the caller's own row from their verified identity, taking the email
-	// back from any other LF account's row that still holds it.
-	BootstrapByLFID(ctx context.Context, input models.UserCreateInput) (*models.User, error)
+	// back from any other LF account's row that still holds it. fill sets only columns still NULL
+	// at write time and never takes an email from another row (ErrEmailInUse instead).
+	BootstrapByLFID(ctx context.Context, input models.UserCreateInput, fill models.UserIdentityFill) (*models.User, error)
 	// SearchCandidates matches part of a name or an LFID prefix, never an email.
 	SearchCandidates(ctx context.Context, query string, limit int) ([]*models.User, error)
 	Update(ctx context.Context, id string, input models.UserUpdateInput) (*models.User, error)
@@ -92,7 +93,10 @@ type ProgramRepository interface {
 	ListAdministeredByUser(ctx context.Context, userID string, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error)
 	Create(ctx context.Context, input models.ProgramCreateInput) (*models.Program, error)
 	CreateEnrollment(ctx context.Context, input models.ProgramEnrollmentInput) (*models.Program, error)
-	Update(ctx context.Context, id string, input models.ProgramUpdateInput) (*models.Program, error)
+	// Update patches the program and applies changes to the prerequisite tasks of its pending
+	// mentee applications in the same transaction. It returns the applications it flagged
+	// tasks_submitted.
+	Update(ctx context.Context, id string, input models.ProgramUpdateInput, changes models.PrerequisiteChanges) (*models.Program, []string, error)
 	Delete(ctx context.Context, id string) error
 
 	// Skills
@@ -192,7 +196,8 @@ type FileReplacement struct {
 // deletion in the same transaction.
 type FileRepository interface {
 	ReplaceProgramLogo(ctx context.Context, r FileReplacement) error
-	// ReplaceTaskFile returns ErrStateLocked once the task is complete or its application is withdrawn.
+	// ReplaceTaskFile also marks the task submitted. It returns ErrStateLocked once the task is
+	// complete or its application is withdrawn.
 	ReplaceTaskFile(ctx context.Context, r FileReplacement) error
 	ClearProgramLogo(ctx context.Context, programID, previous string) error
 	// ClearTaskFile returns ErrStateLocked unless the task is incomplete or in progress and its

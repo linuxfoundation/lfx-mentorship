@@ -604,12 +604,12 @@ func (r *ProgramRepository) ListCatalogMentees(ctx context.Context, programID st
 	span.SetAttributes(attribute.String("db.program_id", programID))
 
 	rows, err := r.pool.Query(ctx, `
-		SELECT a.user_id, u.name, COALESCE(NULLIF(up.logo_url, ''), u.avatar_url), up.introduction, a.status, pt.id, pt.name
+		SELECT a.user_id, `+sqlUserDisplayName+`, COALESCE(NULLIF(up.logo_url, ''), u.avatar_url), up.introduction, a.status, pt.id, pt.name
 		FROM applications a
 		JOIN program_terms pt ON pt.id = a.program_term_id
 		LEFT JOIN users u ON u.id = a.user_id
 		LEFT JOIN LATERAL (
-			SELECT introduction, logo_url
+			SELECT introduction, logo_url, first_name, last_name
 			FROM user_profiles
 			WHERE user_id = a.user_id
 			  AND profile_type = 'mentee'
@@ -621,7 +621,7 @@ func (r *ProgramRepository) ListCatalogMentees(ctx context.Context, programID st
 		  AND a.role = 'mentee'
 		  AND a.status IN ('accepted', 'graduated')
 		ORDER BY CASE WHEN a.status = 'graduated' THEN 1 ELSE 0 END,
-		         u.name NULLS LAST,
+		         `+sqlUserDisplayName+` NULLS LAST,
 		         pt.start_date_time DESC NULLS LAST`, programID)
 	if err != nil {
 		span.RecordError(err)
@@ -743,11 +743,11 @@ func (r *ProgramRepository) loadCatalogTerms(ctx context.Context, ids []string) 
 func (r *ProgramRepository) loadCatalogMentors(ctx context.Context, ids []string) (map[string][]models.ProgramCatalogMentor, error) {
 	out := map[string][]models.ProgramCatalogMentor{}
 	rows, err := r.pool.Query(ctx, `
-		SELECT pm.id, pm.program_id, pm.user_id, u.name, COALESCE(NULLIF(up.logo_url, ''), u.avatar_url), up.introduction
+		SELECT pm.id, pm.program_id, pm.user_id, `+sqlUserDisplayName+`, COALESCE(NULLIF(up.logo_url, ''), u.avatar_url), up.introduction
 		FROM program_members pm
 		LEFT JOIN users u ON u.id = pm.user_id
 		LEFT JOIN LATERAL (
-			SELECT introduction, logo_url
+			SELECT introduction, logo_url, first_name, last_name
 			FROM user_profiles
 			WHERE user_id = pm.user_id
 			  AND profile_type = 'mentor'
@@ -757,7 +757,7 @@ func (r *ProgramRepository) loadCatalogMentors(ctx context.Context, ids []string
 		WHERE pm.program_id = ANY($1::uuid[])
 		  AND pm.member_type = 'mentor'
 		  AND pm.status = 'approved'
-		ORDER BY u.name NULLS LAST, pm.created_on`, ids)
+		ORDER BY `+sqlUserDisplayName+` NULLS LAST, pm.created_on`, ids)
 	if err != nil {
 		return nil, fmt.Errorf("list catalog mentors: %w", err)
 	}
@@ -892,29 +892,65 @@ func (r *ProgramRepository) CreateEnrollment(ctx context.Context, input models.P
 	return program, nil
 }
 
-// Update patches the program and returns the updated record.
-func (r *ProgramRepository) Update(ctx context.Context, id string, input models.ProgramUpdateInput) (*models.Program, error) {
+// Update patches the program, applies changes to the prerequisite tasks of its pending mentee
+// applications, and returns the updated record and the applications it flagged tasks_submitted.
+func (r *ProgramRepository) Update(ctx context.Context, id string, input models.ProgramUpdateInput, changes models.PrerequisiteChanges) (*models.Program, []string, error) {
 	ctx, span := programTracer.Start(ctx, "db.programs.Update")
 	defer span.End()
 	span.SetAttributes(attribute.String("db.program_id", id))
+	p, flagged, err := r.update(ctx, id, input, changes)
+	if err != nil {
+		span.RecordError(err)
+	}
+	return p, flagged, err
+}
+
+func (r *ProgramRepository) update(ctx context.Context, id string, input models.ProgramUpdateInput, changes models.PrerequisiteChanges) (*models.Program, []string, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("begin update program transaction: %w", err)
+		return nil, nil, fmt.Errorf("begin update program transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if input.Status != nil {
 		var current models.ProgramStatus
 		if err := tx.QueryRow(ctx, `SELECT status FROM programs WHERE id = $1 FOR UPDATE`, id).Scan(&current); errors.Is(err, pgx.ErrNoRows) {
-			return nil, domain.ErrProgramNotFound
+			return nil, nil, domain.ErrProgramNotFound
 		} else if err != nil {
-			return nil, fmt.Errorf("lock program for status change: %w", err)
+			return nil, nil, fmt.Errorf("lock program for status change: %w", err)
 		} else if input.ExpectedStatus != nil && current != *input.ExpectedStatus {
-			return nil, fmt.Errorf("%w: program status changed concurrently", domain.ErrInvalidStateTransition)
+			return nil, nil, fmt.Errorf("%w: program status changed concurrently", domain.ErrInvalidStateTransition)
 		}
 		if *input.Status == models.ProgramStatusHidden {
 			if err := checkNoBlockingApplications(ctx, tx, id); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
+		}
+	}
+	// The prerequisite changes were diffed against ExpectedTaskTemplates; they apply only while the
+	// row still holds them, or a concurrent edit would leave tasks no template accounts for.
+	if len(input.TaskTemplates) > 0 {
+		var unchanged bool
+		if err := tx.QueryRow(ctx, `SELECT task_templates IS NOT DISTINCT FROM $2::jsonb FROM programs WHERE id = $1 FOR UPDATE`,
+			id, nilIfEmpty(input.ExpectedTaskTemplates)).Scan(&unchanged); errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil, domain.ErrProgramNotFound
+		} else if err != nil {
+			return nil, nil, fmt.Errorf("lock program for task template change: %w", err)
+		} else if !unchanged {
+			return nil, nil, fmt.Errorf("%w: program task templates changed concurrently", domain.ErrConflict)
+		}
+	}
+	// lfid records the program's creator, which legacy prerequisite clones are recognized by
+	// (clonedFromTemplate), so it can be set while empty but never changed. The service has
+	// already normalized it to the stored value; this re-check under the lock stops a concurrent
+	// update from setting it first.
+	if input.LFID != nil {
+		var current *string
+		if err := tx.QueryRow(ctx, `SELECT lfid FROM programs WHERE id = $1 FOR UPDATE`, id).Scan(&current); errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil, domain.ErrProgramNotFound
+		} else if err != nil {
+			return nil, nil, fmt.Errorf("lock program for lfid change: %w", err)
+		} else if current != nil && *current != "" && *current != *input.LFID {
+			return nil, nil, fmt.Errorf("%w: lfid records the program's creator and cannot be changed once set", domain.ErrInvalidInput)
 		}
 	}
 
@@ -957,49 +993,49 @@ func (r *ProgramRepository) Update(ctx context.Context, id string, input models.
 		nilIfEmpty(input.MenteeNeeds), nilIfEmpty(input.TaskTemplates),
 	).Scan(&updatedID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, domain.ErrProgramNotFound
+		return nil, nil, domain.ErrProgramNotFound
 	}
 	if err != nil {
-		span.RecordError(err)
-		return nil, fmt.Errorf("update program: %w", err)
+		return nil, nil, fmt.Errorf("update program: %w", err)
 	}
 	if input.ProjectUID != nil {
 		if _, err := tx.Exec(ctx, `
 			UPDATE programs SET lf_project_uid = $2, lf_project_slug = $3, lf_project_name = $4, lf_project_logo_url = $5
 			WHERE id = $1`, updatedID, input.ProjectUID, input.ProjectSlug, input.ProjectName, input.ProjectLogoURL); err != nil {
-			span.RecordError(err)
-			return nil, fmt.Errorf("update program project: %w", err)
+			return nil, nil, fmt.Errorf("update program project: %w", err)
 		}
 	}
 	if input.Skills != nil {
 		if err := replaceProgramSkills(ctx, tx, updatedID, input.Skills); err != nil {
-			span.RecordError(err)
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	// The UPDATE above holds the program row lock that replaceOpenTerms requires.
 	if input.Terms != nil {
 		if err := replaceOpenTerms(ctx, tx, updatedID, input.Terms); err != nil {
-			span.RecordError(err)
-			return nil, err
+			return nil, nil, err
 		}
+	}
+
+	flagged, err := applyPrerequisiteChanges(ctx, tx, updatedID, changes)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	p, err := scanProgram(tx.QueryRow(ctx, `SELECT`+programSelectCols+programsWithFundingFrom+` WHERE programs.id = $1`, updatedID))
 	if err != nil {
-		span.RecordError(err)
-		return nil, fmt.Errorf("reload updated program: %w", err)
+		return nil, nil, fmt.Errorf("reload updated program: %w", err)
 	}
 	if err := enqueueObjectMarker(ctx, tx, "mentorship_program", updatedID, updateAccessOperation); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := enqueueProgramIndex(ctx, tx, p, "updated"); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit update program transaction: %w", err)
+		return nil, nil, fmt.Errorf("commit update program transaction: %w", err)
 	}
-	return p, nil
+	return p, flagged, nil
 }
 
 // Delete removes the program with the given ID.

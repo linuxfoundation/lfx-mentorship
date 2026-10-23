@@ -50,6 +50,12 @@ service:
 # values are approved together.
 app:
   audience: lfx-mentorship-backend
+  # Runs Heimdall's oidc_contextualizer on PUT /me and POST /me/program-memberships
+  # so the JWT carries the caller's verified email (and name claims once the
+  # platform emits them). The backend fills a new user's row from these on
+  # sign-in; without it the row has no email or name. Each run is an IdP
+  # userinfo call, rate-limited per user, so no other route runs it.
+  use_oidc_contextualizer: true
 
 lfx:
   domain: ""
@@ -137,6 +143,25 @@ migrationJob:
   activeDeadlineSeconds: 120
   backoffLimit: 2
 
+# ── Approver team ────────────────────────────────────────────────────────────
+# The LFIDs allowed to publish or reject programs. When enabled, a post-install/
+# post-upgrade Job runs `/app/approver-admin sync` with this list, adding the
+# missing members and removing any not listed, so this file is the record of the
+# roster. Each LFID must already have signed in to Self Serve once, or the Job
+# fails naming it. One-off changes use the same binary: see docs/api.md.
+approverTeam:
+  enabled: false
+  members: []
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+  activeDeadlineSeconds: 120
+  backoffLimit: 1
+
 # ── Non-secret environment variables ────────────────────────────────────────
 # These are rendered into a ConfigMap and mounted via envFrom.
 config:
@@ -148,6 +173,9 @@ config:
   FGA_RELAY_INTERVAL: "1s"
   FGA_RELAY_RETRY_DELAY: "1m"
   FGA_RELAY_MAX_ATTEMPTS: "10"
+  # How long a program or application create waits for its creator's FGA
+  # relation, so the client's next request passes the gateway; 0 disables, max 15s.
+  FGA_ACCESS_WAIT_TIMEOUT: "10s"
   INDEX_RELAY_RETRY_DELAY: "1m"
   INDEX_RELAY_MAX_ATTEMPTS: "10"
   # Notification email goes out via lfx-v2-email-service whenever FGA_NATS_URL is set; these are then required.
@@ -155,8 +183,10 @@ config:
   PUBLIC_SITE_URL: ""
   # LFX Self Serve, where management pages live, e.g. https://app.lfx.dev
   SELF_SERVE_URL: ""
-  # LF staff HR inbox that receives every mentee acceptance.
-  EMAIL_HR_INBOX: ""
+  # LF staff inbox (a Google Group) sent every mentee acceptance, with the mentee's
+  # country, and a copy of every other email, with the original recipient in the
+  # subject; must also be in EMAIL_ALLOWED_RECIPIENTS when that is set.
+  EMAIL_COPY_INBOX: ""
   # Comma-separated LF staff inboxes, each told about every program submitted for review.
   EMAIL_REVIEW_INBOX: ""
   # Comma-separated addresses that are the only ones to receive email; set while

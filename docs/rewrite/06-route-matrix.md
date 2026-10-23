@@ -30,7 +30,7 @@ Three rules govern the whole table, and each is a place a RuleSet can be wrong w
 | Route | Auth | Object | Relation | Service must also |
 | --- | --- | --- | --- | --- |
 | `GET /livez`, `/healthz`, `/readyz` | — | — | — | **Not routed through the gateway at all.** These are kubelet probe targets on the cluster-local Service; exposing them on `lfx-api.{lfx.domain}` publishes liveness surface for no caller that needs it |
-| `GET/POST /v1/admin/approver-team/members`, `DELETE /v1/admin/approver-team/members/{userID}` | — | — | — | **Not routed through the gateway.** Approver-team administration is cluster-local until a platform staff relation is approved; the service keeps its `manage:mentorship:approvers` scope check as defence in depth |
+| `GET/POST /v1/admin/approver-team/members`, `DELETE /v1/admin/approver-team/members/{userID}` | — | — | — | **Not routed through the gateway.** Approver-team administration is cluster-local until a platform staff relation is approved: the roster is reconciled from `approverTeam.members` in Helm values by `/app/approver-admin` (see `backend/docs/api.md`). The service keeps its `manage:mentorship:approvers` scope check as defence in depth |
 
 ## Public catalog reads
 
@@ -153,7 +153,7 @@ Handler mechanics are the platform baseline ([lfx-object-store-design](https://g
 | `POST /v1/programs/{uid}/logo-upload` | required | `mentorship_program:{uid}` | `writer` | Public class. Image allowlist, **SVG excluded from new uploads**, 2 MB. New key, conditional row update, previous key queued for deletion unless it is a foreign URL ([02 §stored value and delivery](./02-target-architecture.md#stored-value-and-delivery)). Returns the stored CDN URL as `public_url` |
 | `DELETE /v1/programs/{uid}/logo` | required | `mentorship_program:{uid}` | `writer` | Null the column; queue the key for deletion ([02 §deleting the bytes](./02-target-architecture.md#deleting-the-bytes)) |
 | `GET /v1/programs/{uid}/logo-download` | anonymous | `mentorship_program:{uid}` | `viewer` | Public class. Same relation as `GET /v1/programs/{uid}`, which already returns `logo_url`. Serves a stored logo type as stored — PNG, JPEG, or a migrated legacy SVG (note 2) — and anything else as `application/octet-stream` |
-| `POST /v1/tasks/{uid}/file-upload` | required | `mentorship_task:{uid}` | `assignee` | **Private class.** PDF/doc allowlist, 20 MB. Only before review closes — a state rule, service-side. Pairs with `PATCH /v1/tasks/{uid}/submission` |
+| `POST /v1/tasks/{uid}/file-upload` | required | `mentorship_task:{uid}` | `assignee` | **Private class.** PDF/doc allowlist, 20 MB. Only before review closes — a state rule, service-side. Marks the task `submitted`. Pairs with `PATCH /v1/tasks/{uid}/submission` |
 | `GET /v1/tasks/{uid}/file-download` | required | `mentorship_task:{uid}` | `auditor` | Admits the assignee and the reviewers. Filename is the key minus its `{uuid}-` prefix ([02 §stored value and delivery](./02-target-architecture.md#stored-value-and-delivery)). **This route, not `tasks.file`, is what the program-admin mentee listing returns per task** |
 | `DELETE /v1/tasks/{uid}/file` | required | `mentorship_task:{uid}` | `assignee` | Only before submission (`incomplete` or `in_progress`), since a submitted task that requires a file must keep one (`backend/internal/service/task_service.go:261-263`); a submitted file is replaced through `file-upload`, not deleted. Null the column and queue the key for deletion |
 

@@ -103,6 +103,30 @@ func TestE2EUsers(t *testing.T) {
 		}
 	})
 
+	// Self Serve sends an empty body on first sign-in and the token carries no
+	// name, so the row would be nameless (#360); the LF directory fills it.
+	t.Run("bootstrap with an empty body takes the name from the LF directory", func(t *testing.T) {
+		e2e.fakes.addAccount(fakeAccount{Username: "grace", Email: "grace@example.org", Name: "Grace Hopper"})
+		var created struct {
+			Name  string `json:"name"`
+			Email string `json:"email"`
+		}
+		grace := unprovisioned(t, "grace")
+		grace.mustJSON(t, http.MethodPut, "/me", map[string]any{}, http.StatusOK, &created)
+		if created.Name != "Grace Hopper" || created.Email != grace.Email {
+			t.Fatalf("bootstrap from directory: got %+v; want the directory name and the token email", created)
+		}
+
+		var unknown struct {
+			ID   string  `json:"id"`
+			Name *string `json:"name"`
+		}
+		unprovisioned(t, "nobody").mustJSON(t, http.MethodPut, "/me", map[string]any{}, http.StatusOK, &unknown)
+		if unknown.ID == "" || unknown.Name != nil {
+			t.Fatalf("bootstrap of a user the directory does not know: got %+v; want a nameless row, not an error", unknown)
+		}
+	})
+
 	t.Run("GET /me returns the caller", func(t *testing.T) {
 		var me struct {
 			ID   string `json:"id"`
@@ -159,6 +183,19 @@ func TestE2EUsers(t *testing.T) {
 		alan.call(t, http.MethodGet, "/me", nil).expect(http.StatusOK)
 		if n := dbCount(t, "SELECT count(*) FROM users WHERE lfid = 'mallory' AND email IS NULL"); n != 1 {
 			t.Fatalf("mallory still holds the address")
+		}
+	})
+
+	t.Run("sign-in without an email keeps the stored one", func(t *testing.T) {
+		linus := unprovisioned(t, "linus")
+		linus.call(t, http.MethodPut, "/me", map[string]any{}).expect(http.StatusOK)
+		noClaim := &actor{LFID: "linus", token: mintToken(t, validClaims("linus", "", "access:me"))}
+		var me struct {
+			Email string `json:"email"`
+		}
+		noClaim.mustJSON(t, http.MethodPut, "/me", map[string]any{}, http.StatusOK, &me)
+		if me.Email != linus.Email {
+			t.Fatalf("email after a sign-in without a claim = %q; want the stored %q", me.Email, linus.Email)
 		}
 	})
 

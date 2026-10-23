@@ -16,6 +16,14 @@ import (
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/auth"
 )
 
+// A create waits up to defaultAccessWaitTimeout for its creator's FGA relation.
+// The cap keeps the wait well inside the request timeout (80% of the 30s write
+// timeout), which also covers the create's own work and upstream lookups.
+const (
+	defaultAccessWaitTimeout = 10 * time.Second
+	maxAccessWaitTimeout     = 15 * time.Second
+)
+
 // Config holds all runtime configuration for the service.
 type Config struct {
 	Server       ServerConfig
@@ -81,6 +89,9 @@ type FGAConfig struct {
 	RelayInterval    time.Duration
 	RelayRetryDelay  time.Duration
 	RelayMaxAttempts int
+	// AccessWaitTimeout bounds how long a create waits for its creator's
+	// relation to reach OpenFGA; zero disables the wait.
+	AccessWaitTimeout time.Duration
 }
 
 // IndexerConfig configures authenticated index publishing and retry behavior.
@@ -97,12 +108,12 @@ type EmailConfig struct {
 	PublicSiteURL string
 	// SelfServeURL is LFX Self Serve, where program management pages live.
 	SelfServeURL string
-	// HRInbox is the LF staff HR inbox copied on every mentee acceptance.
-	HRInbox string
 	// ReviewInboxes are the LF staff inboxes told about every program submitted for review.
 	ReviewInboxes []string
 	// AllowedRecipients, when set, are the only addresses mail goes to, so testing on real data cannot reach real users.
 	AllowedRecipients []string
+	// CopyInbox is the LF staff inbox sent every mentee acceptance and a copy of every other email.
+	CopyInbox string
 }
 
 // CrowdfundingConfig holds outbound crowdfunding API settings.
@@ -189,6 +200,13 @@ func loadConfig() (*Config, error) {
 			return nil, fmt.Errorf("FGA_RELAY_RETRY_DELAY: must be a positive duration")
 		}
 	}
+	accessWaitTimeout := defaultAccessWaitTimeout
+	if v := os.Getenv("FGA_ACCESS_WAIT_TIMEOUT"); v != "" {
+		accessWaitTimeout, err = time.ParseDuration(v)
+		if err != nil || accessWaitTimeout < 0 || accessWaitTimeout > maxAccessWaitTimeout {
+			return nil, fmt.Errorf("FGA_ACCESS_WAIT_TIMEOUT: must be a duration from 0 (off) to %s", maxAccessWaitTimeout)
+		}
+	}
 	indexRetryDelay := time.Minute
 	if v := os.Getenv("INDEX_RELAY_RETRY_DELAY"); v != "" {
 		indexRetryDelay, err = time.ParseDuration(v)
@@ -240,11 +258,12 @@ func loadConfig() (*Config, error) {
 			HeimdallIssuer:   heimdallIssuer,
 		},
 		FGA: FGAConfig{
-			NATSURL:          os.Getenv("FGA_NATS_URL"),
-			RelayBatch:       relayBatch,
-			RelayInterval:    relayInterval,
-			RelayRetryDelay:  relayRetryDelay,
-			RelayMaxAttempts: relayMaxAttempts,
+			NATSURL:           os.Getenv("FGA_NATS_URL"),
+			RelayBatch:        relayBatch,
+			RelayInterval:     relayInterval,
+			RelayRetryDelay:   relayRetryDelay,
+			RelayMaxAttempts:  relayMaxAttempts,
+			AccessWaitTimeout: accessWaitTimeout,
 		},
 		Indexer: IndexerConfig{
 			ServiceToken: os.Getenv("INDEXER_SERVICE_TOKEN"),
@@ -275,7 +294,7 @@ func loadEmailConfig(natsConfigured bool) (EmailConfig, error) {
 	cfg := EmailConfig{
 		PublicSiteURL: strings.TrimRight(os.Getenv("PUBLIC_SITE_URL"), "/"),
 		SelfServeURL:  strings.TrimRight(os.Getenv("SELF_SERVE_URL"), "/"),
-		HRInbox:       strings.TrimSpace(os.Getenv("EMAIL_HR_INBOX")),
+		CopyInbox:     strings.TrimSpace(os.Getenv("EMAIL_COPY_INBOX")),
 	}
 	if !natsConfigured {
 		return cfg, nil
@@ -285,8 +304,8 @@ func loadEmailConfig(natsConfigured bool) (EmailConfig, error) {
 			return EmailConfig{}, fmt.Errorf("%s must be an absolute http(s) URL with no query or fragment when FGA_NATS_URL is set", kv[0])
 		}
 	}
-	if addr, err := mail.ParseAddress(cfg.HRInbox); err != nil || addr.Address != cfg.HRInbox {
-		return EmailConfig{}, fmt.Errorf("EMAIL_HR_INBOX must be a bare email address when FGA_NATS_URL is set")
+	if addr, err := mail.ParseAddress(cfg.CopyInbox); err != nil || addr.Address != cfg.CopyInbox {
+		return EmailConfig{}, fmt.Errorf("EMAIL_COPY_INBOX must be a bare email address when FGA_NATS_URL is set")
 	}
 	var err error
 	if cfg.ReviewInboxes, err = addressList("EMAIL_REVIEW_INBOX"); err != nil {

@@ -52,6 +52,55 @@ owners approve an edge relation for LF-staff roster administration. A backend
 scope is not an edge authorization decision and Heimdall does not synthesize
 these scopes unless a rule explicitly configures them.
 
+Until then the roster is managed from inside the cluster with
+`/app/approver-admin`, shipped in the backend image. It writes through the same
+repository as the routes above, so each change lands with its FGA marker in one
+transaction.
+
+- **Declared in Helm values (normal path).** Set `approverTeam.enabled: true`
+  and list the LFIDs in `approverTeam.members` in the environment's values file
+  in lfx-v2-argocd. A post-install/post-upgrade Job runs
+  `approver-admin sync <lfid>...`, adding the missing members and removing any
+  not listed, so the values file is the record of who may publish or reject
+  programs. Changing the roster is an ArgoCD PR. The Deployment carries a
+  `checksum/approver-team` annotation over the list, so a roster-only change
+  shows as OutOfSync and the hook runs on the next sync; ArgoCD does not
+  count hooks themselves when deciding that. Check the hook Job's result after
+  each roster change.
+- **One-off.** Run the same binary as a Job built from the backend Deployment,
+  which has the image, the Secret and the pod security settings. (The sync Job
+  itself is deleted once it succeeds, so it cannot be copied.) The recipe below
+  lists the roster; change the `command` for `add`, `remove` or `sync`. A
+  finished Job is immutable and `apply` would reuse it, so each run deletes the
+  previous one first:
+
+  ```bash
+  NS=mentorship-backend
+  kubectl -n "$NS" delete job approver-admin --ignore-not-found
+  kubectl -n "$NS" get deploy lfx-mentorship-backend -o json | jq '{
+    apiVersion: "batch/v1", kind: "Job",
+    metadata: {name: "approver-admin", namespace: .metadata.namespace},
+    spec: {backoffLimit: 0, ttlSecondsAfterFinished: 3600, template: {spec: {
+      restartPolicy: "Never",
+      automountServiceAccountToken: false,
+      securityContext: .spec.template.spec.securityContext,
+      imagePullSecrets: (.spec.template.spec.imagePullSecrets // []),
+      containers: [.spec.template.spec.containers[0]
+        | {name: "approver-admin", image, imagePullPolicy, securityContext, env, envFrom,
+           command: ["/app/approver-admin", "list"]}]}}}}' \
+    | kubectl create -f -
+  kubectl -n "$NS" wait --for=condition=complete --timeout=120s job/approver-admin
+  kubectl -n "$NS" logs job/approver-admin
+  ```
+
+  Subcommands: `list`, `add <lfid>...`, `remove <lfid>...`, `sync <lfid>...`.
+  Make lasting changes in the values file: a one-off `add` is undone by the next
+  sync unless the LFID is also in `approverTeam.members`.
+
+An LFID must already have a Mentorship user: each approver signs in to Self
+Serve once first. The command applies every other change, then exits non-zero
+naming the LFIDs it could not find. `sync` refuses an empty list.
+
 For local PostgreSQL-backed outbox tests, start `docker compose up -d`, create
 an isolated `mentorship_test` database, and run:
 
@@ -452,7 +501,7 @@ Create a user profile.
   "last_name":    "Smith",
   "email":        "alice@example.com",
   "phone":        "+1-555-0100",
-  "introduction": "...",
+  "introduction": "...",          // at most 18,000 characters, also on update
   "terms_and_conditions": true,
   "address":       { ... },
   "skill_set":     { "skills": ["Go"], "improvementSkills": [], "comments": "" },
@@ -1019,7 +1068,7 @@ The backend reads the project's slug, name, and logo from Project Service by `pr
   "projectName":      "Cloud Native Computing Foundation",   // required only without FGA_NATS_URL
   "projectLogoUrl":   "https://...",                          // optional; http(s)
   "name":             "CNCF Mentorship 2026",                 // required; must be unique
-  "description":      "...",
+  "description":      "...",                                  // at most 18,000 characters
   "repositoryUrl":    "https://github.com/cncf/mentorship",
   "websiteUrl":       "https://...",
   "codeOfConductUrl": "https://...",
@@ -1038,7 +1087,7 @@ The backend reads the project's slug, name, and logo from Project Service by `pr
 ```
 
 **Response** `201` → `<Program>`  
-**Errors** `400` (including a `projectId` with no Project Service project), `409` (duplicate name or slug), `503` (Project Service unavailable)
+**Errors** `400` (including a `projectId` with no Project Service project, or two required prerequisites with the same name ignoring case), `409` (duplicate name or slug), `503` (Project Service unavailable)
 
 ---
 
@@ -1053,9 +1102,9 @@ Update program fields. Status cannot be changed here: a body with `status` retur
 ```json
 {
   "name":        "Updated Name",
-  "description": "Updated description",
+  "description": "Updated description", // at most 18,000 characters
   "repo_link":   "https://...",
-  "lfid":        "alice",
+  "lfid":        "alice", // the program's creator: set while empty; once set, the same LFID in any case is kept and another is a 400
   "skills":      ["Go", "Kubernetes"],
   "terms": [
     {
@@ -1107,15 +1156,33 @@ term close and reopen routes. Omit `terms` to leave them unchanged. The
 mentee application clones into `prerequisite` tasks. Each entry is
 `{name, description, submitFile, dueDate, custom}`: `name` is required and trimmed,
 `submitFile` is `"required"` or blank, and `dueDate` is a `YYYY-MM-DD` date or blank.
-Blank values are stored as `null`. An entry that leaves out `custom` keeps the flag of
-the current template with the same name (ignoring case), or `false` for a new one.
-Tasks already cloned for existing applications are not changed. Omit
-`task_templates` to leave them unchanged.
+Blank values are stored as `null`. Names must be unique, ignoring case. An entry that
+leaves out `custom` keeps the flag of the current template with the same name (ignoring
+case), or `false` for a new one. Omit `task_templates` to leave them unchanged.
+
+The edit also reaches the prerequisite tasks of the program's pending mentee
+applications, in the same transaction. Templates and tasks are matched by name
+(ignoring case), and only what the edit changed is applied: a removed template deletes
+its tasks, an edited template rewrites them, and an added template becomes an
+`incomplete` task on every pending application without one of that name. A `submitted`
+or `complete` task is never changed, and neither is a task a mentor, program admin, or
+service created for one applicant; only tasks cloned from the templates are, and a task of
+the same name already present, however it was created, keeps an added template from
+adding another. A removed template keeps any task the mentee has uploaded a
+file for; an edited template still updates it. Renaming a template
+removes the old name and adds the new one. If another save changed the templates after
+this request read them, the update fails with `409`. Saving unchanged
+templates changes no task, so a task a reviewer deleted is not added back. Program
+admins are emailed for each application a removal left with every prerequisite task
+done, or with none left, as they are when its last task is submitted. Accepted, declined, and withdrawn
+applications keep their tasks.
 
 **Response** `200` → `<Program>`  
-**Errors** `400` (including an `id` that is not an open term of the program, or a
-`project_uid` with no Project Service project), `404`, `409` (removing an open term
-that has applications), `503` (Project Service unavailable)
+**Errors** `400` (including an `id` that is not an open term of the program, a
+`project_uid` with no Project Service project, two `task_templates` with the same name
+ignoring case, or an `lfid` other than the one already set), `404`, `409` (removing an
+open term that has applications, or `task_templates` changed by another save after this
+request read them), `503` (Project Service unavailable)
 
 ---
 
@@ -1250,7 +1317,7 @@ Returns categorized donation transactions for a mentorship program by proxying t
 **Errors**
 
 - `400` invalid pagination parameters
-- `404` program not found
+- `404` program not found, or Crowdfunding has no initiative for it
 - `503` upstream unavailable (Crowdfunding client not configured or upstream failure)
 
 ---
@@ -1271,8 +1338,10 @@ Returns sponsor cards aggregated in the mentorship backend from crowdfunding tra
 **Response** `200`
 
 ```json
-{ "data": [<ProgramSponsor>, ...] }
+{ "data": [<ProgramSponsor>, ...], "crowdfunding_initiative": true }
 ```
+
+`crowdfunding_initiative` is `false` when Crowdfunding has no initiative for the program yet; `data` is then empty and the program cannot take donations.
 
 **Errors**
 
@@ -1762,6 +1831,39 @@ Withdraws the caller's own mentor request, moving it from `requested` or
 
 ---
 
+#### `POST /v1/me/program-memberships/{id}/accept` 🔒
+
+Accepts an invitation to mentor a program, moving the caller's own mentor row
+from `invited` to `approved`, and emails the program's active Program Admins
+(`NotifyAdminMentorAccepted`). It answers the same invitation as
+`POST /v1/mentor-invites/{token}/accept`, by membership ID instead of the
+emailed token, so a signed-in mentor can answer from LFX Self Serve.
+
+**Response** `204`
+
+**Errors**
+
+| Status | When |
+|---|---|
+| `401` | No signed-in user |
+| `404` | No mentor row with this ID belongs to the caller. Rows owned by other users return `404`, not `403`, so IDs cannot be probed. |
+| `409` | The row is in any status other than `invited`, including when it changed concurrently |
+
+---
+
+#### `POST /v1/me/program-memberships/{id}/decline` 🔒
+
+Declines an invitation to mentor a program, moving the caller's own mentor row
+from `invited` to `declined`, and emails the program's active Program Admins
+(`NotifyAdminMentorDeclined`). The by-ID counterpart of
+`POST /v1/mentor-invites/{token}/decline`.
+
+**Response** `204`
+
+**Errors** as for accept
+
+---
+
 ## 11. Mentor Invite Tokens
 
 These endpoints are called by the LFX Self Serve page that the invite email links to (`/mentorship/mentor/invites?token=…`). Both need the signed token **and** the invited user's JWT: the token says which program and user it was issued for, and the caller must be that user.
@@ -1884,7 +1986,7 @@ Submit an application to a term.
 7. The program must be `published`.
 8. The caller holds no other mentee application `accepted` in a term that has not ended, and none `graduated` in any term.
 
-**After creation**: The program's `task_templates` JSONB array is cloned as individual `prerequisite` tasks linked to the new application.
+**After creation**: The program's `task_templates` JSONB array is cloned as individual `prerequisite` tasks linked to the new application. While the application is pending, later template edits reach those tasks too; see [`PATCH /v1/programs/{id}`](#patch-v1programsid-).
 
 **Reapplication** creates a new `pending` application under a new ID and keeps
 the withdrawn one, unchanged, as history — its reviewer note, evaluation, and
@@ -1963,7 +2065,7 @@ Read-only list of accepted/graduated mentees for a (typically closed) term.
 
 Tasks represent units of work assigned to a mentee. They are either:
 
-- **prerequisite** — cloned from `program.task_templates` when an application is created; must all reach `submitted` or `complete` before `tasks_submitted` is set.
+- **prerequisite** — cloned from `program.task_templates` when an application is created, and kept in step with template edits while it is pending; must all reach `submitted` or `complete` before `tasks_submitted` is set.
 - **non_prerequisite** — assigned manually by a program_admin or mentor to an accepted mentee.
 
 ### Task Object
@@ -2326,7 +2428,7 @@ incomplete ──► in_progress ──► submitted ──► complete
 | FR-029 | New applications start at status=pending | `ApplicationService.Create` |
 | FR-030 | No reapplication from declined; withdrawn OK while window open | `ApplicationService.Create` |
 | — | Mentee accepted/graduated on one program cannot apply to another | `ApplicationService.Create` |
-| FR-032 | Task templates cloned on application create | `ApplicationService.Create` |
+| FR-032 | Task templates cloned on application create, and template edits applied to pending applications | `ApplicationService.Create`, `ProgramService.Update` |
 | FR-033 | Task status transitions restricted by actor role | `TaskService.Update` |
 | FR-034 | tasks_submitted auto-set + admin notified when all prereqs done | `TaskService.Update` |
 | FR-035 | Task completion never changes application status | `TaskService.Update` |
@@ -2600,7 +2702,7 @@ class ApiError extends Error {
 | `FGA_NATS_URL` | Yes for relays | — | Shared NATS URL for FGA and index publishing, notification email via lfx-v2-email-service, and project lookups via lfx-v2-project-service |
 | `PUBLIC_SITE_URL` | When `FGA_NATS_URL` is set | — | Public Mentorship site that user-facing email links point at |
 | `SELF_SERVE_URL` | When `FGA_NATS_URL` is set | — | LFX Self Serve base URL for management links in email |
-| `EMAIL_HR_INBOX` | When `FGA_NATS_URL` is set | — | LF staff HR inbox sent every mentee acceptance |
+| `EMAIL_COPY_INBOX` | When `FGA_NATS_URL` is set | — | LF staff inbox sent every mentee acceptance and a copy of every other email, subject prefixed `[Sent to <recipient>]`; must be in `EMAIL_ALLOWED_RECIPIENTS` when that is set |
 | `EMAIL_REVIEW_INBOX` | When `FGA_NATS_URL` is set | — | Comma-separated LF staff inboxes, each sent every program submitted for review |
 | `FGA_RELAY_BATCH_SIZE` | No | `50` | FGA/index claim batch size |
 | `FGA_RELAY_INTERVAL` | No | `1s` | Relay polling interval |

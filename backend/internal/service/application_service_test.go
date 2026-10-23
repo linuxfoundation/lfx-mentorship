@@ -223,11 +223,13 @@ type stubProgRepo struct {
 	create            func(context.Context, models.ProgramCreateInput) (*models.Program, error)
 	createEnrollment  func(context.Context, models.ProgramEnrollmentInput) (*models.Program, error)
 	update            func(context.Context, string, models.ProgramUpdateInput) (*models.Program, error)
-	delete            func(context.Context, string) error
-	listSkills        func(context.Context, string) ([]*models.ProgramSkill, error)
-	addSkill          func(context.Context, string, models.ProgramSkillCreateInput) (*models.ProgramSkill, error)
-	deleteSkill       func(context.Context, string, string) error
-	getFundingStats   func(context.Context, string) (*models.ProgramFundingStats, error)
+	// updateWithPrerequisites, when set, replaces update and also sees the prerequisite changes.
+	updateWithPrerequisites func(context.Context, string, models.ProgramUpdateInput, models.PrerequisiteChanges) (*models.Program, []string, error)
+	delete                  func(context.Context, string) error
+	listSkills              func(context.Context, string) ([]*models.ProgramSkill, error)
+	addSkill                func(context.Context, string, models.ProgramSkillCreateInput) (*models.ProgramSkill, error)
+	deleteSkill             func(context.Context, string, string) error
+	getFundingStats         func(context.Context, string) (*models.ProgramFundingStats, error)
 }
 
 func (m *stubProgRepo) GetByID(ctx context.Context, id string) (*models.Program, error) {
@@ -302,11 +304,15 @@ func (m *stubProgRepo) CreateEnrollment(ctx context.Context, in models.ProgramEn
 	}
 	return m.Create(ctx, in.Program)
 }
-func (m *stubProgRepo) Update(ctx context.Context, id string, in models.ProgramUpdateInput) (*models.Program, error) {
-	if m.update != nil {
-		return m.update(ctx, id, in)
+func (m *stubProgRepo) Update(ctx context.Context, id string, in models.ProgramUpdateInput, changes models.PrerequisiteChanges) (*models.Program, []string, error) {
+	if m.updateWithPrerequisites != nil {
+		return m.updateWithPrerequisites(ctx, id, in, changes)
 	}
-	return &models.Program{ID: id}, nil
+	if m.update != nil {
+		p, err := m.update(ctx, id, in)
+		return p, nil, err
+	}
+	return &models.Program{ID: id}, nil, nil
 }
 func (m *stubProgRepo) Delete(ctx context.Context, id string) error {
 	if m.delete != nil {

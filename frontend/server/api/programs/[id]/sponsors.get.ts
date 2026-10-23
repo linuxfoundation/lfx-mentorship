@@ -1,9 +1,10 @@
 // Copyright The Linux Foundation and each contributor to LFX.
 // SPDX-License-Identifier: MIT
 
+import type { ProgramSponsorsResponse } from '../../../../app/types/program.types';
 import { fetchProgramSponsors, mapCatalogSponsor } from '../../../utils/program-catalog';
 
-export default defineEventHandler(async (event) => {
+export default defineEventHandler(async (event): Promise<ProgramSponsorsResponse> => {
   const id = getRouterParam(event, 'id');
 
   if (!id) {
@@ -11,5 +12,8 @@ export default defineEventHandler(async (event) => {
   }
 
   const response = await fetchProgramSponsors(id);
-  return (response.data ?? []).map(mapCatalogSponsor);
+  return {
+    sponsors: (response.data ?? []).map(mapCatalogSponsor),
+    crowdfundingInitiative: response.crowdfunding_initiative ?? true,
+  };
 });

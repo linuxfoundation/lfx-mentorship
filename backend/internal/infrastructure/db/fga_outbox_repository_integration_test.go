@@ -1176,7 +1176,7 @@ func TestProgramUpdateIntegration_ReplacesSkills(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Skills: []string{"Go", "Kubernetes"}}); err != nil {
+	if _, _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Skills: []string{"Go", "Kubernetes"}}, models.PrerequisiteChanges{}); err != nil {
 		t.Fatalf("update skills: %v", err)
 	}
 	skills, err := repo.ListSkills(ctx, program.ID)
@@ -1205,7 +1205,7 @@ func TestProgramUpdateIntegration_ReplacesSkills(t *testing.T) {
 	}
 
 	name := "Skills Renamed"
-	if _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Name: &name}); err != nil {
+	if _, _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Name: &name}, models.PrerequisiteChanges{}); err != nil {
 		t.Fatalf("update name: %v", err)
 	}
 	if skills, err := repo.ListSkills(ctx, program.ID); err != nil || len(skills) != 2 {
@@ -1259,7 +1259,7 @@ func TestProgramUpdateIntegration_ReplacesOpenTerms(t *testing.T) {
 		return got
 	}
 
-	if _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Terms: []models.ProgramOpenTermInput{term(keptID, "Fall 2026"), term("", "Spring 2027")}}); err != nil {
+	if _, _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Terms: []models.ProgramOpenTermInput{term(keptID, "Fall 2026"), term("", "Spring 2027")}}, models.PrerequisiteChanges{}); err != nil {
 		t.Fatalf("replace open terms: %v", err)
 	}
 	got := termsByName()
@@ -1269,7 +1269,7 @@ func TestProgramUpdateIntegration_ReplacesOpenTerms(t *testing.T) {
 	newID := got["Spring 2027"][0]
 
 	// Only open terms of the program can be listed.
-	if _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Terms: []models.ProgramOpenTermInput{term(keptID, "Fall 2026"), term(newID, "Spring 2027"), term(closedID, "Edited")}}); !errors.Is(err, domain.ErrInvalidInput) {
+	if _, _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Terms: []models.ProgramOpenTermInput{term(keptID, "Fall 2026"), term(newID, "Spring 2027"), term(closedID, "Edited")}}, models.PrerequisiteChanges{}); !errors.Is(err, domain.ErrInvalidInput) {
 		t.Fatalf("listing a closed term: got %v; want ErrInvalidInput", err)
 	}
 
@@ -1277,7 +1277,7 @@ func TestProgramUpdateIntegration_ReplacesOpenTerms(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ('00000000-0000-0000-0000-000000000075', $1, $2, 'mentee', 'pending')`, keptID, userID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Terms: []models.ProgramOpenTermInput{term(newID, "Spring 2027")}}); !errors.Is(err, domain.ErrStateLocked) {
+	if _, _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Terms: []models.ProgramOpenTermInput{term(newID, "Spring 2027")}}, models.PrerequisiteChanges{}); !errors.Is(err, domain.ErrStateLocked) {
 		t.Fatalf("removing a term with applications: got %v; want ErrStateLocked", err)
 	}
 	if after := termsByName(); after["Fall 2026"] != [2]string{keptID, "open"} || after["Spring 2025"] != [2]string{closedID, "closed"} {
@@ -1299,7 +1299,7 @@ func TestProgramUpdateIntegration_ChangesProject(t *testing.T) {
 	}
 
 	newUID, newSlug, newName := "00000000-0000-0000-0000-000000000098", "new-project", "New Project"
-	updated, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{ProjectUID: &newUID, ProjectSlug: &newSlug, ProjectName: &newName})
+	updated, _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{ProjectUID: &newUID, ProjectSlug: &newSlug, ProjectName: &newName}, models.PrerequisiteChanges{})
 	if err != nil {
 		t.Fatalf("update project: %v", err)
 	}
@@ -1312,7 +1312,7 @@ func TestProgramUpdateIntegration_ChangesProject(t *testing.T) {
 	}
 
 	name := "Moving Renamed"
-	if updated, err = repo.Update(ctx, program.ID, models.ProgramUpdateInput{Name: &name}); err != nil {
+	if updated, _, err = repo.Update(ctx, program.ID, models.ProgramUpdateInput{Name: &name}, models.PrerequisiteChanges{}); err != nil {
 		t.Fatalf("update name: %v", err)
 	}
 	if updated.ProjectUID == nil || *updated.ProjectUID != newUID {

@@ -292,15 +292,15 @@ func TestProgramRepositoryIntegration_StatusChangeAppliesOnlyFromExpectedStatus(
 	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
 	repo := NewProgramRepository(pool)
 	published, hidden, archived := models.ProgramStatusPublished, models.ProgramStatusHidden, models.ProgramStatusArchived
-	if _, err := repo.Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &hidden, ExpectedStatus: &published}); err != nil {
+	if _, _, err := repo.Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &hidden, ExpectedStatus: &published}, models.PrerequisiteChanges{}); err != nil {
 		t.Fatalf("hide: %v", err)
 	}
 
 	// An unhide validated against hidden must not overwrite an archive that committed first.
-	if _, err := repo.Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &archived, ExpectedStatus: &hidden}); err != nil {
+	if _, _, err := repo.Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &archived, ExpectedStatus: &hidden}, models.PrerequisiteChanges{}); err != nil {
 		t.Fatalf("archive: %v", err)
 	}
-	if _, err := repo.Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &published, ExpectedStatus: &hidden}); !errors.Is(err, domain.ErrInvalidStateTransition) {
+	if _, _, err := repo.Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &published, ExpectedStatus: &hidden}, models.PrerequisiteChanges{}); !errors.Is(err, domain.ErrInvalidStateTransition) {
 		t.Fatalf("stale unhide err = %v; want ErrInvalidStateTransition", err)
 	}
 	var status models.ProgramStatus
@@ -330,7 +330,7 @@ func TestProgramRepositoryIntegration_HideWaitsForInFlightApplication(t *testing
 	published, hidden := models.ProgramStatusPublished, models.ProgramStatusHidden
 	hideErr := make(chan error, 1)
 	go func() {
-		_, err := NewProgramRepository(pool).Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &hidden, ExpectedStatus: &published})
+		_, _, err := NewProgramRepository(pool).Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &hidden, ExpectedStatus: &published}, models.PrerequisiteChanges{})
 		hideErr <- err
 	}()
 	waitForLockWait(t, pool, hideErr)
@@ -367,7 +367,7 @@ func TestProgramRepositoryIntegration_HideWaitsForApplicationStatusChange(t *tes
 	published, hidden := models.ProgramStatusPublished, models.ProgramStatusHidden
 	hideErr := make(chan error, 1)
 	go func() {
-		_, err := NewProgramRepository(pool).Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &hidden, ExpectedStatus: &published})
+		_, _, err := NewProgramRepository(pool).Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &hidden, ExpectedStatus: &published}, models.PrerequisiteChanges{})
 		hideErr <- err
 	}()
 	waitForLockWait(t, pool, hideErr)
@@ -433,7 +433,7 @@ func TestApplicationRepositoryIntegration_RefusesApplicationToUnpublishedProgram
 		t.Fatalf("insert withdrawn application: %v", err)
 	}
 	published, hidden := models.ProgramStatusPublished, models.ProgramStatusHidden
-	if _, err := NewProgramRepository(pool).Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &hidden, ExpectedStatus: &published}); err != nil {
+	if _, _, err := NewProgramRepository(pool).Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &hidden, ExpectedStatus: &published}, models.PrerequisiteChanges{}); err != nil {
 		t.Fatalf("hide: %v", err)
 	}
 
@@ -639,6 +639,32 @@ func waitForLockWait(t *testing.T, pool *pgxpool.Pool, done <-chan error) {
 	t.Fatal("timed out waiting for the operation to block on a lock")
 }
 
+// A transition is authorized against a status read before the write, so a review that lands in
+// between must not be overwritten: the assignee reopening a task the reviewer just completed fails.
+func TestTaskRepositoryIntegration_UpdateRejectsStaleSourceStatus(t *testing.T) {
+	pool, _ := fileIntegrationPool(t)
+	ctx := context.Background()
+	tasks := NewTaskRepository(pool)
+	if _, err := pool.Exec(ctx, `UPDATE tasks SET status = 'complete' WHERE id = $1`, fileTestTask); err != nil {
+		t.Fatal(err)
+	}
+
+	authorized, reopen := models.TaskStatusSubmitted, models.TaskStatusInProgress
+	if _, err := tasks.Update(ctx, fileTestTask, models.TaskUpdateInput{Status: &reopen, FromStatus: &authorized}); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("stale reopen err = %v; want ErrConflict", err)
+	}
+	var status models.TaskStatus
+	if err := pool.QueryRow(ctx, `SELECT status FROM tasks WHERE id = $1`, fileTestTask).Scan(&status); err != nil || status != models.TaskStatusComplete {
+		t.Fatalf("status = %q (err %v); the completed review must stand", status, err)
+	}
+
+	authorized = models.TaskStatusComplete
+	got, err := tasks.Update(ctx, fileTestTask, models.TaskUpdateInput{Status: &reopen, FromStatus: &authorized})
+	if err != nil || got.Status != models.TaskStatusInProgress {
+		t.Fatalf("current-source update = %+v, %v; want in_progress", got, err)
+	}
+}
+
 // A withdrawn application is kept as history when its applicant reapplies, so its tasks and their
 // files cannot change. The check reads the application itself, not the task's denormalised status.
 func TestTaskRepositoryIntegration_WithdrawnApplicationTasksAreLocked(t *testing.T) {
@@ -819,6 +845,65 @@ func TestApplicationRepositoryIntegration_ListByProgramStatusFilterAndOrder(t *t
 				t.Fatalf("ListByProgram(status %q) row %d = %q; want %q", status, i, row.ApplicationID, want[i])
 			}
 		}
+	}
+}
+
+func TestApplicationRepositoryIntegration_ListByProgramFallsBackToMenteeProfile(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	const (
+		bareUser    = "00000000-0000-0000-0000-0000000000f1" // signed in without name or email claims
+		namedUser   = "00000000-0000-0000-0000-0000000000f2"
+		bareApp     = "00000000-0000-0000-0000-0000000000f3"
+		namedApp    = "00000000-0000-0000-0000-0000000000f4"
+		profileMail = "ada+profile@example.org"
+	)
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid) VALUES ($1, 'bare')`, bareUser); err != nil {
+		t.Fatalf("insert bare user: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name, email) VALUES ($1, 'named', 'Grace Hopper', 'grace@example.org')`, namedUser); err != nil {
+		t.Fatalf("insert named user: %v", err)
+	}
+	for _, p := range []struct{ userID, first, last, email string }{
+		{bareUser, "Ada", "Lovelace", profileMail},
+		{namedUser, "Profile", "Name", "profile@example.org"},
+	} {
+		if _, err := pool.Exec(ctx, `INSERT INTO user_profiles (id, user_id, profile_type, first_name, last_name, email)
+			VALUES (gen_random_uuid(), $1, 'mentee', $2, $3, $4)`, p.userID, p.first, p.last, p.email); err != nil {
+			t.Fatalf("insert mentee profile: %v", err)
+		}
+	}
+	for _, a := range []struct{ id, userID string }{{bareApp, bareUser}, {namedApp, namedUser}} {
+		if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentee', 'pending')`,
+			a.id, fixture.OpenTerm, a.userID); err != nil {
+			t.Fatalf("insert application: %v", err)
+		}
+	}
+	repo := NewApplicationRepository(pool)
+
+	rows, _, err := repo.ListByProgram(ctx, fixture.ProgramID, models.ProgramApplicationFilter{Limit: 50})
+	if err != nil {
+		t.Fatalf("ListByProgram: %v", err)
+	}
+	want := map[string][2]string{bareApp: {"Ada Lovelace", profileMail}, namedApp: {"Grace Hopper", "grace@example.org"}}
+	for _, row := range rows {
+		w, ok := want[row.ApplicationID]
+		if !ok {
+			continue
+		}
+		if row.Name == nil || *row.Name != w[0] || row.Email == nil || *row.Email != w[1] {
+			t.Fatalf("row %s name/email = %v/%v; want %q/%q", row.ApplicationID, row.Name, row.Email, w[0], w[1])
+		}
+		delete(want, row.ApplicationID)
+	}
+	if len(want) != 0 {
+		t.Fatalf("ListByProgram is missing applications %v", want)
+	}
+
+	rows, meta, err := repo.ListByProgram(ctx, fixture.ProgramID, models.ProgramApplicationFilter{Search: "ada+profile", Limit: 50})
+	if err != nil || meta.Total != 1 || len(rows) != 1 || rows[0].ApplicationID != bareApp {
+		t.Fatalf("ListByProgram(search profile email) = %d rows, meta %+v, err = %v; want only %q", len(rows), meta, err, bareApp)
 	}
 }
 

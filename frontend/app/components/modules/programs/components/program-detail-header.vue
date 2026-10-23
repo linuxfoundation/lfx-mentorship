@@ -96,15 +96,25 @@ SPDX-License-Identifier: MIT
               button-style="rounded"
               @click="$emit('open-repository')"
             />
-            <lfx-button
+            <lfx-tooltip
               v-if="program.slug"
-              label="Donate"
-              icon="heart"
-              icon-type="solid"
-              type="transparent"
-              button-style="rounded"
-              @click="$emit('donate')"
-            />
+              :content="PROGRAM_DONATE_UNAVAILABLE"
+              :disabled="!donateDisabled"
+              class="inline-flex"
+              v-bind="donateDisabled ? donateUnavailableAttrs : {}"
+            >
+              <lfx-button
+                label="Donate"
+                icon="heart"
+                icon-type="solid"
+                type="transparent"
+                button-style="rounded"
+                :disabled="donateDisabled"
+                :aria-hidden="donateDisabled || undefined"
+                :class="{ 'pointer-events-none': donateDisabled }"
+                @click="$emit('donate')"
+              />
+            </lfx-tooltip>
           </div>
         </div>
       </div>
@@ -159,11 +169,22 @@ SPDX-License-Identifier: MIT
 
 <script setup lang="ts">
 import { PROGRAM_STATUS_CONFIG } from '../config/program-card.config';
+import { PROGRAM_DONATE_UNAVAILABLE } from '../config/program-detail.config';
 import { AppRoute } from '~/config/routes';
 import type { Program, ProgramTerm } from '~/types/program.types';
 import { formatTermLabel } from '~/utils/program-terms';
 
-const props = defineProps<{ program: Program }>();
+// donateDisabled: the program has no LFX Crowdfunding initiative to donate to yet.
+const props = defineProps<{ program: Program; donateDisabled?: boolean }>();
+
+// A disabled button leaves the tab order, so the tooltip wrapper stands in for it: focusing it
+// shows the tooltip, and screen readers hear the same explanation.
+const donateUnavailableAttrs = {
+  role: 'button',
+  tabindex: 0,
+  'aria-disabled': 'true',
+  'aria-label': `Donate. ${PROGRAM_DONATE_UNAVAILABLE}`,
+};
 
 defineEmits<{
   (e: 'open-repository' | 'donate'): void;

@@ -44,7 +44,7 @@ type programService interface {
 	DeleteSkill(ctx context.Context, programID, skillID, actorID string) error
 	GetFundingStats(ctx context.Context, programID string) (*models.ProgramFundingStats, error)
 	GetCategorizedTransactions(ctx context.Context, programID, categoryType string, subscriptionOnly bool, limit, offset int) (*models.ProgramCategorizedTransactions, error)
-	GetProgramSponsors(ctx context.Context, programID, categoryType string, subscriptionOnly bool, aggregate bool) ([]models.ProgramSponsor, error)
+	GetProgramSponsors(ctx context.Context, programID, categoryType string, subscriptionOnly bool, aggregate bool) (*models.ProgramSponsors, error)
 }
 
 func parseAggregateParam(r *http.Request) bool {
@@ -643,8 +643,5 @@ func (h *ProgramHandler) GetProgramSponsors(w http.ResponseWriter, r *http.Reque
 		Error(w, err)
 		return
 	}
-	if sponsors == nil {
-		sponsors = []models.ProgramSponsor{}
-	}
-	JSON(w, http.StatusOK, map[string]any{"data": sponsors})
+	JSON(w, http.StatusOK, sponsors)
 }

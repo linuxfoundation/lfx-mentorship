@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	emailapi "github.com/linuxfoundation/lfx-v2-email-service/pkg/api"
 	"github.com/linuxfoundation/lfx-v2-project-service/pkg/constants"
@@ -37,6 +38,27 @@ type fakes struct {
 	transactions map[string][]map[string]any
 	// crowdfundingDown makes the crowdfunding fake answer 502.
 	crowdfundingDown bool
+	// granted is fga-sync's view of who has a tuple on which object, keyed
+	// "{object_type}:{uid}" → username → when the relay's message arrived.
+	granted map[string]map[string]time.Time
+	// accessHold delays granting access after a tuple arrives; the test clock for issue #354.
+	accessHold time.Duration
+	// accessChecks records every lfx.access_check.request body and the answer given.
+	accessChecks []accessCheck
+	// grants records every member_put and update_access message accepted, in order.
+	grants []grant
+}
+
+// grant is one accepted sync message and the users it gave a tuple on Object.
+type grant struct {
+	Operation, Object string
+	Users             []string
+}
+
+// accessCheck is one access check the API asked fga-sync, and the answer it got.
+type accessCheck struct {
+	Check   string
+	Allowed bool
 }
 
 func startFakes(nc *nats.Conn) (*fakes, error) {
@@ -50,6 +72,8 @@ func startFakes(nc *nats.Conn) (*fakes, error) {
 		"lfx.auth-service.email_to_username":  f.emailToUsername,
 		"lfx.auth-service.user_metadata.read": f.userMetadata,
 		"lfx.auth-service.user_emails.read":   f.userEmails,
+		"lfx.fga-sync.>":                      f.recordTuples,
+		"lfx.access_check.request":            f.accessCheck,
 	}
 	for subject, handler := range subs {
 		if _, err := nc.Subscribe(subject, handler); err != nil {
@@ -67,6 +91,10 @@ func (f *fakes) reset() {
 	f.accounts = nil
 	f.transactions = map[string][]map[string]any{}
 	f.crowdfundingDown = false
+	f.granted = map[string]map[string]time.Time{}
+	f.accessHold = 0
+	f.accessChecks = nil
+	f.grants = nil
 }
 
 func (f *fakes) addProject(uid string, p fakeProject) {
@@ -91,6 +119,105 @@ func (f *fakes) setCrowdfundingDown(down bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.crowdfundingDown = down
+}
+
+// holdAccess makes the fake fga-sync grant a user's access only hold after the
+// relay's tuple arrives, standing in for the sync lag behind issue #354.
+func (f *fakes) holdAccess(hold time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.accessHold = hold
+}
+
+// accessChecksFor returns the access checks asked about object, in order.
+func (f *fakes) accessChecksFor(object string) []accessCheck {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []accessCheck
+	for _, c := range f.accessChecks {
+		if strings.HasPrefix(c.Check, object+"#") {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// recordTuples plays fga-sync's consumer: every grant that names a user on an
+// object records that the user now has a tuple there. Relations are not
+// modelled; an access check passes once the user has any tuple on the object.
+// The two grant operations shape `relations` differently: member_put carries
+// the one user's relation names as an array, update_access a relation → users map.
+func (f *fakes) recordTuples(msg *nats.Msg) {
+	var m struct {
+		ObjectType string `json:"object_type"`
+		Operation  string `json:"operation"`
+		Data       struct {
+			UID       string          `json:"uid"`
+			Username  string          `json:"username"`
+			Relations json.RawMessage `json:"relations"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(msg.Data, &m) != nil || m.Data.UID == "" {
+		return
+	}
+	var users []string
+	switch m.Operation {
+	case "member_put":
+		users = []string{m.Data.Username}
+	case "update_access":
+		var relations map[string][]string
+		if json.Unmarshal(m.Data.Relations, &relations) != nil {
+			return
+		}
+		for _, names := range relations {
+			users = append(users, names...)
+		}
+	default: // member_remove and delete_access revoke; the fake only tracks grants.
+		return
+	}
+	object := m.ObjectType + ":" + m.Data.UID
+	now := time.Now()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.grants = append(f.grants, grant{Operation: m.Operation, Object: object, Users: users})
+	for _, user := range users {
+		if f.granted[object] == nil {
+			f.granted[object] = map[string]time.Time{}
+		}
+		if _, seen := f.granted[object][user]; !seen {
+			f.granted[object][user] = now
+		}
+	}
+}
+
+// grantsFor returns the grant messages the fake accepted for object, in order.
+func (f *fakes) grantsFor(object string) []grant {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []grant
+	for _, g := range f.grants {
+		if g.Object == object {
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
+// accessCheck answers lfx.access_check.request as fga-sync does: one
+// "{check}\t{true|false}" line per "object#relation@user:name" line asked.
+func (f *fakes) accessCheck(msg *nats.Msg) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var lines []string
+	for _, check := range strings.Split(strings.TrimSpace(string(msg.Data)), "\n") {
+		object, rest, _ := strings.Cut(check, "#")
+		_, user, _ := strings.Cut(rest, "@user:")
+		arrived, ok := f.granted[object][user]
+		allowed := ok && time.Since(arrived) >= f.accessHold
+		f.accessChecks = append(f.accessChecks, accessCheck{Check: check, Allowed: allowed})
+		lines = append(lines, fmt.Sprintf("%s\t%t", check, allowed))
+	}
+	_ = msg.Respond([]byte(strings.Join(lines, "\n")))
 }
 
 // sentEmails returns the emails sent so far.
@@ -189,15 +316,20 @@ func reply(msg *nats.Msg, body any) {
 }
 
 // crowdfundingHandler serves GET /initiatives/{id}/transactions from the configured transactions.
+// Like crowdfunding, it answers 404 for an initiative it has no transactions configured for.
 func (f *fakes) crowdfundingHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /initiatives/{id}/transactions", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		down := f.crowdfundingDown
-		txns := f.transactions[r.PathValue("id")]
+		txns, ok := f.transactions[r.PathValue("id")]
 		f.mu.Unlock()
 		if down {
 			http.Error(w, "upstream down", http.StatusBadGateway)
+			return
+		}
+		if !ok {
+			http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
 			return
 		}
 		if txns == nil {

@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	emailapi "github.com/linuxfoundation/lfx-v2-email-service/pkg/api"
 )
 
 type application struct {
@@ -119,7 +121,15 @@ func TestE2EMenteeJourney(t *testing.T) {
 		// The task requires a file, so it cannot be submitted without one.
 		mentee.call(t, http.MethodPatch, "/tasks/"+prereq.ID+"/submission", map[string]any{"status": "submitted"}).expect(http.StatusBadRequest)
 		mentor.call(t, http.MethodPatch, "/tasks/"+prereq.ID+"/submission", map[string]any{"status": "submitted"}).expect(http.StatusBadRequest)
+		// Uploading the file submits the task.
 		uploadTaskFile(t, mentee, prereq.ID, "intro.pdf", pdfBytes()).expect(http.StatusCreated)
+		mentee.mustJSON(t, http.MethodGet, "/tasks/"+prereq.ID, nil, http.StatusOK, &prereq)
+		if prereq.Status != "submitted" {
+			t.Fatalf("after upload: %+v", prereq)
+		}
+		// Only the assignee may take a submitted task back to in_progress and submit it again.
+		mentor.call(t, http.MethodPatch, "/tasks/"+prereq.ID+"/submission", map[string]any{"status": "in_progress"}).expect(http.StatusForbidden)
+		mentee.mustJSON(t, http.MethodPatch, "/tasks/"+prereq.ID+"/submission", map[string]any{"status": "in_progress"}, http.StatusOK, &prereq)
 		mentor.call(t, http.MethodPatch, "/tasks/"+prereq.ID+"/submission", map[string]any{"status": "submitted"}).expect(http.StatusForbidden)
 		mentee.mustJSON(t, http.MethodPatch, "/tasks/"+prereq.ID+"/submission", map[string]any{"status": "submitted"}, http.StatusOK, &prereq)
 
@@ -274,7 +284,14 @@ func TestE2EMenteeJourney(t *testing.T) {
 		}
 		awaitEmail(t, mentee.Email, "Congratulations", 1)
 		awaitEmail(t, admin.Email, "A new mentee was accepted to", 1)
-		hr := awaitEmail(t, e2eHRInbox, "A new mentee was accepted to", 1)
+		// The copy inbox gets the HR notice itself and a copy of the admin's notice; only the former carries the country.
+		awaitEmail(t, e2eCopyInbox, "A new mentee was accepted to", 2)
+		var hr emailapi.SendEmailRequest
+		for _, e := range emailsAbout(e2eCopyInbox, "A new mentee was accepted to") {
+			if !strings.HasPrefix(e.Subject, "[Sent to ") {
+				hr = e
+			}
+		}
 		if !strings.Contains(hr.Text, "Kenya") || !strings.Contains(hr.Text, mentee.Email) {
 			t.Fatalf("HR notice lacks the country or mentee email: %s", hr.Text)
 		}
