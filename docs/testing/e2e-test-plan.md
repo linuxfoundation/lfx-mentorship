@@ -10,7 +10,7 @@ End-to-end test cases for the new Mentorship platform (the public site plus the 
 | Public site | https://mentorship.dev.lfx.dev | https://mentorship.linuxfoundation.org |
 | Self Serve | https://app.dev.lfx.dev/mentorship | https://app.lfx.dev/mentorship |
 
-**Last run:** 2026-10-22, driven through Playwright MCP.
+**Last run:** 2026-10-22, with re-tests of fixes on 2026-10-23 ([section 12](#12-re-tests-2026-10-23)). Driven through Playwright MCP.
 
 - **DEV:** full program lifecycle.
 - **PROD:** public site, plus a shorter lifecycle in Self Serve (see [PROD](#9-prod)).
@@ -231,12 +231,30 @@ Compared 25 programs sampled across the PROD list with the legacy API (`api.ment
 
 ---
 
+## 12. Re-tests (2026-10-23)
+
+PROD runs `v0.1.10` (backend, cron jobs and frontend), which includes [#358](https://github.com/linuxfoundation/lfx-mentorship/pull/358) only. DEV runs `main`.
+
+| Fix | DEV result |
+|---|---|
+| [#359](https://github.com/linuxfoundation/lfx-mentorship/pull/359) (F1) | ✅ No initiative means `200` with no sponsors, "No sponsors listed yet", and Donate disabled with a tooltip |
+| [#358](https://github.com/linuxfoundation/lfx-mentorship/pull/358) (F2, logo) | ✅ Logo uploaded on the first try (1 run) |
+| [#358](https://github.com/linuxfoundation/lfx-mentorship/pull/358) (F2, apply) | ⚠️ Submit now takes about 10 s, while the access wait times out. On 1 of 3 runs the overview still showed "Forbidden"; access appeared about 15 s after Submit |
+| [#361](https://github.com/linuxfoundation/lfx-mentorship/pull/361)–[#365](https://github.com/linuxfoundation/lfx-mentorship/pull/365) (F10) | ✅ A brand-new user (`mlehotsky1`) has a name in the admin and mentor lists. The backend sends their emails, and the copies in `EMAIL_COPY_INBOX` are correct |
+| F12 | ❌ Still reproduces: 5 of 5 times on idle DEV sessions. PROD RUM, last 30 days: 17 guard timeouts in 17 sessions, 9 of them `mentorshipEnabledGuard` |
+
+Emails:
+
+- PROD before the fix: all 8 mentee emails failed with `user … has no email address` (Datadog), confirming F10.
+- DEV after the fix: SES delivered every mentee and admin email (13 of 13, no bounces). The direct copies to a plus address (`mlehotsky+1@`) never reached Gmail, while mail to the base address did. This looks like Google Workspace filtering of the DEV sender domain, not Mentorship; re-check on PROD, which uses a different sender.
+- PROD SES: healthy, DKIM passing, 50,000 sends a day, 0.9% rolling bounce rate. The account is shared by every LFX v2 service, so a bounce spike from stale legacy addresses at launch would affect them all.
+
 ## Findings
 
 | # | Finding | Env | Severity | Ticket |
 |---|---|---|---|---|
-| F1 | Sponsors tab shows "Unable to load sponsors" (503) and Donate opens a Crowdfunding 404 when a program has no Crowdfunding initiative. Every program created in the new system is affected. | DEV, new PROD programs | Medium | [linuxfoundation/lfx-mentorship#355](https://github.com/linuxfoundation/lfx-mentorship/issues/355) |
-| F2 | Right after a create, the new object is denied until its FGA tuples sync: the logo upload gets 403 (intermittent), and the mentee overview shows "Forbidden" for about 10 s after applying. | DEV, PROD | Medium | [linuxfoundation/lfx-mentorship#354](https://github.com/linuxfoundation/lfx-mentorship/issues/354) |
+| F1 | Sponsors tab shows "Unable to load sponsors" (503) and Donate opens a Crowdfunding 404 when a program has no Crowdfunding initiative. Every program created in the new system is affected. | DEV, new PROD programs | Medium | [linuxfoundation/lfx-mentorship#355](https://github.com/linuxfoundation/lfx-mentorship/issues/355): fixed on DEV, PROD pending release |
+| F2 | Right after a create, the new object is denied until its FGA tuples sync: the logo upload gets 403 (intermittent), and the mentee overview shows "Forbidden" for about 10 s after applying. | DEV, PROD | Medium | [linuxfoundation/lfx-mentorship#354](https://github.com/linuxfoundation/lfx-mentorship/issues/354): logo fixed; apply still affected |
 | F3 | A pending program is readable by UUID on the public site. This is intentional for now: the review email links there. | DEV, PROD | Known | [linuxfoundation/lfx-mentorship#343](https://github.com/linuxfoundation/lfx-mentorship/issues/343) |
 | F4 | Become a Mentor form: after withdrawing a picked program and picking it again, no request was sent on Submit. The picker does not reset after a pick. Seen once; re-test with a new account. | DEV | Low | — |
 | F5 | Request Changes on a task carries no feedback, and the mentee sees the task back at To Do with no reason. | DEV | Low | — |
@@ -244,9 +262,10 @@ Compared 25 programs sampled across the PROD list with the legacy API (`api.ment
 | F7 | Enrollment step 3 with no prerequisite selected shows only the generic "form incomplete" banner; nothing points to the prerequisites. | DEV | Low | — |
 | F8 | The `/programs` header hard-codes "42 foundations" ([`programs-header.config.ts`](../../frontend/app/components/modules/programs/config/programs-header.config.ts)). | DEV, PROD | Low | — |
 | F9 | The landing page logs a Vue hydration mismatch. | DEV, PROD | Low | — |
-| F10 | Mentees whose accounts are new to Mentorship have no name or email in Mentorship: blank in the admin and mentor lists, "Mentee" on the public site, "A mentee" in admin emails, and no mentee emails at all. Their LFX profiles have both. Not reproduced on DEV. | PROD | High | [linuxfoundation/lfx-mentorship#357](https://github.com/linuxfoundation/lfx-mentorship/issues/357) |
-| F12 | Mentorship pages forward to the dashboard after about 10 s on an idle session. The server-side render treats an expired access token as signed out without refreshing it, so LaunchDarkly never gets the user and the flag guard times out. Other flag-gated pages (for example EasyCLA in the Org lens) share the cause. | DEV | Medium | [linuxfoundation/lfx-self-serve#4179](https://github.com/linuxfoundation/lfx-self-serve/issues/4179) |
+| F10 | Mentees whose accounts are new to Mentorship have no name or email in Mentorship: blank in the admin and mentor lists, "Mentee" on the public site, "A mentee" in admin emails, and no mentee emails at all. Their LFX profiles have both. Not reproduced on DEV. | PROD | High | [linuxfoundation/lfx-mentorship#357](https://github.com/linuxfoundation/lfx-mentorship/issues/357), root cause [#360](https://github.com/linuxfoundation/lfx-mentorship/issues/360): fixed on DEV, PROD pending release and `user-backfill` |
+| F12 | Mentorship pages forward to the dashboard after about 10 s on an idle session. The server-side render treats an expired access token as signed out without refreshing it, so LaunchDarkly never gets the user and the flag guard times out. Other flag-gated pages (for example EasyCLA in the Org lens) share the cause. | DEV, PROD | High (launch) | [linuxfoundation/lfx-self-serve#4179](https://github.com/linuxfoundation/lfx-self-serve/issues/4179) |
 | F13 | The legacy paths `/mentee` and `/mentor` with no ID return 404 instead of redirecting. | PROD | Low | — |
+| F14 | A first-time applicant who registers from an Apply link stays on the registration form after the profile is saved, with no message and no move on to the application. | DEV | High (launch) | [linuxfoundation/lfx-self-serve#4232](https://github.com/linuxfoundation/lfx-self-serve/issues/4232) |
 
 **Info, no action proposed:**
 - The landing page counts 5 graduated mentees on DEV, while the directory's Graduated tab lists 4.
