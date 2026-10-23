@@ -143,6 +143,13 @@ func (r *ApplicationRepository) ListByProgramTerm(ctx context.Context, programTe
 const prerequisitesDone = `(NOT EXISTS (SELECT 1 FROM tasks t
 	WHERE t.application_id = a.id AND t.category = 'prerequisite' AND t.status NOT IN ('submitted', 'complete')))`
 
+// applicantName and applicantEmail read the user's account, falling back to their mentee profile
+// (joined as mp): a sign-in without the token claims leaves the account's name and email NULL.
+const (
+	applicantName  = `COALESCE(NULLIF(u.name, ''), NULLIF(CONCAT_WS(' ', NULLIF(mp.first_name, ''), NULLIF(mp.last_name, '')), ''))`
+	applicantEmail = `COALESCE(NULLIF(u.email, ''), NULLIF(mp.email, ''))`
+)
+
 func (r *ApplicationRepository) ListByProgram(ctx context.Context, programID string, filter models.ProgramApplicationFilter) ([]*models.ProgramApplicationRow, *models.PaginationMeta, error) {
 	limit, offset := filter.Limit, filter.Offset
 	if limit <= 0 || limit > 50 {
@@ -183,7 +190,7 @@ func (r *ApplicationRepository) ListByProgram(ctx context.Context, programID str
 	}
 	if filter.Search != "" {
 		args = append(args, "%"+filter.Search+"%")
-		where += fmt.Sprintf(` AND (u.name ILIKE $%d OR u.email ILIKE $%d)`, len(args), len(args))
+		where += fmt.Sprintf(` AND (`+applicantName+` ILIKE $%d OR `+applicantEmail+` ILIKE $%d)`, len(args), len(args))
 	}
 	// Furthest-along applicants first; pending splits on prerequisitesDone as the status filter does.
 	const orderBy = ` ORDER BY CASE
@@ -193,19 +200,20 @@ func (r *ApplicationRepository) ListByProgram(ctx context.Context, programID str
 		WHEN a.status = 'pending' THEN 4
 		WHEN a.status = 'declined' THEN 5
 		ELSE 6 END, a.created_on DESC, a.id DESC`
+	const from = ` FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id JOIN programs p ON p.id = pt.program_id JOIN users u ON u.id = a.user_id
+		LEFT JOIN user_profiles mp ON mp.user_id = a.user_id AND mp.profile_type = 'mentee'`
 	var total int
-	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id JOIN programs p ON p.id = pt.program_id JOIN users u ON u.id = a.user_id`+where, args...).Scan(&total); err != nil {
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*)`+from+where, args...).Scan(&total); err != nil {
 		return nil, nil, fmt.Errorf("count program applications: %w", err)
 	}
 	args = append(args, limit, offset)
-	q := `SELECT a.user_id, a.id, u.name, u.email, COALESCE((SELECT NULLIF(up.logo_url, '') FROM user_profiles up WHERE up.user_id = a.user_id AND up.profile_type = 'mentee' ORDER BY up.updated_on DESC LIMIT 1), u.avatar_url), a.status, pt.id, pt.name, pt.status, pt.start_date_time, pt.end_date_time, pt.application_start_date, pt.application_end_date,
+	q := `SELECT a.user_id, a.id, ` + applicantName + `, ` + applicantEmail + `, COALESCE(NULLIF(mp.logo_url, ''), u.avatar_url), a.status, pt.id, pt.name, pt.status, pt.start_date_time, pt.end_date_time, pt.application_start_date, pt.application_end_date,
 		(SELECT COUNT(*) FROM tasks t WHERE t.application_id = a.id),
 		(SELECT COUNT(*) FROM tasks t WHERE t.application_id = a.id AND t.status IN ('submitted', 'complete')),
 		a.reviewer_note, a.created_on, a.updated_on,
 		COALESCE((SELECT jsonb_agg(jsonb_build_object('program_id', op.id, 'program_name', op.name, 'status', oa.status))
 			FROM applications oa JOIN program_terms ot ON ot.id = oa.program_term_id JOIN programs op ON op.id = ot.program_id
-			WHERE oa.user_id = a.user_id AND op.id <> pt.program_id AND oa.role = 'mentee' AND oa.status IN ('pending', 'accepted', 'graduated')), '[]'::jsonb)
-		FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id JOIN programs p ON p.id = pt.program_id JOIN users u ON u.id = a.user_id` + where + orderBy + fmt.Sprintf(` LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
+			WHERE oa.user_id = a.user_id AND op.id <> pt.program_id AND oa.role = 'mentee' AND oa.status IN ('pending', 'accepted', 'graduated')), '[]'::jsonb)` + from + where + orderBy + fmt.Sprintf(` LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
 	rows, err := r.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("list program applications: %w", err)

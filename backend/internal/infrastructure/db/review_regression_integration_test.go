@@ -848,6 +848,65 @@ func TestApplicationRepositoryIntegration_ListByProgramStatusFilterAndOrder(t *t
 	}
 }
 
+func TestApplicationRepositoryIntegration_ListByProgramFallsBackToMenteeProfile(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	const (
+		bareUser    = "00000000-0000-0000-0000-0000000000f1" // signed in without name or email claims
+		namedUser   = "00000000-0000-0000-0000-0000000000f2"
+		bareApp     = "00000000-0000-0000-0000-0000000000f3"
+		namedApp    = "00000000-0000-0000-0000-0000000000f4"
+		profileMail = "ada+profile@example.org"
+	)
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid) VALUES ($1, 'bare')`, bareUser); err != nil {
+		t.Fatalf("insert bare user: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name, email) VALUES ($1, 'named', 'Grace Hopper', 'grace@example.org')`, namedUser); err != nil {
+		t.Fatalf("insert named user: %v", err)
+	}
+	for _, p := range []struct{ userID, first, last, email string }{
+		{bareUser, "Ada", "Lovelace", profileMail},
+		{namedUser, "Profile", "Name", "profile@example.org"},
+	} {
+		if _, err := pool.Exec(ctx, `INSERT INTO user_profiles (id, user_id, profile_type, first_name, last_name, email)
+			VALUES (gen_random_uuid(), $1, 'mentee', $2, $3, $4)`, p.userID, p.first, p.last, p.email); err != nil {
+			t.Fatalf("insert mentee profile: %v", err)
+		}
+	}
+	for _, a := range []struct{ id, userID string }{{bareApp, bareUser}, {namedApp, namedUser}} {
+		if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentee', 'pending')`,
+			a.id, fixture.OpenTerm, a.userID); err != nil {
+			t.Fatalf("insert application: %v", err)
+		}
+	}
+	repo := NewApplicationRepository(pool)
+
+	rows, _, err := repo.ListByProgram(ctx, fixture.ProgramID, models.ProgramApplicationFilter{Limit: 50})
+	if err != nil {
+		t.Fatalf("ListByProgram: %v", err)
+	}
+	want := map[string][2]string{bareApp: {"Ada Lovelace", profileMail}, namedApp: {"Grace Hopper", "grace@example.org"}}
+	for _, row := range rows {
+		w, ok := want[row.ApplicationID]
+		if !ok {
+			continue
+		}
+		if row.Name == nil || *row.Name != w[0] || row.Email == nil || *row.Email != w[1] {
+			t.Fatalf("row %s name/email = %v/%v; want %q/%q", row.ApplicationID, row.Name, row.Email, w[0], w[1])
+		}
+		delete(want, row.ApplicationID)
+	}
+	if len(want) != 0 {
+		t.Fatalf("ListByProgram is missing applications %v", want)
+	}
+
+	rows, meta, err := repo.ListByProgram(ctx, fixture.ProgramID, models.ProgramApplicationFilter{Search: "ada+profile", Limit: 50})
+	if err != nil || meta.Total != 1 || len(rows) != 1 || rows[0].ApplicationID != bareApp {
+		t.Fatalf("ListByProgram(search profile email) = %d rows, meta %+v, err = %v; want only %q", len(rows), meta, err, bareApp)
+	}
+}
+
 func indexOutboxFixtureRecord(objectType, objectUID string) domain.IndexOutboxRecord {
 	return domain.IndexOutboxRecord{ObjectType: objectType, ObjectUID: objectUID, Action: "updated", Headers: []byte(`{}`), Data: []byte(`{}`), IndexingConfig: []byte(`{}`)}
 }
