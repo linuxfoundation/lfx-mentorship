@@ -101,6 +101,7 @@ SPDX-License-Identifier: MIT
               :content="PROGRAM_DONATE_UNAVAILABLE"
               :disabled="!donateDisabled"
               class="inline-flex"
+              v-bind="donateDisabled ? donateUnavailableAttrs : {}"
             >
               <lfx-button
                 label="Donate"
@@ -109,6 +110,7 @@ SPDX-License-Identifier: MIT
                 type="transparent"
                 button-style="rounded"
                 :disabled="donateDisabled"
+                :aria-hidden="donateDisabled || undefined"
                 :class="{ 'pointer-events-none': donateDisabled }"
                 @click="$emit('donate')"
               />
@@ -174,6 +176,15 @@ import { formatTermLabel } from '~/utils/program-terms';
 
 // donateDisabled: the program has no LFX Crowdfunding initiative to donate to yet.
 const props = defineProps<{ program: Program; donateDisabled?: boolean }>();
+
+// A disabled button leaves the tab order, so the tooltip wrapper stands in for it: focusing it
+// shows the tooltip, and screen readers hear the same explanation.
+const donateUnavailableAttrs = {
+  role: 'button',
+  tabindex: 0,
+  'aria-disabled': 'true',
+  'aria-label': `Donate. ${PROGRAM_DONATE_UNAVAILABLE}`,
+};
 
 defineEmits<{
   (e: 'open-repository' | 'donate'): void;

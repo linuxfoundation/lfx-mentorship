@@ -75,6 +75,8 @@ func (c *crowdfundingHTTPClient) GetCategorizedTransactions(ctx context.Context,
 
 	// Crowdfunding answers 404 for an initiative it does not know: the program has none yet.
 	if resp.StatusCode == http.StatusNotFound {
+		// Drain the small error body so the connection can be reused; this is a normal result now.
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("crowdfunding initiative %s: %w", initiativeID, domain.ErrInitiativeNotFound)
 	}
 	if resp.StatusCode != http.StatusOK {

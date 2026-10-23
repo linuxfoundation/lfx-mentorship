@@ -195,6 +195,9 @@ describe('ProgramDetailView', () => {
     const wrapper = await mountProgram('unfunded');
     const donate = () => wrapper.findAll('button').find((b) => b.text().includes('Donate'))!;
     await vi.waitFor(() => expect(donate().attributes('disabled')).toBeDefined());
+    const standIn = wrapper.find('[role="button"][aria-disabled="true"]');
+    expect(standIn.attributes('tabindex')).toBe('0');
+    expect(standIn.attributes('aria-label')).toContain('does not have an LFX Crowdfunding page');
     await donate().trigger('click');
     expect(openSpy).not.toHaveBeenCalled();
 
