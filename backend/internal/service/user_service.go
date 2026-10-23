@@ -37,9 +37,15 @@ func (s *UserService) SetAccountDirectory(directory domain.AccountDirectory) {
 }
 
 // Bootstrap resolves or creates the local user for a Heimdall LFID. Identity
-// comes from the token first; the directory fills what the token left out. A
-// failed lookup leaves those fields empty and is logged; it never fails the
-// sign-in, and the row is completed on a later sign-in (COALESCE on upsert).
+// comes from the token and the body first; the LF directory fills only what
+// those and the stored row all lack, so a directory value never replaces an
+// edit made through PATCH /me. A failed lookup leaves those fields empty and
+// is logged; it never fails the sign-in, and a later sign-in completes the row.
+//
+// A token email is verified at the gateway, so it reclaims the address from
+// any stale row (BootstrapByLFID). The directory does not report whether the
+// primary email is verified, so an address from there is stored only while no
+// other row holds it: on conflict it is left unset rather than taken.
 func (s *UserService) Bootstrap(ctx context.Context, lfid string, input models.UserUpdateInput) (*models.User, error) {
 	if lfid == "" {
 		return nil, fmt.Errorf("%w: principal is required", domain.ErrInvalidInput)
@@ -47,8 +53,36 @@ func (s *UserService) Bootstrap(ctx context.Context, lfid string, input models.U
 	ctx, span := userSvcTracer.Start(ctx, "UserService.Bootstrap")
 	defer span.End()
 
-	s.fillFromDirectory(ctx, lfid, &input)
-	user, err := s.repo.BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: input.Email, Name: input.Name, GivenName: input.GivenName, FamilyName: input.FamilyName, AvatarURL: input.AvatarURL})
+	write := models.UserCreateInput{LFID: &lfid, Email: input.Email, Name: input.Name, GivenName: input.GivenName, FamilyName: input.FamilyName, AvatarURL: input.AvatarURL}
+	emailFromDirectory := false
+	if s.directory != nil {
+		known := s.knownIdentity(ctx, lfid, input)
+		resolved, err := s.ResolveIdentity(ctx, lfid, known)
+		if err != nil {
+			slog.WarnContext(ctx, "directory lookup failed; bootstrapping with the token's identity only", "error", err)
+		}
+		// Only what the directory added is written; stored values are not re-sent.
+		fillMissing(&write.Name, newlyFilled(known.Name, resolved.Name))
+		fillMissing(&write.GivenName, newlyFilled(known.GivenName, resolved.GivenName))
+		fillMissing(&write.FamilyName, newlyFilled(known.FamilyName, resolved.FamilyName))
+		fillMissing(&write.AvatarURL, newlyFilled(known.AvatarURL, resolved.AvatarURL))
+		if email := newlyFilled(known.Email, resolved.Email); email != nil {
+			write.Email, emailFromDirectory = email, true
+		}
+	}
+
+	var user *models.User
+	var err error
+	if emailFromDirectory {
+		user, err = s.repo.UpsertByLFID(ctx, write)
+		if errors.Is(err, domain.ErrEmailInUse) {
+			slog.WarnContext(ctx, "directory email already belongs to another user; bootstrapping without email")
+			write.Email = nil
+			user, err = s.repo.UpsertByLFID(ctx, write)
+		}
+	} else {
+		user, err = s.repo.BootstrapByLFID(ctx, write)
+	}
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("bootstrap user: %w", err)
@@ -56,12 +90,35 @@ func (s *UserService) Bootstrap(ctx context.Context, lfid string, input models.U
 	return user, nil
 }
 
-// fillFromDirectory looks up only what is missing, so a token that carried
-// the identity costs no directory call.
-func (s *UserService) fillFromDirectory(ctx context.Context, lfid string, input *models.UserUpdateInput) {
-	if s.directory == nil {
-		return
+// knownIdentity merges the sign-in input with the stored row, so the directory
+// is asked only for fields neither has. A missing row (first sign-in) or a
+// failed read leaves the input as is.
+func (s *UserService) knownIdentity(ctx context.Context, lfid string, input models.UserUpdateInput) models.UserUpdateInput {
+	existing, err := s.repo.GetByLFID(ctx, lfid)
+	if err != nil {
+		if !errors.Is(err, domain.ErrUserNotFound) {
+			slog.WarnContext(ctx, "stored user read failed before directory lookup", "error", err)
+		}
+		return input
 	}
+	fillMissing(&input.Email, existing.Email)
+	fillMissing(&input.Name, existing.Name)
+	fillMissing(&input.GivenName, existing.GivenName)
+	fillMissing(&input.FamilyName, existing.FamilyName)
+	fillMissing(&input.AvatarURL, existing.AvatarURL)
+	return input
+}
+
+// ResolveIdentity returns input with the identity fields it lacks filled from
+// the LF directory, and writes nothing. Only missing fields are looked up. An
+// account the directory does not know (an M2M client, say) is not an error;
+// a lookup that fails is returned alongside whatever was filled, so a caller
+// can tell "the directory has nothing more" from "the directory did not answer".
+func (s *UserService) ResolveIdentity(ctx context.Context, lfid string, input models.UserUpdateInput) (models.UserUpdateInput, error) {
+	if s.directory == nil {
+		return input, nil
+	}
+	var lookupErr error
 	if input.Name == nil || input.GivenName == nil || input.FamilyName == nil || input.AvatarURL == nil {
 		account, err := s.directory.Account(ctx, lfid)
 		switch {
@@ -71,9 +128,8 @@ func (s *UserService) fillFromDirectory(ctx context.Context, lfid string, input 
 			fillMissing(&input.FamilyName, account.FamilyName)
 			fillMissing(&input.AvatarURL, account.AvatarURL)
 		case errors.Is(err, domain.ErrAccountNotFound):
-			// Not every principal is an LF account (M2M clients); nothing to fill.
 		default:
-			slog.WarnContext(ctx, "directory profile lookup failed; bootstrapping without name", "error", err)
+			lookupErr = errors.Join(lookupErr, fmt.Errorf("directory profile lookup: %w", err))
 		}
 	}
 	if input.Email == nil {
@@ -82,9 +138,10 @@ func (s *UserService) fillFromDirectory(ctx context.Context, lfid string, input 
 		case err == nil && email != "":
 			input.Email = &email
 		case err != nil && !errors.Is(err, domain.ErrAccountNotFound):
-			slog.WarnContext(ctx, "directory email lookup failed; bootstrapping without email", "error", err)
+			lookupErr = errors.Join(lookupErr, fmt.Errorf("directory email lookup: %w", err))
 		}
 	}
+	return input, lookupErr
 }
 
 // fillMissing sets field to value when the field is empty and the value is not.
@@ -92,6 +149,15 @@ func fillMissing(field **string, value *string) {
 	if *field == nil && value != nil && *value != "" {
 		*field = value
 	}
+}
+
+// newlyFilled returns after when before was empty and after is not: the value
+// a resolution step added.
+func newlyFilled(before, after *string) *string {
+	if before == nil && after != nil && *after != "" {
+		return after
+	}
+	return nil
 }
 
 // GetByID returns the user with the given ID.

@@ -98,11 +98,13 @@ flowchart LR
    are stored with no email or name ([#360](https://github.com/linuxfoundation/lfx-mentorship/issues/360)).
    The backend also reads `name`, `given_name`, `family_name` and `picture`
    claims ([lfx-v2-helm#190](https://github.com/linuxfoundation/lfx-v2-helm/pull/190)
-   adds them to the finalizer). Whatever the token and the request body leave
-   out, `UserService.Bootstrap` fills from lfx-v2-auth-service over NATS
-   (`user_metadata.read`, `user_emails.read`), the same sign-in sync
-   lfx-crowdfunding does; a failed lookup is logged and never fails the
-   sign-in.
+   adds them to the finalizer). Whatever the token, the request body and the
+   stored row all lack, `UserService.Bootstrap` fills from lfx-v2-auth-service
+   over NATS (`user_metadata.read`, `user_emails.read`), the same sign-in sync
+   lfx-crowdfunding does; a directory value never replaces a stored one, and a
+   failed lookup is logged and never fails the sign-in. A token email is
+   verified at the gateway and reclaims the address from a stale row; a
+   directory email is not, so it is stored only while no other row holds it.
 6. The backend validates the JWT against the cluster-internal Heimdall JWKS.
 7. Handlers execute workflow logic without repeating the edge authorization
    decision.
