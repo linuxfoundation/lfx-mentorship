@@ -132,12 +132,10 @@ async function ensureIndex(): Promise<void> {
   return indexLoadPromise;
 }
 
-function onFocus(): void {
-  isOpen.value = true;
-  if (debouncedQuery.value.length >= 2) void ensureIndex();
-}
-
-watch(debouncedQuery, async (q) => {
+// Loads the index if needed, then searches. Both the query watcher and onFocus run this:
+// after a failed index load the query does not change, so a focus that only retried the
+// download would leave "No results" on screen until the user edited the query.
+async function runSearch(q: string): Promise<void> {
   if (q.length < 2) {
     results.value = [];
     return;
@@ -147,6 +145,15 @@ watch(debouncedQuery, async (q) => {
   results.value = searchIndex
     .search(q, { boost: { title: 3, description: 2 }, fuzzy: 0.2, prefix: true })
     .slice(0, 8) as DocSearchResult[];
+}
+
+function onFocus(): void {
+  isOpen.value = true;
+  void runSearch(debouncedQuery.value);
+}
+
+watch(debouncedQuery, (q) => {
+  void runSearch(q);
 });
 
 function clear(): void {

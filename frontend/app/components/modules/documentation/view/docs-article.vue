@@ -193,6 +193,8 @@ useHead({
   link: [{ rel: 'canonical', href: computed(() => url.origin + url.pathname) }],
 });
 useSeoMeta({
+  // Without this the article keeps the generic site description from setup/head.ts.
+  description: seoDescription,
   ogTitle: seoTitle,
   ogDescription: seoDescription,
   ogType: 'article',
