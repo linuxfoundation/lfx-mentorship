@@ -413,7 +413,7 @@ func (r *ApplicationRepository) ReapplyWithTasks(ctx context.Context, oldID, pro
 
 // checkCanApply re-checks, under the caller's term lock, what the service checked before the
 // transaction began: the term takes applications now, its program is published, and a mentee
-// applicant holds no accepted or graduated mentee application.
+// applicant holds no accepted or graduated mentee application and is under the pending limit.
 func checkCanApply(ctx context.Context, tx pgx.Tx, term *models.ProgramTerm, input models.ApplicationCreateInput) error {
 	if !term.AcceptsApplications(time.Now()) {
 		return fmt.Errorf("%w: applications are not open for this term", domain.ErrIneligible)
@@ -422,7 +422,30 @@ func checkCanApply(ctx context.Context, tx pgx.Tx, term *models.ProgramTerm, inp
 		return err
 	}
 	if input.Role == models.ApplicationRoleMentee {
-		return checkMenteeAvailable(ctx, tx, input.UserID, input.ID, true)
+		if err := checkMenteeAvailable(ctx, tx, input.UserID, input.ID, true); err != nil {
+			return err
+		}
+		return checkPendingMenteeApplicationLimit(ctx, tx, input.UserID)
+	}
+	return nil
+}
+
+// checkPendingMenteeApplicationLimit refuses once the user has MaxPendingMenteeApplications mentee
+// applications pending in open terms. Legacy jobspring counted pending and accepted rows in open
+// terms; an accepted one already refuses the apply in checkMenteeAvailable, so only pending ones
+// are counted here. The caller must hold the per-mentee lock that checkMenteeAvailable takes, so
+// concurrent applications to different terms cannot both pass.
+func checkPendingMenteeApplicationLimit(ctx context.Context, tx pgx.Tx, userID string) error {
+	var pending int
+	if err := tx.QueryRow(ctx, `
+		SELECT COUNT(*) FROM applications a
+		JOIN program_terms pt ON pt.id = a.program_term_id
+		WHERE a.user_id = $1 AND a.role = $2 AND a.status = $3 AND pt.status = $4`,
+		userID, models.ApplicationRoleMentee, models.ApplicationStatusPending, models.ProgramTermStatusOpen).Scan(&pending); err != nil {
+		return fmt.Errorf("count pending mentee applications: %w", err)
+	}
+	if pending >= models.MaxPendingMenteeApplications {
+		return fmt.Errorf("%w: you already have %d applications under review; withdraw one before applying again", domain.ErrIneligible, pending)
 	}
 	return nil
 }

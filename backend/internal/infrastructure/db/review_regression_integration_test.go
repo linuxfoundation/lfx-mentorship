@@ -8,6 +8,7 @@ package db
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -1012,6 +1013,131 @@ func TestApplicationRepositoryIntegration_ConcurrentAcceptancesOfOneMentee(t *te
 	}
 	if succeeded != 1 || refused != 1 {
 		t.Fatalf("succeeded %d, refused %d; want exactly one acceptance", succeeded, refused)
+	}
+}
+
+// seedOpenTerms adds n open terms to the fixture program and returns their ids.
+func seedOpenTerms(t *testing.T, pool *pgxpool.Pool, n int) []string {
+	t.Helper()
+	ids := make([]string, n)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("00000000-0000-0000-0000-0000000001%02d", i)
+		if _, err := pool.Exec(context.Background(), `INSERT INTO program_terms (id, program_id, name, status, application_start_date, application_end_date)
+			SELECT $1, program_id, $2, 'open', NOW() - interval '1 day', NOW() + interval '30 days'
+			FROM program_terms WHERE id = '00000000-0000-0000-0000-000000000011'`, ids[i], fmt.Sprintf("Extra %d", i)); err != nil {
+			t.Fatalf("insert term %d: %v", i, err)
+		}
+	}
+	return ids
+}
+
+// A mentee may have at most MaxPendingMenteeApplications applications pending in open terms;
+// withdrawn and declined applications and those in closed terms do not count.
+func TestApplicationRepositoryIntegration_PendingMenteeApplicationLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		lastStatus  models.ApplicationStatus
+		lastClosed  bool
+		wantRefused bool
+	}{
+		{name: "at the limit", lastStatus: models.ApplicationStatusPending, wantRefused: true},
+		{name: "one withdrawn", lastStatus: models.ApplicationStatusWithdrawn},
+		{name: "one declined", lastStatus: models.ApplicationStatusDeclined},
+		{name: "one in a closed term", lastStatus: models.ApplicationStatusPending, lastClosed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pool := integrationPool(t)
+			fixture := seedIntegrationFixture(t, pool)
+			ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+			terms := seedOpenTerms(t, pool, models.MaxPendingMenteeApplications)
+			for i, term := range terms {
+				status := models.ApplicationStatusPending
+				if i == len(terms)-1 {
+					status = tc.lastStatus
+				}
+				if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentee', $4)`,
+					fmt.Sprintf("00000000-0000-0000-0000-0000000002%02d", i), term, fixture.UserID, status); err != nil {
+					t.Fatalf("insert application %d: %v", i, err)
+				}
+			}
+			if tc.lastClosed {
+				if _, err := pool.Exec(ctx, `UPDATE program_terms SET status = 'closed' WHERE id = $1`, terms[len(terms)-1]); err != nil {
+					t.Fatalf("close term: %v", err)
+				}
+			}
+
+			input := models.ApplicationCreateInput{ID: "00000000-0000-0000-0000-000000000299", UserID: fixture.UserID, Role: models.ApplicationRoleMentee, Status: models.ApplicationStatusPending}
+			_, err := NewApplicationRepository(pool).Create(ctx, fixture.OpenTerm, input)
+			if refused := errors.Is(err, domain.ErrIneligible); refused != tc.wantRefused || (err != nil && !refused) {
+				t.Fatalf("create err = %v; want refused = %v", err, tc.wantRefused)
+			}
+		})
+	}
+}
+
+// Reapplying after a withdrawal is a new application and counts against the pending limit.
+func TestApplicationRepositoryIntegration_ReapplyEnforcesPendingLimit(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+	withdrawnID := "00000000-0000-0000-0000-000000000298"
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentee', 'withdrawn')`, withdrawnID, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatalf("insert withdrawn application: %v", err)
+	}
+	for i, term := range seedOpenTerms(t, pool, models.MaxPendingMenteeApplications) {
+		if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentee', 'pending')`,
+			fmt.Sprintf("00000000-0000-0000-0000-0000000002%02d", i), term, fixture.UserID); err != nil {
+			t.Fatalf("insert application %d: %v", i, err)
+		}
+	}
+
+	input := models.ApplicationCreateInput{ID: "00000000-0000-0000-0000-000000000299", UserID: fixture.UserID, Role: models.ApplicationRoleMentee, Status: models.ApplicationStatusPending}
+	if _, err := NewApplicationRepository(pool).ReapplyWithTasks(ctx, withdrawnID, fixture.OpenTerm, input, nil); !errors.Is(err, domain.ErrIneligible) {
+		t.Fatalf("reapply past the pending limit err = %v; want ErrIneligible", err)
+	}
+}
+
+// Applications to different terms lock different term rows; the per-mentee lock still lets only
+// one of two concurrent applications take the last slot.
+func TestApplicationRepositoryIntegration_ConcurrentApplicationsRespectPendingLimit(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+	terms := seedOpenTerms(t, pool, models.MaxPendingMenteeApplications)
+	// Hold all but one slot, then race two applications for it.
+	held, contested := terms[:len(terms)-1], []string{terms[len(terms)-1], fixture.OpenTerm}
+	for i, term := range held {
+		if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentee', 'pending')`,
+			fmt.Sprintf("00000000-0000-0000-0000-0000000002%02d", i), term, fixture.UserID); err != nil {
+			t.Fatalf("insert application %d: %v", i, err)
+		}
+	}
+
+	repo := NewApplicationRepository(pool)
+	start := make(chan struct{})
+	errs := make(chan error, len(contested))
+	for i, term := range contested {
+		input := models.ApplicationCreateInput{ID: fmt.Sprintf("00000000-0000-0000-0000-0000000003%02d", i), UserID: fixture.UserID, Role: models.ApplicationRoleMentee, Status: models.ApplicationStatusPending}
+		go func() {
+			<-start
+			_, err := repo.Create(ctx, term, input)
+			errs <- err
+		}()
+	}
+	close(start)
+	succeeded, refused := 0, 0
+	for range contested {
+		switch err := <-errs; {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, domain.ErrIneligible):
+			refused++
+		default:
+			t.Fatalf("create: %v", err)
+		}
+	}
+	if succeeded != 1 || refused != 1 {
+		t.Fatalf("succeeded %d, refused %d; want exactly one application", succeeded, refused)
 	}
 }
 
