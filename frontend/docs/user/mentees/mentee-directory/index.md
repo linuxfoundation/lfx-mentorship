@@ -17,14 +17,14 @@ No sign-in is required. A mentee appears here once they join a program; a mentee
 
 1. Select **Mentees** from the top navigation.
 
-    ![Mentee directory](/images/docs/screenshots/mentees/mentees-directory.png)
+   ![Mentee directory](/images/docs/screenshots/mentees/mentees-directory.png)
 
 2. Filter the list:
    - **All**, **Active** or **Graduated**
    - **All skills** — show only mentees who list a given skill
 3. Select a mentee to open their public profile.
 
-    ![Mentee profile](/images/docs/screenshots/mentees/mentee-profile.png)
+   ![Mentee profile](/images/docs/screenshots/mentees/mentee-profile.png)
 
 4. The profile shows their introduction, their skills, their links, and the programs they have taken part in.
 

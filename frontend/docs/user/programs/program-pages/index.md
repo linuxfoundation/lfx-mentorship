@@ -17,29 +17,29 @@ No sign-in is required to read a program page.
 
 1. Open any program from [Find a Program](../browsing-programs/).
 
-    ![Program page](/images/docs/screenshots/programs/program-detail.png)
+   ![Program page](/images/docs/screenshots/programs/program-detail.png)
 
 2. Read the header. It carries the project logo and name, the program's status badge, and the skills the program lists.
 3. Check the sidebar for the facts that decide whether you can take part:
 
-    | Field | What it tells you |
-    |---|---|
-    | **Term** | Which term this page is for |
-    | **Applications close** | The last day to apply |
-    | **Stipend** | The amount, or that the amount is determined by mentee location |
+   | Field                  | What it tells you                                               |
+   | ---------------------- | --------------------------------------------------------------- |
+   | **Term**               | Which term this page is for                                     |
+   | **Applications close** | The last day to apply                                           |
+   | **Stipend**            | The amount, or that the amount is determined by mentee location |
 
 4. Open **Overview** for the program description and what the project expects from a mentee.
 5. Open **Terms** for the dates of this and any earlier terms. Applications are always made to a term, so check which one is open before you apply.
 
-    ![Terms tab on a program page](/images/docs/screenshots/programs/program-detail-terms.png)
+   ![Terms tab on a program page](/images/docs/screenshots/programs/program-detail-terms.png)
 
 6. Open **Mentors** to see who will review your work.
 
-    ![Mentors tab on a program page](/images/docs/screenshots/programs/program-detail-mentors.png)
+   ![Mentors tab on a program page](/images/docs/screenshots/programs/program-detail-mentors.png)
 
 7. Open **Mentees** for the program's current mentees and the ones who have graduated from earlier terms, each with the term they took part in.
 
-    ![Mentees tab on a program page](/images/docs/screenshots/programs/program-detail-mentees.png)
+   ![Mentees tab on a program page](/images/docs/screenshots/programs/program-detail-mentees.png)
 
 8. Open **Sponsors** to see who funds the program, where it is funded.
 9. Use the header actions:

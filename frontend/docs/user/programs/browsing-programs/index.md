@@ -17,7 +17,7 @@ No sign-in is required to browse programs. To apply to one you will need an [LF 
 
 1. Select **Find a Program** from the top navigation.
 
-    ![Find a Program](/images/docs/screenshots/programs/programs-browse.png)
+   ![Find a Program](/images/docs/screenshots/programs/programs-browse.png)
 
 2. Each card shows the project logo, the term, the program name, a short description, the skills the program lists, and how many mentors it has.
 3. Narrow the list:

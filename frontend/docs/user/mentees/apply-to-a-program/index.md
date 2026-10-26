@@ -29,11 +29,11 @@ Applying happens in LFX. This site is where you find the program; the applicatio
 
 Your application appears in your mentee overview at [app.lfx.dev/mentorship/mentee](https://app.lfx.dev/mentorship/mentee), and the program's mentors review it against the skills the program listed and what you wrote.
 
-| Outcome | What it means |
-|---|---|
-| **Pending** | Submitted and waiting on mentor review |
+| Outcome      | What it means                                          |
+| ------------ | ------------------------------------------------------ |
+| **Pending**  | Submitted and waiting on mentor review                 |
 | **Accepted** | You have a place on the term; your tasks appear in LFX |
-| **Declined** | The program did not take you on for this term |
+| **Declined** | The program did not take you on for this term          |
 
 A turned-down application is always **declined**. You can apply to a different program, or to the same program in a later term.
 

@@ -13,11 +13,11 @@ LFX Mentorship pairs contributors with experienced members of open source projec
 
 ## Who takes part
 
-| Role | What they do | Where they work |
-|---|---|---|
-| **Mentee** | Applies to a program, completes scoped tasks across the term, and takes a final evaluation | [app.lfx.dev/mentorship/mentee](https://app.lfx.dev/mentorship/mentee) |
-| **Mentor** | Scopes the work, reviews what a mentee submits, and scores applicants | [app.lfx.dev/mentorship/mentor](https://app.lfx.dev/mentorship/mentor) |
-| **Program Admin** | Enrolls a project's program, invites mentors, and runs the term | [app.lfx.dev/mentorship/admin](https://app.lfx.dev/mentorship/admin) |
+| Role              | What they do                                                                               | Where they work                                                        |
+| ----------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------- |
+| **Mentee**        | Applies to a program, completes scoped tasks across the term, and takes a final evaluation | [app.lfx.dev/mentorship/mentee](https://app.lfx.dev/mentorship/mentee) |
+| **Mentor**        | Scopes the work, reviews what a mentee submits, and scores applicants                      | [app.lfx.dev/mentorship/mentor](https://app.lfx.dev/mentorship/mentor) |
+| **Program Admin** | Enrolls a project's program, invites mentors, and runs the term                            | [app.lfx.dev/mentorship/admin](https://app.lfx.dev/mentorship/admin)   |
 
 Browsing programs, mentees and mentors on this site needs no account. Applying, mentoring or administering a program all happen in LFX and need an [LF ID](https://openprofile.dev/).
 

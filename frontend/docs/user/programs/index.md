@@ -18,12 +18,12 @@ A **program** is one project's mentorship offering. Every program belongs to a L
 
 ## Program status
 
-| Status | What it means |
-|---|---|
-| **Accepting** | The term is open and taking applications |
-| **Opens soon** | The term is announced but applications have not opened yet |
-| **In progress** | The term is under way; applications are closed |
-| **Completed** | The term has finished |
+| Status          | What it means                                              |
+| --------------- | ---------------------------------------------------------- |
+| **Accepting**   | The term is open and taking applications                   |
+| **Opens soon**  | The term is announced but applications have not opened yet |
+| **In progress** | The term is under way; applications are closed             |
+| **Completed**   | The term has finished                                      |
 
 Only approved programs appear on this site. A program that was not approved during moderation is **rejected** and is never listed.
 

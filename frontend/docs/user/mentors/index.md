@@ -20,10 +20,10 @@ A **mentor** is an experienced project contributor who scopes a mentee's work, r
 
 Two routes, and both end with the Program Admin:
 
-| Route | How it starts |
-|---|---|
-| **Invitation** | A Program Admin invites you by email. The link takes you to LFX, where you accept or decline. |
-| **Request** | You ask to mentor a program from your My Programs page in LFX. The Program Admin approves or declines the request. |
+| Route          | How it starts                                                                                                      |
+| -------------- | ------------------------------------------------------------------------------------------------------------------ |
+| **Invitation** | A Program Admin invites you by email. The link takes you to LFX, where you accept or decline.                      |
+| **Request**    | You ask to mentor a program from your My Programs page in LFX. The Program Admin approves or declines the request. |
 
 ## Where things happen
 
