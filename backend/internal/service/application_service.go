@@ -277,7 +277,8 @@ func (s *ApplicationService) ListByUser(ctx context.Context, userID string, filt
 //     confirmed (FR-025, FR-028).
 //   - Reapplication only from withdrawn, never from declined, up to the withdrawal limit (FR-030).
 //   - Under lock, in the repository: the program is published, and the applicant holds no
-//     accepted or graduated mentee application.
+//     accepted or graduated mentee application, and has fewer than
+//     MaxPendingMenteeApplications pending in open terms.
 func (s *ApplicationService) Create(ctx context.Context, programTermID string, input models.ApplicationCreateInput) (*models.Application, error) {
 	ctx, span := applicationSvcTracer.Start(ctx, "ApplicationService.Create")
 	defer span.End()
