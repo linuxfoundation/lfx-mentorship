@@ -268,6 +268,17 @@ PROD is still on `v0.1.10`; these fixes are on `main` only.
 | [#371](https://github.com/linuxfoundation/lfx-mentorship/pull/371) (F16) | ✅ Legacy approval, program-mentees and mentor links redirect to Self Serve; signed in as an approver and admin, each opens the right page, and the approve or decline choice carries over |
 | [lfx-self-serve#4261](https://github.com/linuxfoundation/lfx-self-serve/pull/4261) (F14) | ✅ A brand-new account (`mlehotsky2`) registered from an Apply link, landed on the application and submitted it |
 
+| # | Gap check against legacy (2026-10-26, DEV) | Result |
+|---|---|---|
+| 5.15 | Reapply to a term after being declined there | ✅ Refused (409): "You already applied to this term… so you cannot apply again" |
+| 3.10 | Re-open a closed term whose end date has not passed | ✅ Re-Open confirms, the term is open (also on the public site), and Close restores it |
+| 3.11 | Re-open an ended term | ✅ Ended terms show no actions; the backend also refuses (`program_term_service.go:193`) |
+| 6.8 | Re-open a declined application | — The backend allows `declined` → `pending`, but no page offers it |
+
+Comparing the legacy jobspring features with this plan left these untested: accepting or declining a mentor invite from the email link (4.2), and the stipend feed for newly accepted mentees (Postgres → Fivetran → Snowflake → Crowdfunding `mentorship-sync`), which starts after release. 22 of the 23 email types were sent during testing; the missing one is `admin_mentor_declined` (a mentor declines an invite). By design, mentors no longer accept or decline mentee applications ([04](../rewrite/04-authorization-model.md)), which legacy allowed.
+
+F12 reproduced twice more in this session's normal testing, as a mentee and as an admin.
+
 ## 13. Legacy parity checks (2026-10-23)
 
 | # | Check | Result |
