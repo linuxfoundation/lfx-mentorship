@@ -31,6 +31,8 @@ WORKDIR /app
 
 # Nuxt 4 output: .output/server (Node server) + .output/public (static assets)
 COPY --from=builder --chown=appuser:appgroup /build/.output/ ./
+# User docs, read at request time by server/api/docs (getDocsDir resolves docs/user from /app)
+COPY --from=builder --chown=appuser:appgroup /build/docs/user/ ./docs/user/
 
 USER appuser
 

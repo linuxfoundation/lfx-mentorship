@@ -22,6 +22,8 @@ dist/
 .github/
 charts/
 *.md
+# User docs are read by the server at runtime (server/api/docs)
+!docs/user/**
 
 # Test / coverage
 coverage/

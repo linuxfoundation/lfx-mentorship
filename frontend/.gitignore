@@ -16,6 +16,9 @@ logs
 # Smoke tests / local scratch
 tmp-*
 
+# Generated docs search index
+public/assets/docs/search-index.json
+
 # Misc
 .DS_Store
 .fleet
