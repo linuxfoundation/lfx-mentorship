@@ -54,10 +54,10 @@ SPDX-License-Identifier: MIT
                   </a>
                 </template>
                 <button
-                  v-else-if="link.intercom"
+                  v-else-if="link.support"
                   type="button"
                   class="text-sm leading-7 text-white hover:underline self-start text-left"
-                  @click="openIntercom"
+                  @click="isSupportOpen = true"
                 >
                   {{ link.name }}
                 </button>
@@ -88,14 +88,16 @@ SPDX-License-Identifier: MIT
         />
       </ClientOnly>
     </div>
+
+    <contact-support-modal v-model="isSupportOpen" />
   </footer>
 </template>
 
 <script setup lang="ts">
 import { nextTick, ref } from 'vue';
-import { useIntercom } from '~/composables/useIntercom';
 import { lfxFooterMenu } from '~/config/menu/footer';
 import { AppRoute } from '~/config/routes';
+import ContactSupportModal from '~/components/shared/layout/components/contact-support-modal.vue';
 import LfxMentorshipLogo from '~/components/shared/layout/components/lfx-mentorship-logo.vue';
 
 const {
@@ -105,16 +107,7 @@ const footerMenu = lfxFooterMenu(selfServeUrl);
 
 const lfxFooterRef = ref<HTMLElement | null>(null);
 
-const { boot, show } = useIntercom();
-
-async function openIntercom() {
-  try {
-    await boot({});
-    show();
-  } catch (err) {
-    console.error('[MentorshipFooter] Intercom is unavailable', err);
-  }
-}
+const isSupportOpen = ref(false);
 
 onMounted(async () => {
   await nextTick();

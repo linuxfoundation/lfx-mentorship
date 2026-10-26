@@ -64,6 +64,10 @@ const (
 // as history, so once a user has withdrawn this many for a term they cannot apply to it again.
 const MaxWithdrawnApplicationsPerTerm = 3
 
+// MaxPendingMenteeApplications caps how many mentee applications a user may have under review in
+// open terms at once, as legacy did and the public site promises.
+const MaxPendingMenteeApplications = 3
+
 // IsValid reports whether the status value is one of the allowed enum members.
 func (s ApplicationStatus) IsValid() bool {
 	switch s {

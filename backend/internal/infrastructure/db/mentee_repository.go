@@ -87,7 +87,7 @@ const menteeEnrichedCTE = `
 			f.program_name,
 			f.program_slug,
 			f.program_logo_url,
-			NULLIF(TRIM(COALESCE(NULLIF(TRIM(u.name), ''), CONCAT_WS(' ', up.first_name, up.last_name))), '') AS name,
+			` + sqlUserDisplayName + ` AS name,
 			COALESCE(NULLIF(up.logo_url, ''), u.avatar_url) AS avatar_url,
 			up.introduction,
 			COALESCE((
@@ -490,11 +490,11 @@ func (r *MenteeRepository) loadMentorsByProgram(ctx context.Context, ids []strin
 		return out, nil
 	}
 	rows, err := r.pool.Query(ctx, `
-		SELECT pm.id, pm.program_id, pm.user_id, u.name, COALESCE(NULLIF(up.logo_url, ''), u.avatar_url)
+		SELECT pm.id, pm.program_id, pm.user_id, `+sqlUserDisplayName+`, COALESCE(NULLIF(up.logo_url, ''), u.avatar_url)
 		FROM program_members pm
 		LEFT JOIN users u ON u.id = pm.user_id
 		LEFT JOIN LATERAL (
-			SELECT logo_url
+			SELECT logo_url, first_name, last_name
 			FROM user_profiles
 			WHERE user_id = pm.user_id
 			  AND profile_type = 'mentor'
@@ -504,7 +504,7 @@ func (r *MenteeRepository) loadMentorsByProgram(ctx context.Context, ids []strin
 		WHERE pm.program_id = ANY($1::uuid[])
 		  AND pm.member_type = 'mentor'
 		  AND pm.status = 'approved'
-		ORDER BY u.name NULLS LAST, pm.created_on`, ids)
+		ORDER BY `+sqlUserDisplayName+` NULLS LAST, pm.created_on`, ids)
 	if err != nil {
 		return nil, fmt.Errorf("list mentee program mentors: %w", err)
 	}

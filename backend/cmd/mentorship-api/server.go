@@ -153,6 +153,9 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 
 	// Services
 	userSvc := service.NewUserService(userRepo)
+	if accounts != nil {
+		userSvc.SetAccountDirectory(accounts)
+	}
 	userProfileSvc := service.NewUserProfileService(userProfileRepo, notifier)
 	programSvc := service.NewProgramService(programRepo, programTermRepo, applicationRepo, programMemberRepo, notifier)
 	if cfg.Crowdfunding.IsConfigured() {
@@ -167,6 +170,11 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	programTermSvc := service.NewProgramTermService(programTermRepo, applicationRepo, notifier)
 	programMemberSvc := service.NewProgramMemberService(programMemberRepo, programRepo, userRepo, accounts, notifier, cfg.Local.InviteSecret)
 	applicationSvc := service.NewApplicationService(applicationRepo, taskRepo, programTermRepo, programRepo, programMemberRepo, userProfileRepo, notifier)
+	if natsConn != nil && cfg.FGA.AccessWaitTimeout > 0 {
+		accessWaiter := fga.NewAccessWaiter(natsConn, cfg.FGA.AccessWaitTimeout)
+		programSvc.SetAccessWaiter(accessWaiter)
+		applicationSvc.SetAccessWaiter(accessWaiter)
+	}
 	taskSvc := service.NewTaskService(taskRepo, applicationRepo, programTermRepo, programMemberRepo, notifier)
 	menteeSvc := service.NewMenteeService(menteeRepo)
 	mentorSvc := service.NewMentorService(mentorRepo)

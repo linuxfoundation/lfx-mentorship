@@ -36,3 +36,11 @@ type ProgramSponsor struct {
 	LogoURL     string `json:"logo_url,omitempty"`
 	AmountCents int64  `json:"amount_cents"`
 }
+
+// ProgramSponsors is the sponsors panel payload for a program. CrowdfundingInitiative
+// is false when the program has no LFX Crowdfunding initiative yet, so it can take no
+// donations and has no sponsors.
+type ProgramSponsors struct {
+	Data                   []ProgramSponsor `json:"data"`
+	CrowdfundingInitiative bool             `json:"crowdfunding_initiative"`
+}

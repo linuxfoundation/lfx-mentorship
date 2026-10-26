@@ -8,6 +8,7 @@ package db
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -848,6 +849,65 @@ func TestApplicationRepositoryIntegration_ListByProgramStatusFilterAndOrder(t *t
 	}
 }
 
+func TestApplicationRepositoryIntegration_ListByProgramFallsBackToMenteeProfile(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	const (
+		bareUser    = "00000000-0000-0000-0000-0000000000f1" // signed in without name or email claims
+		namedUser   = "00000000-0000-0000-0000-0000000000f2"
+		bareApp     = "00000000-0000-0000-0000-0000000000f3"
+		namedApp    = "00000000-0000-0000-0000-0000000000f4"
+		profileMail = "ada+profile@example.org"
+	)
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid) VALUES ($1, 'bare')`, bareUser); err != nil {
+		t.Fatalf("insert bare user: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name, email) VALUES ($1, 'named', 'Grace Hopper', 'grace@example.org')`, namedUser); err != nil {
+		t.Fatalf("insert named user: %v", err)
+	}
+	for _, p := range []struct{ userID, first, last, email string }{
+		{bareUser, "Ada", "Lovelace", profileMail},
+		{namedUser, "Profile", "Name", "profile@example.org"},
+	} {
+		if _, err := pool.Exec(ctx, `INSERT INTO user_profiles (id, user_id, profile_type, first_name, last_name, email)
+			VALUES (gen_random_uuid(), $1, 'mentee', $2, $3, $4)`, p.userID, p.first, p.last, p.email); err != nil {
+			t.Fatalf("insert mentee profile: %v", err)
+		}
+	}
+	for _, a := range []struct{ id, userID string }{{bareApp, bareUser}, {namedApp, namedUser}} {
+		if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentee', 'pending')`,
+			a.id, fixture.OpenTerm, a.userID); err != nil {
+			t.Fatalf("insert application: %v", err)
+		}
+	}
+	repo := NewApplicationRepository(pool)
+
+	rows, _, err := repo.ListByProgram(ctx, fixture.ProgramID, models.ProgramApplicationFilter{Limit: 50})
+	if err != nil {
+		t.Fatalf("ListByProgram: %v", err)
+	}
+	want := map[string][2]string{bareApp: {"Ada Lovelace", profileMail}, namedApp: {"Grace Hopper", "grace@example.org"}}
+	for _, row := range rows {
+		w, ok := want[row.ApplicationID]
+		if !ok {
+			continue
+		}
+		if row.Name == nil || *row.Name != w[0] || row.Email == nil || *row.Email != w[1] {
+			t.Fatalf("row %s name/email = %v/%v; want %q/%q", row.ApplicationID, row.Name, row.Email, w[0], w[1])
+		}
+		delete(want, row.ApplicationID)
+	}
+	if len(want) != 0 {
+		t.Fatalf("ListByProgram is missing applications %v", want)
+	}
+
+	rows, meta, err := repo.ListByProgram(ctx, fixture.ProgramID, models.ProgramApplicationFilter{Search: "ada+profile", Limit: 50})
+	if err != nil || meta.Total != 1 || len(rows) != 1 || rows[0].ApplicationID != bareApp {
+		t.Fatalf("ListByProgram(search profile email) = %d rows, meta %+v, err = %v; want only %q", len(rows), meta, err, bareApp)
+	}
+}
+
 func indexOutboxFixtureRecord(objectType, objectUID string) domain.IndexOutboxRecord {
 	return domain.IndexOutboxRecord{ObjectType: objectType, ObjectUID: objectUID, Action: "updated", Headers: []byte(`{}`), Data: []byte(`{}`), IndexingConfig: []byte(`{}`)}
 }
@@ -953,6 +1013,131 @@ func TestApplicationRepositoryIntegration_ConcurrentAcceptancesOfOneMentee(t *te
 	}
 	if succeeded != 1 || refused != 1 {
 		t.Fatalf("succeeded %d, refused %d; want exactly one acceptance", succeeded, refused)
+	}
+}
+
+// seedOpenTerms adds n open terms to the fixture program and returns their ids.
+func seedOpenTerms(t *testing.T, pool *pgxpool.Pool, n int) []string {
+	t.Helper()
+	ids := make([]string, n)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("00000000-0000-0000-0000-0000000001%02d", i)
+		if _, err := pool.Exec(context.Background(), `INSERT INTO program_terms (id, program_id, name, status, application_start_date, application_end_date)
+			SELECT $1, program_id, $2, 'open', NOW() - interval '1 day', NOW() + interval '30 days'
+			FROM program_terms WHERE id = '00000000-0000-0000-0000-000000000011'`, ids[i], fmt.Sprintf("Extra %d", i)); err != nil {
+			t.Fatalf("insert term %d: %v", i, err)
+		}
+	}
+	return ids
+}
+
+// A mentee may have at most MaxPendingMenteeApplications applications pending in open terms;
+// withdrawn and declined applications and those in closed terms do not count.
+func TestApplicationRepositoryIntegration_PendingMenteeApplicationLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		lastStatus  models.ApplicationStatus
+		lastClosed  bool
+		wantRefused bool
+	}{
+		{name: "at the limit", lastStatus: models.ApplicationStatusPending, wantRefused: true},
+		{name: "one withdrawn", lastStatus: models.ApplicationStatusWithdrawn},
+		{name: "one declined", lastStatus: models.ApplicationStatusDeclined},
+		{name: "one in a closed term", lastStatus: models.ApplicationStatusPending, lastClosed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pool := integrationPool(t)
+			fixture := seedIntegrationFixture(t, pool)
+			ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+			terms := seedOpenTerms(t, pool, models.MaxPendingMenteeApplications)
+			for i, term := range terms {
+				status := models.ApplicationStatusPending
+				if i == len(terms)-1 {
+					status = tc.lastStatus
+				}
+				if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentee', $4)`,
+					fmt.Sprintf("00000000-0000-0000-0000-0000000002%02d", i), term, fixture.UserID, status); err != nil {
+					t.Fatalf("insert application %d: %v", i, err)
+				}
+			}
+			if tc.lastClosed {
+				if _, err := pool.Exec(ctx, `UPDATE program_terms SET status = 'closed' WHERE id = $1`, terms[len(terms)-1]); err != nil {
+					t.Fatalf("close term: %v", err)
+				}
+			}
+
+			input := models.ApplicationCreateInput{ID: "00000000-0000-0000-0000-000000000299", UserID: fixture.UserID, Role: models.ApplicationRoleMentee, Status: models.ApplicationStatusPending}
+			_, err := NewApplicationRepository(pool).Create(ctx, fixture.OpenTerm, input)
+			if refused := errors.Is(err, domain.ErrIneligible); refused != tc.wantRefused || (err != nil && !refused) {
+				t.Fatalf("create err = %v; want refused = %v", err, tc.wantRefused)
+			}
+		})
+	}
+}
+
+// Reapplying after a withdrawal is a new application and counts against the pending limit.
+func TestApplicationRepositoryIntegration_ReapplyEnforcesPendingLimit(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+	withdrawnID := "00000000-0000-0000-0000-000000000298"
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentee', 'withdrawn')`, withdrawnID, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatalf("insert withdrawn application: %v", err)
+	}
+	for i, term := range seedOpenTerms(t, pool, models.MaxPendingMenteeApplications) {
+		if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentee', 'pending')`,
+			fmt.Sprintf("00000000-0000-0000-0000-0000000002%02d", i), term, fixture.UserID); err != nil {
+			t.Fatalf("insert application %d: %v", i, err)
+		}
+	}
+
+	input := models.ApplicationCreateInput{ID: "00000000-0000-0000-0000-000000000299", UserID: fixture.UserID, Role: models.ApplicationRoleMentee, Status: models.ApplicationStatusPending}
+	if _, err := NewApplicationRepository(pool).ReapplyWithTasks(ctx, withdrawnID, fixture.OpenTerm, input, nil); !errors.Is(err, domain.ErrIneligible) {
+		t.Fatalf("reapply past the pending limit err = %v; want ErrIneligible", err)
+	}
+}
+
+// Applications to different terms lock different term rows; the per-mentee lock still lets only
+// one of two concurrent applications take the last slot.
+func TestApplicationRepositoryIntegration_ConcurrentApplicationsRespectPendingLimit(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+	terms := seedOpenTerms(t, pool, models.MaxPendingMenteeApplications)
+	// Hold all but one slot, then race two applications for it.
+	held, contested := terms[:len(terms)-1], []string{terms[len(terms)-1], fixture.OpenTerm}
+	for i, term := range held {
+		if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentee', 'pending')`,
+			fmt.Sprintf("00000000-0000-0000-0000-0000000002%02d", i), term, fixture.UserID); err != nil {
+			t.Fatalf("insert application %d: %v", i, err)
+		}
+	}
+
+	repo := NewApplicationRepository(pool)
+	start := make(chan struct{})
+	errs := make(chan error, len(contested))
+	for i, term := range contested {
+		input := models.ApplicationCreateInput{ID: fmt.Sprintf("00000000-0000-0000-0000-0000000003%02d", i), UserID: fixture.UserID, Role: models.ApplicationRoleMentee, Status: models.ApplicationStatusPending}
+		go func() {
+			<-start
+			_, err := repo.Create(ctx, term, input)
+			errs <- err
+		}()
+	}
+	close(start)
+	succeeded, refused := 0, 0
+	for range contested {
+		switch err := <-errs; {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, domain.ErrIneligible):
+			refused++
+		default:
+			t.Fatalf("create: %v", err)
+		}
+	}
+	if succeeded != 1 || refused != 1 {
+		t.Fatalf("succeeded %d, refused %d; want exactly one application", succeeded, refused)
 	}
 }
 

@@ -97,9 +97,19 @@ describe('BFF route handlers', () => {
     await expect(call(await load('./programs/[id]/mentees.get'), event)).resolves.toEqual([
       expect.objectContaining({ id: 'e1', status: 'graduated' }),
     ]);
-    await expect(call(await load('./programs/[id]/sponsors.get'), event)).resolves.toEqual([
-      expect.objectContaining({ id: 's1', name: 'ACME', amountCents: 100 }),
-    ]);
+    await expect(call(await load('./programs/[id]/sponsors.get'), event)).resolves.toEqual({
+      sponsors: [expect.objectContaining({ id: 's1', name: 'ACME', amountCents: 100 })],
+      crowdfundingInitiative: true,
+    });
+  });
+
+  it('passes on a program without a Crowdfunding initiative', async () => {
+    fetchMock.mockImplementation(async (url: string) =>
+      url.includes('/resolve/') ? { id: 'uid-1' } : { data: [], crowdfunding_initiative: false },
+    );
+    await expect(
+      call(await load('./programs/[id]/sponsors.get'), { params: { id: 'p' } }),
+    ).resolves.toEqual({ sponsors: [], crowdfundingInitiative: false });
   });
 
   it('treats a missing mentees or sponsors list as empty', async () => {
@@ -108,7 +118,10 @@ describe('BFF route handlers', () => {
     );
     const event = { params: { id: 'p' } };
     await expect(call(await load('./programs/[id]/mentees.get'), event)).resolves.toEqual([]);
-    await expect(call(await load('./programs/[id]/sponsors.get'), event)).resolves.toEqual([]);
+    await expect(call(await load('./programs/[id]/sponsors.get'), event)).resolves.toEqual({
+      sponsors: [],
+      crowdfundingInitiative: true,
+    });
   });
 
   it.each([

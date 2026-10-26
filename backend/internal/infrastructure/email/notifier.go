@@ -37,6 +37,9 @@ const sendConcurrency = 5
 // bulk operation that notifies hundreds of mentees cannot exhaust the database pool or flood NATS.
 const maxConcurrentDispatches = 10
 
+// profilePageSize is the largest page the profile listing serves.
+const profilePageSize = 100
+
 var notifierTracer = otel.Tracer("email-notifier")
 
 const (
@@ -217,7 +220,7 @@ func (n *Notifier) inviterName(ctx context.Context, inviterID string) string {
 	if inviterID == "" {
 		return inviterFallback
 	}
-	inviter, err := n.repos.Users.GetByID(ctx, inviterID)
+	inviter, err := n.user(ctx, inviterID)
 	if err != nil {
 		n.logger.WarnContext(ctx, "mentor inviter unavailable", "error", err)
 		return inviterFallback
@@ -281,7 +284,7 @@ func (n *Notifier) notifyAdminsOfMentor(ctx context.Context, name, programID, us
 		if err != nil {
 			return nil, fmt.Errorf("get program: %w", err)
 		}
-		mentor, err := n.repos.Users.GetByID(ctx, userID)
+		mentor, err := n.user(ctx, userID)
 		if err != nil {
 			return nil, fmt.Errorf("get mentor: %w", err)
 		}
@@ -346,7 +349,7 @@ func (n *Notifier) NotifyProgramSubmitted(ctx context.Context, programID, submit
 		}
 		// The submitter is context for the reviewer; a failed lookup must not hold back the notice.
 		if submitterID != "" {
-			submitter, err := n.repos.Users.GetByID(ctx, submitterID)
+			submitter, err := n.user(ctx, submitterID)
 			if err != nil {
 				n.logger.WarnContext(ctx, "program submitter unavailable", "user_id", submitterID, "error", err)
 			} else {
@@ -448,7 +451,7 @@ func (n *Notifier) NotifyAdminTasksSubmitted(ctx context.Context, applicationID 
 		if err != nil {
 			return nil, err
 		}
-		mentee, err := n.repos.Users.GetByID(ctx, app.UserID)
+		mentee, err := n.user(ctx, app.UserID)
 		if err != nil {
 			return nil, fmt.Errorf("get mentee: %w", err)
 		}
@@ -491,7 +494,7 @@ func (n *Notifier) NotifyMenteeAccepted(ctx context.Context, applicationID, atte
 		if err != nil {
 			return nil, err
 		}
-		mentee, err := n.repos.Users.GetByID(ctx, app.UserID)
+		mentee, err := n.user(ctx, app.UserID)
 		if err != nil {
 			return nil, fmt.Errorf("get mentee: %w", err)
 		}
@@ -655,7 +658,7 @@ func (n *Notifier) NotifyMenteeWithdrawn(ctx context.Context, applicationID stri
 		if err != nil {
 			return nil, err
 		}
-		mentee, err := n.repos.Users.GetByID(ctx, app.UserID)
+		mentee, err := n.user(ctx, app.UserID)
 		if err != nil {
 			return nil, fmt.Errorf("get mentee: %w", err)
 		}
@@ -971,8 +974,59 @@ func adminContacts(admins []recipientUser) []adminContact {
 	return contacts
 }
 
-func (n *Notifier) recipient(ctx context.Context, userID string) (*models.User, string, error) {
+// user returns userID's account, filling each missing email, given name and family name from the
+// newest profile that has it: a sign-in without identity claims leaves the account's NULL while the
+// profile holds what the user typed. An account with a full name needs no name parts. A failed
+// profile lookup keeps what was filled so far.
+func (n *Notifier) user(ctx context.Context, userID string) (*models.User, error) {
 	user, err := n.repos.Users.GetByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	filled := *user
+	fields := []profileFallback{{&filled.Email, func(p *models.UserProfile) *string { return p.Email }}}
+	if strings.TrimSpace(deref(user.Name)) == "" {
+		fields = append(fields,
+			profileFallback{&filled.GivenName, func(p *models.UserProfile) *string { return p.FirstName }},
+			profileFallback{&filled.FamilyName, func(p *models.UserProfile) *string { return p.LastName }})
+	}
+	missing := func() bool {
+		for _, f := range fields {
+			if strings.TrimSpace(deref(*f.account)) == "" {
+				return true
+			}
+		}
+		return false
+	}
+	for offset := 0; missing(); {
+		page, meta, err := n.repos.Profiles.List(ctx, models.UserProfileFilter{UserID: userID, Limit: profilePageSize, Offset: offset})
+		if err != nil {
+			n.logger.WarnContext(ctx, "profile fallback unavailable", "user_id", userID, "error", err)
+			break
+		}
+		for _, p := range page {
+			for _, f := range fields {
+				if v := strings.TrimSpace(deref(f.profile(p))); v != "" && strings.TrimSpace(deref(*f.account)) == "" {
+					*f.account = &v
+				}
+			}
+		}
+		offset += len(page)
+		if len(page) == 0 || meta == nil || offset >= meta.Total {
+			break
+		}
+	}
+	return &filled, nil
+}
+
+// profileFallback pairs a user field with the profile field that fills it when it is blank.
+type profileFallback struct {
+	account **string
+	profile func(*models.UserProfile) *string
+}
+
+func (n *Notifier) recipient(ctx context.Context, userID string) (*models.User, string, error) {
+	user, err := n.user(ctx, userID)
 	if err != nil {
 		return nil, "", fmt.Errorf("get user %s: %w", userID, err)
 	}

@@ -89,7 +89,28 @@ flowchart LR
 4. The public slug resolver uses `allow_all`; UID-addressed routes use an
   OpenFGA relation from the route matrix.
 5. Heimdall creates a PS256 JWT with audience `lfx-mentorship-backend` and a
-   `principal` claim.
+   `principal` claim. On exactly two routes, `PUT /me` (rule
+   `identity-bootstrap`) and `POST /me/program-memberships` (rule
+   `me-program-membership-request`), the pipeline also runs the platform's
+   `oidc_contextualizer` (chart value `app.use_oidc_contextualizer`, on by
+   default), which calls the IdP's `userinfo` endpoint so `create_jwt` adds the
+   caller's verified `email`; the gateway denies the request if the address is
+   unverified. No other route runs it: each run is a `userinfo` call that Auth0
+   limits per user to a burst of 10 and 5 a minute, shared with every other
+   caller, and Self Serve reads several `/me` routes per page. `PUT /me` creates
+   the local user from these claims, so without the contextualizer new users
+   are stored with no email or name ([#360](https://github.com/linuxfoundation/lfx-mentorship/issues/360)).
+   The backend also reads `name`, `given_name`, `family_name` and `picture`
+   claims ([lfx-v2-helm#190](https://github.com/linuxfoundation/lfx-v2-helm/pull/190)
+   adds them to the finalizer). Whatever the token, the request body and the
+   stored row all lack, `UserService.Bootstrap` fills from lfx-v2-auth-service
+   over NATS (`user_metadata.read`, `user_emails.read`), the same sign-in sync
+   lfx-crowdfunding does. Directory values are written as a fill the
+   repository applies only to columns still `NULL`, in the same statement as
+   the sign-in's own values, so an edit made while the lookup was in flight is
+   never replaced; a failed lookup is logged and never fails the sign-in. A token email is
+   verified at the gateway and reclaims the address from a stale row; a
+   directory email is not, so it is stored only while no other row holds it.
 6. The backend validates the JWT against the cluster-internal Heimdall JWKS.
 7. Handlers execute workflow logic without repeating the edge authorization
    decision.
@@ -251,6 +272,7 @@ required components must be present.
 | `FGA_RELAY_INTERVAL` | `1s` | Poll interval for FGA and index relays |
 | `FGA_RELAY_RETRY_DELAY` | `1m` | Delay before retrying an FGA marker |
 | `FGA_RELAY_MAX_ATTEMPTS` | `10` | Attempts before FGA dead letter |
+| `FGA_ACCESS_WAIT_TIMEOUT` | `10s` | How long a program or application create polls `lfx.access_check.request` for the creator's relation (`writer` / `auditor`) before responding anyway; `0` disables, max `15s` |
 | `INDEXER_SERVICE_TOKEN` | None | Service credential stamped on index messages; secret value. Without it the index relay idles |
 | `INDEX_RELAY_RETRY_DELAY` | `1m` | Delay after a failed index publish |
 | `INDEX_RELAY_MAX_ATTEMPTS` | `10` | Failed index publishes before dead letter |
@@ -277,6 +299,7 @@ These are Helm values, not process environment variables:
 | `heimdall.url` | Platform Heimdall main endpoint, normally port `4456` |
 | `openfga.enabled` | `true`; chart consistency gate for Heimdall activation |
 | `app.audience` | `lfx-mentorship-backend` |
+| `app.use_oidc_contextualizer` | `true` (default) to run the platform's `oidc_contextualizer` on `PUT /me` and `POST /me/program-memberships` so the JWT carries the caller's verified `email`; `false` leaves new users without one |
 | `lfx.domain` | Environment domain used to form `lfx-api.{domain}` |
 | `traefik.gateway.name` | Shared gateway name |
 | `traefik.gateway.namespace` | Shared gateway namespace |
@@ -336,6 +359,33 @@ application and deleting its quarantine row.
 
 The relays must be running before the seed commits so that new writes and seed
 markers converge through the same path.
+
+## User Identity Backfill
+
+Users who signed in before the identity fixes in
+[#362](https://github.com/linuxfoundation/lfx-mentorship/pull/362) have rows
+with no email or name ([#360](https://github.com/linuxfoundation/lfx-mentorship/issues/360)).
+`/app/user-backfill` completes them from the LF directory. For each row it
+asks the directory only for what is missing, then sets only the columns still
+`NULL` at write time, so a value stored since the row was read is kept, and it
+never touches another row: an email already held elsewhere is reported as a
+failure, not taken. It needs the database settings and `FGA_NATS_URL`, so run
+it in the cluster from the backend image, as a one-off Job or from the runner
+pod:
+
+```bash
+/app/user-backfill                        # dry run: reports what --apply would write
+/app/user-backfill --apply                # write; exit 1 if any row failed
+/app/user-backfill --apply --limit 200    # bounded run; prints a --cursor to continue
+/app/user-backfill --apply --cursor 2026-01-01T00:00:00Z/<id>
+```
+
+Rows are visited oldest first. Each is reported as `completed`, `filled … still
+missing N` (the directory lacks some fields too), `unchanged` (the directory
+has nothing more) or `FAILED` (a write error, or the directory did not
+answer). Rows the directory cannot complete stay incomplete, so a bounded run
+prints the position to continue from rather than re-visiting them; a run that
+reaches the end prints no cursor. Re-running is safe.
 
 ## Dead-Letter Recovery
 

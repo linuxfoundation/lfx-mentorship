@@ -14,11 +14,51 @@ const RE_LEGACY_MENTOR = /^\/mentor\/([^/]+)\/?$/;
 const RE_LEGACY_FLOW =
   /^\/(?:project\/applied|mentee\/(?:applications|tasks)|participate|profile|email)(?:\/.*)?$/;
 
+// Signed-in flows that legacy emails and bookmarks link to and that Self Serve now serves. They are
+// checked before RE_LEGACY_FLOW, which sends the rest home, and drop the query for the same reason,
+// except the approval decision, which is carried over.
+const RE_LEGACY_APPROVAL = /^\/email\/process-approval\/?$/;
+// Self Serve's program-review page needs the decision and shows an invalid link without one;
+// legacy approval emails send it as action=approve|decline.
+const LEGACY_APPROVAL_DECISIONS = new Map([
+  ['approve', 'approve'],
+  ['decline', 'reject'],
+]);
+// The pathname is already percent-encoded, so the captured program id is safe to forward as is.
+const RE_LEGACY_PROGRAM_MENTEES = /^\/project\/([^/]+)\/mentees\/?$/;
+const SELF_SERVE_FLOWS: ReadonlyArray<readonly [RegExp, string]> = [
+  // Includes the old invitation links, /participate/mentor/join|decline/{id}.
+  [/^\/participate\/mentor(?:\/.*)?$/, '/mentorship/mentor'],
+  [/^\/profile\/mentor\/edit\/?$/, '/mentorship/mentor/profile'],
+  [/^\/mentee\/tasks\/?$/, '/mentorship/mentee/tasks'],
+  [/^\/(?:mentee\/applications|project\/applied)\/?$/, '/mentorship/mentee'],
+];
+
+// The Self Serve path a legacy signed-in link maps to, or undefined when it has none.
+function selfServePath(pathname: string, searchParams: URLSearchParams): string | undefined {
+  if (RE_LEGACY_APPROVAL.test(pathname)) {
+    const programId = searchParams.get('id');
+    if (!programId) return undefined;
+    const path = `/mentorship/program-review/${encodeURIComponent(programId)}`;
+    const decision = LEGACY_APPROVAL_DECISIONS.get(searchParams.get('action') ?? '');
+    return decision ? `${path}?decision=${decision}` : path;
+  }
+  const programMentees = RE_LEGACY_PROGRAM_MENTEES.exec(pathname);
+  if (programMentees) return `/mentorship/admin/${programMentees[1]}`;
+  return SELF_SERVE_FLOWS.find(([pattern]) => pattern.test(pathname))?.[1];
+}
+
 export default defineEventHandler((event) => {
   const method = event.method.toUpperCase();
   if (method !== 'GET' && method !== 'HEAD') return;
 
-  const { pathname, search } = getRequestURL(event);
+  const { pathname, search, searchParams } = getRequestURL(event);
+  const selfServe = selfServePath(pathname, searchParams);
+  if (selfServe) {
+    const base = useRuntimeConfig(event).public.selfServeUrl.replace(/\/$/, '');
+    // 302, so browsers do not cache a redirect into another app's routes.
+    return sendRedirect(event, `${base}${selfServe}`, 302);
+  }
   // Checked first: /project/applied and /mentee/tasks would otherwise read as ids.
   if (RE_LEGACY_FLOW.test(pathname)) return sendRedirect(event, '/', 301);
 

@@ -143,6 +143,10 @@ func (r *ApplicationRepository) ListByProgramTerm(ctx context.Context, programTe
 const prerequisitesDone = `(NOT EXISTS (SELECT 1 FROM tasks t
 	WHERE t.application_id = a.id AND t.category = 'prerequisite' AND t.status NOT IN ('submitted', 'complete')))`
 
+// applicantEmail is the account's email, else the one on the mentee profile joined as up: a
+// sign-in without an email claim leaves the account's NULL.
+const applicantEmail = `COALESCE(NULLIF(u.email, ''), NULLIF(up.email, ''))`
+
 func (r *ApplicationRepository) ListByProgram(ctx context.Context, programID string, filter models.ProgramApplicationFilter) ([]*models.ProgramApplicationRow, *models.PaginationMeta, error) {
 	limit, offset := filter.Limit, filter.Offset
 	if limit <= 0 || limit > 50 {
@@ -183,7 +187,7 @@ func (r *ApplicationRepository) ListByProgram(ctx context.Context, programID str
 	}
 	if filter.Search != "" {
 		args = append(args, "%"+filter.Search+"%")
-		where += fmt.Sprintf(` AND (u.name ILIKE $%d OR u.email ILIKE $%d)`, len(args), len(args))
+		where += fmt.Sprintf(` AND (`+sqlUserDisplayName+` ILIKE $%d OR `+applicantEmail+` ILIKE $%d)`, len(args), len(args))
 	}
 	// Furthest-along applicants first; pending splits on prerequisitesDone as the status filter does.
 	const orderBy = ` ORDER BY CASE
@@ -193,19 +197,20 @@ func (r *ApplicationRepository) ListByProgram(ctx context.Context, programID str
 		WHEN a.status = 'pending' THEN 4
 		WHEN a.status = 'declined' THEN 5
 		ELSE 6 END, a.created_on DESC, a.id DESC`
+	const from = ` FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id JOIN programs p ON p.id = pt.program_id JOIN users u ON u.id = a.user_id
+		LEFT JOIN user_profiles up ON up.user_id = a.user_id AND up.profile_type = 'mentee'`
 	var total int
-	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id JOIN programs p ON p.id = pt.program_id JOIN users u ON u.id = a.user_id`+where, args...).Scan(&total); err != nil {
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*)`+from+where, args...).Scan(&total); err != nil {
 		return nil, nil, fmt.Errorf("count program applications: %w", err)
 	}
 	args = append(args, limit, offset)
-	q := `SELECT a.user_id, a.id, u.name, u.email, COALESCE((SELECT NULLIF(up.logo_url, '') FROM user_profiles up WHERE up.user_id = a.user_id AND up.profile_type = 'mentee' ORDER BY up.updated_on DESC LIMIT 1), u.avatar_url), a.status, pt.id, pt.name, pt.status, pt.start_date_time, pt.end_date_time, pt.application_start_date, pt.application_end_date,
+	q := `SELECT a.user_id, a.id, ` + sqlUserDisplayName + `, ` + applicantEmail + `, COALESCE(NULLIF(up.logo_url, ''), u.avatar_url), a.status, pt.id, pt.name, pt.status, pt.start_date_time, pt.end_date_time, pt.application_start_date, pt.application_end_date,
 		(SELECT COUNT(*) FROM tasks t WHERE t.application_id = a.id),
 		(SELECT COUNT(*) FROM tasks t WHERE t.application_id = a.id AND t.status IN ('submitted', 'complete')),
 		a.reviewer_note, a.created_on, a.updated_on,
 		COALESCE((SELECT jsonb_agg(jsonb_build_object('program_id', op.id, 'program_name', op.name, 'status', oa.status))
 			FROM applications oa JOIN program_terms ot ON ot.id = oa.program_term_id JOIN programs op ON op.id = ot.program_id
-			WHERE oa.user_id = a.user_id AND op.id <> pt.program_id AND oa.role = 'mentee' AND oa.status IN ('pending', 'accepted', 'graduated')), '[]'::jsonb)
-		FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id JOIN programs p ON p.id = pt.program_id JOIN users u ON u.id = a.user_id` + where + orderBy + fmt.Sprintf(` LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
+			WHERE oa.user_id = a.user_id AND op.id <> pt.program_id AND oa.role = 'mentee' AND oa.status IN ('pending', 'accepted', 'graduated')), '[]'::jsonb)` + from + where + orderBy + fmt.Sprintf(` LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
 	rows, err := r.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("list program applications: %w", err)
@@ -408,7 +413,7 @@ func (r *ApplicationRepository) ReapplyWithTasks(ctx context.Context, oldID, pro
 
 // checkCanApply re-checks, under the caller's term lock, what the service checked before the
 // transaction began: the term takes applications now, its program is published, and a mentee
-// applicant holds no accepted or graduated mentee application.
+// applicant holds no accepted or graduated mentee application and is under the pending limit.
 func checkCanApply(ctx context.Context, tx pgx.Tx, term *models.ProgramTerm, input models.ApplicationCreateInput) error {
 	if !term.AcceptsApplications(time.Now()) {
 		return fmt.Errorf("%w: applications are not open for this term", domain.ErrIneligible)
@@ -417,7 +422,30 @@ func checkCanApply(ctx context.Context, tx pgx.Tx, term *models.ProgramTerm, inp
 		return err
 	}
 	if input.Role == models.ApplicationRoleMentee {
-		return checkMenteeAvailable(ctx, tx, input.UserID, input.ID, true)
+		if err := checkMenteeAvailable(ctx, tx, input.UserID, input.ID, true); err != nil {
+			return err
+		}
+		return checkPendingMenteeApplicationLimit(ctx, tx, input.UserID)
+	}
+	return nil
+}
+
+// checkPendingMenteeApplicationLimit refuses once the user has MaxPendingMenteeApplications mentee
+// applications pending in open terms. Legacy jobspring counted pending and accepted rows in open
+// terms; an accepted one already refuses the apply in checkMenteeAvailable, so only pending ones
+// are counted here. The caller must hold the per-mentee lock that checkMenteeAvailable takes, so
+// concurrent applications to different terms cannot both pass.
+func checkPendingMenteeApplicationLimit(ctx context.Context, tx pgx.Tx, userID string) error {
+	var pending int
+	if err := tx.QueryRow(ctx, `
+		SELECT COUNT(*) FROM applications a
+		JOIN program_terms pt ON pt.id = a.program_term_id
+		WHERE a.user_id = $1 AND a.role = $2 AND a.status = $3 AND pt.status = $4`,
+		userID, models.ApplicationRoleMentee, models.ApplicationStatusPending, models.ProgramTermStatusOpen).Scan(&pending); err != nil {
+		return fmt.Errorf("count pending mentee applications: %w", err)
+	}
+	if pending >= models.MaxPendingMenteeApplications {
+		return fmt.Errorf("%w: you already have %d applications under review; withdraw one before applying again", domain.ErrIneligible, pending)
 	}
 	return nil
 }

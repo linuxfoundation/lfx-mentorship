@@ -1317,7 +1317,7 @@ Returns categorized donation transactions for a mentorship program by proxying t
 **Errors**
 
 - `400` invalid pagination parameters
-- `404` program not found
+- `404` program not found, or Crowdfunding has no initiative for it
 - `503` upstream unavailable (Crowdfunding client not configured or upstream failure)
 
 ---
@@ -1338,8 +1338,10 @@ Returns sponsor cards aggregated in the mentorship backend from crowdfunding tra
 **Response** `200`
 
 ```json
-{ "data": [<ProgramSponsor>, ...] }
+{ "data": [<ProgramSponsor>, ...], "crowdfunding_initiative": true }
 ```
+
+`crowdfunding_initiative` is `false` when Crowdfunding has no initiative for the program yet; `data` is then empty and the program cannot take donations.
 
 **Errors**
 
