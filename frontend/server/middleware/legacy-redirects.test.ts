@@ -63,7 +63,15 @@ describe('legacy-redirects middleware', () => {
   });
 
   it.each([
-    [`/email/process-approval?id=${ID}&action=approve`, `/mentorship/program-review/${ID}`],
+    [
+      `/email/process-approval?id=${ID}&action=approve`,
+      `/mentorship/program-review/${ID}?decision=approve`,
+    ],
+    [
+      `/email/process-approval?id=${ID}&action=decline`,
+      `/mentorship/program-review/${ID}?decision=reject`,
+    ],
+    [`/email/process-approval?id=${ID}&action=constructor`, `/mentorship/program-review/${ID}`],
     ['/email/process-approval?id=a%20b%2Fc', '/mentorship/program-review/a%20b%2Fc'],
     [`/project/${ID}/mentees`, `/mentorship/admin/${ID}`],
     [`/project/${ID}/mentees/`, `/mentorship/admin/${ID}`],
@@ -74,7 +82,7 @@ describe('legacy-redirects middleware', () => {
     ['/mentee/tasks', '/mentorship/mentee/tasks'],
     ['/mentee/applications', '/mentorship/mentee'],
     ['/project/applied', '/mentorship/mentee'],
-  ])('sends the legacy signed-in link %s to Self Serve %s without its query', (from, to) => {
+  ])('sends the legacy signed-in link %s to Self Serve %s', (from, to) => {
     handler(request(from));
     expect(mockSendRedirect).toHaveBeenCalledWith(expect.anything(), `${SELF_SERVE}${to}`, 302);
   });

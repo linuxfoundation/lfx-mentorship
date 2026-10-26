@@ -15,8 +15,15 @@ const RE_LEGACY_FLOW =
   /^\/(?:project\/applied|mentee\/(?:applications|tasks)|participate|profile|email)(?:\/.*)?$/;
 
 // Signed-in flows that legacy emails and bookmarks link to and that Self Serve now serves. They are
-// checked before RE_LEGACY_FLOW, which sends the rest home, and drop the query for the same reason.
+// checked before RE_LEGACY_FLOW, which sends the rest home, and drop the query for the same reason,
+// except the approval decision, which is carried over.
 const RE_LEGACY_APPROVAL = /^\/email\/process-approval\/?$/;
+// Self Serve's program-review page needs the decision and shows an invalid link without one;
+// legacy approval emails send it as action=approve|decline.
+const LEGACY_APPROVAL_DECISIONS = new Map([
+  ['approve', 'approve'],
+  ['decline', 'reject'],
+]);
 // The pathname is already percent-encoded, so the captured program id is safe to forward as is.
 const RE_LEGACY_PROGRAM_MENTEES = /^\/project\/([^/]+)\/mentees\/?$/;
 const SELF_SERVE_FLOWS: ReadonlyArray<readonly [RegExp, string]> = [
@@ -31,7 +38,10 @@ const SELF_SERVE_FLOWS: ReadonlyArray<readonly [RegExp, string]> = [
 function selfServePath(pathname: string, searchParams: URLSearchParams): string | undefined {
   if (RE_LEGACY_APPROVAL.test(pathname)) {
     const programId = searchParams.get('id');
-    return programId ? `/mentorship/program-review/${encodeURIComponent(programId)}` : undefined;
+    if (!programId) return undefined;
+    const path = `/mentorship/program-review/${encodeURIComponent(programId)}`;
+    const decision = LEGACY_APPROVAL_DECISIONS.get(searchParams.get('action') ?? '');
+    return decision ? `${path}?decision=${decision}` : path;
   }
   const programMentees = RE_LEGACY_PROGRAM_MENTEES.exec(pathname);
   if (programMentees) return `/mentorship/admin/${programMentees[1]}`;
