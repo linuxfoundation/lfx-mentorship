@@ -28,16 +28,21 @@ No sign-in is required to read a program page.
     | **Applications close** | The last day to apply |
     | **Stipend** | The amount, or that the amount is determined by mentee location |
 
-4. Work through the tabs:
-   - **Overview** — the program description and what the project expects from a mentee.
-   - **Terms** — the dates for this and any earlier terms.
-   - **Mentors** — who will review your work.
-   - **Mentees** — who has taken part in this program before.
-   - **Sponsors** — who funds the program, where it is funded.
+4. Open **Overview** for the program description and what the project expects from a mentee.
+5. Open **Terms** for the dates of this and any earlier terms. Applications are always made to a term, so check which one is open before you apply.
 
-    ![Program mentors tab](/images/docs/screenshots/programs/program-detail-mentors.png)
+    ![Terms tab on a program page](/images/docs/screenshots/programs/program-detail-terms.png)
 
-5. Use the header actions:
+6. Open **Mentors** to see who will review your work.
+
+    ![Mentors tab on a program page](/images/docs/screenshots/programs/program-detail-mentors.png)
+
+7. Open **Mentees** for the program's current mentees and the ones who have graduated from earlier terms, each with the term they took part in.
+
+    ![Mentees tab on a program page](/images/docs/screenshots/programs/program-detail-mentees.png)
+
+8. Open **Sponsors** to see who funds the program, where it is funded.
+9. Use the header actions:
    - **Apply to This Program** — opens the application in LFX.
    - **Repository** — the project's source repository.
    - **Donate** — fund the program through LFX Crowdfunding.
