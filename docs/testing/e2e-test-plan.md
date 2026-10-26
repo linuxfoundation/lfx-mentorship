@@ -274,8 +274,11 @@ PROD is still on `v0.1.10`; these fixes are on `main` only.
 | 3.10 | Re-open a closed term whose end date has not passed | ✅ Re-Open confirms, the term is open (also on the public site), and Close restores it |
 | 3.11 | Re-open an ended term | ✅ Ended terms show no actions; the backend also refuses (`program_term_service.go:193`) |
 | 6.8 | Re-open a declined application | — The backend allows `declined` → `pending`, but no page offers it |
+| 4.2 | Mentor invite from the email link: accept, decline, wrong account, reuse after decline | ✅ Accept and decline work and email the admins (`admin_mentor_accepted`, `admin_mentor_declined`); another account gets 403 "This invitation is for a different account"; a used link says "can't be used". ❌ Opened cold on an idle session, the link bounced to the dashboard and the token was lost ([F12](#findings)) |
+| 4.11 | Create a task for a mentee who is not accepted | ✅ Pending applicants offer no task action, Create Group Task is disabled with no accepted mentees, and the API refuses a graduated one: "Tasks can be created only for accepted mentees" |
+| 6.9 | Contact a mentee (product docs: Email and Call links for admins and mentors) | ❌ Neither the admin nor the mentor view shows a mentee's email or phone; admins can only get emails from Download By Status, mentors have no way ([F18](#findings)) |
 
-Comparing the legacy jobspring features with this plan left these untested: accepting or declining a mentor invite from the email link (4.2), and the stipend feed for newly accepted mentees (Postgres → Fivetran → Snowflake → Crowdfunding `mentorship-sync`), which starts after release. 22 of the 23 email types were sent during testing; the missing one is `admin_mentor_declined` (a mentor declines an invite). By design, mentors no longer accept or decline mentee applications ([04](../rewrite/04-authorization-model.md)), which legacy allowed.
+Comparing the legacy jobspring features with this plan left one flow untested: the stipend feed for newly accepted mentees (Postgres → Fivetran → Snowflake → Crowdfunding `mentorship-sync`), which starts after release. All 23 email types were sent during testing. By design, mentors no longer accept or decline mentee applications ([04](../rewrite/04-authorization-model.md)), which legacy allowed.
 
 F12 reproduced twice more in this session's normal testing, as a mentee and as an admin.
 
@@ -310,6 +313,7 @@ F12 reproduced twice more in this session's normal testing, as a mentee and as a
 | F16 | Legacy email links for approvers, program admins and invited mentors land on the public site after cutover, instead of the Self Serve page where they can act. Filed by Michal; re-test before the 2026-10-27 cutover. | PROD | High (cutover) | [linuxfoundation/lfx-mentorship#367](https://github.com/linuxfoundation/lfx-mentorship/issues/367): fixed on DEV, PROD pending release |
 | F14 | A first-time applicant who registers from an Apply link stays on the registration form after the profile is saved, with no message and no move on to the application. | DEV | High (launch) | [linuxfoundation/lfx-self-serve#4232](https://github.com/linuxfoundation/lfx-self-serve/issues/4232): fixed on DEV |
 | F17 | Ended terms never close. Legacy closed them automatically once no applications were active. 123 ended PROD terms are still open, so their programs show "In progress", and they count toward the cap of 4 open terms per program. | PROD | Medium | [linuxfoundation/lfx-mentorship#369](https://github.com/linuxfoundation/lfx-mentorship/issues/369) |
+| F18 | Program admins and mentors can't see an accepted mentee's email or phone in Self Serve; legacy had Email and Call links, and the product docs still describe them. Admins can get emails only from the CSV export; mentors not at all. | DEV | Medium | — |
 
 **Info, no action proposed:**
 - The landing page counts 5 graduated mentees on DEV, while the directory's Graduated tab lists 4.
