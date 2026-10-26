@@ -2,8 +2,14 @@
 // SPDX-License-Identifier: MIT
 
 /**
- * Build script: scans docs/user/ and writes a search index to
+ * Build script: scans frontend/docs/user/ and writes a search index to
  * public/assets/docs/search-index.json for use by the client-side search component.
+ *
+ * The sources live inside frontend/ on purpose: both image workflows build with
+ * `context: frontend/`, so anything at the repo root is outside the build context and
+ * never reaches the builder. A missing directory is a build failure rather than an
+ * empty index, since an empty index is indistinguishable from a working portal with no
+ * articles until someone opens /docs in a deployed environment.
  *
  * Run via: pnpm docs:build
  * Auto-runs before: pnpm dev, pnpm build
@@ -13,7 +19,7 @@ import { readdirSync, readFileSync, writeFileSync, existsSync, mkdirSync } from 
 import { resolve, join } from 'node:path';
 import { load as parseYaml } from 'js-yaml';
 
-const DOCS_DIR = resolve(import.meta.dirname, '../../docs/user');
+const DOCS_DIR = resolve(import.meta.dirname, '../docs/user');
 const OUT_FILE = resolve(import.meta.dirname, '../public/assets/docs/search-index.json');
 
 function parseFrontmatter(raw) {
@@ -77,7 +83,17 @@ function walk(dir, parentSlug = '') {
   return docs;
 }
 
+if (!existsSync(DOCS_DIR)) {
+  process.stderr.write(`docs:build — source directory not found: ${DOCS_DIR}\n`);
+  process.exit(1);
+}
+
 const docs = walk(DOCS_DIR);
+
+if (docs.length === 0) {
+  process.stderr.write(`docs:build — no documents found under ${DOCS_DIR}\n`);
+  process.exit(1);
+}
 
 const outDir = resolve(OUT_FILE, '..');
 if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });

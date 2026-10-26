@@ -19,7 +19,7 @@ import type { DocArticle } from '../../../app/types/documentation.types';
 // so the renderer hooks take POSITIONAL arguments — `link(href, title, text)` — not the
 // single options object that marked v5+ passes. Writing these against the newer shape
 // silently yields `undefined` link text and empty images.
-function buildRenderer(slugDir: string, baseUrl: string): Renderer {
+export function buildRenderer(slugDir: string, baseUrl: string): Renderer {
   const renderer = new Renderer();
   renderer.link = (href: string | null, title: string | null, text: string) => {
     const rewritten = rewriteDocLink(href ?? '', slugDir);
@@ -90,7 +90,10 @@ export default defineEventHandler(async (event): Promise<DocArticle> => {
     renderer: buildRenderer(slugDir, appUrl),
     async: true,
   });
-  const bodyHtml = DOMPurify.sanitize(renderedHtml);
+  // DOMPurify drops `target` by default, which would silently undo the renderer's
+  // target="_blank" on external links. It is allowed back explicitly; the same hook
+  // always pairs it with rel="noopener noreferrer", so the opener stays severed.
+  const bodyHtml = DOMPurify.sanitize(renderedHtml, { ADD_ATTR: ['target'] });
 
   return {
     slug: normalised,

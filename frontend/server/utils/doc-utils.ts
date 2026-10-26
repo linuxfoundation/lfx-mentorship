@@ -15,15 +15,19 @@ async function pathExists(p: string): Promise<boolean> {
 }
 
 export async function getDocsDir(): Promise<string> {
-  // Try both common launch points so the server works regardless of CWD.
-  // Prefer docs/user (fromRoot) so that when started from the repo root the
-  // correct path is chosen immediately. Fall back to ../docs/user (fromFrontend)
-  // only when CWD is the frontend/ subdirectory (pnpm dev workflow):
-  //   repo root / CI:                process.cwd() = …/repo-root → docs/user is correct
-  //   dev (pnpm dev from frontend/): process.cwd() = …/frontend  → ../docs/user is correct
-  const fromRoot = resolve(process.cwd(), 'docs/user');
-  const fromFrontend = resolve(process.cwd(), '../docs/user');
-  return (await pathExists(fromRoot)) ? fromRoot : fromFrontend;
+  // The Markdown lives at frontend/docs/user so it sits inside the image build context
+  // (both workflows build with `context: frontend/`). Try each launch point in turn:
+  //   runtime image:                 process.cwd() = /app      → docs/user
+  //   dev (pnpm dev from frontend/): process.cwd() = …/frontend → docs/user
+  //   repo root / CI:                process.cwd() = …/repo     → frontend/docs/user
+  const candidates = [
+    resolve(process.cwd(), 'docs/user'),
+    resolve(process.cwd(), 'frontend/docs/user'),
+  ];
+  for (const candidate of candidates) {
+    if (await pathExists(candidate)) return candidate;
+  }
+  return candidates[0]!;
 }
 
 export { pathExists };

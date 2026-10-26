@@ -13,6 +13,7 @@ export function lfxFooterMenu(selfServeUrl: string): FooterMenuSection[] {
         { name: 'Enroll a Program', link: AppRoute.EnrollProgram },
         { name: 'Mentees', link: selfServeMenteeUrl(selfServeUrl) },
         { name: 'Mentors', link: selfServeMentorUrl(selfServeUrl) },
+        { name: 'Documentation', link: AppRoute.Docs },
         { name: 'Contact support', support: true },
         { name: 'Cookie settings', action: () => window.transcend?.showConsentManager?.() },
       ],
