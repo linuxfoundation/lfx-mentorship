@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: MIT
 
 export type FooterMenuLink =
-  | { name: string; link: string; action?: never; intercom?: never }
-  | { name: string; action: () => void; link?: never; intercom?: never }
-  | { name: string; intercom: true; link?: never; action?: never };
+  | { name: string; link: string; action?: never; support?: never }
+  | { name: string; action: () => void; link?: never; support?: never }
+  | { name: string; support: true; link?: never; action?: never };
 
 declare global {
   interface Window {
