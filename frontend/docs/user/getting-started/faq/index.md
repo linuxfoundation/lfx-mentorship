@@ -13,7 +13,7 @@ Some LFX Mentorship programs offer a stipend and some do not. Where a stipend is
 
 ## Who can apply?
 
-Anyone 18 or older who has not previously completed an LFX Mentorship program.
+Anyone who is 18 or older by the time the program starts, is eligible to work in the country they live in for the duration of the mentorship, and is not taking part in, or has not completed, another Linux Foundation mentorship program.
 
 ## Do I need to be a student?
 
@@ -29,7 +29,7 @@ A significant weekly commitment across a multi-week term. Each program page list
 
 ## How are applicants chosen?
 
-The program's mentors review each application against the skills the program lists and what you wrote in your cover letter, then accept for the term.
+The program's mentors and Program Admins review each application against the skills the program lists and the prerequisite tasks you submitted. The Program Admin then accepts applicants for the term.
 
 ## What happens at the end of a term?
 

@@ -16,7 +16,7 @@ LFX Mentorship pairs contributors with experienced members of open source projec
 | Role              | What they do                                                                               | Where they work                                                        |
 | ----------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------- |
 | **Mentee**        | Applies to a program, completes scoped tasks across the term, and takes a final evaluation | [app.lfx.dev/mentorship/mentee](https://app.lfx.dev/mentorship/mentee) |
-| **Mentor**        | Scopes the work, reviews what a mentee submits, and scores applicants                      | [app.lfx.dev/mentorship/mentor](https://app.lfx.dev/mentorship/mentor) |
+| **Mentor**        | Scopes the work, reviews applicants and what a mentee submits                              | [app.lfx.dev/mentorship/mentor](https://app.lfx.dev/mentorship/mentor) |
 | **Program Admin** | Enrolls a project's program, invites mentors, and runs the term                            | [app.lfx.dev/mentorship/admin](https://app.lfx.dev/mentorship/admin)   |
 
 Browsing programs, mentees and mentors on this site needs no account. Applying, mentoring or administering a program all happen in LFX, the Linux Foundation's software platform, and need an [LF ID (Linux Foundation ID)](https://openprofile.dev/).
@@ -26,8 +26,8 @@ Browsing programs, mentees and mentors on this site needs no account. Applying, 
 ![How It Works](/images/docs/screenshots/getting-started/home-how-it-works.png)
 
 1. **Build your profile** — add your skills, links and a short introduction. Mentors read this first.
-2. **Apply to programs** — up to three applications at a time. Each is reviewed by the program's mentors.
-3. **Get matched** — mentors score applicants on skills fit and intent, then accept for the term.
+2. **Apply to programs** — up to three applications at a time. The program's mentors and Program Admins review each one.
+3. **Get matched** — the Program Admin accepts applicants for the term, with input from the mentors.
 4. **Do the work** — scoped tasks with regular reviews from your mentor.
 5. **Graduate** — pass the final evaluation and receive your stipend installments, where the program is funded.
 
@@ -35,7 +35,8 @@ Browsing programs, mentees and mentors on this site needs no account. Applying, 
 
 ![Who Can Apply](/images/docs/screenshots/getting-started/home-who-can-apply.png)
 
-- You are 18 or older.
+- You are 18 or older, or will be by the time the program starts.
+- You are eligible to work in the country you live in for the duration of the mentorship.
 - You can commit consistent hours for the full term.
 - You may have up to **3 applications** open at a time.
 - You may only complete **one** LFX Mentorship program in your career.
