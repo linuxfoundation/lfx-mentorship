@@ -28,7 +28,7 @@ Every check must pass before anything runs.
    ```bash
    kubectl -n mentorship-backend get deploy,pods
    ```
-   Don't look for the migrate Job's logs: Helm deletes the Job once it succeeds. The schema version is checked from the database in the Phase 2 setup check.
+   Don't look for the migrate Job's logs: Helm deletes the Job once it succeeds. The schema version is checked from the database in the Phase 2 setup check. It must be **5 or later**: migration 005 makes `users.created_on` and `updated_on` `NOT NULL`, and the importer in the same release defaults them for legacy records that have none. Importing with an older script against schema 5 fails on the first such user; importing with the new script against an older schema stores NULLs that make `GET /me` return 500 for that user ([#364](https://github.com/linuxfoundation/lfx-mentorship/issues/364)).
 3. **The secret has the keys the relays need.** This prints key names only, never values:
    ```bash
    kubectl -n mentorship-backend get secret lfx-mentorship-backend-secrets -o json | jq '.data | keys'
