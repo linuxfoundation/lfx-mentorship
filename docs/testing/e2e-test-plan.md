@@ -296,6 +296,8 @@ PROD runs Mentorship `v0.1.11` ([lfx-v2-argocd#1917](https://github.com/linuxfou
 | New mentee's email (F10) | ✅ `mentee_profile_created` sent, no "no email address" error, and delivered to Gmail from the PROD sender |
 | An account outside `mentorship-enabled` | ✅ Sent to the dashboard at once, as intended until go-live |
 
+On DEV, after the [#364](https://github.com/linuxfoundation/lfx-mentorship/issues/364) fix ([#383](https://github.com/linuxfoundation/lfx-mentorship/pull/383), migration 005) deployed (2026-10-27): a mentor's request to join a program and its withdrawal both return 204 through the new Heimdall step on `/me/program-memberships`, and the admins get `admin_mentor_requested` and `admin_mentor_withdrew`. No backend errors.
+
 ## 13. Legacy parity checks (2026-10-23)
 
 | # | Check | Result |
