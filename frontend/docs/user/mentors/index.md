@@ -7,7 +7,7 @@ display_order: 4
 intercom_collection: LFX Mentorship
 ---
 
-A **mentor** is an experienced project contributor who scopes a mentee's work, reviews what they submit, and scores applicants for the term.
+A **mentor** is an experienced project contributor who scopes a mentee's work, reviews what they submit, and reviews applicants for the term. The Program Admin makes the final decision on each application.
 
 ## What you can do
 
@@ -20,10 +20,10 @@ A **mentor** is an experienced project contributor who scopes a mentee's work, r
 
 Two routes, and both end with the Program Admin:
 
-| Way in         | How it starts                                                                                                                           |
-| -------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| **Invitation** | A Program Admin invites you by email. The link takes you to LFX, the Linux Foundation's software platform, where you accept or decline. |
-| **Request**    | You ask to mentor a program from your My Programs page in LFX. The Program Admin approves or declines the request.                      |
+| Way in         | How it starts                                                                                                                                                         |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Invitation** | A Program Admin invites you by email. The link takes you to LFX, the Linux Foundation's software platform, where you accept or decline.                               |
+| **Request**    | You ask to mentor a program from **Mentor Profile** → **Edit Mentor Profile** → **Select LFX Mentorship** in LFX. The Program Admin approves or declines the request. |
 
 ## Where things happen
 
