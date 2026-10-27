@@ -24,7 +24,7 @@ A **mentee** is a contributor taking part in a program for one term. Mentees do 
 
 ## Where things happen
 
-Browsing the mentee directory happens here. Everything else — your profile, your applications and your tasks — happens in LFX at [app.lfx.dev/mentorship/mentee](https://app.lfx.dev/mentorship/mentee).
+Browsing the mentee directory happens here. Everything else — your profile, your applications and your tasks — happens in LFX, the Linux Foundation's software platform, at [app.lfx.dev/mentorship/mentee](https://app.lfx.dev/mentorship/mentee).
 
 ## In this section
 

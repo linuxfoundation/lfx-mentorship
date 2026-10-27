@@ -11,7 +11,7 @@ Find a Program lists every program across all participating foundations, includi
 
 ## Before you begin
 
-No sign-in is required to browse programs. To apply to one you will need an [LF ID](https://openprofile.dev/) account.
+No sign-in is required to browse programs. To apply to one you will need an [LF ID (Linux Foundation ID)](https://openprofile.dev/) account.
 
 ## Steps
 

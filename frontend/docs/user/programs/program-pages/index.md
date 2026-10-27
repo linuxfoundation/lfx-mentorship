@@ -43,7 +43,7 @@ No sign-in is required to read a program page.
 
 8. Open **Sponsors** to see who funds the program, where it is funded.
 9. Use the header actions:
-   - **Apply to This Program** — opens the application in LFX.
+   - **Apply to This Program** — opens the application in LFX, the Linux Foundation's software platform.
    - **Repository** — the project's source repository.
    - **Donate** — fund the program through LFX Crowdfunding.
    - **Code of Conduct** — the project's code of conduct.

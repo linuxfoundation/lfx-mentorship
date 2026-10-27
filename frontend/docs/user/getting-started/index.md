@@ -19,7 +19,7 @@ LFX Mentorship pairs contributors with experienced members of open source projec
 | **Mentor**        | Scopes the work, reviews what a mentee submits, and scores applicants                      | [app.lfx.dev/mentorship/mentor](https://app.lfx.dev/mentorship/mentor) |
 | **Program Admin** | Enrolls a project's program, invites mentors, and runs the term                            | [app.lfx.dev/mentorship/admin](https://app.lfx.dev/mentorship/admin)   |
 
-Browsing programs, mentees and mentors on this site needs no account. Applying, mentoring or administering a program all happen in LFX and need an [LF ID](https://openprofile.dev/).
+Browsing programs, mentees and mentors on this site needs no account. Applying, mentoring or administering a program all happen in LFX, the Linux Foundation's software platform, and need an [LF ID (Linux Foundation ID)](https://openprofile.dev/).
 
 ## How a term works
 

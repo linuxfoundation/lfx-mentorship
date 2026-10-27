@@ -7,7 +7,7 @@ display_order: 2
 intercom_collection: LFX Mentorship
 ---
 
-Applying happens in LFX. This site is where you find the program; the application itself is at [app.lfx.dev](https://app.lfx.dev).
+Applying happens in LFX, the Linux Foundation's software platform. This site is where you find the program; the application itself is at [app.lfx.dev](https://app.lfx.dev).
 
 ## Before you begin
 

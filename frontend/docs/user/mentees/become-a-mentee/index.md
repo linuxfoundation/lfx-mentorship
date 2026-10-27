@@ -11,7 +11,7 @@ Your mentee profile is what program mentors read first. It has to exist before y
 
 ## Before you begin
 
-- You need an [LF ID](https://openprofile.dev/). Creating one is free.
+- You need an [LF ID (Linux Foundation ID)](https://openprofile.dev/). Creating one is free.
 - You must be 18 or older.
 - Have your skills, links and a short introduction ready.
 

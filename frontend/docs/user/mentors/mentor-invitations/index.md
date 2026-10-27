@@ -7,12 +7,12 @@ display_order: 2
 intercom_collection: LFX Mentorship
 ---
 
-A Program Admin can invite you to mentor their program by email. The invitation is answered in LFX, not in the email itself.
+A Program Admin can invite you to mentor their program by email. The invitation is answered in LFX, the Linux Foundation's software platform, not in the email itself.
 
 ## Before you begin
 
 - The invitation email contains a one-time link. Use the link rather than navigating by hand.
-- You need an [LF ID](https://openprofile.dev/). If you do not have a mentor profile yet, you are asked to create one.
+- You need an [LF ID (Linux Foundation ID)](https://openprofile.dev/). If you do not have a mentor profile yet, you are asked to create one.
 
 ## Steps
 

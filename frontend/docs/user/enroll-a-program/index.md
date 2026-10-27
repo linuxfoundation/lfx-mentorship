@@ -7,7 +7,7 @@ display_order: 5
 intercom_collection: LFX Mentorship
 ---
 
-Program Admins enroll a program for a Linux Foundation project and bring on paid, mentored contributors for a multi-week term. LFX runs applications, stipends, evaluations and compliance; the project scopes the work and reviews it.
+Program Admins enroll a program for a Linux Foundation project and bring on paid, mentored contributors for a multi-week term. LFX, the Linux Foundation's software platform, runs applications, stipends, evaluations and compliance; the project scopes the work and reviews it.
 
 ![Enroll a Program](/images/docs/screenshots/enroll-a-program/enroll-landing.png)
 
@@ -22,11 +22,11 @@ Program Admins enroll a program for a Linux Foundation project and bring on paid
 
 Enrollment is a three-step form in the LFX Admin area. Gather these before you start; you can save a draft and come back.
 
-| Step                   | What it asks for                                                                                                                                                                                                                         |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **1. Program Details** | Program name, program description, Code of Conduct URL, the Linux Foundation project, repository and website URLs, program logo, technologies, CII Best Practices project ID. You can import details from a program you have run before. |
-| **2. Program Setup**   | Required and desirable skills, custom term dates, non-technical interest areas, program terms. Mentors are invited later, once the program is approved.                                                                                  |
-| **3. Prerequisites**   | What candidates must complete to qualify: resume, participation permission, terms and conditions, cover letter topics, coding challenge, school enrollment verification, and any custom prerequisites. Plus the platform terms.          |
+| Step                   | What it asks for                                                                                                                                                                                                                                                          |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **1. Program Details** | Program name, program description, Code of Conduct URL, the Linux Foundation project, repository and website URLs, program logo, technologies, CII (Core Infrastructure Initiative) Best Practices project ID. You can import details from a program you have run before. |
+| **2. Program Setup**   | Required and desirable skills, custom term dates, non-technical interest areas, program terms. Mentors are invited later, once the program is approved.                                                                                                                   |
+| **3. Prerequisites**   | What candidates must complete to qualify: resume, participation permission, terms and conditions, cover letter topics, coding challenge, school enrollment verification, and any custom prerequisites. Plus the platform terms.                                           |
 
 ## Steps
 

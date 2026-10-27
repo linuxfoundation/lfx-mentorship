@@ -9,7 +9,7 @@ intercom_collection: LFX Mentorship
 
 ## Is there a stipend?
 
-Not every program is funded. Where a stipend is offered it varies by program and by your country of residence, and the program page states it before you apply.
+Some LFX Mentorship programs offer a stipend and some do not. Where a stipend is offered it varies by program and by your country of residence, and the program page states it before you apply.
 
 ## Who can apply?
 
@@ -17,11 +17,11 @@ Anyone 18 or older who has not previously completed an LFX Mentorship program.
 
 ## Do I need to be a student?
 
-No. Some programs ask for school enrollment verification as a prerequisite, but many do not. The program page lists the prerequisites.
+You do not need to be a student. Some programs ask for school enrollment verification as a prerequisite, but many do not. The program page lists the prerequisites.
 
 ## How many programs can I apply to?
 
-You may have up to three applications open at a time. Withdrawing an application frees a slot.
+You can have up to three applications open at a time. Withdrawing an application frees a slot.
 
 ## How much time does a term take?
 
@@ -37,11 +37,11 @@ You complete a final evaluation with your mentor. Graduating is recorded on your
 
 ## Do I need an account to browse?
 
-No. Programs, mentees and mentors are all public. You need an [LF ID](https://openprofile.dev/) to apply, to mentor, or to administer a program.
+You do not need an account to browse. Programs, mentees and mentors are all public. You need an [LF ID (Linux Foundation ID)](https://openprofile.dev/) to apply, to mentor, or to administer a program.
 
 ## Where do I actually apply?
 
-Applying happens in LFX, not on this site. **Apply to This Program** on a program page takes you to [app.lfx.dev](https://app.lfx.dev). See [Apply to a Program](../../mentees/apply-to-a-program/).
+Applying happens in LFX, the Linux Foundation's software platform, not on this site. **Apply to This Program** on a program page takes you to [app.lfx.dev](https://app.lfx.dev). See [Apply to a Program](../../mentees/apply-to-a-program/).
 
 ## Related sections
 

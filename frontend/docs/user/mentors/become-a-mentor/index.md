@@ -11,7 +11,7 @@ A mentor profile is what Program Admins and applicants see. It has to exist befo
 
 ## Before you begin
 
-- You need an [LF ID](https://openprofile.dev/).
+- You need an [LF ID (Linux Foundation ID)](https://openprofile.dev/).
 - Have your introduction, skills and project links ready — the same things a mentee reads before applying.
 
 ## Steps
