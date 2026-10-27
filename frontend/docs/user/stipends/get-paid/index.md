@@ -20,7 +20,7 @@ You receive each stipend installment by submitting an expense report in Expensif
 ## Steps
 
 1. Sign in to [Expensify](https://www.expensify.com).
-2. Create a new expense: select **More** → **Add expense** → **Create expense**, enter the amount, then select **Next**.
+2. Select **+** → **Create expense**.
 3. Fill in the expense:
    - **Amount:** half of your total stipend.
    - **Merchant:** your name. If you live outside the United States, add "International Bank" after your name.
