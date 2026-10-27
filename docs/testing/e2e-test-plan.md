@@ -298,6 +298,18 @@ PROD runs Mentorship `v0.1.11` ([lfx-v2-argocd#1917](https://github.com/linuxfou
 
 On DEV, after the [#364](https://github.com/linuxfoundation/lfx-mentorship/issues/364) fix ([#383](https://github.com/linuxfoundation/lfx-mentorship/pull/383), migration 005) deployed (2026-10-27): a mentor's request to join a program and its withdrawal both return 204 through the new Heimdall step on `/me/program-memberships`, and the admins get `admin_mentor_requested` and `admin_mentor_withdrew`. No backend errors.
 
+### PROD after go-live (2026-10-27, read-only)
+
+| Check | Result |
+|---|---|
+| Final import replaced the test data | ✅ The E2E PROD program is gone; 1,303 programs, 1,002 mentors, 1,512 graduates (test import plus legacy activity since) |
+| Migrated program pages | ✅ e.g. Meshery: 16 terms, 3 mentors, 19 mentees on its Mentees tab |
+| Legacy host | ✅ `mentorship.lfx.linuxfoundation.org` redirects with path and query kept; program links end on `/programs/{id}`, signed-in links on Self Serve; the legacy API answers 503 |
+| Email to everyone | ✅ Allowlist removed; 14 email types sent since go-live, none failed; first real reminder run sent 398 at 14:30 UTC; SES: 459 of 460 delivered today, no bounces or complaints, rolling bounce rate 0.6% |
+| Approver sync | ✅ "approver team already matches (6 members)" on every rollout |
+| Self Serve as `michal` | ✅ Admin page loads and stays (no dashboard redirect); no migrated programs administered, as expected |
+| Backend warnings | ⚠️ 3 FGA access waits after a create (F2); one sign-in where the name lookup failed ("failed to parse jws"), so that user may have no name; one withdrawal on a program with no admins, so no admin email |
+
 ## 13. Legacy parity checks (2026-10-23)
 
 | # | Check | Result |
