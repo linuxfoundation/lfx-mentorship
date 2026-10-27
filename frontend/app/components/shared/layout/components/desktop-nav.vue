@@ -28,7 +28,7 @@ SPDX-License-Identifier: MIT
           :class="{ 'text-brand-500': isActive }"
           :size="16"
         />
-        <span class="sr-only lg:not-sr-only">
+        <span class="sr-only xl:not-sr-only">
           {{ item.label }}
         </span>
       </a>
@@ -59,7 +59,7 @@ SPDX-License-Identifier: MIT
         v-for="item in regularMenuItems"
         :key="item.label"
         :to="item.to"
-        class="c-dropdown__item lg:!hidden flex"
+        class="c-dropdown__item xl:!hidden flex"
         active-class="c-dropdown__item--active"
       >
         <lfx-icon

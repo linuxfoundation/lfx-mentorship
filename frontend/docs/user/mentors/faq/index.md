@@ -9,7 +9,7 @@ intercom_collection: LFX Mentorship
 
 ## How do I get onto a program?
 
-Either a Program Admin invites you by email, or you request the program from **My Programs** in LFX, the Linux Foundation's software platform, and the Program Admin approves it.
+Either a Program Admin invites you by email, or you request the program from **Mentor Profile** → **Edit Mentor Profile** → **Select LFX Mentorship** in LFX, the Linux Foundation's software platform, and the Program Admin approves it.
 
 ## Why doesn't my invitation link work?
 
@@ -17,7 +17,7 @@ Invitation links can only be used once. Ask the Program Admin to send a fresh in
 
 ## Can I withdraw a request to mentor?
 
-Yes, you can withdraw a request while it is still open. Open **My Programs** in LFX and withdraw it.
+Yes, you can withdraw a request while it is still open. Open **Mentor Profile** → **Edit Mentor Profile** in LFX and select **Withdraw** on the request under **Mentorship Program Details**.
 
 ## Can I mentor more than one program?
 

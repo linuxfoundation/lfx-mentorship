@@ -17,7 +17,8 @@ A **mentee** is a contributor taking part in a program for one term. Mentees do 
 
 ## Eligibility
 
-- You are 18 or older.
+- You are 18 or older, or will be by the time the program starts.
+- You are eligible to work in the country you live in for the duration of the mentorship.
 - You can commit consistent hours for the full term.
 - You may have up to **3** open applications at a time.
 - You may only complete **one** LFX Mentorship program in your career.

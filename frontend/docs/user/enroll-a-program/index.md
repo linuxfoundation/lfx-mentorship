@@ -15,12 +15,11 @@ Program Admins enroll a program for a Linux Foundation project and bring on paid
 
 - You must be signed in to LFX as a **Program Admin** for the project.
 - Scope the work for a single term.
-- Name at least two mentors.
-- Confirm funding before enrolling — an unfunded program cannot open.
+- Confirm funding before enrolling.
 
 ## What the form asks for
 
-Enrollment is a three-step form in the LFX Admin area. Gather these before you start; you can save a draft and come back.
+Enrollment is a three-step form in the LFX Admin area. Gather these before you start: nothing is saved until you submit the last step, so plan to finish it in one sitting.
 
 | Step                   | What it asks for                                                                                                                                                                                                                                                          |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -37,7 +36,7 @@ Enrollment is a three-step form in the LFX Admin area. Gather these before you s
 
 ## After you submit
 
-1. The LFX Mentorship team reviews your enrollment, usually within 2 business days. A program that is not approved is **rejected**.
+1. The LFX Mentorship team reviews your enrollment. It can take up to 5 business days, but most reviews are completed within 24 hours. A program that is not approved is **rejected**.
 2. Once approved, invite mentors from the **Mentors** tab.
 3. The program opens for applications, and applicants appear in your workspace.
 
