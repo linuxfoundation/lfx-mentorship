@@ -22,6 +22,9 @@ dist/
 .github/
 charts/
 *.md
+# ...but the user docs ARE the product here: the portal reads this Markdown at runtime,
+# and the search index is generated from it during the build.
+!docs/user/**
 
 # Test / coverage
 coverage/
