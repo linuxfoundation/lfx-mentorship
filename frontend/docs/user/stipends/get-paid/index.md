@@ -20,16 +20,16 @@ You receive each stipend installment by submitting an expense report in Expensif
 ## Steps
 
 1. Sign in to [Expensify](https://www.expensify.com).
-2. Select **+** → **Create expense**.
-3. Fill in the expense:
+2. Select **+** at the bottom left, then **Create expense**.
+3. Fill in the expense form, and leave **Reimbursable** on:
    - **Amount:** half of your total stipend.
    - **Merchant:** your name. If you live outside the United States, add "International Bank" after your name.
-   - **Date:** today's date.
-   - **Category:** **Mentorship**.
-   - **Projects:** the mentorship program you were accepted onto. A wrong program makes the report invalid.
    - **Description:** the program name and the installment, for example "Linux Kernel - mentee stipend payment 1 of 2".
+   - **Category:** **Mentorship**.
+   - **Date:** today's date.
+   - **Projects:** the mentorship program you were accepted onto. A wrong program makes the report invalid.
 4. If you live outside the United States, attach the completed Wire Transfer Form as the receipt. If Expensify also asks for your bank details, add them, since that is usually the fastest way to be paid.
-5. Select **Create expense**, then **Submit**.
+5. Select **Create expense**. Expensify adds the expense to a draft expense report; open the report and select **Submit**.
 
 ## After completing
 
