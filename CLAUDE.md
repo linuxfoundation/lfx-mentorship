@@ -40,6 +40,8 @@ backend/          Go 1.25 · Chi v5 · pgx v5 (Postgres) · OpenTelemetry
 frontend/         Nuxt 4 · Vue 3 · TypeScript
   charts/         Helm chart
   Dockerfile      Nitro server image
+e2e/              Playwright tests for docs/testing/p1-test-plan.md, run against DEV with real accounts
+docs/testing/     E2E and P1 test plans, QA use-case workbook
 specs/            feature specs and task lists
 ```
 
@@ -47,7 +49,7 @@ specs/            feature specs and task lists
 
 **Errors**: services return sentinel errors from `internal/domain` wrapped with `%w`. Not-found is per entity (`ErrUserNotFound`, `ErrProgramNotFound`, `ErrApplicationNotFound`, …); the rest are shared (`ErrInvalidInput`, `ErrIneligible`, `ErrConflict`, `ErrInvalidStateTransition`, `ErrStateLocked`, `ErrForbidden`, `ErrUnauthorized`, `ErrUpstreamUnavailable`). `handler.Error` maps them, plus Postgres SQLSTATEs, to HTTP status codes — `internal/handler/respond.go` is the single place status codes are decided, so add new mappings there rather than writing status codes in handlers.
 
-**Commands** — from `backend/`: `make build`, `make test`, `make lint`, `make license-check`, `make db-migrate`. From `frontend/`: `pnpm dev`, `pnpm build`, `pnpm lint`, `pnpm format:check`. The frontend is pnpm-only and needs **Node 22+** (the toolchain uses `node:sqlite`, which Node 20 does not have).
+**Commands** — from `backend/`: `make build`, `make test`, `make lint`, `make license-check`, `make db-migrate`. From `frontend/`: `pnpm dev`, `pnpm build`, `pnpm lint`, `pnpm format:check`. The frontend is pnpm-only and needs **Node 22+** (the toolchain uses `node:sqlite`, which Node 20 does not have). From `e2e/`: `pnpm test` (needs `e2e/.env` with the test accounts; see `e2e/README.md`). Never commit `e2e/.env` or `e2e/.auth/`.
 
 ## Deployment
 
