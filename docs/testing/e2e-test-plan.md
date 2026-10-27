@@ -282,6 +282,20 @@ Comparing the legacy jobspring features with this plan left one flow untested: t
 
 F12 reproduced twice more in this session's normal testing, as a mentee and as an admin.
 
+### PROD smoke test on v0.1.11 (2026-10-26)
+
+PROD runs Mentorship `v0.1.11` ([lfx-v2-argocd#1917](https://github.com/linuxfoundation/lfx-v2-argocd/pull/1917)) and Self Serve `v1.0.283`.
+
+| Check | PROD result |
+|---|---|
+| Legacy email links (F16) | ✅ Approval, program-mentees and mentor links redirect to the right Self Serve page; `/project/{id}` still goes to the public program page |
+| Sponsors without a Crowdfunding initiative (F1) | ✅ 200 with no sponsors, `crowdfundingInitiative: false` |
+| Support entry point | ✅ No Intercom on the public site; Contact support present |
+| Idle sessions on Mentorship pages (F12, [lfx-self-serve#4297](https://github.com/linuxfoundation/lfx-self-serve/pull/4297)) | ✅ Three idle sessions stayed on their Mentorship page; one went through the silent re-login and came back to its link |
+| New mentee registers from an Apply link (F14) | ✅ `mlehotsky3`: profile saved (204), on the application page 1.2 s later |
+| New mentee's email (F10) | ✅ `mentee_profile_created` sent, no "no email address" error, and delivered to Gmail from the PROD sender |
+| An account outside `mentorship-enabled` | ✅ Sent to the dashboard at once, as intended until go-live |
+
 ## 13. Legacy parity checks (2026-10-23)
 
 | # | Check | Result |
