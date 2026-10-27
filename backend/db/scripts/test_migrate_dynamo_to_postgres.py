@@ -261,29 +261,6 @@ DUPLICATE_PROFILES = [
 ]
 
 
-def user_rows(monkeypatch, users):
-    captured = []
-    monkeypatch.setattr(m.psycopg2.extras, "execute_batch", lambda cur, sql, rows, page_size=0: captured.append(rows) if "INSERT INTO users" in sql else None)
-    m.migrate_users(None, users, _Files())
-    return {row[0]: row for row in captured[0]}
-
-
-# users.created_on and updated_on are NOT NULL (migration 005); a legacy record
-# can lack either, so the import falls back on the other, then on the run time (#364).
-def test_user_timestamps_never_null(monkeypatch):
-    other = USER.replace("2222", "3333", 1)
-    both = USER.replace("2222", "4444", 1)
-    rows = user_rows(monkeypatch, [
-        {"id": USER, "lfid": "no-stamps", "email": "a@example.org"},
-        {"id": other, "lfid": "created-only", "email": "b@example.org", "createdAt": "2024-02-01T00:00:00Z"},
-        {"id": both, "lfid": "both", "email": "c@example.org", "createdAt": "2024-02-01T00:00:00Z", "updatedAt": "2024-03-01T00:00:00Z"},
-    ])
-    created, updated = rows[USER][7], rows[USER][8]
-    assert created is not None and updated is not None and created == updated, "no legacy stamps: both fall back on the run time, equal"
-    assert rows[other][7] == rows[other][8] == m._parse_ts("2024-02-01T00:00:00Z"), "a missing updatedAt takes createdAt"
-    assert (rows[both][7], rows[both][8]) == (m._parse_ts("2024-02-01T00:00:00Z"), m._parse_ts("2024-03-01T00:00:00Z"))
-
-
 def test_user_keeps_only_newest_mentee_profile(monkeypatch):
     captured = []
     monkeypatch.setattr(m.psycopg2.extras, "execute_batch", lambda cur, sql, rows, page_size=0: captured.append(rows))

@@ -558,9 +558,6 @@ def migrate_users(cur, users: list, files: lo.LegacyFileRewriter) -> set:
     log.info("Migrating users (%d rows) ...", len(users))
     rows = []
     ids: set = set()
-    # created_on and updated_on are NOT NULL (migration 005): a legacy record can lack
-    # either, so fall back on the other, then on the time of this run, as applications do.
-    migrated_on = datetime.now(timezone.utc)
     seen_emails: set = set()
     seen_lfids: set = set()
     for u in users:
@@ -581,7 +578,6 @@ def migrate_users(cur, users: list, files: lo.LegacyFileRewriter) -> set:
                 lfid = None
             else:
                 seen_lfids.add(lfid)
-        created_on, updated_on = _parse_ts(u.get("createdAt")), _parse_ts(u.get("updatedAt"))
         rows.append(
             (
                 uid,
@@ -591,8 +587,8 @@ def migrate_users(cur, users: list, files: lo.LegacyFileRewriter) -> set:
                 (u.get("givenName") or "").strip() or None,
                 (u.get("familyName") or "").strip() or None,
                 files.rewrite("users.avatar_url", lo.LOGO, u.get("avatarUrl")),
-                created_on or updated_on or migrated_on,
-                updated_on or created_on or migrated_on,
+                _parse_ts(u.get("createdAt")),
+                _parse_ts(u.get("updatedAt")),
             )
         )
 
