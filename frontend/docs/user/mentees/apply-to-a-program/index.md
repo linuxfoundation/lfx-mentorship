@@ -31,7 +31,7 @@ Your application appears in your mentee overview at [app.lfx.dev/mentorship/ment
 
 | Outcome      | What it means                                          |
 | ------------ | ------------------------------------------------------ |
-| **Pending**  | Submitted and waiting on mentor review                 |
+| **Pending**  | Submitted and waiting for the Program Admins' decision |
 | **Accepted** | You have a place on the term; your tasks appear in LFX |
 | **Declined** | The program did not take you on for this term          |
 
