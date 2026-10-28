@@ -33,7 +33,7 @@ You can take part in only one LFX Mentorship program in your career.
 
 ## When do I get paid?
 
-Where a program is funded, the stipend is paid in milestone installments across the term, and the final installment follows the final evaluation. Amounts vary by program and by your country of residence.
+Where a program is funded, the stipend is paid in two installments, after a satisfactory midterm evaluation and after the final evaluation. You request each one with an expense report; see [Get Paid](../../stipends/get-paid/). The amount depends on your country of residence; see [Stipend Amounts by Country](../../stipends/stipend-amounts/).
 
 ## Why is my profile not in the mentee directory?
 
