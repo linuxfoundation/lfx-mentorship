@@ -5,6 +5,7 @@ package fga
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -23,12 +24,14 @@ import (
 // cache (invalidated on every tuple write) and OpenFGA's check-query cache (TTL only).
 const accessCheckSubject = "lfx.access_check.request"
 
+// readTuplesSubject is fga-sync's request/reply read of a user's direct tuples on an
+// object type, straight from OpenFGA's Read API: no cache sits in front of it, and
+// asking leaves nothing cached behind.
+const readTuplesSubject = "lfx.access_check.read_tuples"
+
 const (
 	accessPollInterval   = 250 * time.Millisecond
 	accessRequestTimeout = 2 * time.Second
-	deliveryPollInterval = 100 * time.Millisecond
-	// applyGrace is fga-sync's usual time from a JetStream publish to the OpenFGA write.
-	applyGrace = 500 * time.Millisecond
 )
 
 var accessTracer = otel.Tracer("fga-access-waiter")
@@ -38,33 +41,22 @@ type Requester interface {
 	RequestMsgWithContext(ctx context.Context, msg *nats.Msg) (*nats.Msg, error)
 }
 
-// OutboxDelivery reports whether an object still has FGA markers the relay has not published.
-type OutboxDelivery interface {
-	HasUndelivered(ctx context.Context, objectType, objectUID string) (bool, error)
-}
-
 // AccessWaiter polls fga-sync until a relation is visible or its timeout ends.
+//
+// It asks for the relation only once the user's direct tuple on the object exists.
+// A check made before then is answered false and cached, by OpenFGA's check-query
+// cache for its TTL and by fga-sync's cache after that, past the end of the wait.
 type AccessWaiter struct {
 	conn         Requester
 	timeout      time.Duration
 	pollInterval time.Duration
-	// outbox gates the first check: a check made before the tuple exists is cached as a
-	// denial by OpenFGA (check-query cache) and by fga-sync, outliving the whole wait.
-	outbox       OutboxDelivery
-	deliveryPoll time.Duration
-	applyGrace   time.Duration
 }
 
 var _ domain.AccessWaiter = (*AccessWaiter)(nil)
 
 // NewAccessWaiter returns an AccessWaiter that gives up after timeout.
 func NewAccessWaiter(conn Requester, timeout time.Duration) *AccessWaiter {
-	return &AccessWaiter{conn: conn, timeout: timeout, pollInterval: accessPollInterval, deliveryPoll: deliveryPollInterval, applyGrace: applyGrace}
-}
-
-// SetOutboxDelivery makes the waiter hold its first check until the relay has published the object's markers.
-func (w *AccessWaiter) SetOutboxDelivery(outbox OutboxDelivery) {
-	w.outbox = outbox
+	return &AccessWaiter{conn: conn, timeout: timeout, pollInterval: accessPollInterval}
 }
 
 // WaitForAccess implements domain.AccessWaiter.
@@ -78,12 +70,16 @@ func (w *AccessWaiter) WaitForAccess(ctx context.Context, object, relation, user
 	ctx, cancel := context.WithTimeout(ctx, w.timeout)
 	defer cancel()
 
-	if err := w.awaitDelivery(ctx, span, object); err != nil {
-		err = fmt.Errorf("wait for %s#%s before any check: %w", object, relation, err)
-		span.SetAttributes(attribute.Int("fga.attempts", 0))
+	fail := func(err error) error {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return err
+	}
+
+	reads, err := w.awaitTuple(ctx, object, username)
+	span.SetAttributes(attribute.Int("fga.tuple_reads", reads))
+	if err != nil {
+		return fail(fmt.Errorf("wait for %s#%s: no tuple for %s after %d reads: %w", object, relation, username, reads, err))
 	}
 
 	check := object + "#" + relation + "@user:" + username
@@ -97,48 +93,73 @@ func (w *AccessWaiter) WaitForAccess(ctx context.Context, object, relation, user
 		if err != nil {
 			lastErr = err
 		}
-		timer := time.NewTimer(w.pollInterval)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			err := fmt.Errorf("wait for %s#%s after %d checks: %w", object, relation, attempt, errors.Join(ctx.Err(), lastErr))
+		if err := sleep(ctx, w.pollInterval); err != nil {
 			span.SetAttributes(attribute.Int("fga.attempts", attempt))
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-			return err
-		case <-timer.C:
+			return fail(fmt.Errorf("wait for %s#%s after %d checks: %w", object, relation, attempt, errors.Join(err, lastErr)))
 		}
 	}
 }
 
-// awaitDelivery returns once the object's outbox markers are published and fga-sync has had
-// applyGrace to write them. A failed outbox read does not hold the wait: the checks run anyway.
-func (w *AccessWaiter) awaitDelivery(ctx context.Context, span trace.Span, object string) error {
-	if w.outbox == nil {
-		return nil
-	}
-	objectType, objectUID, ok := strings.Cut(object, ":")
+// awaitTuple polls read_tuples until user:{username} holds a direct tuple on object,
+// returning the number of reads made. fga-sync writes the direct tuple and the relations
+// derived from it in one OpenFGA write, so its presence means the grant is applied.
+func (w *AccessWaiter) awaitTuple(ctx context.Context, object, username string) (int, error) {
+	objectType, _, ok := strings.Cut(object, ":")
 	if !ok {
-		return nil
+		return 0, fmt.Errorf("object %q has no type prefix", object)
 	}
-	started := time.Now()
-	for {
-		pending, err := w.outbox.HasUndelivered(ctx, objectType, objectUID)
+	request, err := json.Marshal(readTuplesRequest{User: "user:" + username, ObjectType: objectType})
+	if err != nil {
+		return 0, err
+	}
+	var lastErr error
+	for reads := 1; ; reads++ {
+		found, err := w.readTuple(ctx, request, object+"#")
+		if err == nil && found {
+			return reads, nil
+		}
 		if err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			span.RecordError(fmt.Errorf("read outbox delivery: %w", err))
-			return nil
+			lastErr = err
 		}
-		if !pending {
-			span.SetAttributes(attribute.Int64("fga.outbox_delivery_ms", time.Since(started).Milliseconds()))
-			return sleep(ctx, w.applyGrace)
-		}
-		if err := sleep(ctx, w.deliveryPoll); err != nil {
-			return fmt.Errorf("outbox not yet published: %w", err)
+		if err := sleep(ctx, w.pollInterval); err != nil {
+			return reads, errors.Join(err, lastErr)
 		}
 	}
+}
+
+type readTuplesRequest struct {
+	User       string `json:"user"`
+	ObjectType string `json:"object_type"`
+}
+
+type readTuplesResponse struct {
+	Results []string `json:"results"`
+	Error   string   `json:"error,omitempty"`
+}
+
+// readTuple reports whether any of the user's direct tuples is on the object, given
+// as the "{object}#" prefix of fga-sync's "{object}#{relation}@{user}" result lines.
+func (w *AccessWaiter) readTuple(ctx context.Context, request []byte, objectPrefix string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, accessRequestTimeout)
+	defer cancel()
+
+	reply, err := w.conn.RequestMsgWithContext(ctx, &nats.Msg{Subject: readTuplesSubject, Data: request})
+	if err != nil {
+		return false, fmt.Errorf("read tuples: %w", err)
+	}
+	var response readTuplesResponse
+	if err := json.Unmarshal(reply.Data, &response); err != nil {
+		return false, fmt.Errorf("read tuples: %w", err)
+	}
+	if response.Error != "" {
+		return false, fmt.Errorf("read tuples: %s", response.Error)
+	}
+	for _, result := range response.Results {
+		if strings.HasPrefix(result, objectPrefix) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func sleep(ctx context.Context, d time.Duration) error {

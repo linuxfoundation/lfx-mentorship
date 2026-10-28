@@ -5,6 +5,7 @@ package fga
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -13,152 +14,167 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
-const waitCheck = "mentorship_program:p1#writer@user:alice"
+const (
+	waitObject = "mentorship_program:p1"
+	waitCheck  = waitObject + "#writer@user:alice"
+	waitTuple  = waitObject + "#writer@user:alice"
+	// otherTuple is a direct tuple alice holds on another program; it must not satisfy the wait.
+	otherTuple = "mentorship_program:p2#writer@user:alice"
+)
 
-// requesterStub answers each request with the next reply in turn, repeating the last.
+type reply func(*nats.Msg) (*nats.Msg, error)
+
+// requesterStub answers each subject with its next reply in turn, repeating the last,
+// and records every request in order.
 type requesterStub struct {
-	replies  []func(*nats.Msg) (*nats.Msg, error)
+	replies  map[string][]reply
 	requests []*nats.Msg
 }
 
 func (s *requesterStub) RequestMsgWithContext(_ context.Context, msg *nats.Msg) (*nats.Msg, error) {
 	s.requests = append(s.requests, msg)
-	reply := s.replies[min(len(s.requests), len(s.replies))-1]
-	return reply(msg)
+	n := 0
+	for _, r := range s.requests {
+		if r.Subject == msg.Subject {
+			n++
+		}
+	}
+	replies := s.replies[msg.Subject]
+	if len(replies) == 0 {
+		return nil, errors.New("unexpected subject " + msg.Subject)
+	}
+	return replies[min(n, len(replies))-1](msg)
 }
 
-func answer(body string) func(*nats.Msg) (*nats.Msg, error) {
+func (s *requesterStub) subjects() []string {
+	out := make([]string, 0, len(s.requests))
+	for _, r := range s.requests {
+		out = append(out, r.Subject)
+	}
+	return out
+}
+
+func answer(body string) reply {
 	return func(*nats.Msg) (*nats.Msg, error) { return &nats.Msg{Data: []byte(body)}, nil }
 }
 
-func fail(err error) func(*nats.Msg) (*nats.Msg, error) {
+func fail(err error) reply {
 	return func(*nats.Msg) (*nats.Msg, error) { return nil, err }
+}
+
+// tuples answers read_tuples with the given direct tuples.
+func tuples(results ...string) reply {
+	body, _ := json.Marshal(readTuplesResponse{Results: results})
+	return answer(string(body))
 }
 
 func newTestWaiter(conn Requester, timeout time.Duration) *AccessWaiter {
 	w := NewAccessWaiter(conn, timeout)
 	w.pollInterval = time.Millisecond
-	w.deliveryPoll = time.Millisecond
-	w.applyGrace = time.Millisecond
 	return w
 }
 
-// outboxStub reports undelivered markers for the first pendingReads reads.
-type outboxStub struct {
-	pendingReads int
-	err          error
-	reads        []string
-	conn         *requesterStub
-	checksBefore int
+// checkerStub answers only the check subject, for the one-shot AccessChecker.
+func checkerStub(r reply) *requesterStub {
+	return &requesterStub{replies: map[string][]reply{accessCheckSubject: {r}}}
 }
 
-func (o *outboxStub) HasUndelivered(_ context.Context, objectType, objectUID string) (bool, error) {
-	o.reads = append(o.reads, objectType+":"+objectUID)
-	if o.conn != nil && len(o.conn.requests) > 0 {
-		o.checksBefore++
-	}
-	if o.err != nil {
-		return false, o.err
-	}
-	return len(o.reads) <= o.pendingReads, nil
-}
-
-func TestAccessWaiter_FirstCheckWaitsForOutboxDelivery(t *testing.T) {
-	conn := &requesterStub{replies: []func(*nats.Msg) (*nats.Msg, error){answer(waitCheck + "\ttrue")}}
-	outbox := &outboxStub{pendingReads: 3, conn: conn}
-	w := newTestWaiter(conn, time.Second)
-	w.SetOutboxDelivery(outbox)
-
-	if err := w.WaitForAccess(context.Background(), "mentorship_program:p1", "writer", "alice"); err != nil {
-		t.Fatalf("WaitForAccess: %v", err)
-	}
-	if len(outbox.reads) != 4 || outbox.reads[0] != "mentorship_program:p1" {
-		t.Fatalf("outbox reads = %v; want 4 reads of mentorship_program:p1", outbox.reads)
-	}
-	if outbox.checksBefore != 0 || len(conn.requests) != 1 {
-		t.Fatalf("%d checks overlapped undelivered markers, %d checks in all; want none before delivery and one after", outbox.checksBefore, len(conn.requests))
-	}
-}
-
-func TestAccessWaiter_NeverChecksWhileUndelivered(t *testing.T) {
-	conn := &requesterStub{replies: []func(*nats.Msg) (*nats.Msg, error){answer(waitCheck + "\ttrue")}}
-	w := newTestWaiter(conn, 20*time.Millisecond)
-	w.SetOutboxDelivery(&outboxStub{pendingReads: 1 << 30})
-
-	err := w.WaitForAccess(context.Background(), "mentorship_program:p1", "writer", "alice")
-	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "before any check") {
-		t.Fatalf("err = %v; want a deadline before any check", err)
-	}
-	if len(conn.requests) != 0 {
-		t.Fatalf("requests = %d; a check before delivery would cache a denial", len(conn.requests))
-	}
-}
-
-func TestAccessWaiter_OutboxReadFailureStillChecks(t *testing.T) {
-	conn := &requesterStub{replies: []func(*nats.Msg) (*nats.Msg, error){answer(waitCheck + "\ttrue")}}
-	w := newTestWaiter(conn, time.Second)
-	w.SetOutboxDelivery(&outboxStub{err: errors.New("db down")})
-
-	if err := w.WaitForAccess(context.Background(), "mentorship_program:p1", "writer", "alice"); err != nil {
-		t.Fatalf("WaitForAccess: %v", err)
-	}
-	if len(conn.requests) != 1 {
-		t.Fatalf("requests = %d; want the check to run despite the outbox error", len(conn.requests))
-	}
-}
-
-func TestAccessWaiter_PollsUntilAllowed(t *testing.T) {
-	conn := &requesterStub{replies: []func(*nats.Msg) (*nats.Msg, error){
-		answer(waitCheck + "\tfalse"),
-		fail(nats.ErrNoResponders),
-		answer("other#viewer@user:bob\ttrue\n" + waitCheck + "\ttrue\n"),
+func TestAccessWaiter_ReadsTupleBeforeAnyCheck(t *testing.T) {
+	conn := &requesterStub{replies: map[string][]reply{
+		readTuplesSubject: {
+			tuples(),
+			fail(nats.ErrNoResponders),
+			tuples(otherTuple),
+			tuples(otherTuple, waitTuple),
+		},
+		accessCheckSubject: {
+			answer(waitCheck + "\tfalse"),
+			answer("other#viewer@user:bob\ttrue\n" + waitCheck + "\ttrue\n"),
+		},
 	}}
 
-	if err := newTestWaiter(conn, time.Second).WaitForAccess(context.Background(), "mentorship_program:p1", "writer", "alice"); err != nil {
+	if err := newTestWaiter(conn, time.Second).WaitForAccess(context.Background(), waitObject, "writer", "alice"); err != nil {
 		t.Fatalf("WaitForAccess: %v", err)
 	}
-	if len(conn.requests) != 3 {
-		t.Fatalf("requests = %d; want 3", len(conn.requests))
+	want := []string{readTuplesSubject, readTuplesSubject, readTuplesSubject, readTuplesSubject, accessCheckSubject, accessCheckSubject}
+	if got := conn.subjects(); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("requests = %v; want every read before the first check: %v", got, want)
 	}
-	for _, request := range conn.requests {
-		if request.Subject != "lfx.access_check.request" || string(request.Data) != waitCheck {
-			t.Errorf("request %s %q; want lfx.access_check.request %q", request.Subject, request.Data, waitCheck)
-		}
+	var read readTuplesRequest
+	if err := json.Unmarshal(conn.requests[0].Data, &read); err != nil || read.User != "user:alice" || read.ObjectType != "mentorship_program" {
+		t.Fatalf("read request = %+v (%v); want user:alice on mentorship_program", read, err)
+	}
+	if string(conn.requests[4].Data) != waitCheck {
+		t.Fatalf("check = %q; want %q", conn.requests[4].Data, waitCheck)
 	}
 }
 
-func TestAccessWaiter_TimesOut(t *testing.T) {
-	for label, reply := range map[string]func(*nats.Msg) (*nats.Msg, error){
+func TestAccessWaiter_NeverChecksWithoutTheTuple(t *testing.T) {
+	for label, r := range map[string]reply{
+		"no tuples":          tuples(),
+		"other object only":  tuples(otherTuple),
+		"fga-sync unreached": fail(nats.ErrNoResponders),
+		"read error":         answer(`{"error":"failed to read tuples"}`),
+		"malformed reply":    answer("not json"),
+	} {
+		t.Run(label, func(t *testing.T) {
+			conn := &requesterStub{replies: map[string][]reply{
+				readTuplesSubject:  {r},
+				accessCheckSubject: {answer(waitCheck + "\ttrue")},
+			}}
+			err := newTestWaiter(conn, 20*time.Millisecond).WaitForAccess(context.Background(), waitObject, "writer", "alice")
+			if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "no tuple for alice") {
+				t.Fatalf("err = %v; want a deadline with no tuple", err)
+			}
+			for _, subject := range conn.subjects() {
+				if subject == accessCheckSubject {
+					t.Fatal("a check ran without the tuple; that denial would be cached past the wait")
+				}
+			}
+		})
+	}
+}
+
+func TestAccessWaiter_TimesOutOnChecks(t *testing.T) {
+	for label, r := range map[string]reply{
 		"never allowed":      answer(waitCheck + "\tfalse"),
 		"no answer":          answer("other#viewer@user:bob\ttrue"),
 		"fga-sync unreached": fail(nats.ErrNoResponders),
 	} {
 		t.Run(label, func(t *testing.T) {
-			conn := &requesterStub{replies: []func(*nats.Msg) (*nats.Msg, error){reply}}
-			err := newTestWaiter(conn, 20*time.Millisecond).WaitForAccess(context.Background(), "mentorship_program:p1", "writer", "alice")
-			if !errors.Is(err, context.DeadlineExceeded) {
-				t.Fatalf("err = %v; want DeadlineExceeded", err)
-			}
-			if !strings.Contains(err.Error(), "mentorship_program:p1#writer") {
-				t.Errorf("err = %q; want it to name the object and relation", err)
+			conn := &requesterStub{replies: map[string][]reply{
+				readTuplesSubject:  {tuples(waitTuple)},
+				accessCheckSubject: {r},
+			}}
+			err := newTestWaiter(conn, 20*time.Millisecond).WaitForAccess(context.Background(), waitObject, "writer", "alice")
+			if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), waitObject+"#writer after") {
+				t.Fatalf("err = %v; want a deadline naming the object and relation after checks", err)
 			}
 		})
 	}
 }
 
 func TestAccessWaiter_StopsWhenCallerCancels(t *testing.T) {
-	conn := &requesterStub{replies: []func(*nats.Msg) (*nats.Msg, error){answer(waitCheck + "\tfalse")}}
+	conn := &requesterStub{replies: map[string][]reply{readTuplesSubject: {tuples()}}}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if err := newTestWaiter(conn, time.Minute).WaitForAccess(ctx, "mentorship_program:p1", "writer", "alice"); !errors.Is(err, context.Canceled) {
+	if err := newTestWaiter(conn, time.Minute).WaitForAccess(ctx, waitObject, "writer", "alice"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v; want Canceled", err)
+	}
+}
+
+func TestAccessWaiter_RejectsObjectWithoutType(t *testing.T) {
+	conn := &requesterStub{}
+	err := newTestWaiter(conn, time.Second).WaitForAccess(context.Background(), "p1", "writer", "alice")
+	if err == nil || !strings.Contains(err.Error(), "no type prefix") || len(conn.requests) != 0 {
+		t.Fatalf("err = %v, requests = %d; want an immediate error and no requests", err, len(conn.requests))
 	}
 }
 
 func TestAccessChecker_AsksOnce(t *testing.T) {
 	for label, tc := range map[string]struct {
-		reply   func(*nats.Msg) (*nats.Msg, error)
+		reply   reply
 		allowed bool
 		wantErr bool
 	}{
@@ -168,8 +184,8 @@ func TestAccessChecker_AsksOnce(t *testing.T) {
 		"fga-sync unreached": {reply: fail(nats.ErrNoResponders), wantErr: true},
 	} {
 		t.Run(label, func(t *testing.T) {
-			conn := &requesterStub{replies: []func(*nats.Msg) (*nats.Msg, error){tc.reply}}
-			allowed, err := NewAccessChecker(conn).HasAccess(context.Background(), "mentorship_program:p1", "writer", "alice")
+			conn := checkerStub(tc.reply)
+			allowed, err := NewAccessChecker(conn).HasAccess(context.Background(), waitObject, "writer", "alice")
 			if allowed != tc.allowed || (err != nil) != tc.wantErr {
 				t.Fatalf("allowed = %v, err = %v; want %v, error %v", allowed, err, tc.allowed, tc.wantErr)
 			}

@@ -44,9 +44,9 @@ const (
 	e2eLogosBucket  = "e2e-logos"
 	e2eFilesBucket  = "e2e-attachments"
 	apiPrefix       = "/mentorship/v1"
-	// e2eAccessWaitTimeout bounds a create's wait for the fake fga-sync to grant the creator access.
-	// It covers outbox delivery, the waiter's grace after it, and TestE2ECreateWaitsForCreatorAccess's hold.
-	e2eAccessWaitTimeout = 3 * time.Second
+	// e2eAccessWaitTimeout bounds a create's wait for the fake fga-sync to apply the creator's tuple.
+	// It covers relay delivery plus TestE2ECreateWaitsForCreatorAccess's one-second apply hold.
+	e2eAccessWaitTimeout = 2 * time.Second
 )
 
 // e2e is the process-wide environment: one API server and its fake dependencies, shared by every test.

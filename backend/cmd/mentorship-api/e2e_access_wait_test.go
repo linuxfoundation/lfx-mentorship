@@ -15,11 +15,11 @@ import (
 // TestE2ECreateWaitsForCreatorAccess covers issue #354: the API answers a
 // create only once fga-sync says the creator can act on the new object, so the
 // client's next request is not denied at the gateway while the outbox catches up.
-// No check may be asked before the relay's grant arrives: OpenFGA and fga-sync
-// would cache that denial past the end of the wait.
+// The fake remembers a denied check for OpenFGA's cache TTL, as production does,
+// so the wait can only succeed if its first check comes after the tuple is applied.
 func TestE2ECreateWaitsForCreatorAccess(t *testing.T) {
 	reset(t)
-	// Longer than the waiter's grace after publication, so it has to poll.
+	// Applying lags the relay's publish by this much; the wait has to notice, not guess.
 	const hold = time.Second
 	e2e.fakes.holdAccess(hold)
 
@@ -33,13 +33,7 @@ func TestE2ECreateWaitsForCreatorAccess(t *testing.T) {
 			t.Fatalf("enrollment returned after %s; want it to wait at least the %s access hold", elapsed, hold)
 		}
 		checks := e2e.fakes.accessChecksFor("mentorship_program:" + p.ID)
-		if len(checks) < 2 || checks[0].Allowed || !checks[len(checks)-1].Allowed {
-			t.Fatalf("access checks = %+v; want a denied check first and an allowed one last", checks)
-		}
-		if want := "mentorship_program:" + p.ID + "#writer@user:wait-admin"; checks[0].Check != want {
-			t.Fatalf("checked %q; want %q", checks[0].Check, want)
-		}
-		assertNoCheckBeforeGrant(t, "mentorship_program:"+p.ID, "wait-admin", checks)
+		assertFirstCheckAllowedAfterApply(t, "mentorship_program:"+p.ID, "wait-admin", "writer", hold, checks)
 		// The creator's membership arrives as member_put, whose relations are an
 		// array, unlike update_access; the fake must accept both grant shapes.
 		var memberPut bool
@@ -64,13 +58,7 @@ func TestE2ECreateWaitsForCreatorAccess(t *testing.T) {
 			t.Fatalf("application returned after %s; want it to wait at least the %s access hold", elapsed, hold)
 		}
 		checks := e2e.fakes.accessChecksFor("mentorship_application:" + app.ID)
-		if len(checks) < 2 || checks[0].Allowed || !checks[len(checks)-1].Allowed {
-			t.Fatalf("access checks = %+v; want a denied check first and an allowed one last", checks)
-		}
-		if want := "mentorship_application:" + app.ID + "#auditor@user:wait-mentee"; checks[0].Check != want {
-			t.Fatalf("checked %q; want %q", checks[0].Check, want)
-		}
-		assertNoCheckBeforeGrant(t, "mentorship_application:"+app.ID, "wait-mentee", checks)
+		assertFirstCheckAllowedAfterApply(t, "mentorship_application:"+app.ID, "wait-mentee", "auditor", hold, checks)
 		if tasks := tasksOf(t, mentee, app.ID); len(tasks) == 0 {
 			t.Fatal("the new application has no tasks to read")
 		}
@@ -86,8 +74,8 @@ func TestE2ECreateWaitsForCreatorAccess(t *testing.T) {
 		if elapsed < e2eAccessWaitTimeout || elapsed > e2eAccessWaitTimeout+2*time.Second {
 			t.Fatalf("enrollment returned after %s; want it to give up at about the %s timeout", elapsed, e2eAccessWaitTimeout)
 		}
-		if checks := e2e.fakes.accessChecksFor("mentorship_program:" + p.ID); len(checks) == 0 || checks[len(checks)-1].Allowed {
-			t.Fatalf("access checks = %+v; want only denied checks", checks)
+		if checks := e2e.fakes.accessChecksFor("mentorship_program:" + p.ID); len(checks) != 0 {
+			t.Fatalf("access checks = %+v; want none: a check before the tuple is applied would be cached as a denial", checks)
 		}
 		if p.Status != "pending" {
 			t.Fatalf("program status = %q; want pending (saved despite the wait timing out)", p.Status)
@@ -97,14 +85,22 @@ func TestE2ECreateWaitsForCreatorAccess(t *testing.T) {
 	})
 }
 
-// assertNoCheckBeforeGrant fails if any check on object reached fga-sync before the relay's grant to user did.
-func assertNoCheckBeforeGrant(t *testing.T, object, user string, checks []accessCheck) {
+// assertFirstCheckAllowedAfterApply fails unless the wait's one and only check on object
+// was allowed and came after the tuple was applied (the relay's grant plus the apply hold).
+// A check before that is answered false and, like OpenFGA's cache, stays false.
+func assertFirstCheckAllowedAfterApply(t *testing.T, object, user, relation string, hold time.Duration, checks []accessCheck) {
 	t.Helper()
 	granted, ok := e2e.fakes.grantedAt(object, user)
 	if !ok {
 		t.Fatalf("no grant for %s on %s reached fga-sync", user, object)
 	}
-	if first := checks[0].At; first.Before(granted) {
-		t.Fatalf("first check at %s preceded the grant at %s; that denial would be cached past the wait", first.Format(time.StampMicro), granted.Format(time.StampMicro))
+	if len(checks) != 1 || !checks[0].Allowed {
+		t.Fatalf("access checks = %+v; want exactly one, allowed", checks)
+	}
+	if want := object + "#" + relation + "@user:" + user; checks[0].Check != want {
+		t.Fatalf("checked %q; want %q", checks[0].Check, want)
+	}
+	if applied := granted.Add(hold); checks[0].At.Before(applied) {
+		t.Fatalf("check at %s preceded the tuple's application at %s", checks[0].At.Format(time.StampMicro), applied.Format(time.StampMicro))
 	}
 }
