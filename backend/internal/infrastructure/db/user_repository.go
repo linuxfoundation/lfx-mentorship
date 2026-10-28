@@ -148,15 +148,10 @@ func (r *UserRepository) upsertByLFID(ctx context.Context, input models.UserCrea
 	return &u, nil
 }
 
-// backfillColumns reads a user for the backfill. Rows imported from the legacy
-// platform may have NULL timestamps, which models.User cannot hold, so the
-// creation time falls back to the epoch (the same key the ordering and cursor
-// use) and the update time to the creation time.
-const backfillColumns = `id, email, lfid, name, given_name, family_name, avatar_url,
-	COALESCE(created_on, 'epoch'::timestamptz), COALESCE(updated_on, created_on, 'epoch'::timestamptz)`
+// backfillColumns reads a user for the backfill.
+const backfillColumns = `id, email, lfid, name, given_name, family_name, avatar_url, created_on, updated_on`
 
-// UserCursor is a keyset position in the order ListIncompleteIdentities uses:
-// created_on with NULL read as the epoch, then id.
+// UserCursor is a keyset position in the (created_on, id) order ListIncompleteIdentities uses.
 type UserCursor struct {
 	CreatedOn time.Time
 	ID        string
@@ -198,8 +193,8 @@ func (r *UserRepository) ListIncompleteIdentities(ctx context.Context, after *Us
 		FROM users
 		WHERE lfid IS NOT NULL
 		  AND (email IS NULL OR name IS NULL OR given_name IS NULL OR family_name IS NULL OR avatar_url IS NULL)
-		  AND ($1::timestamptz IS NULL OR (COALESCE(created_on, 'epoch'::timestamptz), id) > ($1::timestamptz, $2::uuid))
-		ORDER BY COALESCE(created_on, 'epoch'::timestamptz), id
+		  AND ($1::timestamptz IS NULL OR (created_on, id) > ($1::timestamptz, $2::uuid))
+		ORDER BY created_on, id
 		LIMIT $3`, afterCreatedOn, afterID, limit)
 	if err != nil {
 		span.RecordError(err)

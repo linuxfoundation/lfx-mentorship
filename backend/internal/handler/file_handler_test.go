@@ -23,11 +23,19 @@ import (
 )
 
 type stubFileSvc struct {
+	authorizeLogo       func(context.Context, string) error
 	uploadProgramLogo   func(context.Context, string, []byte) (*models.UploadedFile, error)
 	downloadProgramLogo func(context.Context, *models.Program, string) (*domain.StoredObject, error)
 	uploadTaskFile      func(context.Context, string, string, string, []byte) (*models.UploadedFile, error)
 	downloadTaskFile    func(context.Context, string, string, string) (*domain.StoredObject, string, error)
 	deleteErr           error
+}
+
+func (s *stubFileSvc) AuthorizeProgramLogoUpload(ctx context.Context, id string) error {
+	if s.authorizeLogo == nil {
+		return nil
+	}
+	return s.authorizeLogo(ctx, id)
 }
 
 func (s *stubFileSvc) UploadProgramLogo(ctx context.Context, id string, data []byte) (*models.UploadedFile, error) {
@@ -98,6 +106,33 @@ func TestFileHandler_UploadProgramLogo(t *testing.T) {
 	var body models.UploadedFile
 	if err := json.NewDecoder(w.Body).Decode(&body); err != nil || body.PublicURL != "https://cdn/x" {
 		t.Fatalf("body = %+v, err = %v", body, err)
+	}
+}
+
+func TestFileHandler_UploadProgramLogo_DeniedBeforeBodyIsRead(t *testing.T) {
+	var authorizedID string
+	h := handler.NewFileHandler(&stubFileSvc{
+		authorizeLogo: func(_ context.Context, id string) error {
+			authorizedID = id
+			return domain.ErrForbidden
+		},
+		uploadProgramLogo: func(context.Context, string, []byte) (*models.UploadedFile, error) {
+			t.Fatal("a denied caller's upload must not reach the service")
+			return nil, nil
+		},
+	}, &stubProgramSvc{})
+
+	body := strings.NewReader("png-bytes")
+	r := httptest.NewRequest(http.MethodPost, "/v1/programs/p1/logo-upload", body)
+	r = withPrincipal(requestWithChiParam(r, "id", "p1"), "u1")
+	w := httptest.NewRecorder()
+	h.UploadProgramLogo(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d; want 403", w.Code)
+	}
+	if authorizedID != "p1" || body.Len() != len("png-bytes") {
+		t.Fatalf("authorized %q, unread body = %d bytes; want p1 and the body untouched", authorizedID, body.Len())
 	}
 }
 

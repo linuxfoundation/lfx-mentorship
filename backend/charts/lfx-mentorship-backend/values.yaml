@@ -69,6 +69,11 @@ heimdall:
   enabled: false
   addMiddleware: false
   url: ""
+  # Leave the logo upload's writer check to the backend (FileService.AuthorizeProgramLogoUpload),
+  # which runs on every image from v0.1.13. Flip this only once every pod runs such an image:
+  # the RuleSet applies at once, while pods roll, and an older pod does not check. Set it back
+  # to false before rolling the image back.
+  logoUploadServiceAuthz: false
 
 openfga:
   enabled: false
