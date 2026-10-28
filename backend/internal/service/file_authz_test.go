@@ -30,6 +30,8 @@ func principalCtx(userID, username string) context.Context {
 	return auth.ContextWithPrincipal(context.Background(), &models.Principal{UserID: userID, Username: username})
 }
 
+const logoProgramID = "0b9a3f4e-6d5c-4b3a-9f8e-7d6c5b4a3f2e"
+
 func adminRepo(adminUserID string, err error) *stubMemberRepo {
 	return &stubMemberRepo{findActiveAdmin: func(_ context.Context, _, userID string) (*models.ProgramMember, error) {
 		if err != nil {
@@ -65,7 +67,7 @@ func TestFileService_AuthorizeProgramLogoUpload(t *testing.T) {
 			if tc.access != nil {
 				svc.SetAccessChecker(tc.access)
 			}
-			err := svc.AuthorizeProgramLogoUpload(tc.ctx, "p1")
+			err := svc.AuthorizeProgramLogoUpload(tc.ctx, logoProgramID)
 			if tc.want == nil && err != nil || tc.want != nil && !errors.Is(err, tc.want) {
 				t.Fatalf("err = %v; want %v", err, tc.want)
 			}
@@ -78,7 +80,7 @@ func TestFileService_AuthorizeProgramLogoUpload(t *testing.T) {
 				}
 				return
 			}
-			want := accessCall{"mentorship_program:p1", "writer", "bob"}
+			want := accessCall{"mentorship_program:" + logoProgramID, "writer", "bob"}
 			if len(tc.access.calls) != 1 || tc.access.calls[0] != want {
 				t.Fatalf("checks = %+v; want [%+v]", tc.access.calls, want)
 			}
@@ -95,10 +97,28 @@ func TestFileService_AuthorizeProgramLogoUpload_M2MUsesFGAOnly(t *testing.T) {
 	svc := (&fileSvcDeps{admins: admins}).build()
 	svc.SetAccessChecker(access)
 
-	if err := svc.AuthorizeProgramLogoUpload(principalCtx("svc@clients", "svc@clients"), "p1"); err != nil {
+	if err := svc.AuthorizeProgramLogoUpload(principalCtx("svc@clients", "svc@clients"), logoProgramID); err != nil {
 		t.Fatalf("err = %v", err)
 	}
 	if len(access.calls) != 1 || access.calls[0].username != "svc@clients" {
 		t.Fatalf("checks = %+v", access.calls)
+	}
+}
+
+func TestFileService_AuthorizeProgramLogoUpload_RejectsNonUUIDBeforeAnyLookup(t *testing.T) {
+	admins := &stubMemberRepo{findActiveAdmin: func(context.Context, string, string) (*models.ProgramMember, error) {
+		t.Fatal("a malformed id must not be looked up")
+		return nil, nil
+	}}
+	access := &fakeAccessChecker{allowed: true}
+	svc := (&fileSvcDeps{admins: admins}).build()
+	svc.SetAccessChecker(access)
+
+	err := svc.AuthorizeProgramLogoUpload(principalCtx("u1", "alice"), "p1#writer@user:alice\nmentorship_program:x")
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("err = %v; want ErrInvalidInput", err)
+	}
+	if len(access.calls) != 0 {
+		t.Fatalf("fga-sync was asked %+v", access.calls)
 	}
 }

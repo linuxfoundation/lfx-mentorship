@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/auth"
@@ -115,6 +116,10 @@ func (s *FileService) AuthorizeProgramLogoUpload(ctx context.Context, programID 
 	if principal == nil || principal.UserID == "" || principal.Username == "" {
 		return domain.ErrUnauthorized
 	}
+	// The ID is interpolated into fga-sync's "object#relation@user" check line, so only a UUID may reach it.
+	if _, err := uuid.Parse(programID); err != nil {
+		return fmt.Errorf("%w: program id must be a UUID", domain.ErrInvalidInput)
+	}
 	// Direct program admins come from Postgres, the source the writer tuple is written from.
 	if !principal.IsM2M() {
 		_, err := s.admins.FindActiveProgramAdminByProgramAndUser(ctx, programID, principal.UserID)
@@ -133,7 +138,7 @@ func (s *FileService) AuthorizeProgramLogoUpload(ctx context.Context, programID 
 	allowed, err := s.access.HasAccess(ctx, programFGAObjectPrefix+programID, programWriterRelation, principal.Username)
 	if err != nil {
 		span.RecordError(err)
-		return fmt.Errorf("%w: program writer check: %v", domain.ErrUpstreamUnavailable, err)
+		return fmt.Errorf("%w: program writer check: %w", domain.ErrUpstreamUnavailable, err)
 	}
 	if !allowed {
 		return fmt.Errorf("%w: caller may not change this program's logo", domain.ErrForbidden)

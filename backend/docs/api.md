@@ -2314,6 +2314,10 @@ both added by #161.
   `profile_links.resumeLink` rather than reject it, since resumes are not a file
   class and a client may echo back a migrated profile.
 - An archived program's logo cannot change (`409`); a rejected program's logo stays editable.
+- `logo-upload` is the one route whose relation (`writer` on the program) the service checks
+  rather than the gateway, so a new program's creator is not blocked while the FGA tuple
+  propagates: an approved program admin, else fga-sync's answer for the inherited project
+  roles. A caller who is neither gets `403` before the body is read; fga-sync unreachable is `503`.
 
 | Route | Body | Response |
 |---|---|---|
