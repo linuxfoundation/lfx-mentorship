@@ -83,7 +83,7 @@ func TestAccessWaiter_ReadsTupleBeforeAnyCheck(t *testing.T) {
 	conn := &requesterStub{replies: map[string][]reply{
 		readTuplesSubject: {
 			tuples(),
-			fail(nats.ErrNoResponders),
+			answer(`{"error":"failed to read tuples"}`),
 			tuples(otherTuple),
 			tuples(otherTuple, waitTuple),
 		},
@@ -111,11 +111,10 @@ func TestAccessWaiter_ReadsTupleBeforeAnyCheck(t *testing.T) {
 
 func TestAccessWaiter_NeverChecksWithoutTheTuple(t *testing.T) {
 	for label, r := range map[string]reply{
-		"no tuples":          tuples(),
-		"other object only":  tuples(otherTuple),
-		"fga-sync unreached": fail(nats.ErrNoResponders),
-		"read error":         answer(`{"error":"failed to read tuples"}`),
-		"malformed reply":    answer("not json"),
+		"no tuples":         tuples(),
+		"other object only": tuples(otherTuple),
+		"read error":        answer(`{"error":"failed to read tuples"}`),
+		"malformed reply":   answer("not json"),
 	} {
 		t.Run(label, func(t *testing.T) {
 			conn := &requesterStub{replies: map[string][]reply{
@@ -137,9 +136,8 @@ func TestAccessWaiter_NeverChecksWithoutTheTuple(t *testing.T) {
 
 func TestAccessWaiter_TimesOutOnChecks(t *testing.T) {
 	for label, r := range map[string]reply{
-		"never allowed":      answer(waitCheck + "\tfalse"),
-		"no answer":          answer("other#viewer@user:bob\ttrue"),
-		"fga-sync unreached": fail(nats.ErrNoResponders),
+		"never allowed": answer(waitCheck + "\tfalse"),
+		"no answer":     answer("other#viewer@user:bob\ttrue"),
 	} {
 		t.Run(label, func(t *testing.T) {
 			conn := &requesterStub{replies: map[string][]reply{
@@ -161,6 +159,60 @@ func TestAccessWaiter_StopsWhenCallerCancels(t *testing.T) {
 
 	if err := newTestWaiter(conn, time.Minute).WaitForAccess(ctx, waitObject, "writer", "alice"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v; want Canceled", err)
+	}
+}
+
+// An unanswered request ends the wait at once: fga-sync keeps serving it for up to
+// 10s after our deadline, so retrying every 250ms would pile work onto handler slots
+// shared with the gateway's checks, and a missing responder will not appear in time.
+func TestAccessWaiter_EndsWhenFGASyncDoesNotAnswer(t *testing.T) {
+	for label, tc := range map[string]struct {
+		reads, checks []reply
+		cause         error
+		wantSubjects  []string
+		wantErr       string
+	}{
+		"no read responder": {
+			reads:        []reply{fail(nats.ErrNoResponders)},
+			cause:        nats.ErrNoResponders,
+			wantSubjects: []string{readTuplesSubject},
+			wantErr:      "did not answer",
+		},
+		"read deadline": {
+			reads:        []reply{fail(context.DeadlineExceeded)},
+			cause:        context.DeadlineExceeded,
+			wantSubjects: []string{readTuplesSubject},
+			wantErr:      "did not answer",
+		},
+		"no check responder": {
+			reads:        []reply{tuples(waitTuple)},
+			checks:       []reply{fail(nats.ErrNoResponders)},
+			cause:        nats.ErrNoResponders,
+			wantSubjects: []string{readTuplesSubject, accessCheckSubject},
+			wantErr:      "did not answer check 1",
+		},
+		"check deadline": {
+			reads:        []reply{tuples(waitTuple)},
+			checks:       []reply{fail(context.DeadlineExceeded)},
+			cause:        context.DeadlineExceeded,
+			wantSubjects: []string{readTuplesSubject, accessCheckSubject},
+			wantErr:      "did not answer check 1",
+		},
+	} {
+		t.Run(label, func(t *testing.T) {
+			conn := &requesterStub{replies: map[string][]reply{readTuplesSubject: tc.reads, accessCheckSubject: tc.checks}}
+			started := time.Now()
+			err := newTestWaiter(conn, time.Minute).WaitForAccess(context.Background(), waitObject, "writer", "alice")
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) || !errors.Is(err, tc.cause) {
+				t.Fatalf("err = %v; want %q wrapping %v", err, tc.wantErr, tc.cause)
+			}
+			if time.Since(started) > time.Second {
+				t.Fatalf("wait took %s; want it to end at once", time.Since(started))
+			}
+			if got := conn.subjects(); strings.Join(got, ",") != strings.Join(tc.wantSubjects, ",") {
+				t.Fatalf("requests = %v; want %v and nothing after", got, tc.wantSubjects)
+			}
+		})
 	}
 }
 

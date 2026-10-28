@@ -46,6 +46,12 @@ type Requester interface {
 // It asks for the relation only once the user's direct tuple on the object exists.
 // A check made before then is answered false and cached, by OpenFGA's check-query
 // cache for its TTL and by fga-sync's cache after that, past the end of the wait.
+//
+// The wait is best effort. It polls only on a definitive answer from fga-sync; when
+// fga-sync does not answer at all (no responder, or the request deadline passes) it
+// ends at once rather than retrying: fga-sync keeps serving a request for up to 10s
+// after the caller's deadline, so retrying would pile reads onto handler slots it
+// shares with the gateway's checks.
 type AccessWaiter struct {
 	conn         Requester
 	timeout      time.Duration
@@ -90,6 +96,10 @@ func (w *AccessWaiter) WaitForAccess(ctx context.Context, object, relation, user
 			span.SetAttributes(attribute.Int("fga.attempts", attempt))
 			return nil
 		}
+		if unanswered(ctx, err) {
+			span.SetAttributes(attribute.Int("fga.attempts", attempt))
+			return fail(fmt.Errorf("wait for %s#%s: fga-sync did not answer check %d: %w", object, relation, attempt, err))
+		}
 		if err != nil {
 			lastErr = err
 		}
@@ -103,6 +113,10 @@ func (w *AccessWaiter) WaitForAccess(ctx context.Context, object, relation, user
 // awaitTuple polls read_tuples until user:{username} holds a direct tuple on object,
 // returning the number of reads made. fga-sync writes the direct tuple and the relations
 // derived from it in one OpenFGA write, so its presence means the grant is applied.
+//
+// The read returns every direct tuple the user holds on the object type: fga-sync has
+// no object-scoped read. That is the user's program memberships or applications, tens
+// of tuples, paged by OpenFGA inside fga-sync, well within the request deadline.
 func (w *AccessWaiter) awaitTuple(ctx context.Context, object, username string) (int, error) {
 	objectType, _, ok := strings.Cut(object, ":")
 	if !ok {
@@ -118,6 +132,9 @@ func (w *AccessWaiter) awaitTuple(ctx context.Context, object, username string) 
 		if err == nil && found {
 			return reads, nil
 		}
+		if unanswered(ctx, err) {
+			return reads, fmt.Errorf("fga-sync did not answer: %w", err)
+		}
 		if err != nil {
 			lastErr = err
 		}
@@ -125,6 +142,12 @@ func (w *AccessWaiter) awaitTuple(ctx context.Context, object, username string) 
 			return reads, errors.Join(err, lastErr)
 		}
 	}
+}
+
+// unanswered reports a request fga-sync never answered while the wait itself is still
+// live: no responder on the subject, or the per-request deadline passed.
+func unanswered(ctx context.Context, err error) bool {
+	return err != nil && ctx.Err() == nil && (errors.Is(err, nats.ErrNoResponders) || errors.Is(err, context.DeadlineExceeded))
 }
 
 type readTuplesRequest struct {
