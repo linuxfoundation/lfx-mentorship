@@ -87,5 +87,7 @@ func TestE2ECreateWaitsForCreatorAccess(t *testing.T) {
 		if p.Status != "pending" {
 			t.Fatalf("program status = %q; want pending (saved despite the wait timing out)", p.Status)
 		}
+		// The logo upload checks the creator's admin row, so the FGA lag does not block it.
+		uploadLogo(t, admin, p.ID).expect(http.StatusCreated)
 	})
 }

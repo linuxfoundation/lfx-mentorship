@@ -63,7 +63,7 @@ func (w *AccessWaiter) WaitForAccess(ctx context.Context, object, relation, user
 	check := object + "#" + relation + "@user:" + username
 	var lastErr error
 	for attempt := 1; ; attempt++ {
-		allowed, err := w.check(ctx, check)
+		allowed, err := checkAccess(ctx, w.conn, check)
 		if err == nil && allowed {
 			span.SetAttributes(attribute.Int("fga.attempts", attempt))
 			return nil
@@ -85,13 +85,41 @@ func (w *AccessWaiter) WaitForAccess(ctx context.Context, object, relation, user
 	}
 }
 
-// check asks fga-sync for one relation. The reply is one line per check,
+// AccessChecker asks fga-sync once whether a relation holds.
+type AccessChecker struct {
+	conn Requester
+}
+
+var _ domain.AccessChecker = (*AccessChecker)(nil)
+
+// NewAccessChecker returns an AccessChecker that asks fga-sync over conn.
+func NewAccessChecker(conn Requester) *AccessChecker {
+	return &AccessChecker{conn: conn}
+}
+
+// HasAccess implements domain.AccessChecker.
+func (c *AccessChecker) HasAccess(ctx context.Context, object, relation, username string) (bool, error) {
+	ctx, span := accessTracer.Start(ctx, "fga.HasAccess", trace.WithAttributes(
+		attribute.String("fga.object", object),
+		attribute.String("fga.relation", relation),
+	))
+	defer span.End()
+
+	allowed, err := checkAccess(ctx, c.conn, object+"#"+relation+"@user:"+username)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	}
+	return allowed, err
+}
+
+// checkAccess asks fga-sync for one relation. The reply is one line per check,
 // "{check}\t{true|false}", in no guaranteed order.
-func (w *AccessWaiter) check(ctx context.Context, check string) (bool, error) {
+func checkAccess(ctx context.Context, conn Requester, check string) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, accessRequestTimeout)
 	defer cancel()
 
-	reply, err := w.conn.RequestMsgWithContext(ctx, &nats.Msg{Subject: accessCheckSubject, Data: []byte(check)})
+	reply, err := conn.RequestMsgWithContext(ctx, &nats.Msg{Subject: accessCheckSubject, Data: []byte(check)})
 	if err != nil {
 		return false, fmt.Errorf("access check: %w", err)
 	}
