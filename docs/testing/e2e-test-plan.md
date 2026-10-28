@@ -310,6 +310,20 @@ On DEV, after the [#364](https://github.com/linuxfoundation/lfx-mentorship/issue
 | Self Serve as `michal` | ✅ Admin page loads and stays (no dashboard redirect); no migrated programs administered, as expected |
 | Backend warnings | ⚠️ 3 FGA access waits after a create (F2); one sign-in where the name lookup failed ("failed to parse jws"), so that user may have no name; one withdrawal on a program with no admins, so no admin email |
 
+### PROD lifecycle after go-live (2026-10-27/28)
+
+Test programs were named "E2E Test Program … please ignore".
+
+| Step | Result |
+|---|---|
+| Enroll; logo right after create | ❌ then ✅. On 2026-10-27 the logo got 403 for hours: fga-sync applied the creator's `writer` tuple about 3.5 h late, behind about 190k meeting messages from another service ([#394](https://github.com/linuxfoundation/lfx-mentorship/issues/394)). After [#392](https://github.com/linuxfoundation/lfx-mentorship/pull/392) (v0.1.13, logo checked in the service) a new program's logo uploaded on the first try, 1 s after create |
+| Approve; reject | ✅ Approve published the first program; reject kept the second one off the public site |
+| New mentee registers from Apply, applies | ✅ Lands on the application; the new application was readable about 11 s after submit |
+| Prerequisite, accept, task, review, graduate | ✅ Admin list shows the mentee's name; the mentee saw the new task within seconds |
+| Mentor invite, accept, open program | ✅ Accepted from Edit Mentor Profile; program readable about 8 s later |
+| Public graduate | ✅ Listed with their name |
+| Hide the test program afterwards | ❌ Refused: a graduated application blocks hide, and graduated can't be declined or withdrawn, so a test with a graduate needs backend cleanup |
+
 ## 13. Legacy parity checks (2026-10-23)
 
 | # | Check | Result |
