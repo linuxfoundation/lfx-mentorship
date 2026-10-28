@@ -107,10 +107,12 @@ func TestE2EFakeFGASyncRemembersDenials(t *testing.T) {
 		}
 		return strings.TrimSpace(string(reply.Data)) == check+"\ttrue"
 	}
+	// Taken before the ask: the fake stamps the entry before it replies, so this is
+	// never later than the fake's own clock and lapsed >= ttl below always holds.
+	denied := time.Now()
 	if ask() {
 		t.Fatal("a user with no tuple must be denied")
 	}
-	denied := time.Now()
 	// Apply the tuple directly, as the relay's member_put would.
 	e2e.fakes.recordTuples(&nats.Msg{Data: []byte(`{"object_type":"mentorship_program","operation":"member_put","data":{"uid":"cache-test","username":"` + user + `","relations":["writer"]}}`)})
 
