@@ -171,6 +171,9 @@ The test accounts use external inboxes, so the run did not check emails.
 | 7.3 | Mentor calls the admin-only status change | 403 | ✅ | — |
 | 7.4 | Mentee downloads another mentee's task file | 403 | ✅ | — |
 | 7.5 | Non-approver records a program decision | 403 | ✅ | — |
+| 7.6 | User with **Manage** on the program's project opens and edits the program by direct URL (2026-10-28, `mlehotskynet` on ASWF) | Allowed: project writers are program writers in FGA | ✅ | — |
+| 7.7 | Same user opens **My programs** | Lists the program | ❌ "No programs yet": the list reads Postgres `program_admin` rows only (F22) | — |
+| 7.8 | **Manage** removed | "No access to this program" | ✅ within seconds | — |
 
 ## 8. Emails (PROD)
 
@@ -359,6 +362,7 @@ Test programs were named "E2E Test Program … please ignore".
 | F19 | An approved mentor can't leave a program, and the admins get no email; legacy allowed it and sent `admin-mentor-removed-project`. | DEV | Medium | [linuxfoundation/lfx-mentorship#377](https://github.com/linuxfoundation/lfx-mentorship/issues/377) |
 | F20 | New permissions can lag by hours when another service floods fga-sync, whose shared consumer handles one message at a time. On 2026-10-27 a new program's logo got 403 for hours and a new application's tasks for minutes. Logo fixed by #392; other new-object flows still exposed. | PROD | High (platform) | [linuxfoundation/lfx-mentorship#394](https://github.com/linuxfoundation/lfx-mentorship/issues/394) |
 | F21 | A graduation can't be undone, so a mistaken graduation is permanent and its program can never be hidden; legacy allowed any status change. | PROD | Medium | [linuxfoundation/lfx-mentorship#395](https://github.com/linuxfoundation/lfx-mentorship/issues/395) |
+| F22 | Several admins per program work through project roles (**Manage** on the project), but such admins can't find the programs: **My programs** shows only direct admins' programs. Legacy had one admin per program, so this is an enhancement. | DEV | Medium | [linuxfoundation/lfx-mentorship#398](https://github.com/linuxfoundation/lfx-mentorship/issues/398) |
 
 **Info, no action proposed:**
 - The landing page counts 5 graduated mentees on DEV, while the directory's Graduated tab lists 4.
