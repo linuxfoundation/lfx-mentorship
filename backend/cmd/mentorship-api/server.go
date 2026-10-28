@@ -172,6 +172,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	applicationSvc := service.NewApplicationService(applicationRepo, taskRepo, programTermRepo, programRepo, programMemberRepo, userProfileRepo, notifier)
 	if natsConn != nil && cfg.FGA.AccessWaitTimeout > 0 {
 		accessWaiter := fga.NewAccessWaiter(natsConn, cfg.FGA.AccessWaitTimeout)
+		accessWaiter.SetOutboxDelivery(db.NewFGAOutboxRepository(pool))
 		programSvc.SetAccessWaiter(accessWaiter)
 		applicationSvc.SetAccessWaiter(accessWaiter)
 	}

@@ -38,7 +38,73 @@ func fail(err error) func(*nats.Msg) (*nats.Msg, error) {
 func newTestWaiter(conn Requester, timeout time.Duration) *AccessWaiter {
 	w := NewAccessWaiter(conn, timeout)
 	w.pollInterval = time.Millisecond
+	w.deliveryPoll = time.Millisecond
+	w.applyGrace = time.Millisecond
 	return w
+}
+
+// outboxStub reports undelivered markers for the first pendingReads reads.
+type outboxStub struct {
+	pendingReads int
+	err          error
+	reads        []string
+	conn         *requesterStub
+	checksBefore int
+}
+
+func (o *outboxStub) HasUndelivered(_ context.Context, objectType, objectUID string) (bool, error) {
+	o.reads = append(o.reads, objectType+":"+objectUID)
+	if o.conn != nil && len(o.conn.requests) > 0 {
+		o.checksBefore++
+	}
+	if o.err != nil {
+		return false, o.err
+	}
+	return len(o.reads) <= o.pendingReads, nil
+}
+
+func TestAccessWaiter_FirstCheckWaitsForOutboxDelivery(t *testing.T) {
+	conn := &requesterStub{replies: []func(*nats.Msg) (*nats.Msg, error){answer(waitCheck + "\ttrue")}}
+	outbox := &outboxStub{pendingReads: 3, conn: conn}
+	w := newTestWaiter(conn, time.Second)
+	w.SetOutboxDelivery(outbox)
+
+	if err := w.WaitForAccess(context.Background(), "mentorship_program:p1", "writer", "alice"); err != nil {
+		t.Fatalf("WaitForAccess: %v", err)
+	}
+	if len(outbox.reads) != 4 || outbox.reads[0] != "mentorship_program:p1" {
+		t.Fatalf("outbox reads = %v; want 4 reads of mentorship_program:p1", outbox.reads)
+	}
+	if outbox.checksBefore != 0 || len(conn.requests) != 1 {
+		t.Fatalf("%d checks overlapped undelivered markers, %d checks in all; want none before delivery and one after", outbox.checksBefore, len(conn.requests))
+	}
+}
+
+func TestAccessWaiter_NeverChecksWhileUndelivered(t *testing.T) {
+	conn := &requesterStub{replies: []func(*nats.Msg) (*nats.Msg, error){answer(waitCheck + "\ttrue")}}
+	w := newTestWaiter(conn, 20*time.Millisecond)
+	w.SetOutboxDelivery(&outboxStub{pendingReads: 1 << 30})
+
+	err := w.WaitForAccess(context.Background(), "mentorship_program:p1", "writer", "alice")
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "before any check") {
+		t.Fatalf("err = %v; want a deadline before any check", err)
+	}
+	if len(conn.requests) != 0 {
+		t.Fatalf("requests = %d; a check before delivery would cache a denial", len(conn.requests))
+	}
+}
+
+func TestAccessWaiter_OutboxReadFailureStillChecks(t *testing.T) {
+	conn := &requesterStub{replies: []func(*nats.Msg) (*nats.Msg, error){answer(waitCheck + "\ttrue")}}
+	w := newTestWaiter(conn, time.Second)
+	w.SetOutboxDelivery(&outboxStub{err: errors.New("db down")})
+
+	if err := w.WaitForAccess(context.Background(), "mentorship_program:p1", "writer", "alice"); err != nil {
+		t.Fatalf("WaitForAccess: %v", err)
+	}
+	if len(conn.requests) != 1 {
+		t.Fatalf("requests = %d; want the check to run despite the outbox error", len(conn.requests))
+	}
 }
 
 func TestAccessWaiter_PollsUntilAllowed(t *testing.T) {

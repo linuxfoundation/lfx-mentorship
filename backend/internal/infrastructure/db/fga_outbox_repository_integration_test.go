@@ -73,6 +73,67 @@ func seedIntegrationFixture(t *testing.T, pool *pgxpool.Pool) integrationFixture
 	return fixture
 }
 
+func TestFGAOutboxIntegration_HasUndeliveredTracksPublication(t *testing.T) {
+	pool := integrationPool(t)
+	repo := NewFGAOutboxRepository(pool)
+	ctx := context.Background()
+	undelivered := func(uid string) bool {
+		t.Helper()
+		pending, err := repo.HasUndelivered(ctx, "mentorship_program", uid)
+		if err != nil {
+			t.Fatalf("HasUndelivered: %v", err)
+		}
+		return pending
+	}
+
+	if undelivered("p-deliver") {
+		t.Fatal("an object with no markers reports undelivered")
+	}
+	if err := repo.EnqueueObject(ctx, "mentorship_program", "p-deliver", "update_access"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.EnqueueMembership(ctx, "mentorship_program", "p-deliver", "writer", "alice"); err != nil {
+		t.Fatal(err)
+	}
+	if !undelivered("p-deliver") {
+		t.Fatal("pending markers must report undelivered")
+	}
+	if undelivered("p-other") {
+		t.Fatal("another object's markers must not count")
+	}
+
+	// The claim serializes per object, so it takes one marker per pass.
+	for pass := 0; pass < 2; pass++ {
+		markers, err := repo.Claim(ctx, 10)
+		if err != nil || len(markers) != 1 {
+			t.Fatalf("claim pass %d: %d markers, err %v", pass, len(markers), err)
+		}
+		if !undelivered("p-deliver") {
+			t.Fatalf("pass %d: an in-flight or still pending marker must report undelivered", pass)
+		}
+		if ok, err := repo.Acknowledge(ctx, markers[0]); err != nil || !ok {
+			t.Fatalf("acknowledge pass %d: ok=%v err=%v", pass, ok, err)
+		}
+	}
+	if undelivered("p-deliver") {
+		t.Fatal("acknowledged markers must report delivered")
+	}
+
+	if err := repo.EnqueueObject(ctx, "mentorship_program", "p-dead", "update_access"); err != nil {
+		t.Fatal(err)
+	}
+	markers, err := repo.Claim(ctx, 10)
+	if err != nil || len(markers) != 1 {
+		t.Fatalf("claim dead-letter marker: %d, %v", len(markers), err)
+	}
+	if ok, err := repo.DeadLetter(ctx, markers[0], "boom"); err != nil || !ok {
+		t.Fatalf("dead letter: ok=%v err=%v", ok, err)
+	}
+	if undelivered("p-dead") {
+		t.Fatal("a dead-lettered marker will never be delivered and must not hold the wait")
+	}
+}
+
 func TestFGAOutboxIntegration_ClaimSerializesSameObject(t *testing.T) {
 	pool := integrationPool(t)
 	repo := NewFGAOutboxRepository(pool)

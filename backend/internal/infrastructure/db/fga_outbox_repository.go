@@ -144,6 +144,20 @@ func (r *FGAOutboxRepository) EnqueueMembershipRemoval(ctx context.Context, obje
 	return nil
 }
 
+// HasUndelivered reports whether the object has markers the relay has not yet published.
+// Dead-lettered markers are excluded: no amount of waiting delivers them.
+func (r *FGAOutboxRepository) HasUndelivered(ctx context.Context, objectType, objectUID string) (bool, error) {
+	var pending bool
+	if err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM fga_outbox
+			WHERE object_type = $1 AND object_uid = $2 AND state IN ('pending', 'in_flight')
+		)`, objectType, objectUID).Scan(&pending); err != nil {
+		return false, fmt.Errorf("read FGA outbox delivery: %w", err)
+	}
+	return pending, nil
+}
+
 // Claim marks a bounded batch in flight and returns the claimed generations.
 func (r *FGAOutboxRepository) Claim(ctx context.Context, limit int) ([]domain.FGAOutboxMarker, error) {
 	if limit <= 0 {

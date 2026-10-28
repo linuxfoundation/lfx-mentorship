@@ -15,9 +15,12 @@ import (
 // TestE2ECreateWaitsForCreatorAccess covers issue #354: the API answers a
 // create only once fga-sync says the creator can act on the new object, so the
 // client's next request is not denied at the gateway while the outbox catches up.
+// No check may be asked before the relay's grant arrives: OpenFGA and fga-sync
+// would cache that denial past the end of the wait.
 func TestE2ECreateWaitsForCreatorAccess(t *testing.T) {
 	reset(t)
-	const hold = 300 * time.Millisecond
+	// Longer than the waiter's grace after publication, so it has to poll.
+	const hold = time.Second
 	e2e.fakes.holdAccess(hold)
 
 	t.Run("program creator holds writer before the enrollment returns", func(t *testing.T) {
@@ -36,6 +39,7 @@ func TestE2ECreateWaitsForCreatorAccess(t *testing.T) {
 		if want := "mentorship_program:" + p.ID + "#writer@user:wait-admin"; checks[0].Check != want {
 			t.Fatalf("checked %q; want %q", checks[0].Check, want)
 		}
+		assertNoCheckBeforeGrant(t, "mentorship_program:"+p.ID, "wait-admin", checks)
 		// The creator's membership arrives as member_put, whose relations are an
 		// array, unlike update_access; the fake must accept both grant shapes.
 		var memberPut bool
@@ -66,6 +70,7 @@ func TestE2ECreateWaitsForCreatorAccess(t *testing.T) {
 		if want := "mentorship_application:" + app.ID + "#auditor@user:wait-mentee"; checks[0].Check != want {
 			t.Fatalf("checked %q; want %q", checks[0].Check, want)
 		}
+		assertNoCheckBeforeGrant(t, "mentorship_application:"+app.ID, "wait-mentee", checks)
 		if tasks := tasksOf(t, mentee, app.ID); len(tasks) == 0 {
 			t.Fatal("the new application has no tasks to read")
 		}
@@ -90,4 +95,16 @@ func TestE2ECreateWaitsForCreatorAccess(t *testing.T) {
 		// The logo upload checks the creator's admin row, so the FGA lag does not block it.
 		uploadLogo(t, admin, p.ID).expect(http.StatusCreated)
 	})
+}
+
+// assertNoCheckBeforeGrant fails if any check on object reached fga-sync before the relay's grant to user did.
+func assertNoCheckBeforeGrant(t *testing.T, object, user string, checks []accessCheck) {
+	t.Helper()
+	granted, ok := e2e.fakes.grantedAt(object, user)
+	if !ok {
+		t.Fatalf("no grant for %s on %s reached fga-sync", user, object)
+	}
+	if first := checks[0].At; first.Before(granted) {
+		t.Fatalf("first check at %s preceded the grant at %s; that denial would be cached past the wait", first.Format(time.StampMicro), granted.Format(time.StampMicro))
+	}
 }

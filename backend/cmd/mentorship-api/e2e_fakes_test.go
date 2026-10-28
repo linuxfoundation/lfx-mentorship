@@ -59,6 +59,7 @@ type grant struct {
 type accessCheck struct {
 	Check   string
 	Allowed bool
+	At      time.Time
 }
 
 func startFakes(nc *nats.Conn) (*fakes, error) {
@@ -190,6 +191,14 @@ func (f *fakes) recordTuples(msg *nats.Msg) {
 	}
 }
 
+// grantedAt returns when the relay's first grant of a tuple on object to user arrived.
+func (f *fakes) grantedAt(object, user string) (time.Time, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	at, ok := f.granted[object][user]
+	return at, ok
+}
+
 // grantsFor returns the grant messages the fake accepted for object, in order.
 func (f *fakes) grantsFor(object string) []grant {
 	f.mu.Lock()
@@ -214,7 +223,7 @@ func (f *fakes) accessCheck(msg *nats.Msg) {
 		_, user, _ := strings.Cut(rest, "@user:")
 		arrived, ok := f.granted[object][user]
 		allowed := ok && time.Since(arrived) >= f.accessHold
-		f.accessChecks = append(f.accessChecks, accessCheck{Check: check, Allowed: allowed})
+		f.accessChecks = append(f.accessChecks, accessCheck{Check: check, Allowed: allowed, At: time.Now()})
 		lines = append(lines, fmt.Sprintf("%s\t%t", check, allowed))
 	}
 	_ = msg.Respond([]byte(strings.Join(lines, "\n")))

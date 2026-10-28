@@ -272,7 +272,7 @@ required components must be present.
 | `FGA_RELAY_INTERVAL` | `1s` | Poll interval for FGA and index relays |
 | `FGA_RELAY_RETRY_DELAY` | `1m` | Delay before retrying an FGA marker |
 | `FGA_RELAY_MAX_ATTEMPTS` | `10` | Attempts before FGA dead letter |
-| `FGA_ACCESS_WAIT_TIMEOUT` | `10s` | How long a program or application create polls `lfx.access_check.request` for the creator's relation (`writer` / `auditor`) before responding anyway; `0` disables, max `15s` |
+| `FGA_ACCESS_WAIT_TIMEOUT` | `10s` | How long a program or application create polls `lfx.access_check.request` for the creator's relation (`writer` / `auditor`) before responding anyway; `0` disables, max `15s`. The first check waits until the relay has published the object's outbox markers: a check made before the tuple exists is cached as a denial by OpenFGA's check-query cache (10 s TTL) and by fga-sync, outliving the wait |
 | `INDEXER_SERVICE_TOKEN` | None | Service credential stamped on index messages; secret value. Without it the index relay idles |
 | `INDEX_RELAY_RETRY_DELAY` | `1m` | Delay after a failed index publish |
 | `INDEX_RELAY_MAX_ATTEMPTS` | `10` | Failed index publishes before dead letter |
