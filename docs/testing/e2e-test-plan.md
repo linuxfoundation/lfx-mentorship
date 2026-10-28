@@ -241,7 +241,7 @@ PROD runs `v0.1.10` (backend, cron jobs and frontend), which includes [#358](htt
 | [#358](https://github.com/linuxfoundation/lfx-mentorship/pull/358) (F2, logo) | ✅ Logo uploaded on the first try (1 run) |
 | [#358](https://github.com/linuxfoundation/lfx-mentorship/pull/358) (F2, apply) | ⚠️ Submit now takes about 10 s, while the access wait times out. On 1 of 2 runs the overview still showed "Forbidden"; access appeared about 15 s after Submit |
 | [#361](https://github.com/linuxfoundation/lfx-mentorship/pull/361)–[#365](https://github.com/linuxfoundation/lfx-mentorship/pull/365) (F10) | ✅ A brand-new user (`mlehotsky1`) has a name in the admin and mentor lists. The backend sends their emails, and the copies in `EMAIL_COPY_INBOX` are correct |
-| F12 | ❌ Still reproduces: 5 of 5 times on idle DEV sessions. PROD RUM, last 30 days: 17 guard timeouts in 17 sessions, 9 of them `mentorshipEnabledGuard` |
+| F12 | [linuxfoundation/lfx-self-serve#4179](https://github.com/linuxfoundation/lfx-self-serve/issues/4179): fixed by lfx-self-serve#4341 (SSR refreshes the token), with #4297 as safety net; verified on PROD and DEV 2026-10-27, closed |
 
 | # | Re-test or new check (2026-10-23, DEV) | Result |
 |---|---|---|
@@ -322,7 +322,7 @@ Test programs were named "E2E Test Program … please ignore".
 | Prerequisite, accept, task, review, graduate | ✅ Admin list shows the mentee's name; the mentee saw the new task within seconds |
 | Mentor invite, accept, open program | ✅ Accepted from Edit Mentor Profile; program readable about 8 s later |
 | Public graduate | ✅ Listed with their name |
-| Hide the test program afterwards | ❌ Refused: a graduated application blocks hide, and graduated can't be declined or withdrawn, so a test with a graduate needs backend cleanup |
+| Hide the test program afterwards | ❌ Refused: a graduated application blocks hide (intended), and graduated can't be undone; legacy allowed it ([#395](https://github.com/linuxfoundation/lfx-mentorship/issues/395)). Its term was closed instead, so it shows as Completed, not accepting; hide it once #395 ships. The second test program was rejected, so it was never public |
 
 ## 13. Legacy parity checks (2026-10-23)
 
@@ -357,6 +357,8 @@ Test programs were named "E2E Test Program … please ignore".
 | F17 | Ended terms never close. Legacy closed them automatically once no applications were active. 123 ended PROD terms are still open, so their programs show "In progress", and they count toward the cap of 4 open terms per program. | PROD | Medium | [linuxfoundation/lfx-mentorship#369](https://github.com/linuxfoundation/lfx-mentorship/issues/369) |
 | F18 | Program admins and mentors can't see an accepted mentee's email or phone in Self Serve; legacy had Email and Call links, and the product docs still describe them. Admins can get emails only from the CSV export; mentors not at all. | DEV | Medium | [linuxfoundation/lfx-mentorship#376](https://github.com/linuxfoundation/lfx-mentorship/issues/376) |
 | F19 | An approved mentor can't leave a program, and the admins get no email; legacy allowed it and sent `admin-mentor-removed-project`. | DEV | Medium | [linuxfoundation/lfx-mentorship#377](https://github.com/linuxfoundation/lfx-mentorship/issues/377) |
+| F20 | New permissions can lag by hours when another service floods fga-sync, whose shared consumer handles one message at a time. On 2026-10-27 a new program's logo got 403 for hours and a new application's tasks for minutes. Logo fixed by #392; other new-object flows still exposed. | PROD | High (platform) | [linuxfoundation/lfx-mentorship#394](https://github.com/linuxfoundation/lfx-mentorship/issues/394) |
+| F21 | A graduation can't be undone, so a mistaken graduation is permanent and its program can never be hidden; legacy allowed any status change. | PROD | Medium | [linuxfoundation/lfx-mentorship#395](https://github.com/linuxfoundation/lfx-mentorship/issues/395) |
 
 **Info, no action proposed:**
 - The landing page counts 5 graduated mentees on DEV, while the directory's Graduated tab lists 4.
