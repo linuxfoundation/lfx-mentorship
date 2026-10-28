@@ -5,6 +5,7 @@ package fga
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -19,9 +20,14 @@ import (
 )
 
 // accessCheckSubject is fga-sync's request/reply batch check. It answers from
-// OpenFGA (through a cache invalidated on every tuple write), the store
-// Heimdall's openfga_check authorizer reads.
+// OpenFGA, the store Heimdall's openfga_check authorizer reads, through fga-sync's
+// cache (invalidated on every tuple write) and OpenFGA's check-query cache (TTL only).
 const accessCheckSubject = "lfx.access_check.request"
+
+// readTuplesSubject is fga-sync's request/reply read of a user's direct tuples on an
+// object type, straight from OpenFGA's Read API: no cache sits in front of it, and
+// asking leaves nothing cached behind.
+const readTuplesSubject = "lfx.access_check.read_tuples"
 
 const (
 	accessPollInterval   = 250 * time.Millisecond
@@ -36,6 +42,16 @@ type Requester interface {
 }
 
 // AccessWaiter polls fga-sync until a relation is visible or its timeout ends.
+//
+// It asks for the relation only once the user's direct tuple on the object exists.
+// A check made before then is answered false and cached, by OpenFGA's check-query
+// cache for its TTL and by fga-sync's cache after that, past the end of the wait.
+//
+// The wait is best effort. It polls only on a definitive answer from fga-sync; when
+// fga-sync does not answer at all (no responder, or the request deadline passes) it
+// ends at once rather than retrying: fga-sync keeps serving a request for up to 10s
+// after the caller's deadline, so retrying would pile reads onto handler slots it
+// shares with the gateway's checks.
 type AccessWaiter struct {
 	conn         Requester
 	timeout      time.Duration
@@ -60,6 +76,18 @@ func (w *AccessWaiter) WaitForAccess(ctx context.Context, object, relation, user
 	ctx, cancel := context.WithTimeout(ctx, w.timeout)
 	defer cancel()
 
+	fail := func(err error) error {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return err
+	}
+
+	reads, err := w.awaitTuple(ctx, object, username)
+	span.SetAttributes(attribute.Int("fga.tuple_reads", reads))
+	if err != nil {
+		return fail(fmt.Errorf("wait for %s#%s: no tuple for %s after %d reads: %w", object, relation, username, reads, err))
+	}
+
 	check := object + "#" + relation + "@user:" + username
 	var lastErr error
 	for attempt := 1; ; attempt++ {
@@ -68,20 +96,103 @@ func (w *AccessWaiter) WaitForAccess(ctx context.Context, object, relation, user
 			span.SetAttributes(attribute.Int("fga.attempts", attempt))
 			return nil
 		}
+		if unanswered(ctx, err) {
+			span.SetAttributes(attribute.Int("fga.attempts", attempt))
+			return fail(fmt.Errorf("wait for %s#%s: fga-sync did not answer check %d: %w", object, relation, attempt, err))
+		}
 		if err != nil {
 			lastErr = err
 		}
-		timer := time.NewTimer(w.pollInterval)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			err := fmt.Errorf("wait for %s#%s after %d checks: %w", object, relation, attempt, errors.Join(ctx.Err(), lastErr))
+		if err := sleep(ctx, w.pollInterval); err != nil {
 			span.SetAttributes(attribute.Int("fga.attempts", attempt))
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-			return err
-		case <-timer.C:
+			return fail(fmt.Errorf("wait for %s#%s after %d checks: %w", object, relation, attempt, errors.Join(err, lastErr)))
 		}
+	}
+}
+
+// awaitTuple polls read_tuples until user:{username} holds a direct tuple on object,
+// returning the number of reads made. fga-sync writes the direct tuple and the relations
+// derived from it in one OpenFGA write, so its presence means the grant is applied.
+//
+// The read returns every direct tuple the user holds on the object type: fga-sync has
+// no object-scoped read. That is the user's program memberships or applications, tens
+// of tuples, paged by OpenFGA inside fga-sync, well within the request deadline.
+func (w *AccessWaiter) awaitTuple(ctx context.Context, object, username string) (int, error) {
+	objectType, _, ok := strings.Cut(object, ":")
+	if !ok {
+		return 0, fmt.Errorf("object %q has no type prefix", object)
+	}
+	request, err := json.Marshal(readTuplesRequest{User: "user:" + username, ObjectType: objectType})
+	if err != nil {
+		return 0, err
+	}
+	var lastErr error
+	for reads := 1; ; reads++ {
+		found, err := w.readTuple(ctx, request, object+"#")
+		if err == nil && found {
+			return reads, nil
+		}
+		if unanswered(ctx, err) {
+			return reads, fmt.Errorf("fga-sync did not answer: %w", err)
+		}
+		if err != nil {
+			lastErr = err
+		}
+		if err := sleep(ctx, w.pollInterval); err != nil {
+			return reads, errors.Join(err, lastErr)
+		}
+	}
+}
+
+// unanswered reports a request fga-sync never answered while the wait itself is still
+// live: no responder on the subject, or the per-request deadline passed.
+func unanswered(ctx context.Context, err error) bool {
+	return err != nil && ctx.Err() == nil && (errors.Is(err, nats.ErrNoResponders) || errors.Is(err, context.DeadlineExceeded))
+}
+
+type readTuplesRequest struct {
+	User       string `json:"user"`
+	ObjectType string `json:"object_type"`
+}
+
+type readTuplesResponse struct {
+	Results []string `json:"results"`
+	Error   string   `json:"error,omitempty"`
+}
+
+// readTuple reports whether any of the user's direct tuples is on the object, given
+// as the "{object}#" prefix of fga-sync's "{object}#{relation}@{user}" result lines.
+func (w *AccessWaiter) readTuple(ctx context.Context, request []byte, objectPrefix string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, accessRequestTimeout)
+	defer cancel()
+
+	reply, err := w.conn.RequestMsgWithContext(ctx, &nats.Msg{Subject: readTuplesSubject, Data: request})
+	if err != nil {
+		return false, fmt.Errorf("read tuples: %w", err)
+	}
+	var response readTuplesResponse
+	if err := json.Unmarshal(reply.Data, &response); err != nil {
+		return false, fmt.Errorf("read tuples: %w", err)
+	}
+	if response.Error != "" {
+		return false, fmt.Errorf("read tuples: %s", response.Error)
+	}
+	for _, result := range response.Results {
+		if strings.HasPrefix(result, objectPrefix) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func sleep(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
 }
 
