@@ -44,9 +44,12 @@ type fakes struct {
 	// accessHold delays applying a tuple after the relay's message arrives, standing in
 	// for fga-sync's consumer lag: until it passes, neither read_tuples nor a check sees it.
 	accessHold time.Duration
-	// deniedUntil models OpenFGA's check-query cache: a check answered false stays false
-	// for checkCacheTTL however the tuples change, which is what makes a premature check fatal.
+	// deniedUntil models OpenFGA's check-query cache: a check answered false from the
+	// store is remembered as false until its entry lapses, however the tuples change in
+	// between. A hit on the entry does not extend it, as in OpenFGA.
 	deniedUntil map[string]time.Time
+	// checkCacheTTL is how long a denial is remembered; defaultCheckCacheTTL unless a test shortens it.
+	checkCacheTTL time.Duration
 	// accessChecks records every lfx.access_check.request body and the answer given.
 	accessChecks []accessCheck
 	// grants records every member_put and update_access message accepted, in order.
@@ -100,6 +103,7 @@ func (f *fakes) reset() {
 	f.granted = map[string]map[string]time.Time{}
 	f.accessHold = 0
 	f.deniedUntil = map[string]time.Time{}
+	f.checkCacheTTL = defaultCheckCacheTTL
 	f.accessChecks = nil
 	f.grants = nil
 }
@@ -218,12 +222,21 @@ func (f *fakes) grantsFor(object string) []grant {
 	return out
 }
 
-// checkCacheTTL mirrors OPENFGA_CHECK_QUERY_CACHE_TTL on dev and prod.
-const checkCacheTTL = 10 * time.Second
+// defaultCheckCacheTTL mirrors OPENFGA_CHECK_QUERY_CACHE_TTL on dev and prod.
+const defaultCheckCacheTTL = 10 * time.Second
+
+// setCheckCacheTTL shortens how long the fake remembers a denied check.
+func (f *fakes) setCheckCacheTTL(ttl time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.checkCacheTTL = ttl
+}
 
 // accessCheck answers lfx.access_check.request as fga-sync does: one
-// "{check}\t{true|false}" line per "object#relation@user:name" line asked. A
-// denial is remembered for checkCacheTTL, as OpenFGA's check-query cache would.
+// "{check}\t{true|false}" line per "object#relation@user:name" line asked.
+// A denial computed from the store is remembered for checkCacheTTL and served
+// from memory until then, as OpenFGA's check-query cache does; serving it does
+// not extend it.
 func (f *fakes) accessCheck(msg *nats.Msg) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -232,10 +245,15 @@ func (f *fakes) accessCheck(msg *nats.Msg) {
 	for _, check := range strings.Split(strings.TrimSpace(string(msg.Data)), "\n") {
 		object, rest, _ := strings.Cut(check, "#")
 		_, user, _ := strings.Cut(rest, "@user:")
-		applied, ok := f.granted[object][user]
-		allowed := ok && now.Sub(applied) >= f.accessHold && now.After(f.deniedUntil[check])
-		if !allowed {
-			f.deniedUntil[check] = now.Add(checkCacheTTL)
+		var allowed bool
+		if now.Before(f.deniedUntil[check]) {
+			allowed = false // cache hit: the stored denial, untouched
+		} else {
+			applied, ok := f.granted[object][user]
+			allowed = ok && now.Sub(applied) >= f.accessHold
+			if !allowed {
+				f.deniedUntil[check] = now.Add(f.checkCacheTTL)
+			}
 		}
 		f.accessChecks = append(f.accessChecks, accessCheck{Check: check, Allowed: allowed, At: now})
 		lines = append(lines, fmt.Sprintf("%s\t%t", check, allowed))

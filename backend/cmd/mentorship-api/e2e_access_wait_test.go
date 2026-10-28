@@ -8,15 +8,19 @@ package main
 import (
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/nats-io/nats.go"
 )
 
 // TestE2ECreateWaitsForCreatorAccess covers issue #354: the API answers a
 // create only once fga-sync says the creator can act on the new object, so the
 // client's next request is not denied at the gateway while the outbox catches up.
-// The fake remembers a denied check for OpenFGA's cache TTL, as production does,
-// so the wait can only succeed if its first check comes after the tuple is applied.
+// The wait may make exactly one check, after the tuple is applied: a check before
+// that is denied, and the fake, like OpenFGA's check-query cache, would keep
+// serving that denial for the cache TTL (TestE2EFakeFGASyncRemembersDenials).
 func TestE2ECreateWaitsForCreatorAccess(t *testing.T) {
 	reset(t)
 	// Applying lags the relay's publish by this much; the wait has to notice, not guess.
@@ -83,6 +87,44 @@ func TestE2ECreateWaitsForCreatorAccess(t *testing.T) {
 		// The logo upload checks the creator's admin row, so the FGA lag does not block it.
 		uploadLogo(t, admin, p.ID).expect(http.StatusCreated)
 	})
+}
+
+// TestE2EFakeFGASyncRemembersDenials pins the fake's cache model, which the wait tests
+// rely on: a check denied from the store stays denied until the entry lapses, even once
+// the tuple is applied, and a hit on the entry does not extend it, as in OpenFGA.
+func TestE2EFakeFGASyncRemembersDenials(t *testing.T) {
+	reset(t)
+	const ttl = 300 * time.Millisecond
+	e2e.fakes.setCheckCacheTTL(ttl)
+	const object, user = "mentorship_program:cache-test", "cache-user"
+	check := object + "#writer@user:" + user
+
+	ask := func() bool {
+		t.Helper()
+		reply, err := e2e.nc.Request("lfx.access_check.request", []byte(check), time.Second)
+		if err != nil {
+			t.Fatalf("access check: %v", err)
+		}
+		return strings.TrimSpace(string(reply.Data)) == check+"\ttrue"
+	}
+	if ask() {
+		t.Fatal("a user with no tuple must be denied")
+	}
+	denied := time.Now()
+	// Apply the tuple directly, as the relay's member_put would.
+	e2e.fakes.recordTuples(&nats.Msg{Data: []byte(`{"object_type":"mentorship_program","operation":"member_put","data":{"uid":"cache-test","username":"` + user + `","relations":["writer"]}}`)})
+
+	// Hits on the cached denial must neither allow nor extend it.
+	for time.Since(denied) < ttl/2 {
+		if ask() {
+			t.Fatal("the cached denial was not served while its entry was live")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	eventually(t, ttl+time.Second, "the denial to lapse and the applied tuple to be seen", ask)
+	if lapsed := time.Since(denied); lapsed < ttl {
+		t.Fatalf("denial lapsed after %s; want at least the %s TTL", lapsed, ttl)
+	}
 }
 
 // assertFirstCheckAllowedAfterApply fails unless the wait's one and only check on object

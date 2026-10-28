@@ -56,6 +56,7 @@ type environment struct {
 	baseURL string
 	pool    *pgxpool.Pool
 	key     *rsa.PrivateKey
+	nc      *nats.Conn
 	js      jetstream.JetStream
 	fakes   *fakes
 	s3      gofakes3.Backend
@@ -198,7 +199,7 @@ func startEnvironment(ctx context.Context, dsn string) (*environment, func(), er
 	api := httptest.NewServer(srv.router)
 	closers = append(closers, api.Close)
 
-	return &environment{baseURL: api.URL, pool: srv.pool, key: key, js: js, fakes: fk, s3: s3Backend, email: srv.emailNotifier}, cleanup, nil
+	return &environment{baseURL: api.URL, pool: srv.pool, key: key, nc: nc, js: js, fakes: fk, s3: s3Backend, email: srv.emailNotifier}, cleanup, nil
 }
 
 // reset empties every table and every fake, so each test starts from a blank platform.
