@@ -9,6 +9,7 @@ const SECTION_ICONS: Record<string, string> = {
   mentees: 'graduation-cap',
   mentors: 'chalkboard-user',
   'enroll-a-program': 'clipboard-check',
+  stipends: 'circle-dollar-to-slot',
 };
 
 const DEFAULT_SECTION_ICON = 'file-lines';

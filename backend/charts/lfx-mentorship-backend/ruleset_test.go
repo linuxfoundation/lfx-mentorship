@@ -5,6 +5,7 @@ package lfxmentorshipbackend_test
 
 import (
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -137,7 +138,6 @@ func TestFileRoutesUseTheirClassRelation(t *testing.T) {
 	for _, tc := range []struct {
 		rule, method, path, relation string
 	}{
-		{"program-logo-upload", "POST", "/mentorship/v1/programs/:id/logo-upload", "relation: writer"},
 		{"program-logo-delete", "DELETE", "/mentorship/v1/programs/:id/logo", "relation: writer"},
 		{"programs-public", "GET", "/mentorship/v1/programs/:id/logo-download", "relation: viewer"},
 		{"tasks-file-upload", "POST", "/mentorship/v1/tasks/:id/file-upload", "relation: assignee"},
@@ -159,6 +159,75 @@ func TestFileRoutesUseTheirClassRelation(t *testing.T) {
 	if strings.Contains(ruleBlock(t, "tasks-auditor"), "anonymous_authenticator") {
 		t.Error("task file download must not be anonymous")
 	}
+}
+
+// TestProgramLogoUploadRuleFollowsRolloutFlag renders the rule both ways: the
+// gateway check stays by default so a RuleSet applied mid-rollout never meets a
+// pod that does not check, and only the flag moves the decision to the service.
+func TestProgramLogoUploadRuleFollowsRolloutFlag(t *testing.T) {
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skip("helm is not installed")
+	}
+	const fgaCheck = "object: 'mentorship_program:{{- .Request.URL.Captures.id -}}'\n              relation: writer"
+	for name, tc := range map[string]struct {
+		args          []string
+		want, mustNot string
+	}{
+		"default keeps the gateway check": {want: fgaCheck, mustNot: "allow_all"},
+		"flag moves it to the service":    {args: []string{"--set", "heimdall.logoUploadServiceAuthz=true"}, want: "- authorizer: allow_all", mustNot: "openfga_check"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			block := renderedRuleBlock(t, "program-logo-upload", tc.args...)
+			if strings.Count(block, "- path:") != 1 || !strings.Contains(block, "- path: /mentorship/v1/programs/:id/logo-upload\n") || !strings.Contains(block, "methods: [POST]\n") {
+				t.Fatalf("logo upload rule must cover only POST logo-upload:\n%s", block)
+			}
+			if !strings.Contains(block, "- authenticator: oidc") || strings.Contains(block, "anonymous_authenticator") {
+				t.Errorf("logo upload rule must require an authenticated caller:\n%s", block)
+			}
+			if !strings.Contains(block, tc.want) || strings.Contains(block, tc.mustNot) {
+				t.Errorf("logo upload rule: want %q and no %q:\n%s", tc.want, tc.mustNot, block)
+			}
+		})
+	}
+}
+
+// renderedRuleBlock renders the RuleSet through helm and returns the rule with the given id suffix.
+func renderedRuleBlock(t *testing.T, id string, extra ...string) string {
+	t.Helper()
+	args := []string{"template", "x", ".", "-s", "templates/ruleset.yaml",
+		"--set", "image.tag=t",
+		"--set", "secretName=s",
+		"--set", "config.HEIMDALL_JWKS_URL=https://h/jwks",
+		"--set", "config.HEIMDALL_JWT_AUDIENCE=a",
+		"--set", "config.HEIMDALL_JWT_ISSUER=i",
+		"--set", "config.AWS_REGION=us-west-2",
+		"--set", "config.FGA_NATS_URL=nats://nats:4222",
+		"--set", "config.EMAIL_COPY_INBOX=copy@example.org",
+		"--set", "config.EMAIL_REVIEW_INBOX=review@example.org",
+		"--set", "config.PUBLIC_SITE_URL=https://mentorship.example.org",
+		"--set", "config.SELF_SERVE_URL=https://app.example.org",
+		"--set", "lfx.domain=example.org",
+		"--set", "traefik.gateway.name=gw",
+		"--set", "traefik.gateway.namespace=lfx",
+		"--set", "heimdall.enabled=true",
+		"--set", "heimdall.addMiddleware=true",
+		"--set", "heimdall.url=http://heimdall:4456",
+		"--set", "openfga.enabled=true",
+	}
+	out, err := exec.Command("helm", append(args, extra...)...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("helm template: %v\n%s", err, out)
+	}
+	rendered := string(out)
+	start := strings.Index(rendered, "id: rule:lfx:lfx-mentorship-backend:"+id+"\n")
+	if start < 0 {
+		t.Fatalf("rendered RuleSet is missing rule %q", id)
+	}
+	end := strings.Index(rendered[start:], "\n    - id:")
+	if end < 0 {
+		end = len(rendered) - start
+	}
+	return rendered[start : start+end]
 }
 
 func TestReviewerFieldsRequireReviewerRelation(t *testing.T) {
