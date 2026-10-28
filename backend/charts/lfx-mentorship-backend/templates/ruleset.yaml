@@ -337,8 +337,10 @@ spec:
             values:
               aud: {{ .Values.app.audience | quote }}
 
-    # Writer is checked in the service (FileService.AuthorizeProgramLogoUpload): a new
+    # The backend checks writer on this route (FileService.AuthorizeProgramLogoUpload): a new
     # program's writer tuple can reach OpenFGA long after the create that precedes this upload.
+    # The gateway check stays until heimdall.logoUploadServiceAuthz is set, once every pod
+    # runs an image that checks (values.yaml).
     - id: rule:lfx:lfx-mentorship-backend:program-logo-upload
       allow_encoded_slashes: "off"
       match:
@@ -347,7 +349,15 @@ spec:
           - path: /mentorship/v1/programs/:id/logo-upload
       execute:
         - authenticator: oidc
+        {{- if .Values.heimdall.logoUploadServiceAuthz }}
         - authorizer: allow_all
+        {{- else }}
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_program:{{ "{{- .Request.URL.Captures.id -}}" }}'
+              relation: writer
+        {{- end }}
         - finalizer: create_jwt
           config:
             values:
