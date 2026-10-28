@@ -62,8 +62,9 @@ func TestE2EProgramLogoFiles(t *testing.T) {
 		admin.send(t, http.MethodPost, logoPath+"/logo-upload", bytes.NewReader(nil), "image/png", nil).expect(http.StatusBadRequest)
 		huge := append(pngBytes(t), make([]byte, 3<<20)...)
 		admin.send(t, http.MethodPost, logoPath+"/logo-upload", bytes.NewReader(huge), "image/png", nil).expect(http.StatusRequestEntityTooLarge)
-		uploadLogo(t, admin, "00000000-0000-4000-8000-000000000000").expect(http.StatusNotFound)
+		uploadLogo(t, admin, "00000000-0000-4000-8000-000000000000").expect(http.StatusForbidden)
 		uploadLogo(t, anonymous(), p.ID).expect(http.StatusUnauthorized)
+		uploadLogo(t, signIn(t, "logo-stranger"), p.ID).expect(http.StatusForbidden)
 	})
 
 	anonymous().call(t, http.MethodGet, logoPath+"/logo-download", nil).expect(http.StatusNotFound)

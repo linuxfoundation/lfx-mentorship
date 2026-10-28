@@ -89,3 +89,27 @@ func TestAccessWaiter_StopsWhenCallerCancels(t *testing.T) {
 		t.Fatalf("err = %v; want Canceled", err)
 	}
 }
+
+func TestAccessChecker_AsksOnce(t *testing.T) {
+	for label, tc := range map[string]struct {
+		reply   func(*nats.Msg) (*nats.Msg, error)
+		allowed bool
+		wantErr bool
+	}{
+		"allowed":            {reply: answer("other#viewer@user:bob\tfalse\n" + waitCheck + "\ttrue\n"), allowed: true},
+		"denied":             {reply: answer(waitCheck + "\tfalse")},
+		"no answer":          {reply: answer("other#viewer@user:bob\ttrue"), wantErr: true},
+		"fga-sync unreached": {reply: fail(nats.ErrNoResponders), wantErr: true},
+	} {
+		t.Run(label, func(t *testing.T) {
+			conn := &requesterStub{replies: []func(*nats.Msg) (*nats.Msg, error){tc.reply}}
+			allowed, err := NewAccessChecker(conn).HasAccess(context.Background(), "mentorship_program:p1", "writer", "alice")
+			if allowed != tc.allowed || (err != nil) != tc.wantErr {
+				t.Fatalf("allowed = %v, err = %v; want %v, error %v", allowed, err, tc.allowed, tc.wantErr)
+			}
+			if len(conn.requests) != 1 || string(conn.requests[0].Data) != waitCheck {
+				t.Fatalf("requests = %d; want one %q", len(conn.requests), waitCheck)
+			}
+		})
+	}
+}

@@ -5,12 +5,14 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
+	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/auth"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -59,6 +61,10 @@ type deletionScheduler interface {
 	Schedule(ctx context.Context, bucket domain.ObjectBucket, locator string, delay time.Duration) (string, error)
 }
 
+type programAdmins interface {
+	FindActiveProgramAdminByProgramAndUser(ctx context.Context, programID, userID string) (*models.ProgramMember, error)
+}
+
 // FileService implements the upload, download and removal use cases for program logos
 // and task submissions. Logo downloads are a fallback to the CDN.
 //
@@ -68,11 +74,14 @@ type FileService struct {
 	files       domain.FileRepository
 	deletions   deletionScheduler
 	programs    domain.ProgramRepository
+	admins      programAdmins
 	tasks       taskAccess
 	submissions taskSubmissions
 	// logos and attachments are nil when their bucket is not configured.
 	logos       *LogoBucket
 	attachments domain.ObjectStore
+	// access is nil when fga-sync is not reachable; only direct program admins may then upload logos.
+	access domain.AccessChecker
 }
 
 // NewFileService returns a FileService. Pass a nil logos or attachments to disable that file class.
@@ -80,12 +89,56 @@ func NewFileService(
 	files domain.FileRepository,
 	deletions deletionScheduler,
 	programs domain.ProgramRepository,
+	admins programAdmins,
 	tasks taskAccess,
 	submissions taskSubmissions,
 	logos *LogoBucket,
 	attachments domain.ObjectStore,
 ) *FileService {
-	return &FileService{files: files, deletions: deletions, programs: programs, tasks: tasks, submissions: submissions, logos: logos, attachments: attachments}
+	return &FileService{files: files, deletions: deletions, programs: programs, admins: admins, tasks: tasks, submissions: submissions, logos: logos, attachments: attachments}
+}
+
+// SetAccessChecker sets the fga-sync check used for program writers not stored as program admins here.
+func (s *FileService) SetAccessChecker(access domain.AccessChecker) {
+	s.access = access
+}
+
+// AuthorizeProgramLogoUpload reports whether the caller may replace the program's logo, the
+// OpenFGA writer relation. The gateway does not check it on this route: a new program's writer
+// tuple can lag its creation, and the logo is the next step. Call it before reading the body.
+func (s *FileService) AuthorizeProgramLogoUpload(ctx context.Context, programID string) error {
+	ctx, span := fileSvcTracer.Start(ctx, "FileService.AuthorizeProgramLogoUpload")
+	defer span.End()
+	span.SetAttributes(attribute.String("program.id", programID))
+
+	principal := auth.PrincipalFromContext(ctx)
+	if principal == nil || principal.UserID == "" || principal.Username == "" {
+		return domain.ErrUnauthorized
+	}
+	// Direct program admins come from Postgres, the source the writer tuple is written from.
+	if !principal.IsM2M() {
+		_, err := s.admins.FindActiveProgramAdminByProgramAndUser(ctx, programID, principal.UserID)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, domain.ErrProgramMemberNotFound) {
+			span.RecordError(err)
+			return fmt.Errorf("find program admin membership: %w", err)
+		}
+	}
+	// Project writers and project mentorship admins inherit writer in OpenFGA only.
+	if s.access == nil {
+		return fmt.Errorf("%w: caller may not change this program's logo", domain.ErrForbidden)
+	}
+	allowed, err := s.access.HasAccess(ctx, programFGAObjectPrefix+programID, programWriterRelation, principal.Username)
+	if err != nil {
+		span.RecordError(err)
+		return fmt.Errorf("%w: program writer check: %v", domain.ErrUpstreamUnavailable, err)
+	}
+	if !allowed {
+		return fmt.Errorf("%w: caller may not change this program's logo", domain.ErrForbidden)
+	}
+	return nil
 }
 
 // UploadProgramLogo stores a new logo for the program and points programs.logo_url at it.

@@ -137,7 +137,6 @@ func TestFileRoutesUseTheirClassRelation(t *testing.T) {
 	for _, tc := range []struct {
 		rule, method, path, relation string
 	}{
-		{"program-logo-upload", "POST", "/mentorship/v1/programs/:id/logo-upload", "relation: writer"},
 		{"program-logo-delete", "DELETE", "/mentorship/v1/programs/:id/logo", "relation: writer"},
 		{"programs-public", "GET", "/mentorship/v1/programs/:id/logo-download", "relation: viewer"},
 		{"tasks-file-upload", "POST", "/mentorship/v1/tasks/:id/file-upload", "relation: assignee"},
@@ -158,6 +157,19 @@ func TestFileRoutesUseTheirClassRelation(t *testing.T) {
 	// No private-class download route may be anonymous.
 	if strings.Contains(ruleBlock(t, "tasks-auditor"), "anonymous_authenticator") {
 		t.Error("task file download must not be anonymous")
+	}
+}
+
+func TestProgramLogoUploadIsAuthenticatedOnly(t *testing.T) {
+	block := ruleBlock(t, "program-logo-upload")
+	if strings.Count(block, "- path:") != 1 || !strings.Contains(block, "- path: /mentorship/v1/programs/:id/logo-upload\n") || !strings.Contains(block, "methods: [POST]\n") {
+		t.Fatalf("logo upload rule must cover only POST logo-upload:\n%s", block)
+	}
+	if !strings.Contains(block, "- authenticator: oidc") || strings.Contains(block, "anonymous_authenticator") {
+		t.Errorf("logo upload rule must require an authenticated caller:\n%s", block)
+	}
+	if !strings.Contains(block, "- authorizer: allow_all") {
+		t.Errorf("logo upload rule must leave the writer check to the service:\n%s", block)
 	}
 }
 
