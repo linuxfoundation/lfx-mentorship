@@ -135,14 +135,14 @@ SPDX-License-Identifier: MIT
             </dd>
           </div>
           <div
-            v-if="term.applicationsCloseAt"
+            v-if="applicationDate(term).at"
             class="flex flex-col gap-1"
           >
             <dt class="text-xxs text-neutral-500">
-              {{ isAccepting ? 'Applications close' : 'Applications closed' }}
+              {{ applicationDate(term).label }}
             </dt>
             <dd class="text-xs text-neutral-900">
-              {{ formatProgramDate(term.applicationsCloseAt) }}
+              {{ formatProgramDate(applicationDate(term).at!) }}
             </dd>
           </div>
           <div
@@ -172,7 +172,7 @@ import { PROGRAM_STATUS_CONFIG } from '../config/program-card.config';
 import { PROGRAM_DONATE_UNAVAILABLE } from '../config/program-detail.config';
 import { AppRoute } from '~/config/routes';
 import type { Program, ProgramTerm } from '~/types/program.types';
-import { formatTermLabel, sortTermsNewestFirst } from '~/utils/program-terms';
+import { formatTermLabel, getProgramTermDisplayStatus, sortTermsNewestFirst } from '~/utils/program-terms';
 
 // donateDisabled: the program has no LFX Crowdfunding initiative to donate to yet.
 const props = defineProps<{ program: Program; donateDisabled?: boolean }>();
@@ -212,9 +212,28 @@ const displayTerms = computed(() => {
   return newest ? [newest] : [];
 });
 
+// Same rule as the header badge and the Terms tab, so the three never disagree.
 function termHeading(term: ProgramTerm): string {
   if (isAccepting.value) return 'Accepting Applications';
-  return term.status === 'open' ? 'Current Term' : 'Previous Term';
+  switch (getProgramTermDisplayStatus(term)) {
+    case 'opens-soon':
+      return 'Upcoming Term';
+    case 'in-progress':
+      return 'Current Term';
+    default:
+      return 'Previous Term';
+  }
+}
+
+// An upcoming term shows when applications open; any other term, when they close.
+function applicationDate(term: ProgramTerm): { label: string; at?: string } {
+  if (!isAccepting.value && getProgramTermDisplayStatus(term) === 'opens-soon') {
+    return { label: 'Applications open', at: term.applicationsStartAt };
+  }
+  return {
+    label: isAccepting.value ? 'Applications close' : 'Applications closed',
+    at: term.applicationsCloseAt,
+  };
 }
 </script>
 
