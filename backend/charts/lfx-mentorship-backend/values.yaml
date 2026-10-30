@@ -132,11 +132,11 @@ tolerations: []
 affinity: {}
 topologySpreadConstraints: []
 
-# Evict at most one pod at a time during node drains and EKS consolidation.
-# Set exactly one of minAvailable or maxUnavailable.
+# Keep at least one pod through node drains and EKS consolidation. Set exactly
+# one of minAvailable or maxUnavailable.
 podDisruptionBudget:
   enabled: true
-  maxUnavailable: 1
+  minAvailable: 1
 
 # ── Database migration hook ──────────────────────────────────────────────────
 # Runs `/app/migrate` as a pre-install/pre-upgrade Job so schema changes land
