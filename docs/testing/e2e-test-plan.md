@@ -269,6 +269,39 @@ Emails:
 | 13.5 | HR gets the mentee-accepted notice (PROD) | ✅ Sent to `EMAIL_COPY_INBOX` (`lfx-mentorship-sent@`) on 2026-10-22, as decided in [07-email-delivery.md](../rewrite/07-email-delivery.md) |
 | 13.6 | Public "Contact support" sends users to the Self Serve chat (release plan) | ⚠️ Opens the Intercom messenger on DEV and PROD; [#366](https://github.com/linuxfoundation/lfx-mentorship/pull/366) moves it to Self Serve |
 
+## 14. PROD run (2026-10-27)
+
+Run on go-live day by Sameh, through Claude in Chrome. At the time of the run the legacy site and legacy API showed "LFX Mentorship is being upgraded. Please check back later.", so the cutover was still in progress. Michal's PROD test program (`456c2394-…`) now returns 404: it went with the truncation before the final import.
+
+**Read-only checks (logged out)**
+
+| # | Case | PROD |
+|---|---|---|
+| 1.1 | Landing page | ✅ `/api/summary`: 1,303 programs, 1 accepting, 1,002 mentors, 1,510 graduates, 47 foundations, $4.18M stipends. Become a Mentor and My Mentorship link to `app.lfx.dev` |
+| 1.2 | Programs list | ✅ Tabs add up: 1 accepting + 222 in progress + 1,080 completed = 1,303. Search (64 for "kubernetes"), "No programs found." empty state, skill filter (434 for Go), name sort, Load More pages of 15 with no duplicates over 45 programs. The header still says "42 foundations" ([F8](#findings)) |
+| 1.3 | Program detail | ✅ Meshery opens by slug (`meshery-1`) and by UUID; Overview, Terms, Mentors, Mentees and Sponsors tabs; Sponsors lists Linux Foundation, Intel and individual donors; no emails. A program with no Crowdfunding initiative (the [F1](#findings) case) is checked in the lifecycle below |
+| 1.4 | Apply while logged out | ✅ "Sign in to apply" names the program and term; Sign In opens Self Serve `/mentorship/mentee` with `programId` and `programTermId` (the register step, for an account without a mentee profile) |
+| 1.5 | Donate | ✅ Meshery opens its Crowdfunding initiative |
+| 1.6 | Mentor and mentee directories | ✅ Mentors: 1,002, Load More with no duplicates, no contact fields in the API or the page. Mentees: All / Active / Graduated tabs (Active 462, Graduated 1,509). Profile pages load; an unknown ID gives the 404 page |
+| 1.7 | Enroll page | ✅ "Enroll a Program in LFX" links to `app.lfx.dev/mentorship/admin/enroll` |
+| 1.8 | Unknown program | ✅ 404 page, HTTP 404 |
+| 1.9 | Mobile, 390 px wide | ✅ No horizontal scroll on landing, programs, detail, mentors, mentees and enroll |
+| 7.1 | Logged out, Self Serve Mentorship routes | ✅ `/mentorship`, `/admin`, `/mentor`, `/mentee` and `/program-review/{id}` redirect to sign-in; `/api/mentorship/*` returns 401 JSON |
+| 11 | Legacy URL redirects | ✅ `/project/{id}`, `/project/{id}/detail`, `/mentee/{id}`, `/mentee/{id},{programId}`, `/mentor/{id}` go to the new pages; `/participate/*`, `/profile` and `/email/process-approval` with no `id` go to `/`. `/mentee` and `/mentor` with no ID still 404 ([F13](#findings)) |
+| 11.1 | Legacy email links ([F16](#findings), fixed by [#371](https://github.com/linuxfoundation/lfx-mentorship/pull/371)) | ✅ `/email/process-approval?id={id}&action=approve` → Self Serve `/mentorship/program-review/{id}?decision=approve`; `action=decline` → `?decision=reject`; `/project/{id}/mentees` → `/mentorship/admin/{id}`; `/participate/mentor` (and `/participate/mentor/join/…`) → `/mentorship/mentor`; `/profile/mentor/edit` → `/mentorship/mentor/profile`; `/mentee/tasks` → `/mentorship/mentee/tasks`; `/mentee/applications` and `/project/applied` → `/mentorship/mentee`. An `action` other than approve or decline lands on "This review link is not valid", as designed |
+| 11.2 | The legacy host forwards to the new host | — Not yet: the legacy host still shows the maintenance page |
+| 10 | Migrated data vs legacy | — Not possible: the legacy API returns the maintenance page |
+| 13.1 | Ended terms close on their own | ❌ Unchanged: 123 ended terms still open on 120 programs ([F17](#findings), planned after the release) |
+| 13.6 | Public "Contact support" | ✅ Opens a "Contact support" dialog with "Go to LFX Self Serve" ([#366](https://github.com/linuxfoundation/lfx-mentorship/pull/366) shipped) |
+
+**Info:** the landing page counts 1,510 graduates; the directory's Graduated tab lists 1,509 (same pattern as the DEV note below).
+
+**Self Serve lifecycle:** see [14.1](#141-self-serve-lifecycle).
+
+### 14.1 Self Serve lifecycle
+
+Not run yet.
+
 ## Findings
 
 | # | Finding | Env | Severity | Ticket |
@@ -286,7 +319,7 @@ Emails:
 | F12 | Mentorship pages forward to the dashboard after about 10 s on an idle session. The server-side render treats an expired access token as signed out without refreshing it, so LaunchDarkly never gets the user and the flag guard times out. Other flag-gated pages (for example EasyCLA in the Org lens) share the cause. | DEV, PROD | High (launch) | [linuxfoundation/lfx-self-serve#4179](https://github.com/linuxfoundation/lfx-self-serve/issues/4179) |
 | F13 | The legacy paths `/mentee` and `/mentor` with no ID return 404 instead of redirecting. | PROD | Low | — |
 | F15 | A mentee can have more than 3 active applications. Legacy refused a fourth, and the public site still promises the limit. | DEV | Medium | [linuxfoundation/lfx-mentorship#368](https://github.com/linuxfoundation/lfx-mentorship/issues/368) |
-| F16 | Legacy email links for approvers, program admins and invited mentors land on the public site after cutover, instead of the Self Serve page where they can act. Filed by Michal; re-test before the 2026-10-27 cutover. | PROD | High (cutover) | [linuxfoundation/lfx-mentorship#367](https://github.com/linuxfoundation/lfx-mentorship/issues/367) |
+| F16 | Legacy email links for approvers, program admins and invited mentors land on the public site after cutover, instead of the Self Serve page where they can act. Filed by Michal; re-test before the 2026-10-27 cutover. | PROD | High (cutover) | [linuxfoundation/lfx-mentorship#367](https://github.com/linuxfoundation/lfx-mentorship/issues/367): fixed by [#371](https://github.com/linuxfoundation/lfx-mentorship/pull/371), PROD ✅ 2026-10-27 ([section 14](#14-prod-run-2026-10-27)) |
 | F14 | A first-time applicant who registers from an Apply link stays on the registration form after the profile is saved, with no message and no move on to the application. | DEV | High (launch) | [linuxfoundation/lfx-self-serve#4232](https://github.com/linuxfoundation/lfx-self-serve/issues/4232) |
 | F17 | Ended terms never close. Legacy closed them automatically once no applications were active. 123 ended PROD terms are still open, so their programs show "In progress", and they count toward the cap of 4 open terms per program. | PROD | Medium | [linuxfoundation/lfx-mentorship#369](https://github.com/linuxfoundation/lfx-mentorship/issues/369) |
 
