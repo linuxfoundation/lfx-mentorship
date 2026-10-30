@@ -27,6 +27,7 @@ export const PROGRAM_TERM_STATUS_CONFIG: Record<
 > = {
   'opens-soon': { label: 'Opens Soon', variation: 'warning' },
   accepting: { label: 'Accepting', variation: 'positive' },
+  'in-progress': { label: 'In progress', variation: 'warning' },
   completed: { label: 'Completed', variation: 'neutral' },
 };
 

@@ -4,7 +4,12 @@
 import type { Program, ProgramStatus, ProgramTerm } from '../types/program.types';
 
 /** Public-facing term lifecycle shown on the program Terms tab. */
-export const PROGRAM_TERM_DISPLAY_STATUSES = ['opens-soon', 'accepting', 'completed'] as const;
+export const PROGRAM_TERM_DISPLAY_STATUSES = [
+  'opens-soon',
+  'accepting',
+  'in-progress',
+  'completed',
+] as const;
 
 export type ProgramTermDisplayStatus = (typeof PROGRAM_TERM_DISPLAY_STATUSES)[number];
 
@@ -62,8 +67,8 @@ export function getProgramTermDisplayStatus(
     case 'open':
       return 'accepting';
     default:
-      // Application window passed or unset — treat as completed for listing.
-      return 'completed';
+      // Application window passed or unset, but the term is still open: it is running.
+      return 'in-progress';
   }
 }
 
@@ -77,7 +82,7 @@ export function toProgramCardStatus(terms: ProgramTerm[]): Exclude<ProgramStatus
   const displays = terms.map((term) => getProgramTermDisplayStatus(term));
   if (displays.some((status) => status === 'accepting')) return 'acceptance';
   if (displays.some((status) => status === 'opens-soon')) return 'open-soon';
-  if (terms.some((term) => term.status === 'open')) return 'in-progress';
+  if (displays.some((status) => status === 'in-progress')) return 'in-progress';
   return 'completed';
 }
 

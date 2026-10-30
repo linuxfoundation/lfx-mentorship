@@ -28,20 +28,20 @@ describe('application window', () => {
     ['before the start day', '2026-05-31T23:59:59Z', 'opens-soon'],
     ['on the start day before its stored time', '2026-06-01T00:00:00Z', 'accepting'],
     ['through the last second of the end day', '2026-08-01T23:59:59Z', 'accepting'],
-    ['after the end day', '2026-08-02T00:00:00Z', 'completed'],
+    ['after the end day, while the term is still open', '2026-08-02T00:00:00Z', 'in-progress'],
   ])('%s', (_, now, want) => {
     expect(getProgramTermDisplayStatus(term(), new Date(now))).toBe(want);
     expect(getActiveTerms([term()], new Date(now))).toHaveLength(want === 'accepting' ? 1 : 0);
   });
 
-  it('treats a term missing either window date as not accepting', () => {
+  it('treats an open term missing either window date as in progress, not accepting', () => {
     const now = new Date('2026-07-01T00:00:00Z');
     for (const t of [
       term({ applicationsStartAt: undefined }),
       term({ applicationsCloseAt: undefined }),
     ]) {
       expect(getActiveTerms([t], now)).toHaveLength(0);
-      expect(getProgramTermDisplayStatus(t, now)).toBe('completed');
+      expect(getProgramTermDisplayStatus(t, now)).toBe('in-progress');
     }
   });
 
@@ -51,11 +51,16 @@ describe('application window', () => {
     expect(getProgramTermDisplayStatus(term({ status: 'closed' }), now)).toBe('completed');
   });
 
-  it('treats a deleted term or an unparseable window date as completed', () => {
-    const now = new Date('2026-07-01T00:00:00Z');
+  it('treats a closed or deleted term as completed once its window has passed', () => {
+    const now = new Date('2026-08-02T00:00:00Z');
+    expect(getProgramTermDisplayStatus(term({ status: 'closed' }), now)).toBe('completed');
     expect(getProgramTermDisplayStatus(term({ status: 'deleted' }), now)).toBe('completed');
+  });
+
+  it('treats an open term with an unparseable window date as in progress', () => {
+    const now = new Date('2026-07-01T00:00:00Z');
     expect(getProgramTermDisplayStatus(term({ applicationsCloseAt: 'not-a-date' }), now)).toBe(
-      'completed',
+      'in-progress',
     );
   });
 });

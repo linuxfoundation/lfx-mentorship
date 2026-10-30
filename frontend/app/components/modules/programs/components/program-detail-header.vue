@@ -125,7 +125,7 @@ SPDX-License-Identifier: MIT
         class="w-full shrink-0 rounded-xl bg-neutral-50 border border-neutral-100 px-4.5 py-4 lg:w-52"
       >
         <p class="text-xs font-semibold uppercase tracking-wide text-neutral-500 mb-3">
-          {{ isAccepting ? 'Accepting Applications' : 'Previous Term' }}
+          {{ termHeading(term) }}
         </p>
         <dl class="flex flex-col gap-3">
           <div class="flex flex-col gap-1">
@@ -172,7 +172,7 @@ import { PROGRAM_STATUS_CONFIG } from '../config/program-card.config';
 import { PROGRAM_DONATE_UNAVAILABLE } from '../config/program-detail.config';
 import { AppRoute } from '~/config/routes';
 import type { Program, ProgramTerm } from '~/types/program.types';
-import { formatTermLabel } from '~/utils/program-terms';
+import { formatTermLabel, sortTermsNewestFirst } from '~/utils/program-terms';
 
 // donateDisabled: the program has no LFX Crowdfunding initiative to donate to yet.
 const props = defineProps<{ program: Program; donateDisabled?: boolean }>();
@@ -208,9 +208,14 @@ const activeTerms = computed(() => props.program.activeTerms);
 const isAccepting = computed(() => activeTerms.value.length > 0);
 const displayTerms = computed(() => {
   if (activeTerms.value.length) return activeTerms.value.slice(0, 2);
-  const last = props.program.terms.at(-1);
-  return last ? [last] : [];
+  const newest = sortTermsNewestFirst(props.program.terms)[0];
+  return newest ? [newest] : [];
 });
+
+function termHeading(term: ProgramTerm): string {
+  if (isAccepting.value) return 'Accepting Applications';
+  return term.status === 'open' ? 'Current Term' : 'Previous Term';
+}
 </script>
 
 <script lang="ts">
