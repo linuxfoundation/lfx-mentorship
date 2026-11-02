@@ -459,8 +459,8 @@ func (r *ProgramTermRepository) CloseWithBulkDecline(ctx context.Context, id str
 }
 
 // endedTermSQL matches an open term, aliased pt, that ended before $1 and has no pending or accepted
-// mentee application left: the rule of legacy's update-program-terms-active job. Mentor applications
-// do not count, since an accepted mentor application stays accepted for good.
+// mentee application left: the rule of legacy's update-program-terms-active job. Applications are
+// mentee-only (mentors join a program through program_members), and the role filter keeps it so.
 // NOTE: status literals must stay in sync with models.ProgramTermStatus and models.ApplicationStatus.
 const endedTermSQL = `
 	pt.status = 'open' AND pt.end_date_time < $1
@@ -499,13 +499,17 @@ func (r *ProgramTermRepository) CloseEnded(ctx context.Context, id string, now t
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// Lock first, then check in a later statement, so the check sees whatever an application or
-	// term write that held the lock committed.
+	// Lock first, then check in a later statement, so the check sees whatever a term or application
+	// write that held the lock committed. The applications are locked too: reopening a declined one
+	// locks only the application, and a check that missed it would close the term on a pending mentee.
 	var locked int
 	if err := tx.QueryRow(ctx, `SELECT 1 FROM program_terms WHERE id = $1 FOR UPDATE`, id).Scan(&locked); errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrProgramTermNotFound
 	} else if err != nil {
 		return nil, fmt.Errorf("lock ended term: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM applications WHERE program_term_id = $1 FOR SHARE`, id); err != nil {
+		return nil, fmt.Errorf("lock ended term applications: %w", err)
 	}
 	var ended bool
 	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM program_terms pt WHERE pt.id = $2 AND`+endedTermSQL+`)`, now, id).Scan(&ended); err != nil {
