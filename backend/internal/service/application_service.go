@@ -164,9 +164,11 @@ var applicationTransitions = map[models.ApplicationStatus][]models.ApplicationSt
 		models.ApplicationStatusGraduated,
 		models.ApplicationStatusDeclined,
 	},
-	models.ApplicationStatusDeclined:  {models.ApplicationStatusPending}, // allow re-open by admin
-	models.ApplicationStatusWithdrawn: {},
-	models.ApplicationStatusGraduated: {},
+	// A program admin can walk back an end state: re-open a declined or withdrawn
+	// application, or undo a mentee's graduation (see Update).
+	models.ApplicationStatusDeclined:  {models.ApplicationStatusPending},
+	models.ApplicationStatusWithdrawn: {models.ApplicationStatusPending},
+	models.ApplicationStatusGraduated: {models.ApplicationStatusAccepted},
 }
 
 // GetByID returns the application with the given ID.
@@ -398,7 +400,8 @@ func (s *ApplicationService) prerequisiteTasks(ctx context.Context, programTermI
 // Update applies status changes to an application.
 // Enforces the state machine defined in applicationTransitions.
 // When accepting, attendance_type is required.
-// A mentee is notified when their application is accepted, declined, withdrawn, or graduated;
+// A mentee is notified when their application is accepted, declined, withdrawn, or graduated, but
+// not when a program admin undoes their graduation or re-opens their application;
 // program admins are notified when a mentor withdraws their application.
 func (s *ApplicationService) Update(ctx context.Context, id string, input models.ApplicationUpdateInput) (*models.Application, error) {
 	ctx, span := applicationSvcTracer.Start(ctx, "ApplicationService.Update")
@@ -446,6 +449,10 @@ func (s *ApplicationService) Update(ctx context.Context, id string, input models
 					break
 				}
 			}
+			// Only a mentee's graduation can be undone; re-accepting a mentor would re-add their membership.
+			if current.Status == models.ApplicationStatusGraduated && current.Role != models.ApplicationRoleMentee {
+				ok = false
+			}
 			if !ok {
 				return nil, fmt.Errorf("%w: cannot transition application from %q to %q", domain.ErrInvalidStateTransition, current.Status, next)
 			}
@@ -480,6 +487,10 @@ func (s *ApplicationService) Update(ctx context.Context, id string, input models
 	if input.Status != nil && a.Role == models.ApplicationRoleMentee {
 		switch *input.Status {
 		case models.ApplicationStatusAccepted:
+			// An undone graduation sends nothing: the mentee was accepted before, and the graduation email has gone out.
+			if *input.ExpectedStatus == models.ApplicationStatusGraduated {
+				break
+			}
 			attType := ""
 			if a.AttendanceType != nil {
 				attType = string(*a.AttendanceType)

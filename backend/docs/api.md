@@ -2377,11 +2377,12 @@ deleted
 
 ```
 pending ──► accepted ──► graduated
-  │            │
+  │            │   ▲          │
+  │            │   └──────────┘ (undo, mentee only)
   │            └──► declined
   │
   └──► declined ──► pending
-  └──► withdrawn
+  └──► withdrawn ──► pending
 ```
 
 `accepted` is the enrolled state for the whole term; there is no intermediate
@@ -2394,7 +2395,9 @@ pending ──► accepted ──► graduated
 | `pending` | `withdrawn` | **Applicant only** | Self-withdrawal |
 | `accepted` | `graduated` | Program Admin | Manual; never automatic |
 | `accepted` | `declined` | Program Admin | |
-| `declined` | `pending` | Program Admin | Re-open a declined application |
+| `declined` | `pending` | Program Admin | Re-open a declined application; no email |
+| `withdrawn` | `pending` | Program Admin | Re-open a withdrawn application; no email. `409` if the applicant has since reapplied to the term |
+| `graduated` | `accepted` | Program Admin | Undo a mentee's graduation; no email. Keeps the stored `attendance_type`. `422` if the mentee holds another accepted mentorship or the term is no longer open; `409` for a mentor application |
 
 ### Task Status
 

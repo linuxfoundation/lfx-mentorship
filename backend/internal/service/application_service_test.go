@@ -940,17 +940,114 @@ func TestApplicationService_Update_InvalidTransition(t *testing.T) {
 	}
 }
 
-func TestApplicationService_Update_WithdrawnTerminal(t *testing.T) {
+// A program admin can walk an end state back: re-open a declined or withdrawn application, or undo
+// a mentee's graduation. Nothing else leaves those states.
+func TestApplicationService_Update_WalkBackTransitions(t *testing.T) {
+	attType := models.AttendanceTypePartTime
+	for _, tc := range []struct {
+		name    string
+		from    models.ApplicationStatus
+		role    models.ApplicationRole
+		to      models.ApplicationStatus
+		wantErr error
+	}{
+		{name: "re-open withdrawn", from: models.ApplicationStatusWithdrawn, role: models.ApplicationRoleMentee, to: models.ApplicationStatusPending},
+		{name: "re-open declined", from: models.ApplicationStatusDeclined, role: models.ApplicationRoleMentee, to: models.ApplicationStatusPending},
+		{name: "undo mentee graduation", from: models.ApplicationStatusGraduated, role: models.ApplicationRoleMentee, to: models.ApplicationStatusAccepted},
+		{name: "undo mentor graduation", from: models.ApplicationStatusGraduated, role: models.ApplicationRoleMentor, to: models.ApplicationStatusAccepted, wantErr: domain.ErrInvalidStateTransition},
+		{name: "accept withdrawn", from: models.ApplicationStatusWithdrawn, role: models.ApplicationRoleMentee, to: models.ApplicationStatusAccepted, wantErr: domain.ErrInvalidStateTransition},
+		{name: "decline graduated", from: models.ApplicationStatusGraduated, role: models.ApplicationRoleMentee, to: models.ApplicationStatusDeclined, wantErr: domain.ErrInvalidStateTransition},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var expected *models.ApplicationStatus
+			repo := &stubAppRepo{
+				getByID: func(_ context.Context, id string) (*models.Application, error) {
+					return &models.Application{ID: id, Status: tc.from, Role: tc.role, AttendanceType: &attType}, nil
+				},
+				update: func(_ context.Context, id string, in models.ApplicationUpdateInput) (*models.Application, error) {
+					expected = in.ExpectedStatus
+					return &models.Application{ID: id}, nil
+				},
+			}
+			svc := newApplicationSvc(repo, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{})
+			next := tc.to
+			_, err := svc.Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &next, ActorID: "reviewer"})
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("err = %v; want %v", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Update: %v", err)
+			}
+			if expected == nil || *expected != tc.from {
+				t.Fatalf("ExpectedStatus = %v; want %s", expected, tc.from)
+			}
+		})
+	}
+}
+
+// Walking an end state back is a program admin decision, like any other status change: a mentor
+// reviewing the application, or the applicant themselves, is refused before anything is written.
+func TestApplicationService_Update_WalkBackNeedsProgramAdmin(t *testing.T) {
+	attType := models.AttendanceTypeFullTime
+	for _, tc := range []struct {
+		name  string
+		from  models.ApplicationStatus
+		to    models.ApplicationStatus
+		actor string
+	}{
+		{name: "mentor re-opens withdrawn", from: models.ApplicationStatusWithdrawn, to: models.ApplicationStatusPending, actor: "mentor-1"},
+		{name: "mentor re-opens declined", from: models.ApplicationStatusDeclined, to: models.ApplicationStatusPending, actor: "mentor-1"},
+		{name: "mentor undoes graduation", from: models.ApplicationStatusGraduated, to: models.ApplicationStatusAccepted, actor: "mentor-1"},
+		{name: "applicant re-opens own withdrawn", from: models.ApplicationStatusWithdrawn, to: models.ApplicationStatusPending, actor: "mentee-1"},
+		{name: "applicant re-opens own declined", from: models.ApplicationStatusDeclined, to: models.ApplicationStatusPending, actor: "mentee-1"},
+		{name: "applicant undoes own graduation", from: models.ApplicationStatusGraduated, to: models.ApplicationStatusAccepted, actor: "mentee-1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &stubAppRepo{
+				getByID: func(_ context.Context, id string) (*models.Application, error) {
+					return &models.Application{ID: id, Status: tc.from, ProgramTermID: "term-1", UserID: "mentee-1", Role: models.ApplicationRoleMentee, AttendanceType: &attType}, nil
+				},
+				update: func(context.Context, string, models.ApplicationUpdateInput) (*models.Application, error) {
+					t.Fatal("a non-admin changed the application's status")
+					return nil, nil
+				},
+			}
+			// Neither actor is a program admin: approvedMentor finds no admin row for anyone.
+			svc := service.NewApplicationService(repo, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{}, approvedMentor(), menteeProfiles(1), &stubNotifier{})
+			next := tc.to
+			if _, err := svc.Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &next, ActorID: tc.actor}); !errors.Is(err, domain.ErrForbidden) {
+				t.Fatalf("err = %v; want ErrForbidden", err)
+			}
+		})
+	}
+}
+
+// Undoing a graduation keeps the stored attendance type and sends no acceptance email.
+func TestApplicationService_Update_UndoGraduationSendsNothing(t *testing.T) {
+	attType := models.AttendanceTypeFullTime
+	var sentAttendance *models.AttendanceType
 	repo := &stubAppRepo{
 		getByID: func(_ context.Context, id string) (*models.Application, error) {
-			return &models.Application{ID: id, Status: "withdrawn"}, nil
+			return &models.Application{ID: id, Status: models.ApplicationStatusGraduated, ProgramTermID: "term-1", UserID: "mentee-1", Role: models.ApplicationRoleMentee, AttendanceType: &attType}, nil
+		},
+		update: func(_ context.Context, id string, in models.ApplicationUpdateInput) (*models.Application, error) {
+			sentAttendance = in.AttendanceType
+			return &models.Application{ID: id, Status: models.ApplicationStatusAccepted, ProgramTermID: "term-1", UserID: "mentee-1", Role: models.ApplicationRoleMentee, AttendanceType: &attType}, nil
 		},
 	}
-	svc := newApplicationSvc(repo, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{})
-	next := models.ApplicationStatusPending
-	_, err := svc.Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &next, ActorID: "reviewer"})
-	if !errors.Is(err, domain.ErrInvalidStateTransition) {
-		t.Errorf("expected ErrInvalidStateTransition for terminal withdrawn, got %v", err)
+	n := &stubNotifier{}
+	next := models.ApplicationStatusAccepted
+	if _, err := newApplicationSvcWithNotifier(repo, &stubTermRepo{}, n).Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &next, ActorID: "reviewer"}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if sentAttendance != nil {
+		t.Fatalf("attendance_type = %v; want none sent, so the stored one is kept", *sentAttendance)
+	}
+	if got := n.menteeDecisions(); got != (menteeDecisionCalls{}) {
+		t.Fatalf("notifications = %+v; want none", got)
 	}
 }
 
@@ -1223,6 +1320,8 @@ func TestApplicationService_Update_NotifiesMenteeOfStatusChange(t *testing.T) {
 		{name: "declined after acceptance", from: models.ApplicationStatusAccepted, to: models.ApplicationStatusDeclined, role: models.ApplicationRoleMentee, actor: "reviewer", want: menteeDecisionCalls{declined: 1}},
 		{name: "self-withdrawn", from: models.ApplicationStatusPending, to: models.ApplicationStatusWithdrawn, role: models.ApplicationRoleMentee, actor: "mentee-1", want: menteeDecisionCalls{withdrawn: 1}},
 		{name: "graduated", from: models.ApplicationStatusAccepted, to: models.ApplicationStatusGraduated, role: models.ApplicationRoleMentee, actor: "reviewer", want: menteeDecisionCalls{graduated: 1}},
+		{name: "re-opened after withdrawal", from: models.ApplicationStatusWithdrawn, to: models.ApplicationStatusPending, role: models.ApplicationRoleMentee, actor: "reviewer"},
+		{name: "re-opened after decline", from: models.ApplicationStatusDeclined, to: models.ApplicationStatusPending, role: models.ApplicationRoleMentee, actor: "reviewer"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := &stubAppRepo{
