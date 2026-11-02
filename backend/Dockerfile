@@ -31,7 +31,10 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     -o /build/approver-admin ./cmd/approver-admin \
  && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -trimpath -ldflags "-s -w" \
-    -o /build/user-backfill ./cmd/user-backfill
+    -o /build/user-backfill ./cmd/user-backfill \
+ && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags "-s -w" \
+    -o /build/term-status ./cmd/term-status
 
 # Runtime stage
 # Distroless static image minimizes runtime attack surface while retaining CA certs.
@@ -45,6 +48,7 @@ COPY --from=builder /build/outbox-repair ./outbox-repair
 COPY --from=builder /build/prerequisite-reminder ./prerequisite-reminder
 COPY --from=builder /build/approver-admin ./approver-admin
 COPY --from=builder /build/user-backfill ./user-backfill
+COPY --from=builder /build/term-status ./term-status
 
 EXPOSE 8080
 
