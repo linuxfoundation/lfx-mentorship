@@ -397,9 +397,31 @@ func (s *ApplicationService) prerequisiteTasks(ctx context.Context, programTermI
 	return tasks, nil
 }
 
+// withCurrentPrerequisites has the update of a re-opened mentee application reconcile its
+// prerequisite tasks with the program's prerequisites, and pins the templates they were read from.
+func (s *ApplicationService) withCurrentPrerequisites(ctx context.Context, programTermID string, input *models.ApplicationUpdateInput) error {
+	term, err := s.termRepo.GetByID(ctx, programTermID)
+	if err != nil {
+		return fmt.Errorf("get program term for re-open: %w", err)
+	}
+	prog, err := s.programRepo.GetByID(ctx, term.ProgramID)
+	if err != nil {
+		return fmt.Errorf("get program task templates for re-open: %w", err)
+	}
+	prerequisites, err := decodePrerequisites(prog.TaskTemplates)
+	if err != nil {
+		return fmt.Errorf("decode program task templates: %w", err)
+	}
+	input.ReconcilePrerequisites = true
+	input.Prerequisites = prerequisites
+	input.ExpectedTaskTemplates = prog.TaskTemplates
+	return nil
+}
+
 // Update applies status changes to an application.
 // Enforces the state machine defined in applicationTransitions.
-// When accepting, attendance_type is required.
+// When accepting, attendance_type is required, except when undoing a graduation, which keeps the
+// stored one. Re-opening a mentee application reconciles its prerequisite tasks.
 // A mentee is notified when their application is accepted, declined, withdrawn, or graduated, but
 // not when a program admin undoes their graduation or re-opens their application;
 // program admins are notified when a mentor withdraws their application.
@@ -464,14 +486,26 @@ func (s *ApplicationService) Update(ctx context.Context, id string, input models
 				return nil, fmt.Errorf("%w: only the applicant may withdraw their application", domain.ErrForbidden)
 			}
 
-			// Accept guard: attendance_type is required when accepting.
-			if next == models.ApplicationStatusAccepted {
+			// Undoing a graduation keeps the attendance type the mentee was accepted with, even a
+			// legacy graduate's empty one, so any sent with it is ignored and none is required.
+			if current.Status == models.ApplicationStatusGraduated {
+				input.AttendanceType = nil
+			} else if next == models.ApplicationStatusAccepted {
+				// Accept guard: attendance_type is required when accepting.
 				attType := input.AttendanceType
 				if attType == nil {
 					attType = current.AttendanceType
 				}
 				if attType == nil || *attType == "" {
 					return nil, fmt.Errorf("%w: attendance_type is required when accepting an application", domain.ErrInvalidInput)
+				}
+			}
+
+			// A program's prerequisite edits reach only its pending applications, so a re-opened
+			// mentee application takes the prerequisites as they are now.
+			if next == models.ApplicationStatusPending && current.Role == models.ApplicationRoleMentee {
+				if err := s.withCurrentPrerequisites(ctx, current.ProgramTermID, &input); err != nil {
+					return nil, err
 				}
 			}
 		}
@@ -488,7 +522,7 @@ func (s *ApplicationService) Update(ctx context.Context, id string, input models
 		switch *input.Status {
 		case models.ApplicationStatusAccepted:
 			// An undone graduation sends nothing: the mentee was accepted before, and the graduation email has gone out.
-			if *input.ExpectedStatus == models.ApplicationStatusGraduated {
+			if input.ExpectedStatus != nil && *input.ExpectedStatus == models.ApplicationStatusGraduated {
 				break
 			}
 			attType := ""

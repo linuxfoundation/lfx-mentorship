@@ -1040,7 +1040,9 @@ func TestApplicationService_Update_UndoGraduationSendsNothing(t *testing.T) {
 	}
 	n := &stubNotifier{}
 	next := models.ApplicationStatusAccepted
-	if _, err := newApplicationSvcWithNotifier(repo, &stubTermRepo{}, n).Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &next, ActorID: "reviewer"}); err != nil {
+	// A client resending its acceptance payload cannot change the stored attendance type.
+	other := models.AttendanceTypePartTime
+	if _, err := newApplicationSvcWithNotifier(repo, &stubTermRepo{}, n).Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &next, AttendanceType: &other, ActorID: "reviewer"}); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 	if sentAttendance != nil {
@@ -1048,6 +1050,85 @@ func TestApplicationService_Update_UndoGraduationSendsNothing(t *testing.T) {
 	}
 	if got := n.menteeDecisions(); got != (menteeDecisionCalls{}) {
 		t.Fatalf("notifications = %+v; want none", got)
+	}
+}
+
+// A graduate imported from legacy has no attendance type; undoing the graduation keeps it empty
+// rather than asking for one, which an accept would.
+func TestApplicationService_Update_UndoLegacyGraduationWithoutAttendance(t *testing.T) {
+	updated := false
+	repo := &stubAppRepo{
+		getByID: func(_ context.Context, id string) (*models.Application, error) {
+			return &models.Application{ID: id, Status: models.ApplicationStatusGraduated, ProgramTermID: "term-1", UserID: "mentee-1", Role: models.ApplicationRoleMentee}, nil
+		},
+		update: func(_ context.Context, id string, in models.ApplicationUpdateInput) (*models.Application, error) {
+			updated = true
+			if in.AttendanceType != nil {
+				t.Fatalf("attendance_type = %v; want none", *in.AttendanceType)
+			}
+			return &models.Application{ID: id, Status: models.ApplicationStatusAccepted, Role: models.ApplicationRoleMentee}, nil
+		},
+	}
+	next := models.ApplicationStatusAccepted
+	if _, err := newApplicationSvc(repo, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{}).Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &next, ActorID: "reviewer"}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if !updated {
+		t.Fatal("the graduation was not undone")
+	}
+}
+
+// Re-opening a mentee application has the repository reconcile its prerequisite tasks with the
+// program's prerequisites as they are now, pinned to the templates they were read from. A mentor
+// application has no prerequisites to reconcile.
+func TestApplicationService_Update_ReopenReconcilesPrerequisites(t *testing.T) {
+	templates := json.RawMessage(`[{"name":"Resume","dueDate":"2030-01-31"},{"name":"  "}]`)
+	for _, tc := range []struct {
+		name string
+		role models.ApplicationRole
+		want bool
+	}{
+		{name: "mentee", role: models.ApplicationRoleMentee, want: true},
+		{name: "mentor", role: models.ApplicationRoleMentor, want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got models.ApplicationUpdateInput
+			repo := &stubAppRepo{
+				getByID: func(_ context.Context, id string) (*models.Application, error) {
+					return &models.Application{ID: id, Status: models.ApplicationStatusWithdrawn, ProgramTermID: "term-1", UserID: "user-1", Role: tc.role}, nil
+				},
+				update: func(_ context.Context, id string, in models.ApplicationUpdateInput) (*models.Application, error) {
+					got = in
+					return &models.Application{ID: id, Status: models.ApplicationStatusPending, Role: tc.role}, nil
+				},
+			}
+			termRepo := &stubTermRepo{getByID: func(_ context.Context, id string) (*models.ProgramTerm, error) {
+				return &models.ProgramTerm{ID: id, ProgramID: "prog-1", Status: "open"}, nil
+			}}
+			progRepo := &stubProgRepo{getByID: func(_ context.Context, id string) (*models.Program, error) {
+				if id != "prog-1" {
+					t.Fatalf("read program %q; want the term's", id)
+				}
+				return &models.Program{ID: id, TaskTemplates: templates}, nil
+			}}
+			next := models.ApplicationStatusPending
+			if _, err := newApplicationSvc(repo, &stubTaskRepo{}, termRepo, progRepo).Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &next, ActorID: "reviewer"}); err != nil {
+				t.Fatalf("Update: %v", err)
+			}
+			if got.ReconcilePrerequisites != tc.want {
+				t.Fatalf("ReconcilePrerequisites = %v; want %v", got.ReconcilePrerequisites, tc.want)
+			}
+			if !tc.want {
+				return
+			}
+			// A template without a name is skipped, as when applying.
+			if len(got.Prerequisites) != 1 || got.Prerequisites[0].Name != "Resume" || got.Prerequisites[0].DueDate == nil || *got.Prerequisites[0].DueDate != "2030-01-31" {
+				t.Fatalf("Prerequisites = %+v; want Resume", got.Prerequisites)
+			}
+			if string(got.ExpectedTaskTemplates) != string(templates) {
+				t.Fatalf("ExpectedTaskTemplates = %s; want the templates read", got.ExpectedTaskTemplates)
+			}
+		})
 	}
 }
 

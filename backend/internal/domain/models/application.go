@@ -189,4 +189,11 @@ type ApplicationUpdateInput struct {
 	ActorID string `json:"-"`
 	// ExpectedStatus, when set, makes a status change apply only if the row still has this status.
 	ExpectedStatus *ApplicationStatus `json:"-"`
+	// ReconcilePrerequisites, set when a mentee application is re-opened, brings its prerequisite
+	// tasks in line with Prerequisites, the program's prerequisites decoded from
+	// ExpectedTaskTemplates: the update fails with ErrConflict if those templates have changed since.
+	// Not persisted.
+	ReconcilePrerequisites bool                   `json:"-"`
+	Prerequisites          []PrerequisiteTemplate `json:"-"`
+	ExpectedTaskTemplates  json.RawMessage        `json:"-"`
 }

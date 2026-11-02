@@ -25,9 +25,9 @@ Yes, you can reapply — to a different program, or to a later term of the same 
 
 ## I withdrew, or was declined, by mistake — can it be undone?
 
-Yes. Ask a Program Admin of the program to re-open the application. It goes back to **Pending**, and they decide on it again. You cannot re-open it yourself, and no email is sent. A re-opened application counts as one of your three open applications again.
+Yes. Ask a Program Admin of the program to re-open the application. It goes back to **Pending**, and they decide on it again. You cannot re-open it yourself, and no email is sent. Its tasks are updated to the program's current prerequisites; work you already submitted is kept.
 
-If you have already reapplied to the same term, the old application cannot be re-opened.
+A re-opened application counts as one of your three open applications again, so it can't be re-opened while you already have three. It also can't be re-opened once the term has closed, or while you have another open application to the same term.
 
 ## I was marked as graduated by mistake — can it be undone?
 

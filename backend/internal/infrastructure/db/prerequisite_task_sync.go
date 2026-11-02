@@ -87,53 +87,107 @@ func applyPrerequisiteChanges(ctx context.Context, tx pgx.Tx, programID string, 
 
 	var flagged []string
 	for _, a := range applications {
-		present := make(map[string]bool, len(tasksByApplication[a.ID]))
-		deleted := false
-		for _, t := range tasksByApplication[a.ID] {
-			key := ""
-			if t.Name != nil {
-				key = models.PrerequisiteKey(*t.Name)
-			}
-			present[key] = true
-			if !clonedFromTemplate(t, legacyCreator) || t.Status == models.TaskStatusSubmitted || t.Status == models.TaskStatusComplete {
-				continue
-			}
-			if p, ok := edited[key]; ok {
-				if err := updatePrerequisiteTask(ctx, tx, t, p); err != nil {
-					return nil, err
-				}
-			} else if removed[key] && (t.File == nil || *t.File == "") {
-				if err := deleteTaskInTx(ctx, tx, t); err != nil {
-					return nil, err
-				}
-				deleted = true
-			}
-		}
-
-		var added []models.TaskCreateInput
-		for _, p := range changes.Added {
-			if !present[models.PrerequisiteKey(p.Name)] {
-				added = append(added, p.NewTask(uuid.New().String(), a.ProgramTermID, a.UserID))
-			}
-		}
-		if err := insertApplicationTasks(ctx, tx, a, added); err != nil {
+		flipped, err := syncApplicationPrerequisiteTasks(ctx, tx, a, tasksByApplication[a.ID], legacyCreator,
+			func(key string) (models.PrerequisiteTemplate, bool) { p, ok := edited[key]; return p, ok },
+			func(key string) bool { return removed[key] },
+			changes.Added)
+		if err != nil {
 			return nil, err
 		}
-		// Only a deletion can complete the set; the flag records the first completion and is never
-		// cleared, so an added task leaves it as it is. A deletion that leaves no prerequisite has
-		// removed the last one outstanding, so that completes the set too. The program update
-		// refreshes the program's search document once, after every application.
-		if deleted {
-			flipped, err := markTasksSubmitted(ctx, tx, a.ID, true)
-			if err != nil {
-				return nil, err
-			}
-			if flipped {
-				flagged = append(flagged, a.ID)
-			}
+		// The program update refreshes the program's search document once, after every application.
+		if flipped {
+			flagged = append(flagged, a.ID)
 		}
 	}
 	return flagged, nil
+}
+
+// reconcilePrerequisiteTasks brings a re-opened mentee application's prerequisite tasks in line
+// with the program's prerequisites, inside the caller's transaction, and reports whether it flagged
+// the application tasks_submitted. Prerequisite edits reach only pending applications
+// (applyPrerequisiteChanges), so one declined or withdrawn meanwhile missed them: a task whose
+// prerequisite is gone counts as removed, one whose prerequisite remains takes its content, and a
+// prerequisite with no task gets one, by applyPrerequisiteChanges's rules. Deleting the last
+// outstanding task flags the application, but notifies no one: re-opening sends nothing.
+func reconcilePrerequisiteTasks(ctx context.Context, tx pgx.Tx, application *models.Application, programID string, prerequisites []models.PrerequisiteTemplate) (bool, error) {
+	var legacyCreator *string
+	if err := tx.QueryRow(ctx, `SELECT lfid FROM programs WHERE id = $1`, programID).Scan(&legacyCreator); err != nil {
+		return false, fmt.Errorf("load program creator for re-open: %w", err)
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT `+taskCols+` FROM tasks
+		WHERE application_id = $1 AND category = $2
+		FOR UPDATE`, application.ID, models.TaskCategoryPrerequisite)
+	if err != nil {
+		return false, fmt.Errorf("lock prerequisite tasks for re-open: %w", err)
+	}
+	tasks, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (*models.Task, error) {
+		return scanTask(row)
+	})
+	if err != nil {
+		return false, fmt.Errorf("load prerequisite tasks for re-open: %w", err)
+	}
+	current := make(map[string]models.PrerequisiteTemplate, len(prerequisites))
+	for _, p := range prerequisites {
+		current[models.PrerequisiteKey(p.Name)] = p
+	}
+	return syncApplicationPrerequisiteTasks(ctx, tx, application, tasks, legacyCreator,
+		func(key string) (models.PrerequisiteTemplate, bool) { p, ok := current[key]; return p, ok },
+		func(key string) bool { _, ok := current[key]; return !ok },
+		prerequisites)
+}
+
+// syncApplicationPrerequisiteTasks applies prerequisite content to one application's locked
+// prerequisite tasks and reports whether it flagged the application tasks_submitted. Tasks are
+// matched to prerequisites by PrerequisiteKey. Only tasks cloned from a template are changed (see
+// clonedFromTemplate), so a task a reviewer or service created for one applicant never is, though
+// its name still counts as present. Submitted and complete tasks are kept as they are. An
+// unsubmitted task takes the content edited returns for it, and is deleted when removed reports its
+// prerequisite gone, unless the mentee has uploaded a file for it. Each of added with no task of its
+// name becomes an incomplete task.
+func syncApplicationPrerequisiteTasks(
+	ctx context.Context, tx pgx.Tx, a *models.Application, tasks []*models.Task, legacyCreator *string,
+	edited func(key string) (models.PrerequisiteTemplate, bool), removed func(key string) bool, added []models.PrerequisiteTemplate,
+) (bool, error) {
+	present := make(map[string]bool, len(tasks))
+	deleted := false
+	for _, t := range tasks {
+		key := ""
+		if t.Name != nil {
+			key = models.PrerequisiteKey(*t.Name)
+		}
+		present[key] = true
+		if !clonedFromTemplate(t, legacyCreator) || t.Status == models.TaskStatusSubmitted || t.Status == models.TaskStatusComplete {
+			continue
+		}
+		if p, ok := edited(key); ok {
+			if err := updatePrerequisiteTask(ctx, tx, t, p); err != nil {
+				return false, err
+			}
+		} else if removed(key) && (t.File == nil || *t.File == "") {
+			if err := deleteTaskInTx(ctx, tx, t); err != nil {
+				return false, err
+			}
+			deleted = true
+		}
+	}
+
+	var inserts []models.TaskCreateInput
+	for _, p := range added {
+		if !present[models.PrerequisiteKey(p.Name)] {
+			inserts = append(inserts, p.NewTask(uuid.New().String(), a.ProgramTermID, a.UserID))
+		}
+	}
+	if err := insertApplicationTasks(ctx, tx, a, inserts); err != nil {
+		return false, err
+	}
+	// Only a deletion can complete the set; the flag records the first completion and is never
+	// cleared, so an added task leaves it as it is. A deletion that leaves no prerequisite has
+	// removed the last one outstanding, so that completes the set too.
+	if !deleted {
+		return false, nil
+	}
+	return markTasksSubmitted(ctx, tx, a.ID, true)
 }
 
 // clonedFromTemplate reports whether a prerequisite task was cloned from its program's templates.
