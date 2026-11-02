@@ -374,7 +374,7 @@ func TestE2EMenteeJourney(t *testing.T) {
 			t.Fatalf("graduation undone: %+v", app)
 		}
 		awaitEmailsSent(t)
-		if n := len(emailsAbout(mentee.Email, "Congratulations")); n != 1 {
+		if n := len(emailsAbout(mentee.Email, "You were accepted to")); n != 1 {
 			t.Fatalf("mentee got %d acceptance emails; want only the first", n)
 		}
 		admin.mustJSON(t, http.MethodPatch, "/applications/"+app.ID+"/status", map[string]any{"status": "graduated"}, http.StatusOK, &app)
