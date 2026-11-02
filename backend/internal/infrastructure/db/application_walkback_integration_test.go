@@ -172,6 +172,25 @@ func TestApplicationRepositoryIntegration_ReopenKeepsPendingLimit(t *testing.T) 
 	}
 }
 
+// A second re-open of the same application, validated before the first committed, answers 409
+// rather than counting the re-opened application against the pending limit.
+func TestApplicationRepositoryIntegration_StaleReopenConflicts(t *testing.T) {
+	pool := integrationPool(t)
+	f := seedIntegrationFixture(t, pool)
+	terms := openExtraTerms(t, pool, f.ProgramID, models.MaxPendingMenteeApplications-1)
+	for i, term := range terms {
+		insertApplication(t, pool, fmt.Sprintf("00000000-0000-0000-0008-%012d", i+1), term, f.UserID, "pending")
+	}
+	declined := "00000000-0000-0000-0008-000000000099"
+	insertApplication(t, pool, declined, f.OpenTerm, f.UserID, "declined")
+	if _, err := reopen(t, pool, declined, models.ApplicationStatusDeclined, nil, nil); err != nil {
+		t.Fatalf("first re-open: %v", err)
+	}
+	if _, err := reopen(t, pool, declined, models.ApplicationStatusDeclined, nil, nil); !errors.Is(err, domain.ErrInvalidStateTransition) {
+		t.Fatalf("err = %v; want ErrInvalidStateTransition", err)
+	}
+}
+
 // Undoing a graduation goes through the accept path, so it keeps both of its guards.
 func TestApplicationRepositoryIntegration_UndoGraduationGuards(t *testing.T) {
 	pool := integrationPool(t)

@@ -593,6 +593,9 @@ func insertApplicationTasks(ctx context.Context, tx pgx.Tx, application *models.
 	return nil
 }
 
+// errApplicationStatusChanged answers a status change validated against a status the row no longer has.
+var errApplicationStatusChanged = fmt.Errorf("%w: application status changed concurrently", domain.ErrInvalidStateTransition)
+
 // Update patches an application's status fields.
 func (r *ApplicationRepository) Update(ctx context.Context, id string, input models.ApplicationUpdateInput) (*models.Application, error) {
 	ctx, span := applicationTracer.Start(ctx, "db.applications.Update")
@@ -667,11 +670,16 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 			termStatus models.ProgramTermStatus
 			role       models.ApplicationRole
 			userID     string
+			current    models.ApplicationStatus
 		)
-		if err := tx.QueryRow(ctx, `SELECT pt.status, a.role, a.user_id FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE a.id = $1 FOR UPDATE OF pt, a`, id).Scan(&termStatus, &role, &userID); errors.Is(err, pgx.ErrNoRows) {
+		// A stale request is answered before the checks below, which would count a concurrent
+		// re-open of this application against the applicant.
+		if err := tx.QueryRow(ctx, `SELECT pt.status, a.role, a.user_id, a.status FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE a.id = $1 FOR UPDATE OF pt, a`, id).Scan(&termStatus, &role, &userID, &current); errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrApplicationNotFound
 		} else if err != nil {
 			return nil, fmt.Errorf("lock application term for re-open: %w", err)
+		} else if input.ExpectedStatus != nil && current != *input.ExpectedStatus {
+			return nil, errApplicationStatusChanged
 		} else if termStatus != models.ProgramTermStatusOpen {
 			return nil, fmt.Errorf("%w: applications are not open for this term", domain.ErrIneligible)
 		}
@@ -703,7 +711,7 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 		} else if err != nil {
 			return nil, fmt.Errorf("lock application for status change: %w", err)
 		} else if current != *input.ExpectedStatus {
-			return nil, fmt.Errorf("%w: application status changed concurrently", domain.ErrInvalidStateTransition)
+			return nil, errApplicationStatusChanged
 		}
 	}
 	if input.Status != nil && slices.Contains(blockingApplicationStatuses, string(*input.Status)) {
