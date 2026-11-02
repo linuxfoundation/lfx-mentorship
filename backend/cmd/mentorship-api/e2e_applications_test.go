@@ -366,7 +366,18 @@ func TestE2EMenteeJourney(t *testing.T) {
 		if app.Status != "graduated" {
 			t.Fatalf("graduated: %+v", app)
 		}
-		admin.call(t, http.MethodPatch, "/applications/"+app.ID+"/status", map[string]any{"status": "accepted"}).expect(http.StatusConflict)
+		// A program admin can undo the graduation (Heimdall's manager rule keeps others off the route).
+		// The mentee keeps the attendance type they were accepted with, whatever the request sends,
+		// and is not told they were accepted again.
+		admin.mustJSON(t, http.MethodPatch, "/applications/"+app.ID+"/status", map[string]any{"status": "accepted", "attendance_type": "full_time"}, http.StatusOK, &app)
+		if app.Status != "accepted" || app.AttendanceType == nil || *app.AttendanceType != "part_time" {
+			t.Fatalf("graduation undone: %+v", app)
+		}
+		awaitEmailsSent(t)
+		if n := len(emailsAbout(mentee.Email, "You were accepted to")); n != 1 {
+			t.Fatalf("mentee got %d acceptance emails; want only the first", n)
+		}
+		admin.mustJSON(t, http.MethodPatch, "/applications/"+app.ID+"/status", map[string]any{"status": "graduated"}, http.StatusOK, &app)
 		var past struct {
 			Data []application `json:"data"`
 		}

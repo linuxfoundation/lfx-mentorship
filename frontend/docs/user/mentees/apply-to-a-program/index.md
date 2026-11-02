@@ -2,7 +2,7 @@
 title: Apply to a Program
 description: How to apply to an LFX Mentorship program, what the prerequisites are, and what happens next.
 tags: [mentees, apply, application, prerequisites, cover-letter, declined]
-last_updated: 2026-10-26
+last_updated: 2026-11-02
 display_order: 2
 intercom_collection: LFX Mentorship
 ---
@@ -35,7 +35,7 @@ Your application appears in your mentee overview at [app.lfx.dev/mentorship/ment
 | **Accepted** | You have a place on the term; your tasks appear in LFX |
 | **Declined** | The program did not take you on for this term          |
 
-A turned-down application is always **declined**. You can apply to a different program, or to the same program in a later term.
+A turned-down application is always **declined**. You can apply to a different program, or to the same program in a later term. If you were declined, or withdrew, by mistake, a Program Admin can re-open the application; see the [Mentees FAQ](../faq/).
 
 ## Related
 

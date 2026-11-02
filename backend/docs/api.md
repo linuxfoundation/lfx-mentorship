@@ -2377,11 +2377,12 @@ deleted
 
 ```
 pending ──► accepted ──► graduated
-  │            │
+  │            │   ▲          │
+  │            │   └──────────┘ (undo, mentee only)
   │            └──► declined
   │
   └──► declined ──► pending
-  └──► withdrawn
+  └──► withdrawn ──► pending
 ```
 
 `accepted` is the enrolled state for the whole term; there is no intermediate
@@ -2394,7 +2395,16 @@ pending ──► accepted ──► graduated
 | `pending` | `withdrawn` | **Applicant only** | Self-withdrawal |
 | `accepted` | `graduated` | Program Admin | Manual; never automatic |
 | `accepted` | `declined` | Program Admin | |
-| `declined` | `pending` | Program Admin | Re-open a declined application |
+| `declined` | `pending` | Program Admin | Re-open a declined application; no email. See **Re-opening** below |
+| `withdrawn` | `pending` | Program Admin | Re-open a withdrawn application; no email. See **Re-opening** below. `409` while the applicant holds another active (not withdrawn) application in the term, even at the pending limit |
+| `graduated` | `accepted` | Program Admin | Undo a mentee's graduation; no email. Keeps the stored `attendance_type`, even an empty one imported from legacy; one sent with the request is ignored. `422` if the mentee holds another accepted mentorship or the term is no longer open; `409` for a mentor application |
+
+**Re-opening** a declined or withdrawn application (`→ pending`) is checked like a new application:
+
+- The term must be open, and the program not hidden (`422`).
+- The applicant must hold no other active (not withdrawn) application in the term (`409`), checked before the pending limit.
+- A mentee application counts toward the three pending applications a mentee may hold in open terms (`422` when they already hold three).
+- A mentee application gets an incomplete task for each of the program's current prerequisites it has no task of, so a prerequisite added while it was declined or withdrawn reaches it; a name stored twice gets one task. Its existing tasks are kept as they are, since they may carry a reviewer's change for that applicant. `409` if the prerequisites change while the re-open is in flight.
 
 ### Task Status
 
