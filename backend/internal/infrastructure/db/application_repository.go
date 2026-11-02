@@ -641,8 +641,9 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 		}
 		becameAccepted = previous != models.ApplicationStatusAccepted
 	}
-	// Re-opening a declined or withdrawn application needs an open term, and a mentee stays within
-	// the pending limit, as when applying.
+	// Re-opening a declined or withdrawn application needs an open term and no other active
+	// application of the applicant's in it, and a mentee stays within the pending limit, as when
+	// applying.
 	var reopenProgramID string
 	if input.Status != nil && *input.Status == models.ApplicationStatusPending {
 		if err := tx.QueryRow(ctx, `SELECT pt.program_id FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE a.id = $1`, id).Scan(&reopenProgramID); errors.Is(err, pgx.ErrNoRows) {
@@ -650,10 +651,10 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 		} else if err != nil {
 			return nil, fmt.Errorf("resolve application program for re-open: %w", err)
 		}
-		// The prerequisites reconciled below were decoded from ExpectedTaskTemplates. Share-locking
+		// The prerequisites added below were decoded from ExpectedTaskTemplates. Share-locking
 		// the program holds off a prerequisite edit, which locks it for update, until this commits,
 		// and the lock comes before the term's and the application's, the order that edit takes them in.
-		if input.ReconcilePrerequisites {
+		if input.AddMissingPrerequisites {
 			var unchanged bool
 			if err := tx.QueryRow(ctx, `SELECT task_templates IS NOT DISTINCT FROM $2::jsonb FROM programs WHERE id = $1 FOR SHARE`,
 				reopenProgramID, nilIfEmpty(input.ExpectedTaskTemplates)).Scan(&unchanged); err != nil {
@@ -673,6 +674,18 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 			return nil, fmt.Errorf("lock application term for re-open: %w", err)
 		} else if termStatus != models.ProgramTermStatusOpen {
 			return nil, fmt.Errorf("%w: applications are not open for this term", domain.ErrIneligible)
+		}
+		// uq_applications_active would refuse the write anyway; checking first answers 409 even when
+		// that other application already has the mentee at the pending limit.
+		var reapplied bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS (SELECT 1 FROM applications
+				WHERE program_term_id = (SELECT program_term_id FROM applications WHERE id = $1)
+				  AND user_id = $2 AND role = $3 AND id <> $1 AND status <> $4)`,
+			id, userID, role, models.ApplicationStatusWithdrawn).Scan(&reapplied); err != nil {
+			return nil, fmt.Errorf("check other applications in the term for re-open: %w", err)
+		} else if reapplied {
+			return nil, fmt.Errorf("%w: the applicant holds another active application in this term", domain.ErrConflict)
 		}
 		if role == models.ApplicationRoleMentee {
 			if err := lockMentee(ctx, tx, userID); err != nil {
@@ -729,15 +742,11 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 			return nil, err
 		}
 	}
-	// Reconciled once the row holds its new status, so the tasks it adds are cloned for a pending
-	// application; the sync below then brings every task's copy of the state in line.
-	if input.ReconcilePrerequisites && reopenProgramID != "" && a.Role == models.ApplicationRoleMentee {
-		flagged, err := reconcilePrerequisiteTasks(ctx, tx, a, reopenProgramID, input.Prerequisites)
-		if err != nil {
+	// Added once the row holds its new status, so the tasks are cloned for a pending application;
+	// the sync below then brings every task's copy of the state in line.
+	if input.AddMissingPrerequisites && reopenProgramID != "" && a.Role == models.ApplicationRoleMentee {
+		if err := addMissingPrerequisiteTasks(ctx, tx, a, input.Prerequisites); err != nil {
 			return nil, err
-		}
-		if flagged {
-			a.TasksSubmitted = true
 		}
 	}
 	updatedTasks, err := syncTasksWithApplicationState(ctx, tx, a)

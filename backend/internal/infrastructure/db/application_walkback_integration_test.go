@@ -47,11 +47,11 @@ func reopen(t *testing.T, pool *pgxpool.Pool, id string, from models.Application
 	next := models.ApplicationStatusPending
 	return NewApplicationRepository(pool).Update(context.Background(), id, models.ApplicationUpdateInput{
 		Status: &next, ExpectedStatus: &pending,
-		ReconcilePrerequisites: true, Prerequisites: prerequisites, ExpectedTaskTemplates: templates,
+		AddMissingPrerequisites: true, Prerequisites: prerequisites, ExpectedTaskTemplates: templates,
 	})
 }
 
-func TestApplicationRepositoryIntegration_ReopenReconcilesPrerequisites(t *testing.T) {
+func TestApplicationRepositoryIntegration_ReopenAddsMissingPrerequisites(t *testing.T) {
 	pool := integrationPool(t)
 	f := seedIntegrationFixture(t, pool)
 	s := &syncSeeder{t: t, pool: pool}
@@ -60,13 +60,11 @@ func TestApplicationRepositoryIntegration_ReopenReconcilesPrerequisites(t *testi
 	s.task(withdrawn, "Resume", "prerequisite", "incomplete")
 	s.task(withdrawn, "Essay", "prerequisite", "in_progress")
 	s.task(withdrawn, "Video", "prerequisite", "submitted")
-	reviewer := f.UserID
-	s.createdBy(s.task(withdrawn, "Brief", "prerequisite", "incomplete"), reviewer, &reviewer)
 	s.task(withdrawn, "Intro call", "non_prerequisite", "incomplete")
 
-	// While the application was withdrawn, the program edited Resume, dropped Essay and Video,
-	// and added Cover letter.
-	templates := json.RawMessage(`[{"name": "resume", "description": "Upload a PDF"}, {"name": "Cover letter", "custom": true}]`)
+	// While the application was withdrawn, the program edited Resume, dropped Essay and Video, and
+	// added Cover letter, which a legacy import stored twice.
+	templates := json.RawMessage(`[{"name": "resume", "description": "Upload a PDF"}, {"name": "Cover letter", "custom": true}, {"name": "cover letter"}]`)
 	if _, err := pool.Exec(context.Background(), `UPDATE programs SET task_templates = $2 WHERE id = $1`, f.ProgramID, templates); err != nil {
 		t.Fatal(err)
 	}
@@ -74,6 +72,7 @@ func TestApplicationRepositoryIntegration_ReopenReconcilesPrerequisites(t *testi
 	a, err := reopen(t, pool, withdrawn, models.ApplicationStatusWithdrawn, templates, []models.PrerequisiteTemplate{
 		{Name: "resume", Description: &description},
 		{Name: "Cover letter", Custom: true},
+		{Name: "cover letter"},
 	})
 	if err != nil {
 		t.Fatalf("re-open: %v", err)
@@ -82,12 +81,14 @@ func TestApplicationRepositoryIntegration_ReopenReconcilesPrerequisites(t *testi
 		t.Fatalf("status = %s; want pending", a.Status)
 	}
 
+	// Existing tasks are kept as they are, since they may carry a reviewer's change for this
+	// applicant; only the prerequisite with no task gets one, once.
 	got := syncedTasks(t, pool, withdrawn)
 	want := map[string]string{
-		"resume":       "incomplete",
-		"Video":        "submitted",  // submitted work is kept even with its prerequisite gone
-		"Brief":        "incomplete", // a reviewer created it
-		"Intro call":   "incomplete", // not a prerequisite
+		"Resume":       "incomplete",
+		"Essay":        "in_progress",
+		"Video":        "submitted",
+		"Intro call":   "incomplete",
 		"Cover letter": "incomplete",
 	}
 	if len(got) != len(want) {
@@ -98,8 +99,8 @@ func TestApplicationRepositoryIntegration_ReopenReconcilesPrerequisites(t *testi
 			t.Errorf("task %q = %+v; want status %s", name, g, status)
 		}
 	}
-	if deref(got["resume"].Description) != description {
-		t.Errorf("Resume kept its old content: %+v", got["resume"])
+	if deref(got["Resume"].Description) != "Old description" {
+		t.Errorf("Resume was changed: %+v", got["Resume"])
 	}
 	if !got["Cover letter"].Custom {
 		t.Errorf("added task lost its custom flag: %+v", got["Cover letter"])
@@ -107,6 +108,23 @@ func TestApplicationRepositoryIntegration_ReopenReconcilesPrerequisites(t *testi
 	var stale int
 	if err := pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM tasks WHERE application_id = $1 AND application_status <> 'pending'`, withdrawn).Scan(&stale); err != nil || stale != 0 {
 		t.Fatalf("%d tasks kept the old application status (err %v)", stale, err)
+	}
+}
+
+// A withdrawn application whose applicant has applied to the term again answers 409, even when the
+// newer application has them at the pending limit.
+func TestApplicationRepositoryIntegration_ReopenRefusedWhileReapplied(t *testing.T) {
+	pool := integrationPool(t)
+	f := seedIntegrationFixture(t, pool)
+	terms := openExtraTerms(t, pool, f.ProgramID, models.MaxPendingMenteeApplications-1)
+	for i, term := range terms {
+		insertApplication(t, pool, fmt.Sprintf("00000000-0000-0000-0007-%012d", i+1), term, f.UserID, "pending")
+	}
+	old := "00000000-0000-0000-0007-000000000098"
+	insertApplication(t, pool, old, f.OpenTerm, f.UserID, "withdrawn")
+	insertApplication(t, pool, "00000000-0000-0000-0007-000000000099", f.OpenTerm, f.UserID, "pending")
+	if _, err := reopen(t, pool, old, models.ApplicationStatusWithdrawn, nil, nil); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("err = %v; want ErrConflict", err)
 	}
 }
 

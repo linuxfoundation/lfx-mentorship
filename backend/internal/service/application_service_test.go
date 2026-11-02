@@ -1078,10 +1078,10 @@ func TestApplicationService_Update_UndoLegacyGraduationWithoutAttendance(t *test
 	}
 }
 
-// Re-opening a mentee application has the repository reconcile its prerequisite tasks with the
-// program's prerequisites as they are now, pinned to the templates they were read from. A mentor
-// application has no prerequisites to reconcile.
-func TestApplicationService_Update_ReopenReconcilesPrerequisites(t *testing.T) {
+// Re-opening a mentee application has the repository add any prerequisite task it is missing, from
+// the program's prerequisites as they are now, pinned to the templates they were read from. A
+// mentor application has no prerequisites.
+func TestApplicationService_Update_ReopenAddsMissingPrerequisites(t *testing.T) {
 	templates := json.RawMessage(`[{"name":"Resume","dueDate":"2030-01-31"},{"name":"  "}]`)
 	for _, tc := range []struct {
 		name string
@@ -1115,8 +1115,8 @@ func TestApplicationService_Update_ReopenReconcilesPrerequisites(t *testing.T) {
 			if _, err := newApplicationSvc(repo, &stubTaskRepo{}, termRepo, progRepo).Update(context.Background(), "app-1", models.ApplicationUpdateInput{Status: &next, ActorID: "reviewer"}); err != nil {
 				t.Fatalf("Update: %v", err)
 			}
-			if got.ReconcilePrerequisites != tc.want {
-				t.Fatalf("ReconcilePrerequisites = %v; want %v", got.ReconcilePrerequisites, tc.want)
+			if got.AddMissingPrerequisites != tc.want {
+				t.Fatalf("AddMissingPrerequisites = %v; want %v", got.AddMissingPrerequisites, tc.want)
 			}
 			if !tc.want {
 				return

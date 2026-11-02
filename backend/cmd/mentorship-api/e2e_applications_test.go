@@ -366,9 +366,9 @@ func TestE2EMenteeJourney(t *testing.T) {
 		if app.Status != "graduated" {
 			t.Fatalf("graduated: %+v", app)
 		}
-		// A program admin can undo the graduation. The mentee keeps the attendance type they were
-		// accepted with, whatever the request sends, and is not told they were accepted again.
-		mentee.call(t, http.MethodPatch, "/applications/"+app.ID+"/status", map[string]any{"status": "accepted"}).expect(http.StatusForbidden)
+		// A program admin can undo the graduation (Heimdall's manager rule keeps others off the route).
+		// The mentee keeps the attendance type they were accepted with, whatever the request sends,
+		// and is not told they were accepted again.
 		admin.mustJSON(t, http.MethodPatch, "/applications/"+app.ID+"/status", map[string]any{"status": "accepted", "attendance_type": "full_time"}, http.StatusOK, &app)
 		if app.Status != "accepted" || app.AttendanceType == nil || *app.AttendanceType != "part_time" {
 			t.Fatalf("graduation undone: %+v", app)

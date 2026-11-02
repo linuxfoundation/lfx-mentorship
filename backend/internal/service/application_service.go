@@ -397,8 +397,8 @@ func (s *ApplicationService) prerequisiteTasks(ctx context.Context, programTermI
 	return tasks, nil
 }
 
-// withCurrentPrerequisites has the update of a re-opened mentee application reconcile its
-// prerequisite tasks with the program's prerequisites, and pins the templates they were read from.
+// withCurrentPrerequisites has the update of a re-opened mentee application add a task for each of
+// the program's prerequisites it has none of, and pins the templates they were read from.
 func (s *ApplicationService) withCurrentPrerequisites(ctx context.Context, programTermID string, input *models.ApplicationUpdateInput) error {
 	term, err := s.termRepo.GetByID(ctx, programTermID)
 	if err != nil {
@@ -412,7 +412,7 @@ func (s *ApplicationService) withCurrentPrerequisites(ctx context.Context, progr
 	if err != nil {
 		return fmt.Errorf("decode program task templates: %w", err)
 	}
-	input.ReconcilePrerequisites = true
+	input.AddMissingPrerequisites = true
 	input.Prerequisites = prerequisites
 	input.ExpectedTaskTemplates = prog.TaskTemplates
 	return nil
@@ -421,7 +421,7 @@ func (s *ApplicationService) withCurrentPrerequisites(ctx context.Context, progr
 // Update applies status changes to an application.
 // Enforces the state machine defined in applicationTransitions.
 // When accepting, attendance_type is required, except when undoing a graduation, which keeps the
-// stored one. Re-opening a mentee application reconciles its prerequisite tasks.
+// stored one. Re-opening a mentee application adds any prerequisite task it is missing.
 // A mentee is notified when their application is accepted, declined, withdrawn, or graduated, but
 // not when a program admin undoes their graduation or re-opens their application;
 // program admins are notified when a mentor withdraws their application.
@@ -502,7 +502,7 @@ func (s *ApplicationService) Update(ctx context.Context, id string, input models
 			}
 
 			// A program's prerequisite edits reach only its pending applications, so a re-opened
-			// mentee application takes the prerequisites as they are now.
+			// mentee application gets a task for any prerequisite added while it was closed.
 			if next == models.ApplicationStatusPending && current.Role == models.ApplicationRoleMentee {
 				if err := s.withCurrentPrerequisites(ctx, current.ProgramTermID, &input); err != nil {
 					return nil, err
