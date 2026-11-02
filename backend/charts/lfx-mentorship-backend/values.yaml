@@ -287,6 +287,32 @@ fundingStatsSyncCronJob:
   failedJobsHistoryLimit: 1
   concurrencyPolicy: Forbid
 
+# ── CronJob: term-status ─────────────────────────────────────────────────────
+# Closes open program terms whose end date has passed once no pending or accepted
+# mentee application is left, as legacy update-program-terms-active did. Needs only
+# the database. Closing is idempotent, so a failed Job may be retried.
+termStatusCronJob:
+  enabled: false
+  # 00:10, 05:10, 11:10 and 17:10 UTC, the legacy update-program-terms-active schedule.
+  schedule: "10 0,5,11,17 * * *"
+  timeZone: "Etc/UTC"
+  activeDeadlineSeconds: 900
+  backoffLimit: 1
+  image:
+    # Defaults to same repository and tag as the main API image.
+    repository: ""
+    tag: ""
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  concurrencyPolicy: Forbid
+
 # ── CronJob: prerequisite-reminder ───────────────────────────────────────────
 # Emails pending mentees the prerequisite tasks they have not submitted, on their
 # reminder days. Sends through lfx-v2-email-service, so FGA_NATS_URL and

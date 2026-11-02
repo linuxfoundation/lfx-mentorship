@@ -124,6 +124,13 @@ type ProgramTermRepository interface {
 	Delete(ctx context.Context, id string) error
 	CloseWithBulkDecline(ctx context.Context, id string) (*models.ProgramTerm, []*models.Application, error)
 
+	// ListEndedIDs returns the IDs of the open terms that ended before now and have no pending or
+	// accepted mentee application left.
+	ListEndedIDs(ctx context.Context, now time.Time) ([]string, error)
+	// CloseEnded closes a term ListEndedIDs returned, after checking under lock that it still
+	// qualifies. A term that no longer does returns ErrInvalidStateTransition.
+	CloseEnded(ctx context.Context, id string, now time.Time) (*models.ProgramTerm, error)
+
 	// CountOpenTermsByProgram returns the number of terms with status='open' for a program.
 	CountOpenTermsByProgram(ctx context.Context, programID string) (int, error)
 }

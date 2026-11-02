@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -447,21 +448,103 @@ func (r *ProgramTermRepository) CloseWithBulkDecline(ctx context.Context, id str
 	}
 	rows.Close()
 
-	closed := models.ProgramTermStatusClosed
-	updated, err := scanProgramTerm(tx.QueryRow(ctx, `UPDATE program_terms SET status = $2 WHERE id = $1 RETURNING`+programTermCols, id, closed))
+	updated, err := closeTerm(ctx, tx, id)
 	if err != nil {
-		return nil, nil, fmt.Errorf("close term: %w", err)
-	}
-	if err := syncApplicationsWithTermState(ctx, tx, id, closed); err != nil {
-		return nil, nil, err
-	}
-	if err := enqueueProgramIndexByID(ctx, tx, updated.ProgramID); err != nil {
 		return nil, nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, nil, fmt.Errorf("commit close term transaction: %w", err)
 	}
 	return updated, applications, nil
+}
+
+// endedTermSQL matches an open term, aliased pt, that ended before $1 and has no pending or accepted
+// mentee application left: the rule of legacy's update-program-terms-active job. Applications are
+// mentee-only (mentors join a program through program_members), and the role filter keeps it so.
+// NOTE: status literals must stay in sync with models.ProgramTermStatus and models.ApplicationStatus.
+const endedTermSQL = `
+	pt.status = 'open' AND pt.end_date_time < $1
+	AND NOT EXISTS (
+		SELECT 1 FROM applications a
+		WHERE a.program_term_id = pt.id AND a.role = 'mentee' AND a.status IN ('pending', 'accepted'))`
+
+// ListEndedIDs returns the IDs of the open terms that ended before now and have no pending or
+// accepted mentee application left, oldest end first.
+func (r *ProgramTermRepository) ListEndedIDs(ctx context.Context, now time.Time) ([]string, error) {
+	ctx, span := programTermTracer.Start(ctx, "db.program_terms.ListEndedIDs")
+	defer span.End()
+
+	rows, err := r.pool.Query(ctx, `SELECT pt.id FROM program_terms pt WHERE`+endedTermSQL+` ORDER BY pt.end_date_time, pt.id`, now)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("list ended terms: %w", err)
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("scan ended terms: %w", err)
+	}
+	return ids, nil
+}
+
+// CloseEnded closes the term if, once locked, it still matches endedTermSQL at now, returning
+// ErrInvalidStateTransition if it does not. It has no pending application to decline.
+func (r *ProgramTermRepository) CloseEnded(ctx context.Context, id string, now time.Time) (*models.ProgramTerm, error) {
+	ctx, span := programTermTracer.Start(ctx, "db.program_terms.CloseEnded")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.term_id", id))
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin close ended term transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Lock first, then check in a later statement, so the check sees whatever a term or application
+	// write that held the lock committed. The applications are locked too: reopening a declined one
+	// locks only the application, and a check that missed it would close the term on a pending mentee.
+	var locked int
+	if err := tx.QueryRow(ctx, `SELECT 1 FROM program_terms WHERE id = $1 FOR UPDATE`, id).Scan(&locked); errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrProgramTermNotFound
+	} else if err != nil {
+		return nil, fmt.Errorf("lock ended term: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM applications WHERE program_term_id = $1 FOR SHARE`, id); err != nil {
+		return nil, fmt.Errorf("lock ended term applications: %w", err)
+	}
+	var ended bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM program_terms pt WHERE pt.id = $2 AND`+endedTermSQL+`)`, now, id).Scan(&ended); err != nil {
+		return nil, fmt.Errorf("check ended term: %w", err)
+	}
+	if !ended {
+		return nil, fmt.Errorf("%w: term is no longer open, ended and free of pending or accepted mentee applications", domain.ErrInvalidStateTransition)
+	}
+
+	updated, err := closeTerm(ctx, tx, id)
+	if err != nil {
+		span.RecordError(err)
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit close ended term transaction: %w", err)
+	}
+	return updated, nil
+}
+
+// closeTerm sets a locked term to closed, carries the status onto its applications and refreshes
+// its program's search document.
+func closeTerm(ctx context.Context, tx pgx.Tx, id string) (*models.ProgramTerm, error) {
+	closed := models.ProgramTermStatusClosed
+	updated, err := scanProgramTerm(tx.QueryRow(ctx, `UPDATE program_terms SET status = $2 WHERE id = $1 RETURNING`+programTermCols, id, closed))
+	if err != nil {
+		return nil, fmt.Errorf("close term: %w", err)
+	}
+	if err := syncApplicationsWithTermState(ctx, tx, id, closed); err != nil {
+		return nil, err
+	}
+	if err := enqueueProgramIndexByID(ctx, tx, updated.ProgramID); err != nil {
+		return nil, err
+	}
+	return updated, nil
 }
 
 // CountOpenTermsByProgram returns the count of terms with status='open' for a program.

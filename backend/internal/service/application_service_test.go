@@ -156,6 +156,8 @@ type stubTermRepo struct {
 	delete               func(context.Context, string) error
 	countOpenByProgram   func(context.Context, string) (int, error)
 	closeWithBulkDecline func(context.Context, string) (*models.ProgramTerm, []*models.Application, error)
+	listEndedIDs         func(context.Context, time.Time) ([]string, error)
+	closeEnded           func(context.Context, string, time.Time) (*models.ProgramTerm, error)
 }
 
 func (m *stubTermRepo) GetByID(ctx context.Context, id string) (*models.ProgramTerm, error) {
@@ -202,6 +204,18 @@ func (m *stubTermRepo) CloseWithBulkDecline(ctx context.Context, id string) (*mo
 		return m.closeWithBulkDecline(ctx, id)
 	}
 	return &models.ProgramTerm{}, nil, nil
+}
+func (m *stubTermRepo) ListEndedIDs(ctx context.Context, now time.Time) ([]string, error) {
+	if m.listEndedIDs != nil {
+		return m.listEndedIDs(ctx, now)
+	}
+	return nil, nil
+}
+func (m *stubTermRepo) CloseEnded(ctx context.Context, id string, now time.Time) (*models.ProgramTerm, error) {
+	if m.closeEnded != nil {
+		return m.closeEnded(ctx, id, now)
+	}
+	return &models.ProgramTerm{ID: id, Status: models.ProgramTermStatusClosed}, nil
 }
 func (m *stubTermRepo) CountOpenTermsByProgram(ctx context.Context, id string) (int, error) {
 	if m.countOpenByProgram != nil {
