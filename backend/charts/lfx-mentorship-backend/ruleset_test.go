@@ -256,11 +256,26 @@ func TestPrerequisiteReminderSendRate(t *testing.T) {
 			t.Fatalf("job must take EMAIL_SEND_RATE from the ConfigMap when sendRate is empty:\n%s", out)
 		}
 	})
-	t.Run("env override of the API rate renders", func(t *testing.T) {
-		render(t, cronJob, "--set", "config.EMAIL_SEND_RATE=", "--set", "env[0].name=EMAIL_SEND_RATE", "--set", "env[0].value=2.5")
+	t.Run("null job rate shares the API rate", func(t *testing.T) {
+		if out := render(t, cronJob, append(enabled, "--set", "prerequisiteReminderCronJob.sendRate=null")...); strings.Contains(out, "EMAIL_SEND_RATE") {
+			t.Fatalf("a null sendRate must fall back to the API rate:\n%s", out)
+		}
+	})
+	apiRateInEnv := append(append([]string{}, enabled...), "--set", "config.EMAIL_SEND_RATE=", "--set", "env[0].name=EMAIL_SEND_RATE", "--set", "env[0].value=2.5")
+	t.Run("job rate replaces an API rate set in env", func(t *testing.T) {
+		out := render(t, cronJob, apiRateInEnv...)
+		if n := strings.Count(out, "name: EMAIL_SEND_RATE"); n != 1 || !strings.Contains(out, "value: \"4\"") {
+			t.Fatalf("job env must hold one EMAIL_SEND_RATE, the job's 4, not the API's; found %d:\n%s", n, out)
+		}
+	})
+	t.Run("API rate in env reaches the job when its own rate is empty", func(t *testing.T) {
+		out := render(t, cronJob, append(apiRateInEnv, "--set", "prerequisiteReminderCronJob.sendRate=")...)
+		if n := strings.Count(out, "name: EMAIL_SEND_RATE"); n != 1 || !strings.Contains(out, "value: \"2.5\"") {
+			t.Fatalf("job env must hold the API's EMAIL_SEND_RATE once; found %d:\n%s", n, out)
+		}
 	})
 	t.Run("valueFrom API rate is trusted", func(t *testing.T) {
-		render(t, cronJob, "--set", "config.EMAIL_SEND_RATE=", "--set", "env[0].name=EMAIL_SEND_RATE", "--set", "env[0].valueFrom.secretKeyRef.name=s", "--set", "env[0].valueFrom.secretKeyRef.key=k")
+		render(t, cronJob, append(enabled, "--set", "config.EMAIL_SEND_RATE=", "--set", "env[0].name=EMAIL_SEND_RATE", "--set", "env[0].valueFrom.secretKeyRef.name=s", "--set", "env[0].valueFrom.secretKeyRef.key=k")...)
 	})
 	for name, args := range map[string][]string{
 		"non-numeric job rate": append(enabled, "--set", "prerequisiteReminderCronJob.sendRate=fast"),

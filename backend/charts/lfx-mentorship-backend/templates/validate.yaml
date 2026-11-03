@@ -129,7 +129,9 @@ reading the effective value as the guards above do. */ -}}
 {{- if not (or (hasKey $emailFromRef "EMAIL_SEND_RATE") (regexMatch $positive (get $email "EMAIL_SEND_RATE"))) }}
 {{- fail "values.yaml: EMAIL_SEND_RATE must be a number of emails per second above zero (in config: or env:) when FGA_NATS_URL is set." }}
 {{- end }}
-{{- if and (toString .Values.prerequisiteReminderCronJob.sendRate) (not (regexMatch $positive (toString .Values.prerequisiteReminderCronJob.sendRate))) }}
+{{- /* A null sendRate clears the default like ""; a numeric 0 is still rejected. */ -}}
+{{- $jobRate := ternary "" (toString .Values.prerequisiteReminderCronJob.sendRate) (kindIs "invalid" .Values.prerequisiteReminderCronJob.sendRate) }}
+{{- if and $jobRate (not (regexMatch $positive $jobRate)) }}
 {{- fail "values.yaml: prerequisiteReminderCronJob.sendRate must be empty or a number of emails per second above zero." }}
 {{- end }}
 {{- end }}
