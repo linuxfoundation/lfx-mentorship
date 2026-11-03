@@ -66,15 +66,16 @@ func TestLoadConfig(t *testing.T) {
 		wantTo   []string
 		wantRate float64
 	}{
-		"valid":                     {wantRate: 5},
+		"valid":                     {wantRate: 4},
 		"missing nats":              {override: map[string]string{"FGA_NATS_URL": ""}, wantErr: "FGA_NATS_URL"},
 		"missing self serve":        {override: map[string]string{"SELF_SERVE_URL": ""}, wantErr: "SELF_SERVE_URL"},
 		"relative self serve":       {override: map[string]string{"SELF_SERVE_URL": "app.example.org"}, wantErr: "SELF_SERVE_URL"},
 		"send rate":                 {override: map[string]string{"EMAIL_SEND_RATE": "12.5"}, wantRate: 12.5},
 		"zero send rate":            {override: map[string]string{"EMAIL_SEND_RATE": "0"}, wantErr: "EMAIL_SEND_RATE"},
 		"infinite send rate":        {override: map[string]string{"EMAIL_SEND_RATE": "Inf"}, wantErr: "EMAIL_SEND_RATE"},
+		"nan send rate":             {override: map[string]string{"EMAIL_SEND_RATE": "NaN"}, wantErr: "EMAIL_SEND_RATE"},
 		"non-numeric send rate":     {override: map[string]string{"EMAIL_SEND_RATE": "fast"}, wantErr: "EMAIL_SEND_RATE"},
-		"allowed recipients":        {override: map[string]string{"EMAIL_ALLOWED_RECIPIENTS": " a@linuxfoundation.org, b@linuxfoundation.org ,"}, wantTo: []string{"a@linuxfoundation.org", "b@linuxfoundation.org"}, wantRate: 5},
+		"allowed recipients":        {override: map[string]string{"EMAIL_ALLOWED_RECIPIENTS": " a@linuxfoundation.org, b@linuxfoundation.org ,"}, wantTo: []string{"a@linuxfoundation.org", "b@linuxfoundation.org"}, wantRate: 4},
 		"invalid allowed recipient": {override: map[string]string{"EMAIL_ALLOWED_RECIPIENTS": "a@linuxfoundation.org,nobody"}, wantErr: "EMAIL_ALLOWED_RECIPIENTS"},
 		"comma-only recipients":     {override: map[string]string{"EMAIL_ALLOWED_RECIPIENTS": " , "}, wantErr: "EMAIL_ALLOWED_RECIPIENTS"},
 	}

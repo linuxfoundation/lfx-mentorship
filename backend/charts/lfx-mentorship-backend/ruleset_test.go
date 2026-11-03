@@ -245,25 +245,35 @@ func TestPrerequisiteReminderSendRate(t *testing.T) {
 	const cronJob = "templates/cronjob-prerequisite-reminder.yaml"
 	enabled := []string{"--set", "prerequisiteReminderCronJob.enabled=true"}
 
-	t.Run("shares the API rate by default", func(t *testing.T) {
-		if out := render(t, cronJob, enabled...); strings.Contains(out, "EMAIL_SEND_RATE") {
+	t.Run("default job rate overrides the ConfigMap", func(t *testing.T) {
+		out := render(t, cronJob, enabled...)
+		if !strings.Contains(out, "- name: EMAIL_SEND_RATE\n                  value: \"4\"") {
+			t.Fatalf("job env must set EMAIL_SEND_RATE=4 by default:\n%s", out)
+		}
+	})
+	t.Run("empty job rate shares the API rate", func(t *testing.T) {
+		if out := render(t, cronJob, append(enabled, "--set", "prerequisiteReminderCronJob.sendRate=")...); strings.Contains(out, "EMAIL_SEND_RATE") {
 			t.Fatalf("job must take EMAIL_SEND_RATE from the ConfigMap when sendRate is empty:\n%s", out)
 		}
 	})
-	t.Run("own rate overrides the ConfigMap", func(t *testing.T) {
-		out := render(t, cronJob, append(enabled, "--set", "prerequisiteReminderCronJob.sendRate=2.5")...)
-		if !strings.Contains(out, "- name: EMAIL_SEND_RATE\n                  value: \"2.5\"") {
-			t.Fatalf("job env must set EMAIL_SEND_RATE=2.5:\n%s", out)
-		}
+	t.Run("env override of the API rate renders", func(t *testing.T) {
+		render(t, cronJob, "--set", "config.EMAIL_SEND_RATE=", "--set", "env[0].name=EMAIL_SEND_RATE", "--set", "env[0].value=2.5")
+	})
+	t.Run("valueFrom API rate is trusted", func(t *testing.T) {
+		render(t, cronJob, "--set", "config.EMAIL_SEND_RATE=", "--set", "env[0].name=EMAIL_SEND_RATE", "--set", "env[0].valueFrom.secretKeyRef.name=s", "--set", "env[0].valueFrom.secretKeyRef.key=k")
 	})
 	for name, args := range map[string][]string{
 		"non-numeric job rate": append(enabled, "--set", "prerequisiteReminderCronJob.sendRate=fast"),
 		"negative job rate":    append(enabled, "--set", "prerequisiteReminderCronJob.sendRate=-1"),
+		"zero job rate":        append(enabled, "--set", "prerequisiteReminderCronJob.sendRate=0"),
 		"non-numeric api rate": {"--set", "config.EMAIL_SEND_RATE=fast"},
 		"empty api rate":       {"--set", "config.EMAIL_SEND_RATE="},
+		"zero api rate":        {"--set", "config.EMAIL_SEND_RATE=0.0"},
+		"bad env override":     {"--set", "env[0].name=EMAIL_SEND_RATE", "--set", "env[0].value=fast"},
+		"zero env override":    {"--set", "env[0].name=EMAIL_SEND_RATE", "--set", "env[0].value=0"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if out, err := tryRender(cronJob, args...); err == nil || !strings.Contains(out, "emails per second") {
+			if out, err := tryRender(cronJob, args...); err == nil || !strings.Contains(out, "emails per second above zero") {
 				t.Fatalf("render must fail on a bad send rate; err = %v\n%s", err, out)
 			}
 		})

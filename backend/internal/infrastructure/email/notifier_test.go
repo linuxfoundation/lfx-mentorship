@@ -1417,6 +1417,25 @@ func TestNotify_PacesSendsAcrossNotifications(t *testing.T) {
 	}
 }
 
+func TestNotify_PacedBatchOutlivesLookupDeadline(t *testing.T) {
+	f := newFixture()
+	// The mentee, the HR notice and ten admins make 12 sends plus 11 copies; at 100/s that is over
+	// 200ms, well past a 50ms lookup deadline.
+	f.n.limiter = rate.NewLimiter(100, 1)
+	f.n.lookupTimeout = 50 * time.Millisecond
+	for i := range 10 {
+		id := "admin" + strconv.Itoa(i)
+		f.users.users[id] = &models.User{ID: id, Email: strPtr(id + "@linuxfoundation.org")}
+		f.members.members = append(f.members.members, &models.ProgramMember{UserID: id})
+	}
+
+	f.n.NotifyMenteeAccepted(context.Background(), "a1", "full_time")
+
+	if sent := f.waitAll(t); len(sent) != 23 {
+		t.Fatalf("sent %d messages, want all 23: waiting for the send rate must not expire mail", len(sent))
+	}
+}
+
 func TestNotify_RetriesThrottledSendWithBackoff(t *testing.T) {
 	f := newFixture()
 	f.n.throttleBackoff = 10 * time.Millisecond

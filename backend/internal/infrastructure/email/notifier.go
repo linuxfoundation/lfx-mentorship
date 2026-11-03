@@ -29,8 +29,10 @@ const pageSize = 100
 // mentorPageSize is the largest page the mentor management listing serves.
 const mentorPageSize = 50
 
-// dispatchTimeout bounds one notification's lookups and sends so a stuck dependency cannot hold shutdown.
-const dispatchTimeout = 30 * time.Second
+// lookupTimeout bounds one notification's recipient and template lookups so a stuck dependency
+// cannot hold shutdown. Sends are not under it: they wait their turn under the send rate, and each
+// request is bounded by the client's own timeout.
+const lookupTimeout = 30 * time.Second
 
 // sendConcurrency caps parallel sends per notification, so slow recipients cannot starve the rest of the deadline.
 const sendConcurrency = 5
@@ -39,8 +41,8 @@ const sendConcurrency = 5
 // bulk operation that notifies hundreds of mentees cannot exhaust the database pool or flood NATS.
 const maxConcurrentDispatches = 10
 
-// A throttled send is tried up to throttleAttempts times, the wait doubling from throttleRetryBase;
-// the waits (at most 15s) fit inside dispatchTimeout.
+// A throttled send is tried up to throttleAttempts times, the wait doubling from throttleRetryBase,
+// so a send waits at most 15s in backoff.
 const (
 	throttleAttempts  = 5
 	throttleRetryBase = time.Second
@@ -111,8 +113,9 @@ type NotifierConfig struct {
 	// CopyInbox is the LF staff inbox sent every mentee acceptance, with the mentee's country,
 	// and a copy of every other email except prerequisite reminders, with the original recipient in the subject.
 	CopyInbox string
-	// SendRate caps sends per second across the notifier, keeping bulk runs under the SES sending
-	// rate that every service shares; 0 leaves sends unpaced.
+	// SendRate caps sends per second from this process, keeping bulk runs under the SES sending
+	// rate that every service shares. Each API pod and the reminder job pace separately, so
+	// SendRate × API pods + the job's rate must stay under that limit; 0 leaves sends unpaced.
 	SendRate float64
 }
 
@@ -146,6 +149,7 @@ type Notifier struct {
 	limiter *rate.Limiter
 	// throttleBackoff is the first retry delay for a throttled send; tests shorten it.
 	throttleBackoff time.Duration
+	lookupTimeout   time.Duration
 }
 
 var _ domain.Notifier = (*Notifier)(nil)
@@ -169,6 +173,7 @@ func NewNotifier(sender Sender, repos Repositories, cfg NotifierConfig, logger *
 		copyInbox:         cfg.CopyInbox,
 		limiter:           rate.NewLimiter(limit, 1),
 		throttleBackoff:   throttleRetryBase,
+		lookupTimeout:     lookupTimeout,
 	}
 }
 
@@ -806,8 +811,6 @@ func (n *Notifier) dispatch(ctx context.Context, notification string, build func
 		// The deadline starts once a slot is free, so a queued notification is not timed out for waiting.
 		n.dispatches <- struct{}{}
 		defer func() { <-n.dispatches }()
-		ctx, cancel := context.WithTimeout(ctx, dispatchTimeout)
-		defer cancel()
 		// Chi's recoverer does not cover this goroutine; a panic here would take down the API.
 		defer func() {
 			if r := recover(); r != nil {
@@ -817,7 +820,9 @@ func (n *Notifier) dispatch(ctx context.Context, notification string, build func
 		ctx, span := notifierTracer.Start(ctx, "email.notify "+notification)
 		defer span.End()
 
-		msgs, err := build(ctx)
+		lookupCtx, cancel := context.WithTimeout(ctx, n.lookupTimeout)
+		msgs, err := build(lookupCtx)
+		cancel()
 		if err != nil {
 			span.RecordError(err)
 			n.logger.ErrorContext(ctx, "email notification not sent", "notification", notification, "error", err)
@@ -873,7 +878,8 @@ func (n *Notifier) dispatch(ctx context.Context, notification string, build func
 
 // send paces msg under the notifier's send rate and retries it with exponential backoff while SES
 // throttles it. Each retry waits a random time between half and all of the current delay, so
-// sends throttled together do not retry together.
+// sends throttled together do not retry together. ctx carries no deadline of its own: a send that
+// has waited its turn must not expire for having waited, and the client bounds each request.
 func (n *Notifier) send(ctx context.Context, msg Message) (Receipt, error) {
 	delay := n.throttleBackoff
 	for attempt := 1; ; attempt++ {

@@ -48,6 +48,7 @@ func TestLoadEmailConfig(t *testing.T) {
 		"zero send rate":              {nats: true, override: map[string]string{"EMAIL_SEND_RATE": "0"}, wantErr: "EMAIL_SEND_RATE"},
 		"negative send rate":          {nats: true, override: map[string]string{"EMAIL_SEND_RATE": "-1"}, wantErr: "EMAIL_SEND_RATE"},
 		"infinite send rate":          {nats: true, override: map[string]string{"EMAIL_SEND_RATE": "Inf"}, wantErr: "EMAIL_SEND_RATE"},
+		"nan send rate":               {nats: true, override: map[string]string{"EMAIL_SEND_RATE": "NaN"}, wantErr: "EMAIL_SEND_RATE"},
 		"non-numeric send rate":       {nats: true, override: map[string]string{"EMAIL_SEND_RATE": "fast"}, wantErr: "EMAIL_SEND_RATE"},
 		"bad send rate without nats":  {nats: false, override: map[string]string{"EMAIL_SEND_RATE": "fast"}},
 	} {
@@ -87,7 +88,7 @@ func TestLoadEmailConfig(t *testing.T) {
 			if tc.nats && cfg.CopyInbox != "copies@linuxfoundation.org" {
 				t.Fatalf("CopyInbox = %q, want the trimmed address", cfg.CopyInbox)
 			}
-			wantRate := 5.0
+			wantRate := 1.0
 			if name == "send rate" {
 				wantRate = 12.5
 			}

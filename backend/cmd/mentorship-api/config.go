@@ -330,14 +330,14 @@ func loadEmailConfig(natsConfigured bool) (EmailConfig, error) {
 	return cfg, nil
 }
 
-// defaultEmailSendRate keeps the API and the reminder job together under the 14 per second SES
-// rate that every service shares.
-const defaultEmailSendRate = "5"
+// defaultEmailSendRate is per API pod. With the chart's ten-pod ceiling and the reminder job's
+// own rate (4/s), the defaults total the 14 per second SES rate every service shares.
+const defaultEmailSendRate = "1"
 
 // parseSendRate reads EMAIL_SEND_RATE, the notification sends allowed per second.
 func parseSendRate() (float64, error) {
 	r, err := strconv.ParseFloat(getEnv("EMAIL_SEND_RATE", defaultEmailSendRate), 64)
-	if err != nil || r <= 0 || math.IsInf(r, 0) {
+	if err != nil || math.IsNaN(r) || math.IsInf(r, 0) || r <= 0 {
 		return 0, fmt.Errorf("EMAIL_SEND_RATE: must be a positive number of sends per second")
 	}
 	return r, nil

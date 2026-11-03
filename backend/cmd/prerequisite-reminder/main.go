@@ -140,9 +140,9 @@ type config struct {
 	SendRate          float64
 }
 
-// defaultSendRate keeps the job and the API together under the 14 per second SES rate that every
-// service shares; a deadline day sends more than 700 reminders.
-const defaultSendRate = "5"
+// defaultSendRate leaves room for the API pods under the 14 per second SES rate every service
+// shares: 4/s here plus 1/s on each of up to ten pods. A deadline day's 700 reminders take 3 minutes.
+const defaultSendRate = "4"
 
 // loadConfig reads the settings the reminder email needs; the API's other email settings are unused here.
 func loadConfig() (*config, error) {
@@ -162,7 +162,7 @@ func loadConfig() (*config, error) {
 		rateValue = defaultSendRate
 	}
 	sendRate, err := strconv.ParseFloat(rateValue, 64)
-	if err != nil || sendRate <= 0 || math.IsInf(sendRate, 0) {
+	if err != nil || math.IsNaN(sendRate) || math.IsInf(sendRate, 0) || sendRate <= 0 {
 		return nil, fmt.Errorf("EMAIL_SEND_RATE must be a positive number of sends per second")
 	}
 	cfg.SendRate = sendRate

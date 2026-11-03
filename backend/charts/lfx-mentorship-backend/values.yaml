@@ -198,11 +198,12 @@ config:
   # testing on real data so real users get nothing. user+tag@ variants of a
   # listed address match too. Empty sends to everyone.
   EMAIL_ALLOWED_RECIPIENTS: ""
-  # Notification emails sent per second. The prerequisite-reminder job uses it too
-  # unless prerequisiteReminderCronJob.sendRate is set; the two together must stay
-  # under the SES sending rate every service shares (14/s in prod). A send SES
-  # throttles anyway is retried with exponential backoff.
-  EMAIL_SEND_RATE: "5"
+  # Notification emails sent per second by EACH API pod; the limiter is per process.
+  # Every service shares one SES sending rate (14/s in prod), so keep
+  # EMAIL_SEND_RATE × autoscaling.maxReplicas + prerequisiteReminderCronJob.sendRate
+  # under it: the defaults give 1 × 10 + 4 = 14. A send SES throttles anyway is retried
+  # with exponential backoff.
+  EMAIL_SEND_RATE: "1"
   LEDGER_BASE_URL: ""
   # Crowdfunding is reached through the LFX v2 gateway at
   # https://lfx-api.<domain>/crowdfunding; the transactions route is public.
@@ -332,9 +333,10 @@ prerequisiteReminderCronJob:
   schedule: "30 14 * * *"
   timeZone: "Etc/UTC"
   activeDeadlineSeconds: 1800
-  # Reminders sent per second by the job. Empty uses config.EMAIL_SEND_RATE; set it
-  # when the job and the API together would exceed the shared SES rate.
-  sendRate: ""
+  # Reminders sent per second by the job; it runs as one pod. Empty falls back to
+  # config.EMAIL_SEND_RATE. Budget it with the API pods, see EMAIL_SEND_RATE; at 4/s a
+  # deadline day's 700 reminders take about 3 minutes.
+  sendRate: "4"
   image:
     # Defaults to same repository and tag as the main API image.
     repository: ""
