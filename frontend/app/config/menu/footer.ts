@@ -23,7 +23,7 @@ export function lfxFooterMenu(selfServeUrl: string): FooterMenuSection[] {
       links: [
         { name: 'LFX Self Serve', link: 'https://lfx.linuxfoundation.org' },
         { name: 'LFX Insights', link: 'https://insights.lfx.linuxfoundation.org' },
-        { name: 'LFX Crowdfunding', link: 'https://crowdfunding.lfx.linuxfoundation.org' },
+        { name: 'LFX Crowdfunding', link: 'https://crowdfunding.linuxfoundation.org' },
         { name: 'About the LF', link: 'https://www.linuxfoundation.org/about' },
       ],
     },
