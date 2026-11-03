@@ -133,6 +133,10 @@ func (s *ProgramMemberService) ListByProgram(ctx context.Context, programID stri
 }
 
 func (s *ProgramMemberService) ListMentorManagement(ctx context.Context, programID string, filter models.ProgramMemberFilter) ([]*models.ProgramMentorManagementRow, *models.PaginationMeta, error) {
+	var err error
+	if filter.Search, err = normalizeSearch(filter.Search); err != nil {
+		return nil, nil, err
+	}
 	return s.repo.ListMentorManagement(ctx, programID, filter)
 }
 
@@ -341,7 +345,10 @@ func (s *ProgramMemberService) SearchCandidates(ctx context.Context, programID, 
 	defer span.End()
 	span.SetAttributes(attribute.String("program.id", programID))
 
-	query = strings.TrimSpace(query)
+	query, err := normalizeSearch(query)
+	if err != nil {
+		return nil, err
+	}
 	if utf8.RuneCountInString(query) < minCandidateQueryLen {
 		return nil, fmt.Errorf("%w: search must be at least %d characters", domain.ErrInvalidInput, minCandidateQueryLen)
 	}

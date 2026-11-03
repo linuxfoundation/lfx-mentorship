@@ -39,6 +39,10 @@ const objectDeletionRelayInterval = 10 * time.Second
 // objectDeletionRelayBatch is independent of the FGA and index relays: deletes are cheap and idempotent.
 const objectDeletionRelayBatch = 50
 
+// statementTimeout bounds every API query well inside the request timeout (0.8 × WriteTimeout),
+// so a pathological query is cancelled by Postgres and its pooled connection freed.
+const statementTimeout = 10 * time.Second
+
 // fileTransferTimeout matches the gateway's upload timeout (chart value uploads.timeout).
 const fileTransferTimeout = 120 * time.Second
 
@@ -73,9 +77,10 @@ type Server struct {
 func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, error) {
 	// Database pool
 	pool, err := db.NewPool(ctx, db.PoolConfig{
-		MaxConns:        cfg.Database.MaxConns,
-		MinConns:        cfg.Database.MinConns,
-		ConnMaxLifetime: cfg.Database.ConnMaxLifetime,
+		MaxConns:         cfg.Database.MaxConns,
+		MinConns:         cfg.Database.MinConns,
+		ConnMaxLifetime:  cfg.Database.ConnMaxLifetime,
+		StatementTimeout: statementTimeout,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("database pool: %w", err)

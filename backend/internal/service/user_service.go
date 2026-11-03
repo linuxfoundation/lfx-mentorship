@@ -52,6 +52,9 @@ func (s *UserService) Bootstrap(ctx context.Context, lfid string, input models.U
 	if lfid == "" {
 		return nil, fmt.Errorf("%w: principal is required", domain.ErrInvalidInput)
 	}
+	if err := validateUserNames(input.Name, input.GivenName, input.FamilyName); err != nil {
+		return nil, err
+	}
 	ctx, span := userSvcTracer.Start(ctx, "UserService.Bootstrap")
 	defer span.End()
 
@@ -176,6 +179,10 @@ func (s *UserService) List(ctx context.Context, filter models.UserFilter) ([]*mo
 	ctx, span := userSvcTracer.Start(ctx, "UserService.List")
 	defer span.End()
 
+	var err error
+	if filter.Search, err = normalizeSearch(filter.Search); err != nil {
+		return nil, nil, err
+	}
 	users, meta, err := s.repo.List(ctx, filter)
 	if err != nil {
 		span.RecordError(err)
@@ -191,6 +198,9 @@ func (s *UserService) Create(ctx context.Context, input models.UserCreateInput) 
 
 	if input.ID == "" {
 		return nil, fmt.Errorf("%w: id is required", domain.ErrInvalidInput)
+	}
+	if err := validateUserNames(input.Name, input.GivenName, input.FamilyName); err != nil {
+		return nil, err
 	}
 
 	user, err := s.repo.Create(ctx, input)
@@ -212,6 +222,9 @@ func (s *UserService) Update(ctx context.Context, id string, input models.UserUp
 	}
 	if input.Email != nil {
 		return nil, fmt.Errorf("%w: email cannot be updated", domain.ErrForbidden)
+	}
+	if err := validateUserNames(input.Name, input.GivenName, input.FamilyName); err != nil {
+		return nil, err
 	}
 
 	user, err := s.repo.Update(ctx, id, input)

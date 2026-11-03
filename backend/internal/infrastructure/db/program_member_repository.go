@@ -203,7 +203,7 @@ func (r *ProgramMemberRepository) ListMentorManagement(ctx context.Context, prog
 		where += fmt.Sprintf(` AND pm.status = $%d`, len(args))
 	}
 	if filter.Search != "" {
-		args = append(args, "%"+filter.Search+"%")
+		args = append(args, containsPattern(filter.Search))
 		where += fmt.Sprintf(` AND (`+sqlUserDisplayName+` ILIKE $%d OR `+mentorEmail+` ILIKE $%d OR u.lfid ILIKE $%d)`, len(args), len(args), len(args))
 	}
 	// The mentor's latest profile backs the name, email and avatar the account lacks.

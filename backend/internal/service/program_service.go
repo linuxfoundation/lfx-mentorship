@@ -117,6 +117,10 @@ func (s *ProgramService) List(ctx context.Context, filter models.ProgramFilter) 
 	ctx, span := programSvcTracer.Start(ctx, "ProgramService.List")
 	defer span.End()
 
+	var err error
+	if filter.Search, err = normalizeSearch(filter.Search); err != nil {
+		return nil, nil, err
+	}
 	programs, meta, err := s.repo.List(ctx, filter)
 	if err != nil {
 		span.RecordError(err)
@@ -185,6 +189,10 @@ func (s *ProgramService) ListCatalog(ctx context.Context, filter models.ProgramF
 	ctx, span := programSvcTracer.Start(ctx, "ProgramService.ListCatalog")
 	defer span.End()
 
+	var err error
+	if filter.Search, err = normalizeSearch(filter.Search); err != nil {
+		return nil, nil, err
+	}
 	filter = normalizeCatalogFilter(filter)
 
 	items, meta, err := s.repo.ListCatalog(ctx, filter)
@@ -197,7 +205,6 @@ func (s *ProgramService) ListCatalog(ctx context.Context, filter models.ProgramF
 }
 
 func normalizeCatalogFilter(filter models.ProgramFilter) models.ProgramFilter {
-	filter.Search = strings.TrimSpace(filter.Search)
 	filter.Skill = strings.TrimSpace(filter.Skill)
 	if strings.EqualFold(filter.Skill, "all") {
 		filter.Skill = ""
@@ -264,7 +271,10 @@ func (s *ProgramService) ListMine(ctx context.Context, userID string, filter mod
 	if filter.Status != "" && !filter.Status.IsValid() {
 		return nil, nil, fmt.Errorf("%w: status must be open, pending_review, completed, rejected, or hidden", domain.ErrInvalidInput)
 	}
-	filter.Search = strings.TrimSpace(filter.Search)
+	var err error
+	if filter.Search, err = normalizeSearch(filter.Search); err != nil {
+		return nil, nil, err
+	}
 
 	programs, meta, err := s.repo.ListAdministeredByUser(ctx, userID, filter)
 	if err != nil {
@@ -281,6 +291,9 @@ func (s *ProgramService) Create(ctx context.Context, input models.ProgramCreateI
 
 	if strings.TrimSpace(input.Name) == "" {
 		return nil, fmt.Errorf("%w: name is required", domain.ErrInvalidInput)
+	}
+	if err := validateName("name", &input.Name); err != nil {
+		return nil, err
 	}
 	if err := reservedFileField("logo_url", input.LogoURL); err != nil {
 		return nil, err
@@ -381,6 +394,9 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 	}
 	if strings.TrimSpace(input.Program.Name) == "" {
 		return nil, fmt.Errorf("%w: name is required", domain.ErrInvalidInput)
+	}
+	if err := validateName("name", &input.Program.Name); err != nil {
+		return nil, err
 	}
 	available, err := s.repo.NameAvailable(ctx, input.Program.Name, "")
 	if err != nil {
@@ -525,6 +541,9 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 
 	if input.Status != nil && !input.Status.IsValid() {
 		return nil, fmt.Errorf("%w: invalid status %q", domain.ErrInvalidInput, *input.Status)
+	}
+	if err := validateName("name", input.Name); err != nil {
+		return nil, err
 	}
 	if input.ProgramTermStatus != nil && !input.ProgramTermStatus.IsValid() {
 		return nil, fmt.Errorf("%w: invalid program term status %q", domain.ErrInvalidInput, *input.ProgramTermStatus)

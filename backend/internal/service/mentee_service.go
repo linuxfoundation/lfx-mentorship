@@ -28,7 +28,10 @@ func NewMenteeService(repo domain.MenteeRepository) *MenteeService {
 }
 
 func normalizeMenteeFilter(filter models.MenteeFilter) (models.MenteeFilter, error) {
-	filter.Search = strings.TrimSpace(filter.Search)
+	var err error
+	if filter.Search, err = normalizeSearch(filter.Search); err != nil {
+		return filter, err
+	}
 	filter.Skill = strings.TrimSpace(filter.Skill)
 	if strings.EqualFold(filter.Skill, "all") {
 		filter.Skill = ""

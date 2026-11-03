@@ -209,7 +209,7 @@ func menteeListWhere(filter models.MenteeFilter, args []any) (string, []any) {
 		)`, len(args))
 	}
 	if filter.Search != "" {
-		args = append(args, "%"+filter.Search+"%")
+		args = append(args, containsPattern(filter.Search))
 		where += fmt.Sprintf(` AND COALESCE(name, '') ILIKE $%d`, len(args))
 	}
 	return where, args
