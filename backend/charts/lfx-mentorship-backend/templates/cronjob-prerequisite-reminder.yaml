@@ -46,9 +46,16 @@ spec:
               image: "{{ .Values.prerequisiteReminderCronJob.image.repository | default .Values.image.repository }}:{{ .Values.prerequisiteReminderCronJob.image.tag | default (required "image.tag is required" .Values.image.tag) }}"
               imagePullPolicy: {{ .Values.image.pullPolicy }}
               command: ["/app/prerequisite-reminder"]
-              {{- with .Values.env }}
+              {{- if or .Values.env .Values.prerequisiteReminderCronJob.sendRate }}
               env:
+                {{- with .Values.env }}
                 {{- toYaml . | nindent 16 }}
+                {{- end }}
+                {{- with .Values.prerequisiteReminderCronJob.sendRate }}
+                # env overrides the ConfigMap's EMAIL_SEND_RATE for this container only.
+                - name: EMAIL_SEND_RATE
+                  value: {{ . | quote }}
+                {{- end }}
               {{- end }}
               envFrom:
                 - configMapRef:

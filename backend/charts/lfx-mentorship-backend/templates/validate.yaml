@@ -123,6 +123,14 @@ valueFrom is resolved at runtime, so it counts as set without a format check. */
 {{- if not (or (hasKey $emailFromRef "EMAIL_REVIEW_INBOX") (regexMatch "^[^@\\s<>,]+@[^@\\s<>,]+(\\s*,\\s*[^@\\s<>,]+@[^@\\s<>,]+)*$" (get $email "EMAIL_REVIEW_INBOX"))) }}
 {{- fail "values.yaml: EMAIL_REVIEW_INBOX must be one or more comma-separated email addresses (in config: or env:) when FGA_NATS_URL is set — every program submitted for review is sent to each." }}
 {{- end }}
+{{- /* The binaries refuse a send rate that is not a positive number; catch it at render time. */ -}}
+{{- $rate := "^[0-9]*\\.?[0-9]+$" }}
+{{- if not (regexMatch $rate (toString .Values.config.EMAIL_SEND_RATE)) }}
+{{- fail "values.yaml: config.EMAIL_SEND_RATE must be a positive number of emails per second when FGA_NATS_URL is set." }}
+{{- end }}
+{{- if and .Values.prerequisiteReminderCronJob.sendRate (not (regexMatch $rate (toString .Values.prerequisiteReminderCronJob.sendRate))) }}
+{{- fail "values.yaml: prerequisiteReminderCronJob.sendRate must be empty or a positive number of emails per second." }}
+{{- end }}
 {{- end }}
 
 {{- /* The prerequisite reminder only sends email, so it needs NATS; the email guard above then

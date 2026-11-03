@@ -27,8 +27,15 @@ const defaultTimeout = 10 * time.Second
 
 var tracer = otel.Tracer("email-client")
 
-// ErrRejected marks a send the email service refused; the relay does not retry it.
+// ErrRejected marks a send the email service refused for a reason a retry cannot fix.
 var ErrRejected = errors.New("email service rejected send")
+
+// ErrThrottled marks a send the email service refused because Amazon SES throttled it; nothing was
+// sent, and the same send can succeed later.
+var ErrThrottled = errors.New("email sending throttled")
+
+// throttledReply is the email service's error reply when SES throttles a send.
+const throttledReply = "sending throttled"
 
 // Requester is the subset of *nats.Conn the client needs.
 type Requester interface {
@@ -122,6 +129,9 @@ func (c *Client) request(ctx context.Context, data []byte) (Receipt, error) {
 
 	var errResp emailapi.SendEmailErrorResponse
 	if err := json.Unmarshal(reply.Data, &errResp); err == nil && errResp.Error != "" {
+		if errResp.Error == throttledReply {
+			return Receipt{}, ErrThrottled
+		}
 		return Receipt{}, fmt.Errorf("%w: %s", ErrRejected, errResp.Error)
 	}
 	// Decode email_id as a pointer: an allowlist-blocked recipient gets "" (counted as sent), but a

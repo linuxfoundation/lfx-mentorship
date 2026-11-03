@@ -6,6 +6,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"net/mail"
 	"net/url"
 	"os"
@@ -114,6 +115,8 @@ type EmailConfig struct {
 	AllowedRecipients []string
 	// CopyInbox is the LF staff inbox sent every mentee acceptance and a copy of every other email.
 	CopyInbox string
+	// SendRate caps notification sends per second; see email.NotifierConfig.SendRate.
+	SendRate float64
 }
 
 // CrowdfundingConfig holds outbound crowdfunding API settings.
@@ -299,6 +302,10 @@ func loadEmailConfig(natsConfigured bool) (EmailConfig, error) {
 	if !natsConfigured {
 		return cfg, nil
 	}
+	var err error
+	if cfg.SendRate, err = parseSendRate(); err != nil {
+		return EmailConfig{}, err
+	}
 	for _, kv := range [][2]string{{"PUBLIC_SITE_URL", cfg.PublicSiteURL}, {"SELF_SERVE_URL", cfg.SelfServeURL}} {
 		if u, err := url.Parse(kv[1]); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
 			return EmailConfig{}, fmt.Errorf("%s must be an absolute http(s) URL with no query or fragment when FGA_NATS_URL is set", kv[0])
@@ -307,7 +314,6 @@ func loadEmailConfig(natsConfigured bool) (EmailConfig, error) {
 	if addr, err := mail.ParseAddress(cfg.CopyInbox); err != nil || addr.Address != cfg.CopyInbox {
 		return EmailConfig{}, fmt.Errorf("EMAIL_COPY_INBOX must be a bare email address when FGA_NATS_URL is set")
 	}
-	var err error
 	if cfg.ReviewInboxes, err = addressList("EMAIL_REVIEW_INBOX"); err != nil {
 		return EmailConfig{}, err
 	}
@@ -322,6 +328,19 @@ func loadEmailConfig(natsConfigured bool) (EmailConfig, error) {
 		return EmailConfig{}, fmt.Errorf("EMAIL_ALLOWED_RECIPIENTS is set but lists no addresses")
 	}
 	return cfg, nil
+}
+
+// defaultEmailSendRate keeps the API and the reminder job together under the 14 per second SES
+// rate that every service shares.
+const defaultEmailSendRate = "5"
+
+// parseSendRate reads EMAIL_SEND_RATE, the notification sends allowed per second.
+func parseSendRate() (float64, error) {
+	r, err := strconv.ParseFloat(getEnv("EMAIL_SEND_RATE", defaultEmailSendRate), 64)
+	if err != nil || r <= 0 || math.IsInf(r, 0) {
+		return 0, fmt.Errorf("EMAIL_SEND_RATE: must be a positive number of sends per second")
+	}
+	return r, nil
 }
 
 // addressList reads key as comma-separated bare email addresses, skipping blank entries.

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"net/url"
 	"strings"
 	"sync"
@@ -19,6 +20,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"golang.org/x/text/language"
 	"golang.org/x/text/language/display"
+	"golang.org/x/time/rate"
 )
 
 // pageSize is the largest page the member and task repositories serve.
@@ -36,6 +38,13 @@ const sendConcurrency = 5
 // maxConcurrentDispatches caps notifications resolving and sending at once across the notifier, so a
 // bulk operation that notifies hundreds of mentees cannot exhaust the database pool or flood NATS.
 const maxConcurrentDispatches = 10
+
+// A throttled send is tried up to throttleAttempts times, the wait doubling from throttleRetryBase;
+// the waits (at most 15s) fit inside dispatchTimeout.
+const (
+	throttleAttempts  = 5
+	throttleRetryBase = time.Second
+)
 
 // profilePageSize is the largest page the profile listing serves.
 const profilePageSize = 100
@@ -100,8 +109,11 @@ type NotifierConfig struct {
 	// AllowedRecipients, when set, are the only addresses mail goes to; every other send is suppressed.
 	AllowedRecipients []string
 	// CopyInbox is the LF staff inbox sent every mentee acceptance, with the mentee's country,
-	// and a copy of every other email, with the original recipient in the subject.
+	// and a copy of every other email except prerequisite reminders, with the original recipient in the subject.
 	CopyInbox string
+	// SendRate caps sends per second across the notifier, keeping bulk runs under the SES sending
+	// rate that every service shares; 0 leaves sends unpaced.
+	SendRate float64
 }
 
 // Repositories are the lookups the Notifier needs to resolve recipients and template data.
@@ -130,12 +142,20 @@ type Notifier struct {
 	wg                sync.WaitGroup
 	// dispatches holds one slot per notification in progress, up to maxConcurrentDispatches.
 	dispatches chan struct{}
+	// limiter paces every send the notifier makes, retries included.
+	limiter *rate.Limiter
+	// throttleBackoff is the first retry delay for a throttled send; tests shorten it.
+	throttleBackoff time.Duration
 }
 
 var _ domain.Notifier = (*Notifier)(nil)
 
 // NewNotifier returns a Notifier that sends through sender.
 func NewNotifier(sender Sender, repos Repositories, cfg NotifierConfig, logger *slog.Logger) *Notifier {
+	limit := rate.Inf
+	if cfg.SendRate > 0 {
+		limit = rate.Limit(cfg.SendRate)
+	}
 	return &Notifier{
 		sender:        sender,
 		repos:         repos,
@@ -147,6 +167,8 @@ func NewNotifier(sender Sender, repos Repositories, cfg NotifierConfig, logger *
 
 		allowedRecipients: recipientSet(cfg.AllowedRecipients),
 		copyInbox:         cfg.CopyInbox,
+		limiter:           rate.NewLimiter(limit, 1),
+		throttleBackoff:   throttleRetryBase,
 	}
 }
 
@@ -817,7 +839,11 @@ func (n *Notifier) dispatch(ctx context.Context, notification string, build func
 		}
 		slots := make(chan struct{}, sendConcurrency)
 		var sends sync.WaitGroup
-		for _, msg := range append(unique, n.copies(unique)...) {
+		if notification != templateMenteePrerequisiteReminder {
+			// Reminders go out in daily bulk; copying them would double the batch against the SES rate.
+			unique = append(unique, n.copies(unique)...)
+		}
+		for _, msg := range unique {
 			if !n.recipientAllowed(strings.ToLower(msg.To)) {
 				n.logger.InfoContext(ctx, "email notification suppressed", "notification", notification)
 				continue
@@ -832,7 +858,7 @@ func (n *Notifier) dispatch(ctx context.Context, notification string, build func
 						n.logger.ErrorContext(ctx, "email notification panicked", "notification", notification, "panic", r)
 					}
 				}()
-				receipt, err := n.sender.Send(ctx, msg)
+				receipt, err := n.send(ctx, msg)
 				if err != nil {
 					span.RecordError(err)
 					n.logger.ErrorContext(ctx, "email notification not sent", "notification", notification, "error", err)
@@ -843,6 +869,30 @@ func (n *Notifier) dispatch(ctx context.Context, notification string, build func
 		}
 		sends.Wait()
 	}()
+}
+
+// send paces msg under the notifier's send rate and retries it with exponential backoff while SES
+// throttles it. Each retry waits a random time between half and all of the current delay, so
+// sends throttled together do not retry together.
+func (n *Notifier) send(ctx context.Context, msg Message) (Receipt, error) {
+	delay := n.throttleBackoff
+	for attempt := 1; ; attempt++ {
+		if err := n.limiter.Wait(ctx); err != nil {
+			return Receipt{}, fmt.Errorf("wait for send rate: %w", err)
+		}
+		receipt, err := n.sender.Send(ctx, msg)
+		if !errors.Is(err, ErrThrottled) || attempt == throttleAttempts {
+			return receipt, err
+		}
+		wait := delay/2 + rand.N(delay/2+1)
+		n.logger.WarnContext(ctx, "email send throttled; retrying", "attempt", attempt, "retry_in", wait.String())
+		select {
+		case <-ctx.Done():
+			return Receipt{}, fmt.Errorf("%w: %w", err, ctx.Err())
+		case <-time.After(wait):
+		}
+		delay *= 2
+	}
 }
 
 // copySubjectPrefix starts a copy's subject, followed by the original recipient and "] ".

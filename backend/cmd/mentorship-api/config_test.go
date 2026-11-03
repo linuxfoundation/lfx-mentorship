@@ -17,6 +17,7 @@ func TestLoadEmailConfig(t *testing.T) {
 		"EMAIL_COPY_INBOX":         "copies@linuxfoundation.org",
 		"EMAIL_REVIEW_INBOX":       "review@linuxfoundation.org",
 		"EMAIL_ALLOWED_RECIPIENTS": "",
+		"EMAIL_SEND_RATE":          "",
 	}
 	for name, tc := range map[string]struct {
 		nats     bool
@@ -43,6 +44,12 @@ func TestLoadEmailConfig(t *testing.T) {
 		"blank recipients":            {nats: true, override: map[string]string{"EMAIL_ALLOWED_RECIPIENTS": " "}, wantErr: "EMAIL_ALLOWED_RECIPIENTS"},
 		"copy inbox":                  {nats: true, override: map[string]string{"EMAIL_COPY_INBOX": " copies@linuxfoundation.org "}},
 		"display-name copy inbox":     {nats: true, override: map[string]string{"EMAIL_COPY_INBOX": "Copies <copies@linuxfoundation.org>"}, wantErr: "EMAIL_COPY_INBOX"},
+		"send rate":                   {nats: true, override: map[string]string{"EMAIL_SEND_RATE": "12.5"}},
+		"zero send rate":              {nats: true, override: map[string]string{"EMAIL_SEND_RATE": "0"}, wantErr: "EMAIL_SEND_RATE"},
+		"negative send rate":          {nats: true, override: map[string]string{"EMAIL_SEND_RATE": "-1"}, wantErr: "EMAIL_SEND_RATE"},
+		"infinite send rate":          {nats: true, override: map[string]string{"EMAIL_SEND_RATE": "Inf"}, wantErr: "EMAIL_SEND_RATE"},
+		"non-numeric send rate":       {nats: true, override: map[string]string{"EMAIL_SEND_RATE": "fast"}, wantErr: "EMAIL_SEND_RATE"},
+		"bad send rate without nats":  {nats: false, override: map[string]string{"EMAIL_SEND_RATE": "fast"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			for k, v := range valid {
@@ -79,6 +86,13 @@ func TestLoadEmailConfig(t *testing.T) {
 			}
 			if tc.nats && cfg.CopyInbox != "copies@linuxfoundation.org" {
 				t.Fatalf("CopyInbox = %q, want the trimmed address", cfg.CopyInbox)
+			}
+			wantRate := 5.0
+			if name == "send rate" {
+				wantRate = 12.5
+			}
+			if tc.nats && cfg.SendRate != wantRate {
+				t.Fatalf("SendRate = %v, want %v", cfg.SendRate, wantRate)
 			}
 		})
 	}
@@ -160,6 +174,7 @@ func TestLoadConfig(t *testing.T) {
 		"EMAIL_COPY_INBOX":                     "",
 		"EMAIL_REVIEW_INBOX":                   "",
 		"EMAIL_ALLOWED_RECIPIENTS":             "",
+		"EMAIL_SEND_RATE":                      "",
 		"AWS_REGION":                           "",
 		"LOGOS_S3_BUCKET":                      "",
 		"LOGOS_S3_ENDPOINT_URL":                "",

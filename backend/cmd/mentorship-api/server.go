@@ -144,6 +144,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 
 			AllowedRecipients: cfg.Email.AllowedRecipients,
 			CopyInbox:         cfg.Email.CopyInbox,
+			SendRate:          cfg.Email.SendRate,
 		}, logger)
 		notifier = emailNotifier
 		if len(cfg.Email.AllowedRecipients) > 0 {
