@@ -194,7 +194,30 @@ func TestProgramLogoUploadRuleFollowsRolloutFlag(t *testing.T) {
 // renderedRuleBlock renders the RuleSet through helm and returns the rule with the given id suffix.
 func renderedRuleBlock(t *testing.T, id string, extra ...string) string {
 	t.Helper()
-	args := []string{"template", "x", ".", "-s", "templates/ruleset.yaml",
+	rendered := render(t, "templates/ruleset.yaml", extra...)
+	start := strings.Index(rendered, "id: rule:lfx:lfx-mentorship-backend:"+id+"\n")
+	if start < 0 {
+		t.Fatalf("rendered RuleSet is missing rule %q", id)
+	}
+	end := strings.Index(rendered[start:], "\n    - id:")
+	if end < 0 {
+		end = len(rendered) - start
+	}
+	return rendered[start : start+end]
+}
+
+// render renders one template through helm with every required value set, plus extra.
+func render(t *testing.T, template string, extra ...string) string {
+	t.Helper()
+	out, err := tryRender(template, extra...)
+	if err != nil {
+		t.Fatalf("helm template: %v\n%s", err, out)
+	}
+	return out
+}
+
+func tryRender(template string, extra ...string) (string, error) {
+	args := []string{"template", "x", ".", "-s", template,
 		"--set", "image.tag=t",
 		"--set", "secretName=s",
 		"--set", "config.HEIMDALL_JWKS_URL=https://h/jwks",
@@ -215,19 +238,61 @@ func renderedRuleBlock(t *testing.T, id string, extra ...string) string {
 		"--set", "openfga.enabled=true",
 	}
 	out, err := exec.Command("helm", append(args, extra...)...).CombinedOutput()
-	if err != nil {
-		t.Fatalf("helm template: %v\n%s", err, out)
+	return string(out), err
+}
+
+func TestPrerequisiteReminderSendRate(t *testing.T) {
+	const cronJob = "templates/cronjob-prerequisite-reminder.yaml"
+	enabled := []string{"--set", "prerequisiteReminderCronJob.enabled=true"}
+
+	t.Run("default job rate overrides the ConfigMap", func(t *testing.T) {
+		out := render(t, cronJob, enabled...)
+		if !strings.Contains(out, "- name: EMAIL_SEND_RATE\n                  value: \"4\"") {
+			t.Fatalf("job env must set EMAIL_SEND_RATE=4 by default:\n%s", out)
+		}
+	})
+	t.Run("empty job rate shares the API rate", func(t *testing.T) {
+		if out := render(t, cronJob, append(enabled, "--set", "prerequisiteReminderCronJob.sendRate=")...); strings.Contains(out, "EMAIL_SEND_RATE") {
+			t.Fatalf("job must take EMAIL_SEND_RATE from the ConfigMap when sendRate is empty:\n%s", out)
+		}
+	})
+	t.Run("null job rate shares the API rate", func(t *testing.T) {
+		if out := render(t, cronJob, append(enabled, "--set", "prerequisiteReminderCronJob.sendRate=null")...); strings.Contains(out, "EMAIL_SEND_RATE") {
+			t.Fatalf("a null sendRate must fall back to the API rate:\n%s", out)
+		}
+	})
+	apiRateInEnv := append(append([]string{}, enabled...), "--set", "config.EMAIL_SEND_RATE=", "--set", "env[0].name=EMAIL_SEND_RATE", "--set", "env[0].value=2.5")
+	t.Run("job rate replaces an API rate set in env", func(t *testing.T) {
+		out := render(t, cronJob, apiRateInEnv...)
+		if n := strings.Count(out, "name: EMAIL_SEND_RATE"); n != 1 || !strings.Contains(out, "value: \"4\"") {
+			t.Fatalf("job env must hold one EMAIL_SEND_RATE, the job's 4, not the API's; found %d:\n%s", n, out)
+		}
+	})
+	t.Run("API rate in env reaches the job when its own rate is empty", func(t *testing.T) {
+		out := render(t, cronJob, append(apiRateInEnv, "--set", "prerequisiteReminderCronJob.sendRate=")...)
+		if n := strings.Count(out, "name: EMAIL_SEND_RATE"); n != 1 || !strings.Contains(out, "value: \"2.5\"") {
+			t.Fatalf("job env must hold the API's EMAIL_SEND_RATE once; found %d:\n%s", n, out)
+		}
+	})
+	t.Run("valueFrom API rate is trusted", func(t *testing.T) {
+		render(t, cronJob, append(enabled, "--set", "config.EMAIL_SEND_RATE=", "--set", "env[0].name=EMAIL_SEND_RATE", "--set", "env[0].valueFrom.secretKeyRef.name=s", "--set", "env[0].valueFrom.secretKeyRef.key=k")...)
+	})
+	for name, args := range map[string][]string{
+		"non-numeric job rate": append(enabled, "--set", "prerequisiteReminderCronJob.sendRate=fast"),
+		"negative job rate":    append(enabled, "--set", "prerequisiteReminderCronJob.sendRate=-1"),
+		"zero job rate":        append(enabled, "--set", "prerequisiteReminderCronJob.sendRate=0"),
+		"non-numeric api rate": {"--set", "config.EMAIL_SEND_RATE=fast"},
+		"empty api rate":       {"--set", "config.EMAIL_SEND_RATE="},
+		"zero api rate":        {"--set", "config.EMAIL_SEND_RATE=0.0"},
+		"bad env override":     {"--set", "env[0].name=EMAIL_SEND_RATE", "--set", "env[0].value=fast"},
+		"zero env override":    {"--set", "env[0].name=EMAIL_SEND_RATE", "--set", "env[0].value=0"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if out, err := tryRender(cronJob, args...); err == nil || !strings.Contains(out, "emails per second above zero") {
+				t.Fatalf("render must fail on a bad send rate; err = %v\n%s", err, out)
+			}
+		})
 	}
-	rendered := string(out)
-	start := strings.Index(rendered, "id: rule:lfx:lfx-mentorship-backend:"+id+"\n")
-	if start < 0 {
-		t.Fatalf("rendered RuleSet is missing rule %q", id)
-	}
-	end := strings.Index(rendered[start:], "\n    - id:")
-	if end < 0 {
-		end = len(rendered) - start
-	}
-	return rendered[start : start+end]
 }
 
 func TestReviewerFieldsRequireReviewerRelation(t *testing.T) {

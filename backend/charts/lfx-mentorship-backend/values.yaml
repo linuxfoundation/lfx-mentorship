@@ -189,8 +189,8 @@ config:
   # LFX Self Serve, where management pages live, e.g. https://app.lfx.dev
   SELF_SERVE_URL: ""
   # LF staff inbox (a Google Group) sent every mentee acceptance, with the mentee's
-  # country, and a copy of every other email, with the original recipient in the
-  # subject; must also be in EMAIL_ALLOWED_RECIPIENTS when that is set.
+  # country, and a copy of every other email except prerequisite reminders, with the
+  # original recipient in the subject; must also be in EMAIL_ALLOWED_RECIPIENTS when that is set.
   EMAIL_COPY_INBOX: ""
   # Comma-separated LF staff inboxes, each told about every program submitted for review.
   EMAIL_REVIEW_INBOX: ""
@@ -198,6 +198,14 @@ config:
   # testing on real data so real users get nothing. user+tag@ variants of a
   # listed address match too. Empty sends to everyone.
   EMAIL_ALLOWED_RECIPIENTS: ""
+  # Notification emails sent per second by EACH API pod; the limiter is per process.
+  # Every service shares one SES sending rate (50/s in prod since lfx-self-serve-ops#1263),
+  # so keep EMAIL_SEND_RATE × autoscaling.maxReplicas + prerequisiteReminderCronJob.sendRate
+  # under it with room for other services. The defaults (1 × 10 + 4 = 14) fit an account
+  # still at the SES starting rate of 14/s; raise them per environment. A rollout at the
+  # ceiling adds the 25% surge and draining pods; a send SES throttles is retried with
+  # exponential backoff.
+  EMAIL_SEND_RATE: "1"
   LEDGER_BASE_URL: ""
   # Crowdfunding is reached through the LFX v2 gateway at
   # https://lfx-api.<domain>/crowdfunding; the transactions route is public.
@@ -317,7 +325,7 @@ termStatusCronJob:
 # Emails pending mentees the prerequisite tasks they have not submitted, on their
 # reminder days. Sends through lfx-v2-email-service, so FGA_NATS_URL and
 # SELF_SERVE_URL are required, and EMAIL_ALLOWED_RECIPIENTS applies as it does to
-# the API. Reminder days are UTC calendar days and the job keeps no sent marker:
+# the API; reminders are not copied to EMAIL_COPY_INBOX. Reminder days are UTC calendar days and the job keeps no sent marker:
 # run it once a day, and keep timeZone at UTC. A failed Job is never retried, since a
 # crash part-way through sending would email those mentees again; the command retries
 # its own failures from before it sends anything.
@@ -327,6 +335,10 @@ prerequisiteReminderCronJob:
   schedule: "30 14 * * *"
   timeZone: "Etc/UTC"
   activeDeadlineSeconds: 1800
+  # Reminders sent per second by the job; it runs as one pod. Empty falls back to
+  # config.EMAIL_SEND_RATE. Budget it with the API pods, see EMAIL_SEND_RATE; at 4/s a
+  # deadline day's 700 reminders take about 3 minutes.
+  sendRate: "4"
   image:
     # Defaults to same repository and tag as the main API image.
     repository: ""

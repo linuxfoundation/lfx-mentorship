@@ -9,10 +9,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/mail"
 	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -80,7 +82,7 @@ func run(logger *slog.Logger) error {
 	}, email.NotifierConfig{
 		SelfServeURL:      cfg.SelfServeURL,
 		AllowedRecipients: cfg.AllowedRecipients,
-		CopyInbox:         cfg.CopyInbox,
+		SendRate:          cfg.SendRate,
 	}, logger)
 	if len(cfg.AllowedRecipients) > 0 {
 		logger.Warn("email restricted to EMAIL_ALLOWED_RECIPIENTS; all other recipients are suppressed", "allowed", len(cfg.AllowedRecipients))
@@ -134,16 +136,19 @@ func sendWithRetry(ctx context.Context, logger *slog.Logger, delay time.Duration
 type config struct {
 	NATSURL           string
 	SelfServeURL      string
-	CopyInbox         string
 	AllowedRecipients []string
+	SendRate          float64
 }
+
+// defaultSendRate leaves room for the API pods under a 14 per second SES rate, the lowest any
+// environment runs at: 4/s here plus 1/s on each of up to ten pods. Deployments raise it.
+const defaultSendRate = "4"
 
 // loadConfig reads the settings the reminder email needs; the API's other email settings are unused here.
 func loadConfig() (*config, error) {
 	cfg := &config{
 		NATSURL:      os.Getenv("FGA_NATS_URL"),
 		SelfServeURL: strings.TrimRight(os.Getenv("SELF_SERVE_URL"), "/"),
-		CopyInbox:    strings.TrimSpace(os.Getenv("EMAIL_COPY_INBOX")),
 	}
 	if cfg.NATSURL == "" {
 		return nil, fmt.Errorf("FGA_NATS_URL is required to send email")
@@ -152,10 +157,15 @@ func loadConfig() (*config, error) {
 	if u, err := url.Parse(cfg.SelfServeURL); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
 		return nil, fmt.Errorf("SELF_SERVE_URL must be an absolute http(s) URL with no query or fragment")
 	}
-	// Every reminder is copied to the staff inbox, as the API copies its email.
-	if addr, err := mail.ParseAddress(cfg.CopyInbox); err != nil || addr.Address != cfg.CopyInbox {
-		return nil, fmt.Errorf("EMAIL_COPY_INBOX must be a bare email address")
+	rateValue := os.Getenv("EMAIL_SEND_RATE")
+	if rateValue == "" {
+		rateValue = defaultSendRate
 	}
+	sendRate, err := strconv.ParseFloat(rateValue, 64)
+	if err != nil || math.IsNaN(sendRate) || math.IsInf(sendRate, 0) || sendRate <= 0 {
+		return nil, fmt.Errorf("EMAIL_SEND_RATE must be a positive number of sends per second")
+	}
+	cfg.SendRate = sendRate
 	for r := range strings.SplitSeq(os.Getenv("EMAIL_ALLOWED_RECIPIENTS"), ",") {
 		if r = strings.TrimSpace(r); r == "" {
 			continue
