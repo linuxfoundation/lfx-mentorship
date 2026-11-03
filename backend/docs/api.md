@@ -2716,8 +2716,9 @@ class ApiError extends Error {
 | `FGA_NATS_URL` | Yes for relays | — | Shared NATS URL for FGA and index publishing, notification email via lfx-v2-email-service, and project lookups via lfx-v2-project-service |
 | `PUBLIC_SITE_URL` | When `FGA_NATS_URL` is set | — | Public Mentorship site that user-facing email links point at |
 | `SELF_SERVE_URL` | When `FGA_NATS_URL` is set | — | LFX Self Serve base URL for management links in email |
-| `EMAIL_COPY_INBOX` | When `FGA_NATS_URL` is set | — | LF staff inbox sent every mentee acceptance and a copy of every other email, subject prefixed `[Sent to <recipient>]`; must be in `EMAIL_ALLOWED_RECIPIENTS` when that is set |
+| `EMAIL_COPY_INBOX` | When `FGA_NATS_URL` is set | — | LF staff inbox sent every mentee acceptance and a copy of every other email except prerequisite reminders, subject prefixed `[Sent to <recipient>]`; must be in `EMAIL_ALLOWED_RECIPIENTS` when that is set |
 | `EMAIL_REVIEW_INBOX` | When `FGA_NATS_URL` is set | — | Comma-separated LF staff inboxes, each sent every program submitted for review |
+| `EMAIL_SEND_RATE` | No | `1` | Notification emails sent per second **per pod**; the limiter is per process. Keep `EMAIL_SEND_RATE × autoscaling.maxReplicas + prerequisiteReminderCronJob.sendRate` under the SES rate every service shares (50/s in prod), with room for other services. The chart's defaults give 1 × 10 + 4 = 14, which fits an account still at the SES starting rate; raise them per environment. A rollout at the ceiling briefly adds the 25% surge and draining pods; throttled sends are retried with backoff. The reminder job uses `prerequisiteReminderCronJob.sendRate` (default `4`), falling back to this when that is empty |
 | `FGA_RELAY_BATCH_SIZE` | No | `50` | FGA/index claim batch size |
 | `FGA_RELAY_INTERVAL` | No | `1s` | Relay polling interval |
 | `FGA_RELAY_RETRY_DELAY` | No | `1m` | FGA retry delay |

@@ -18,6 +18,7 @@ import (
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
+	"golang.org/x/time/rate"
 )
 
 const (
@@ -37,12 +38,21 @@ type senderStub struct {
 	delay       time.Duration
 	inFlight    int
 	maxInFlight int
+	// throttle is how many more sends to each recipient get ErrThrottled.
+	throttle map[string]int
+	attempts map[string]int
+	sentAt   []time.Time
 }
 
 func (s *senderStub) Send(_ context.Context, msg Message) (Receipt, error) {
 	s.mu.Lock()
 	s.inFlight++
 	s.maxInFlight = max(s.maxInFlight, s.inFlight)
+	if s.attempts == nil {
+		s.attempts = map[string]int{}
+	}
+	s.attempts[msg.To]++
+	s.sentAt = append(s.sentAt, time.Now())
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
@@ -57,6 +67,10 @@ func (s *senderStub) Send(_ context.Context, msg Message) (Receipt, error) {
 	defer s.mu.Unlock()
 	if s.failFor[msg.To] {
 		return Receipt{}, ErrRejected
+	}
+	if s.throttle[msg.To] > 0 {
+		s.throttle[msg.To]--
+		return Receipt{}, ErrThrottled
 	}
 	s.sent = append(s.sent, msg)
 	return Receipt{EmailID: "e-" + msg.To}, nil
@@ -1381,6 +1395,125 @@ func TestNotify_BoundsConcurrentDispatches(t *testing.T) {
 	}
 	if programs.max < 2 || programs.max > maxConcurrentDispatches {
 		t.Fatalf("max notifications in flight = %d, want between 2 and %d", programs.max, maxConcurrentDispatches)
+	}
+}
+
+func TestNotify_PacesSendsAcrossNotifications(t *testing.T) {
+	f := newFixture()
+	const perSecond = 50
+	f.n.limiter = rate.NewLimiter(perSecond, 1)
+
+	// Three notifications send three messages and three copies, at most one per 20ms.
+	for range 3 {
+		f.n.NotifyMentorDeclined(context.Background(), "p1", "mentor")
+	}
+
+	if sent := f.waitAll(t); len(sent) != 6 {
+		t.Fatalf("sent %d messages, want 6", len(sent))
+	}
+	at := slices.SortedFunc(slices.Values(f.sender.sentAt), time.Time.Compare)
+	if spread, want := at[len(at)-1].Sub(at[0]), 5*time.Second/perSecond; spread < want*9/10 {
+		t.Fatalf("6 sends spread over %v, want at least %v at %d per second", spread, want, perSecond)
+	}
+}
+
+func TestNotify_PacedBatchOutlivesLookupDeadline(t *testing.T) {
+	f := newFixture()
+	// The mentee, the HR notice and ten admins make 12 sends plus 11 copies; at 100/s that is over
+	// 200ms, well past a 50ms lookup deadline.
+	f.n.limiter = rate.NewLimiter(100, 1)
+	f.n.lookupTimeout = 50 * time.Millisecond
+	for i := range 10 {
+		id := "admin" + strconv.Itoa(i)
+		f.users.users[id] = &models.User{ID: id, Email: strPtr(id + "@linuxfoundation.org")}
+		f.members.members = append(f.members.members, &models.ProgramMember{UserID: id})
+	}
+
+	f.n.NotifyMenteeAccepted(context.Background(), "a1", "full_time")
+
+	if sent := f.waitAll(t); len(sent) != 23 {
+		t.Fatalf("sent %d messages, want all 23: waiting for the send rate must not expire mail", len(sent))
+	}
+}
+
+func TestNotify_RetriesThrottledSendWithBackoff(t *testing.T) {
+	f := newFixture()
+	f.n.throttleBackoff = 10 * time.Millisecond
+	f.sender.throttle = map[string]int{"mentor@linuxfoundation.org": 2}
+
+	start := time.Now()
+	f.n.NotifyMentorDeclined(context.Background(), "p1", "mentor")
+
+	if sent := f.wait(t); len(sent) != 1 || sent[0].To != "mentor@linuxfoundation.org" {
+		t.Fatalf("sent = %+v, want the mentor's email once SES stops throttling", sent)
+	}
+	if got := f.sender.attempts["mentor@linuxfoundation.org"]; got != 3 {
+		t.Fatalf("attempts = %d, want 3", got)
+	}
+	// The waits are at least half of 10ms, then of 20ms.
+	if elapsed := time.Since(start); elapsed < 15*time.Millisecond {
+		t.Fatalf("retried after %v, want backoff of at least 15ms", elapsed)
+	}
+}
+
+func TestNotify_GivesUpAfterThrottleAttempts(t *testing.T) {
+	f := newFixture()
+	f.n.throttleBackoff = time.Millisecond
+	f.sender.throttle = map[string]int{"mentor@linuxfoundation.org": 100}
+
+	f.n.NotifyMentorDeclined(context.Background(), "p1", "mentor")
+
+	if sent := f.wait(t); len(sent) != 0 {
+		t.Fatalf("sent = %+v, want nothing while SES throttles", sent)
+	}
+	if got := f.sender.attempts["mentor@linuxfoundation.org"]; got != throttleAttempts {
+		t.Fatalf("attempts = %d, want %d", got, throttleAttempts)
+	}
+}
+
+func TestNotify_RejectedSendIsNotRetried(t *testing.T) {
+	f := newFixture()
+	f.n.throttleBackoff = time.Millisecond
+	f.sender.failFor = map[string]bool{"mentor@linuxfoundation.org": true}
+
+	f.n.NotifyMentorDeclined(context.Background(), "p1", "mentor")
+
+	f.wait(t)
+	if got := f.sender.attempts["mentor@linuxfoundation.org"]; got != 1 {
+		t.Fatalf("attempts = %d, want 1: only throttling is retried", got)
+	}
+}
+
+func TestSend_ThrottleRetryStopsAtDeadline(t *testing.T) {
+	f := newFixture()
+	f.n.throttleBackoff = time.Hour
+	f.sender.throttle = map[string]int{"mentor@linuxfoundation.org": 100}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	_, err := f.n.send(ctx, Message{To: "mentor@linuxfoundation.org"})
+
+	if !errors.Is(err, ErrThrottled) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want the throttle error and the deadline", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("send returned after %v, want shortly after the 20ms deadline", elapsed)
+	}
+	if got := f.sender.attempts["mentor@linuxfoundation.org"]; got != 1 {
+		t.Fatalf("attempts = %d, want 1: the deadline passed during the first backoff", got)
+	}
+}
+
+func TestNotifyMenteePrerequisiteReminder_NotCopied(t *testing.T) {
+	prerequisite := models.TaskCategoryPrerequisite
+	f := newFixture()
+	f.tasks.tasks = []*models.Task{{ID: "t1", Name: strPtr("Write an intro"), Category: &prerequisite, Status: models.TaskStatusIncomplete}}
+
+	f.n.NotifyMenteePrerequisiteReminder(context.Background(), "a1")
+
+	if sent := f.waitAll(t); len(sent) != 1 || sent[0].To != "mentee@linuxfoundation.org" {
+		t.Fatalf("sent = %+v, want the reminder to the mentee and no copy to the staff inbox", sent)
 	}
 }
 

@@ -95,7 +95,7 @@ Two things this guard must get right, both learned from review:
 {{- /* Notification email: the binary requires these whenever NATS is set, bypass or not.
 Like the bypass guard, read both config: and env:; an env value overrides config, and a
 valueFrom is resolved at runtime, so it counts as set without a format check. */ -}}
-{{- $emailKeys := list "FGA_NATS_URL" "PUBLIC_SITE_URL" "SELF_SERVE_URL" "EMAIL_COPY_INBOX" "EMAIL_REVIEW_INBOX" }}
+{{- $emailKeys := list "FGA_NATS_URL" "PUBLIC_SITE_URL" "SELF_SERVE_URL" "EMAIL_COPY_INBOX" "EMAIL_REVIEW_INBOX" "EMAIL_SEND_RATE" }}
 {{- $email := dict }}
 {{- $emailFromRef := dict }}
 {{- range $key := $emailKeys }}
@@ -122,6 +122,17 @@ valueFrom is resolved at runtime, so it counts as set without a format check. */
 {{- end }}
 {{- if not (or (hasKey $emailFromRef "EMAIL_REVIEW_INBOX") (regexMatch "^[^@\\s<>,]+@[^@\\s<>,]+(\\s*,\\s*[^@\\s<>,]+@[^@\\s<>,]+)*$" (get $email "EMAIL_REVIEW_INBOX"))) }}
 {{- fail "values.yaml: EMAIL_REVIEW_INBOX must be one or more comma-separated email addresses (in config: or env:) when FGA_NATS_URL is set — every program submitted for review is sent to each." }}
+{{- end }}
+{{- /* The binaries refuse a send rate that is not a number above zero; catch it at render time,
+reading the effective value as the guards above do. */ -}}
+{{- $positive := "^(0*[1-9][0-9]*(\\.[0-9]+)?|0*\\.[0-9]*[1-9][0-9]*)$" }}
+{{- if not (or (hasKey $emailFromRef "EMAIL_SEND_RATE") (regexMatch $positive (get $email "EMAIL_SEND_RATE"))) }}
+{{- fail "values.yaml: EMAIL_SEND_RATE must be a number of emails per second above zero (in config: or env:) when FGA_NATS_URL is set." }}
+{{- end }}
+{{- /* A null sendRate clears the default like ""; a numeric 0 is still rejected. */ -}}
+{{- $jobRate := ternary "" (toString .Values.prerequisiteReminderCronJob.sendRate) (kindIs "invalid" .Values.prerequisiteReminderCronJob.sendRate) }}
+{{- if and $jobRate (not (regexMatch $positive $jobRate)) }}
+{{- fail "values.yaml: prerequisiteReminderCronJob.sendRate must be empty or a number of emails per second above zero." }}
 {{- end }}
 {{- end }}
 
