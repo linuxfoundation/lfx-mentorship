@@ -114,6 +114,7 @@ func (s *UserService) knownIdentity(ctx context.Context, lfid string, input mode
 // account the directory does not know (an M2M client, say) is not an error;
 // a lookup that fails is returned alongside whatever was filled, so a caller
 // can tell "the directory has nothing more" from "the directory did not answer".
+// A directory name longer than maxNameLength is left out.
 func (s *UserService) ResolveIdentity(ctx context.Context, lfid string, input models.UserUpdateInput) (models.UserUpdateInput, error) {
 	if s.directory == nil {
 		return input, nil
@@ -123,9 +124,9 @@ func (s *UserService) ResolveIdentity(ctx context.Context, lfid string, input mo
 		account, err := s.directory.Account(ctx, lfid)
 		switch {
 		case err == nil:
-			fillMissing(&input.Name, account.Name)
-			fillMissing(&input.GivenName, account.GivenName)
-			fillMissing(&input.FamilyName, account.FamilyName)
+			fillMissing(&input.Name, boundedName(account.Name))
+			fillMissing(&input.GivenName, boundedName(account.GivenName))
+			fillMissing(&input.FamilyName, boundedName(account.FamilyName))
 			fillMissing(&input.AvatarURL, account.AvatarURL)
 		case errors.Is(err, domain.ErrAccountNotFound):
 		default:

@@ -81,6 +81,62 @@ func TestProgramService_ListCatalog_RejectsLongSearch(t *testing.T) {
 	}
 }
 
+// Every list that takes a search applies the cap; the stub repositories would otherwise succeed.
+func TestListEntryPoints_RejectLongSearch(t *testing.T) {
+	ctx := context.Background()
+	search := longestSearch + "é"
+	programs := newProgramSvc(&stubProgRepo{}, &stubTermRepo{}, &stubAppRepo{})
+	members := service.NewProgramMemberService(&stubMemberRepo{}, publishedProgRepo(), &stubInviteeUsers{}, nil, &stubNotifier{}, "test-secret")
+	for name, list := range map[string]func() error{
+		"ProgramService.List": func() error {
+			_, _, err := programs.List(ctx, models.ProgramFilter{Search: search})
+			return err
+		},
+		"ProgramService.ListMine": func() error {
+			_, _, err := programs.ListMine(ctx, "user-1", models.AdministeredProgramFilter{Search: search})
+			return err
+		},
+		"ApplicationService.ListByProgram": func() error {
+			_, _, err := newApplicationSvc(&stubAppRepo{}, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{}).
+				ListByProgram(ctx, "prog-1", models.ProgramApplicationFilter{Search: search})
+			return err
+		},
+		"ProgramMemberService.ListMentorManagement": func() error {
+			_, _, err := members.ListMentorManagement(ctx, "prog-1", models.ProgramMemberFilter{Search: search})
+			return err
+		},
+		"ProgramMemberService.SearchCandidates": func() error {
+			_, err := members.SearchCandidates(ctx, "prog-1", search)
+			return err
+		},
+		"UserService.List": func() error {
+			_, _, err := service.NewUserService(&stubUserRepository{}).List(ctx, models.UserFilter{Search: search})
+			return err
+		},
+	} {
+		if err := list(); !errors.Is(err, domain.ErrInvalidInput) {
+			t.Errorf("%s(129-character search) err = %v; want ErrInvalidInput", name, err)
+		}
+	}
+}
+
+func TestProgramMemberService_Create_DropsLongDirectoryName(t *testing.T) {
+	long := longestName + "é"
+	dir := &stubDirectory{
+		accounts: map[string]*models.LFAccount{"ada": {Username: "ada", Name: &long, GivenName: ptr("Ada"), FamilyName: &long}},
+		emails:   map[string]string{"ada": "ada@example.org"},
+	}
+	users := &stubInviteeUsers{}
+	var captured models.ProgramMemberCreateInput
+	if _, err := newInviteSvc(users, dir, capturingMemberRepo(&captured), &stubNotifier{}).
+		Create(context.Background(), "prog-1", models.ProgramMemberCreateInput{LFID: "ada", MemberType: models.MemberTypeMentor}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if users.upserted == nil || users.upserted.Name != nil || users.upserted.FamilyName != nil || users.upserted.GivenName == nil || *users.upserted.GivenName != "Ada" {
+		t.Errorf("upserted = %+v; want the over-long names left out and the given name kept", users.upserted)
+	}
+}
+
 func TestUserService_Update_NameLength(t *testing.T) {
 	called := false
 	svc := service.NewUserService(&stubUserRepository{

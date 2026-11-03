@@ -323,7 +323,7 @@ func (s *ProgramMemberService) userByLFID(ctx context.Context, lfid string) (*mo
 		return nil, fmt.Errorf("look up LF account: %w", err)
 	}
 	if account != nil {
-		input.Name, input.GivenName, input.FamilyName, input.AvatarURL = account.Name, account.GivenName, account.FamilyName, account.AvatarURL
+		input.Name, input.GivenName, input.FamilyName, input.AvatarURL = boundedName(account.Name), boundedName(account.GivenName), boundedName(account.FamilyName), account.AvatarURL
 	}
 
 	user, err = s.users.UpsertByLFID(ctx, input)

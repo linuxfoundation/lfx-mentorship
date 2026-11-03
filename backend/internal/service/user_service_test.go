@@ -212,6 +212,14 @@ func TestUserService_Bootstrap_FillsMissingIdentityFromDirectory(t *testing.T) {
 			wantFill:  models.UserIdentityFill{AvatarURL: str("https://img/alice.png")},
 			wantCalls: 1,
 		},
+		"directory name over the length cap: left out, the rest still filled": {
+			dir: &stubDirectory{accounts: map[string]*models.LFAccount{"alice": {
+				Username: "alice", Name: str(longestName + "é"), GivenName: str("Alice"), FamilyName: str(longestName + "é"),
+			}}, emails: map[string]string{"alice": "dir@example.org"}},
+			wantInput: models.UserCreateInput{LFID: str("alice")},
+			wantFill:  models.UserIdentityFill{Email: str("dir@example.org"), GivenName: str("Alice")},
+			wantCalls: 2,
+		},
 		"directory down: sign-in still succeeds with what the token had": {
 			dir:       &stubDirectory{err: errors.New("nats: no responders")},
 			input:     models.UserUpdateInput{Email: str("tok@example.org")},

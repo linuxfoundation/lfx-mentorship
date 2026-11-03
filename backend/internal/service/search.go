@@ -37,6 +37,15 @@ func validateName(field string, value *string) error {
 	return nil
 }
 
+// boundedName returns value, or nil when it is longer than maxNameLength. A name the LF
+// directory supplies is dropped rather than failing the write it fills.
+func boundedName(value *string) *string {
+	if validateName("", value) != nil {
+		return nil
+	}
+	return value
+}
+
 // validateUserNames rejects a user name, given name, or family name longer than maxNameLength.
 func validateUserNames(name, givenName, familyName *string) error {
 	if err := validateName("name", name); err != nil {
