@@ -235,6 +235,10 @@ func (s *ApplicationService) ListByProgram(ctx context.Context, programID string
 	if filter.Status != "" && !filter.Status.IsValid() {
 		return nil, nil, fmt.Errorf("%w: status must be applied, tasks_submitted, or an application status", domain.ErrInvalidInput)
 	}
+	var err error
+	if filter.Search, err = normalizeSearch(filter.Search); err != nil {
+		return nil, nil, err
+	}
 	return s.repo.ListByProgram(ctx, programID, filter)
 }
 

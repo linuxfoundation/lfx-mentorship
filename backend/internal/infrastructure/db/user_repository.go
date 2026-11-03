@@ -258,7 +258,7 @@ func (r *UserRepository) SearchCandidates(ctx context.Context, query string, lim
 	ctx, span := userTracer.Start(ctx, "db.users.SearchCandidates")
 	defer span.End()
 
-	pattern := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(query)
+	pattern := likeEscaper.Replace(query)
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, email, lfid, name, given_name, family_name, avatar_url, created_on, updated_on
 		FROM users
@@ -309,7 +309,7 @@ func (r *UserRepository) List(ctx context.Context, filter models.UserFilter) ([]
 	args := []any{}
 	if filter.Search != "" {
 		countQ += ` WHERE name ILIKE $1 OR email ILIKE $1 OR lfid ILIKE $1`
-		args = append(args, "%"+filter.Search+"%")
+		args = append(args, containsPattern(filter.Search))
 	}
 	if err := r.pool.QueryRow(ctx, countQ, args...).Scan(&total); err != nil {
 		span.RecordError(err)

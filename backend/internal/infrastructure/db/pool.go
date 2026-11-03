@@ -20,6 +20,9 @@ type PoolConfig struct {
 	MaxConns        int
 	MinConns        int
 	ConnMaxLifetime time.Duration
+	// StatementTimeout, when positive, has Postgres cancel any statement that runs
+	// longer, so a runaway query frees its connection instead of holding it.
+	StatementTimeout time.Duration
 }
 
 // NewPool creates a pgxpool.Pool, pings the database, and returns it.
@@ -31,6 +34,9 @@ func NewPool(ctx context.Context, cfg PoolConfig) (*pgxpool.Pool, error) {
 	config, err := pgxpool.ParseConfig("")
 	if err != nil {
 		return nil, fmt.Errorf("build pool config: %w", err)
+	}
+	if cfg.StatementTimeout > 0 {
+		connConfig.RuntimeParams["statement_timeout"] = fmt.Sprintf("%dms", cfg.StatementTimeout.Milliseconds())
 	}
 	config.ConnConfig = connConfig
 	if cfg.MaxConns < 0 || cfg.MaxConns > math.MaxInt32 {

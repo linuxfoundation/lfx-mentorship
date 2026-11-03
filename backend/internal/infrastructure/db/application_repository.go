@@ -186,7 +186,7 @@ func (r *ApplicationRepository) ListByProgram(ctx context.Context, programID str
 		where += fmt.Sprintf(` AND pt.id = $%d`, len(args))
 	}
 	if filter.Search != "" {
-		args = append(args, "%"+filter.Search+"%")
+		args = append(args, containsPattern(filter.Search))
 		where += fmt.Sprintf(` AND (`+sqlUserDisplayName+` ILIKE $%d OR `+applicantEmail+` ILIKE $%d)`, len(args), len(args))
 	}
 	// Furthest-along applicants first; pending splits on prerequisitesDone as the status filter does.

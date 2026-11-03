@@ -263,7 +263,7 @@ func (r *ProgramRepository) ListAdministeredByUser(ctx context.Context, userID s
 		where += fmt.Sprintf(` AND ap.admin_status = $%d`, len(args))
 	}
 	if filter.Search != "" {
-		args = append(args, "%"+filter.Search+"%")
+		args = append(args, containsPattern(filter.Search))
 		where += fmt.Sprintf(` AND (ap.name ILIKE $%d OR ap.lf_project_name ILIKE $%d)`, len(args), len(args))
 	}
 
@@ -335,7 +335,7 @@ func (r *ProgramRepository) List(ctx context.Context, filter models.ProgramFilte
 		where += ` AND programs.status = 'published'` // public list only shows published programs
 	}
 	if filter.Search != "" {
-		args = append(args, "%"+filter.Search+"%")
+		args = append(args, containsPattern(filter.Search))
 		where += fmt.Sprintf(` AND programs.name ILIKE $%d`, len(args))
 	}
 
@@ -484,7 +484,7 @@ func catalogWhere(filter models.ProgramFilter) (where string, args []any) {
 		where += ` AND programs.status = 'published'`
 	}
 	if filter.Search != "" {
-		args = append(args, "%"+filter.Search+"%")
+		args = append(args, containsPattern(filter.Search))
 		n := len(args)
 		where += fmt.Sprintf(` AND programs.name ILIKE $%d`, n)
 	}
