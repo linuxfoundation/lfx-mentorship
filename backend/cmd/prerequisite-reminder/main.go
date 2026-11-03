@@ -140,8 +140,8 @@ type config struct {
 	SendRate          float64
 }
 
-// defaultSendRate leaves room for the API pods under the 14 per second SES rate every service
-// shares: 4/s here plus 1/s on each of up to ten pods. A deadline day's 700 reminders take 3 minutes.
+// defaultSendRate leaves room for the API pods under a 14 per second SES rate, the lowest any
+// environment runs at: 4/s here plus 1/s on each of up to ten pods. Deployments raise it.
 const defaultSendRate = "4"
 
 // loadConfig reads the settings the reminder email needs; the API's other email settings are unused here.

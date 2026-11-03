@@ -331,7 +331,7 @@ func loadEmailConfig(natsConfigured bool) (EmailConfig, error) {
 }
 
 // defaultEmailSendRate is per API pod. With the chart's ten-pod ceiling and the reminder job's
-// own rate (4/s), the defaults total the 14 per second SES rate every service shares.
+// own rate (4/s), the defaults total 14 per second, the lowest SES rate any environment runs at.
 const defaultEmailSendRate = "1"
 
 // parseSendRate reads EMAIL_SEND_RATE, the notification sends allowed per second.

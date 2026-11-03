@@ -199,11 +199,12 @@ config:
   # listed address match too. Empty sends to everyone.
   EMAIL_ALLOWED_RECIPIENTS: ""
   # Notification emails sent per second by EACH API pod; the limiter is per process.
-  # Every service shares one SES sending rate (14/s in prod), so keep
-  # EMAIL_SEND_RATE × autoscaling.maxReplicas + prerequisiteReminderCronJob.sendRate
-  # under it: the defaults give 1 × 10 + 4 = 14. A rollout at the ceiling adds the 25%
-  # surge and draining pods (about 17/s for a few minutes); the overshoot is retried with
-  # exponential backoff, and lfx-self-serve-ops#1263 raises the SES rate well above it.
+  # Every service shares one SES sending rate (50/s in prod since lfx-self-serve-ops#1263),
+  # so keep EMAIL_SEND_RATE × autoscaling.maxReplicas + prerequisiteReminderCronJob.sendRate
+  # under it with room for other services. The defaults (1 × 10 + 4 = 14) fit an account
+  # still at the SES starting rate of 14/s; raise them per environment. A rollout at the
+  # ceiling adds the 25% surge and draining pods; a send SES throttles is retried with
+  # exponential backoff.
   EMAIL_SEND_RATE: "1"
   LEDGER_BASE_URL: ""
   # Crowdfunding is reached through the LFX v2 gateway at
