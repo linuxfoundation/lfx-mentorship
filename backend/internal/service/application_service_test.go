@@ -234,7 +234,8 @@ type stubProgRepo struct {
 	getCatalog        func(context.Context, string) (*models.ProgramCatalogItem, error)
 	listMentees       func(context.Context, string) ([]*models.ProgramCatalogMentee, error)
 	listAdministered  func(context.Context, string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error)
-	listByProject     func(context.Context, string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error)
+	listByProjects    func(context.Context, []string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error)
+	listProjectUIDs   func(context.Context) ([]string, error)
 	create            func(context.Context, models.ProgramCreateInput) (*models.Program, error)
 	createEnrollment  func(context.Context, models.ProgramEnrollmentInput) (*models.Program, error)
 	update            func(context.Context, string, models.ProgramUpdateInput) (*models.Program, error)
@@ -307,11 +308,17 @@ func (m *stubProgRepo) ListAdministeredByUser(ctx context.Context, userID string
 	}
 	return []*models.AdministeredProgram{}, &models.PaginationMeta{}, nil
 }
-func (m *stubProgRepo) ListAdministeredByProject(ctx context.Context, projectUID string, f models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
-	if m.listByProject != nil {
-		return m.listByProject(ctx, projectUID, f)
+func (m *stubProgRepo) ListAdministeredByProjects(ctx context.Context, projectUIDs []string, f models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+	if m.listByProjects != nil {
+		return m.listByProjects(ctx, projectUIDs, f)
 	}
 	return []*models.AdministeredProgram{}, &models.PaginationMeta{}, nil
+}
+func (m *stubProgRepo) ListProjectUIDs(ctx context.Context) ([]string, error) {
+	if m.listProjectUIDs != nil {
+		return m.listProjectUIDs(ctx)
+	}
+	return []string{}, nil
 }
 func (m *stubProgRepo) Create(ctx context.Context, in models.ProgramCreateInput) (*models.Program, error) {
 	if m.create != nil {

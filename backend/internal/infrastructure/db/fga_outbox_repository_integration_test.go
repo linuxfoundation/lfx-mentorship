@@ -951,7 +951,7 @@ func TestProgramListAdministeredIntegration_GroupsStatusAndScopesToActiveAdmin(t
 	}
 }
 
-func TestProgramListAdministeredByProjectIntegration_ScopesToProjectInEveryStatus(t *testing.T) {
+func TestProgramListAdministeredByProjectsIntegration_ScopesToProjectsInEveryStatus(t *testing.T) {
 	pool := integrationPool(t)
 	fixture := seedIntegrationFixture(t, pool)
 	ctx := context.Background()
@@ -977,7 +977,7 @@ func TestProgramListAdministeredByProjectIntegration_ScopesToProjectInEveryStatu
 	}
 	repo := NewProgramRepository(pool)
 
-	programs, meta, err := repo.ListAdministeredByProject(ctx, fixtureProjectUID, models.AdministeredProgramFilter{})
+	programs, meta, err := repo.ListAdministeredByProjects(ctx, []string{fixtureProjectUID}, models.AdministeredProgramFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1002,7 +1002,7 @@ func TestProgramListAdministeredByProjectIntegration_ScopesToProjectInEveryStatu
 		t.Errorf("fixture program stats = %+v; want 1 mentee", s)
 	}
 
-	filtered, meta, err := repo.ListAdministeredByProject(ctx, fixtureProjectUID, models.AdministeredProgramFilter{Status: models.AdministeredProgramStatusHidden})
+	filtered, meta, err := repo.ListAdministeredByProjects(ctx, []string{fixtureProjectUID}, models.AdministeredProgramFilter{Status: models.AdministeredProgramStatusHidden})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1010,7 +1010,7 @@ func TestProgramListAdministeredByProjectIntegration_ScopesToProjectInEveryStatu
 		t.Errorf("status=hidden: total=%d programs=%+v; want only %s", meta.Total, filtered, hiddenID)
 	}
 
-	searched, meta, err := repo.ListAdministeredByProject(ctx, fixtureProjectUID, models.AdministeredProgramFilter{Search: "cncf"})
+	searched, meta, err := repo.ListAdministeredByProjects(ctx, []string{fixtureProjectUID}, models.AdministeredProgramFilter{Search: "cncf"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1018,7 +1018,7 @@ func TestProgramListAdministeredByProjectIntegration_ScopesToProjectInEveryStatu
 		t.Errorf("search=cncf: total=%d programs=%+v; want only %s", meta.Total, searched, pendingID)
 	}
 
-	paged, meta, err := repo.ListAdministeredByProject(ctx, fixtureProjectUID, models.AdministeredProgramFilter{Limit: 1, Offset: 2})
+	paged, meta, err := repo.ListAdministeredByProjects(ctx, []string{fixtureProjectUID}, models.AdministeredProgramFilter{Limit: 1, Offset: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1026,12 +1026,33 @@ func TestProgramListAdministeredByProjectIntegration_ScopesToProjectInEveryStatu
 		t.Errorf("limit=1 offset=2: total=%d programs=%+v; want %s of %d", meta.Total, paged, hiddenID, len(want))
 	}
 
-	none, meta, err := repo.ListAdministeredByProject(ctx, "00000000-0000-0000-0000-000000000097", models.AdministeredProgramFilter{})
+	none, meta, err := repo.ListAdministeredByProjects(ctx, []string{"00000000-0000-0000-0000-000000000097"}, models.AdministeredProgramFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if meta.Total != 0 || len(none) != 0 {
 		t.Errorf("unknown project: total=%d programs=%+v; want none", meta.Total, none)
+	}
+
+	both, meta, err := repo.ListAdministeredByProjects(ctx, []string{fixtureProjectUID, otherProjectUID}, models.AdministeredProgramFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]string, 0, len(both))
+	for _, p := range both {
+		ids = append(ids, p.ID)
+	}
+	if meta.Total != len(want)+1 || !slices.Contains(ids, otherProjectID) || slices.Contains(ids, noProjectID) {
+		t.Errorf("both projects: total=%d ids=%q; want the %d fixture project programs and %s", meta.Total, ids, len(want), otherProjectID)
+	}
+
+	projectUIDs, err := repo.ListProjectUIDs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(projectUIDs)
+	if want := []string{otherProjectUID, fixtureProjectUID}; !slices.Equal(projectUIDs, want) {
+		t.Errorf("ListProjectUIDs = %q; want each project once and no NULL: %q", projectUIDs, want)
 	}
 }
 

@@ -191,6 +191,15 @@ func TestE2EProjectPrograms(t *testing.T) {
 	uploadLogo(t, admin, published.ID).expect(http.StatusCreated)
 	approver(t).call(t, http.MethodPost, "/programs/"+published.ID+"/decision", map[string]any{"status": "published"}).expect(http.StatusOK)
 	elsewhere := createProgram(t, admin, "Elsewhere Program")
+	// nested sits two levels below uid, under a sub-project with no programs,
+	// in a sub-project projectAdmin may manage. denied is in one they may not.
+	subproject := newSubproject(t, "projectlist-sub", uid)
+	nestedProject := newSubproject(t, "projectlist-subsub", subproject)
+	deniedProject := newSubproject(t, "projectlist-denied", uid)
+	var nested, denied program
+	admin.mustJSON(t, http.MethodPost, "/programs", enrollmentBody("Project Nested", nestedProject), http.StatusCreated, &nested)
+	admin.mustJSON(t, http.MethodPost, "/programs", enrollmentBody("Project Denied", deniedProject), http.StatusCreated, &denied)
+	e2e.fakes.grant("project:"+nestedProject, projectAdmin.LFID)
 
 	var list programPage
 	projectAdmin.mustJSON(t, http.MethodGet, "/projects/"+uid+"/programs", nil, http.StatusOK, &list)
@@ -202,6 +211,20 @@ func TestE2EProjectPrograms(t *testing.T) {
 	if contains(list.ids(), elsewhere.ID) {
 		t.Fatalf("another project's program is listed")
 	}
+
+	projectAdmin.mustJSON(t, http.MethodGet, "/projects/"+uid+"/programs?include_subprojects=true", nil, http.StatusOK, &list)
+	if ids := list.ids(); list.Meta.Total != 3 || !contains(ids, published.ID) || !contains(ids, pending.ID) || !contains(ids, nested.ID) || contains(ids, elsewhere.ID) || contains(ids, denied.ID) {
+		t.Fatalf("with sub-projects: %+v", list)
+	}
+	checks := e2e.fakes.accessChecksFor("project:" + deniedProject)
+	if len(checks) == 0 || checks[0].Check != "project:"+deniedProject+"#mentorship_program_creator@user:"+projectAdmin.LFID || checks[0].Allowed {
+		t.Fatalf("a sub-project the caller may not manage must be checked and denied: %+v", checks)
+	}
+	projectAdmin.mustJSON(t, http.MethodGet, "/projects/"+subproject+"/programs?include_subprojects=true", nil, http.StatusOK, &list)
+	if len(list.Data) != 1 || list.Data[0].ID != nested.ID {
+		t.Fatalf("a sub-project with sub-projects lists only what is below it: %+v", list)
+	}
+	projectAdmin.call(t, http.MethodGet, "/projects/"+uid+"/programs?include_subprojects=yes", nil).expect(http.StatusBadRequest)
 
 	projectAdmin.mustJSON(t, http.MethodGet, "/projects/"+strings.ToUpper(uid)+"/programs?status=pending_review", nil, http.StatusOK, &list)
 	if len(list.Data) != 1 || list.Data[0].ID != pending.ID {

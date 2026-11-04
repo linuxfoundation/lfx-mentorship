@@ -6,8 +6,10 @@ package projects
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -24,6 +26,10 @@ import (
 )
 
 const defaultTimeout = 10 * time.Second
+
+// listProjectsMaxUIDs is the most UIDs Project Service's list_projects accepts
+// in one request.
+const listProjectsMaxUIDs = 500
 
 var tracer = otel.Tracer("projects-client")
 
@@ -74,29 +80,64 @@ func (c *Client) GetProject(ctx context.Context, uid string) (*models.ProjectMet
 	return project, nil
 }
 
+// GetParentUIDs returns the parent UID of each project in uids that Project
+// Service knows, asking list_projects in batches of at most listProjectsMaxUIDs.
+func (c *Client) GetParentUIDs(ctx context.Context, uids []string) (map[string]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+
+	parents := make(map[string]string, len(uids))
+	for batch := range slices.Chunk(uids, listProjectsMaxUIDs) {
+		body, err := json.Marshal(events.ProjectListRequest{UIDs: batch})
+		if err != nil {
+			return nil, fmt.Errorf("encode project list request: %w", err)
+		}
+		reply, err := c.call(ctx, constants.ProjectListProjectsSubject, body, attribute.Int("project.count", len(batch)))
+		if err != nil {
+			return nil, err
+		}
+		var refs []events.ProjectRef
+		if err := json.Unmarshal(reply, &refs); err != nil {
+			return nil, fmt.Errorf("project service %s: decode reply: %w: %w", constants.ProjectListProjectsSubject, err, domain.ErrUpstreamUnavailable)
+		}
+		for _, ref := range refs {
+			parents[ref.UID] = ref.ParentUID
+		}
+	}
+	return parents, nil
+}
+
 func (c *Client) request(ctx context.Context, subject, uid string) (string, error) {
+	reply, err := c.call(ctx, subject, []byte(uid), attribute.String("project.uid", uid))
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(reply)), nil
+}
+
+func (c *Client) call(ctx context.Context, subject string, data []byte, attrs ...attribute.KeyValue) ([]byte, error) {
 	ctx, span := tracer.Start(ctx, "nats.request "+subject,
 		trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithAttributes(
 			attribute.String("messaging.system", "nats"),
 			attribute.String("messaging.destination.name", subject),
-			attribute.String("project.uid", uid),
 		),
+		trace.WithAttributes(attrs...),
 	)
 	defer span.End()
 
-	value, err := c.send(ctx, subject, uid)
+	reply, err := c.send(ctx, subject, data)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		return "", err
+		return nil, err
 	}
-	return value, nil
+	return reply, nil
 }
 
-func (c *Client) send(ctx context.Context, subject, uid string) (string, error) {
+func (c *Client) send(ctx context.Context, subject string, data []byte) ([]byte, error) {
 	req := nats.NewMsg(subject)
-	req.Data = []byte(uid)
+	req.Data = data
 	// NATS headers are case-sensitive; http.Header canonicalisation would hide traceparent from the consumer.
 	carrier := propagation.MapCarrier{}
 	otel.GetTextMapPropagator().Inject(ctx, carrier)
@@ -106,13 +147,13 @@ func (c *Client) send(ctx context.Context, subject, uid string) (string, error) 
 
 	reply, err := c.conn.RequestMsgWithContext(ctx, req)
 	if err != nil {
-		return "", fmt.Errorf("project service %s: %w: %w", subject, err, domain.ErrUpstreamUnavailable)
+		return nil, fmt.Errorf("project service %s: %w: %w", subject, err, domain.ErrUpstreamUnavailable)
 	}
 	if rpcErr, ok := events.ParseRPCError(reply.Data); ok {
 		if errors.Is(rpcErr, events.ErrRPCNotFound) {
-			return "", fmt.Errorf("project %s: %w", uid, domain.ErrProjectNotFound)
+			return nil, fmt.Errorf("project service %s: %w", subject, domain.ErrProjectNotFound)
 		}
-		return "", fmt.Errorf("project service %s: %w: %w", subject, rpcErr, domain.ErrUpstreamUnavailable)
+		return nil, fmt.Errorf("project service %s: %w: %w", subject, rpcErr, domain.ErrUpstreamUnavailable)
 	}
-	return strings.TrimSpace(string(reply.Data)), nil
+	return reply.Data, nil
 }

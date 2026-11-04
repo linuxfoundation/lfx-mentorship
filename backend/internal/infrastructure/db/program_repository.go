@@ -245,9 +245,9 @@ const administeredByUserScope = `
 		JOIN program_members pm ON pm.program_id = programs.id
 		WHERE pm.user_id = $1 AND pm.member_type = 'program_admin' AND pm.status = 'approved'`
 
-// administeredByProjectScope keeps the programs of project $1.
-const administeredByProjectScope = `
-		WHERE programs.lf_project_uid = $1`
+// administeredByProjectsScope keeps the programs of the projects in $1.
+const administeredByProjectsScope = `
+		WHERE programs.lf_project_uid = ANY($1)`
 
 // ListAdministeredByUser returns the programs userID is an active program
 // admin of, ordered by programListOrder. Stats are counted for the returned
@@ -260,19 +260,37 @@ func (r *ProgramRepository) ListAdministeredByUser(ctx context.Context, userID s
 	return r.listAdministered(ctx, span, administeredByUserScope, userID, filter)
 }
 
-// ListAdministeredByProject returns the programs of projectUID in any status,
-// in the same shape and order as ListAdministeredByUser.
-func (r *ProgramRepository) ListAdministeredByProject(ctx context.Context, projectUID string, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
-	ctx, span := programTracer.Start(ctx, "db.programs.ListAdministeredByProject")
+// ListAdministeredByProjects returns the programs of projectUIDs in any
+// status, in the same shape and order as ListAdministeredByUser.
+func (r *ProgramRepository) ListAdministeredByProjects(ctx context.Context, projectUIDs []string, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+	ctx, span := programTracer.Start(ctx, "db.programs.ListAdministeredByProjects")
 	defer span.End()
-	span.SetAttributes(attribute.String("db.project_uid", projectUID))
+	span.SetAttributes(attribute.Int("db.project_count", len(projectUIDs)))
 
-	return r.listAdministered(ctx, span, administeredByProjectScope, projectUID, filter)
+	return r.listAdministered(ctx, span, administeredByProjectsScope, projectUIDs, filter)
+}
+
+// ListProjectUIDs returns each distinct project UID that has a program.
+func (r *ProgramRepository) ListProjectUIDs(ctx context.Context) ([]string, error) {
+	ctx, span := programTracer.Start(ctx, "db.programs.ListProjectUIDs")
+	defer span.End()
+
+	rows, err := r.pool.Query(ctx, `SELECT DISTINCT lf_project_uid FROM programs WHERE lf_project_uid IS NOT NULL`)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("list program project UIDs: %w", err)
+	}
+	uids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("scan program project UIDs: %w", err)
+	}
+	return uids, nil
 }
 
 // listAdministered pages the admin programs list over the programs that scope
 // selects for scopeArg.
-func (r *ProgramRepository) listAdministered(ctx context.Context, span trace.Span, scope, scopeArg string, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+func (r *ProgramRepository) listAdministered(ctx context.Context, span trace.Span, scope string, scopeArg any, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
 	from := administeredProgramsFrom(scope)
 	limit := filter.Limit
 	if limit <= 0 || limit > 100 {
