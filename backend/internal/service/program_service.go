@@ -282,12 +282,14 @@ func (s *ProgramService) ListMine(ctx context.Context, userID string, filter mod
 }
 
 // ListByProject returns every program of the project, in any status, in the
-// admin programs list shape. Heimdall has already checked the caller may
-// manage the project's programs.
-func (s *ProgramService) ListByProject(ctx context.Context, projectUID string, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+// admin programs list shape. With includeSubprojects it also returns the
+// programs of every project below it in Project Service's hierarchy, at any
+// depth. Heimdall has already checked the caller may manage the project's
+// programs.
+func (s *ProgramService) ListByProject(ctx context.Context, projectUID string, includeSubprojects bool, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
 	ctx, span := programSvcTracer.Start(ctx, "ProgramService.ListByProject")
 	defer span.End()
-	span.SetAttributes(attribute.String("project.uid", projectUID))
+	span.SetAttributes(attribute.String("project.uid", projectUID), attribute.Bool("include_subprojects", includeSubprojects))
 
 	uid, err := uuid.Parse(projectUID)
 	if err != nil {
@@ -297,12 +299,86 @@ func (s *ProgramService) ListByProject(ctx context.Context, projectUID string, f
 		return nil, nil, err
 	}
 
-	programs, meta, err := s.repo.ListAdministeredByProject(ctx, uid.String(), filter)
+	projectUIDs := []string{uid.String()}
+	if includeSubprojects {
+		if projectUIDs, err = s.projectAndSubprojects(ctx, uid.String()); err != nil {
+			span.RecordError(err)
+			return nil, nil, fmt.Errorf("list project programs: %w", err)
+		}
+	}
+	programs, meta, err := s.repo.ListAdministeredByProjects(ctx, projectUIDs, filter)
 	if err != nil {
 		span.RecordError(err)
 		return nil, nil, fmt.Errorf("list project programs: %w", err)
 	}
 	return programs, meta, nil
+}
+
+// projectAndSubprojects returns rootUID and each project with a program that
+// sits below it in Project Service's hierarchy. Project Service only answers
+// "what is this project's parent", so it starts from the projects that have
+// programs and walks up, one request per level of nesting.
+func (s *ProgramService) projectAndSubprojects(ctx context.Context, rootUID string) ([]string, error) {
+	if s.projects == nil {
+		return nil, fmt.Errorf("project hierarchy needs Project Service: %w", domain.ErrUpstreamUnavailable)
+	}
+	candidates, err := s.repo.ListProjectUIDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// parents maps each project already asked about to its parent: "" at the
+	// top of the hierarchy, or when Project Service does not know the project.
+	// rootUID is never asked about, so the walk stops there.
+	parents := map[string]string{rootUID: ""}
+	for pending := unknownProjects(candidates, parents); len(pending) > 0; {
+		found, err := s.projects.GetParentUIDs(ctx, pending)
+		if err != nil {
+			return nil, fmt.Errorf("resolve project parents: %w", err)
+		}
+		next := make([]string, 0, len(pending))
+		for _, uid := range pending {
+			parents[uid] = found[uid]
+			if found[uid] != "" {
+				next = append(next, found[uid])
+			}
+		}
+		pending = unknownProjects(next, parents)
+	}
+
+	uids := []string{rootUID}
+	for _, uid := range candidates {
+		if uid != rootUID && isBelowProject(uid, rootUID, parents) {
+			uids = append(uids, uid)
+		}
+	}
+	return uids, nil
+}
+
+// unknownProjects returns the distinct UIDs whose parent is not yet in parents.
+func unknownProjects(uids []string, parents map[string]string) []string {
+	queued := make(map[string]bool, len(uids))
+	unknown := make([]string, 0, len(uids))
+	for _, uid := range uids {
+		if _, known := parents[uid]; !known && !queued[uid] {
+			queued[uid] = true
+			unknown = append(unknown, uid)
+		}
+	}
+	return unknown
+}
+
+// isBelowProject reports whether rootUID is an ancestor of uid. It stops at a
+// cycle rather than looping, though Project Service should never hold one.
+func isBelowProject(uid, rootUID string, parents map[string]string) bool {
+	visited := map[string]bool{uid: true}
+	for parent := parents[uid]; parent != "" && !visited[parent]; parent = parents[parent] {
+		if parent == rootUID {
+			return true
+		}
+		visited[parent] = true
+	}
+	return false
 }
 
 // validateAdministeredProgramFilter checks the status and normalizes the

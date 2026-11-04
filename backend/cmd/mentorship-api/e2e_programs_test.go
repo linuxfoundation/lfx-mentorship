@@ -191,6 +191,10 @@ func TestE2EProjectPrograms(t *testing.T) {
 	uploadLogo(t, admin, published.ID).expect(http.StatusCreated)
 	approver(t).call(t, http.MethodPost, "/programs/"+published.ID+"/decision", map[string]any{"status": "published"}).expect(http.StatusOK)
 	elsewhere := createProgram(t, admin, "Elsewhere Program")
+	// nested sits two levels below uid, under a sub-project with no programs.
+	subproject := newSubproject(t, "projectlist-sub", uid)
+	var nested program
+	admin.mustJSON(t, http.MethodPost, "/programs", enrollmentBody("Project Nested", newSubproject(t, "projectlist-subsub", subproject)), http.StatusCreated, &nested)
 
 	var list programPage
 	projectAdmin.mustJSON(t, http.MethodGet, "/projects/"+uid+"/programs", nil, http.StatusOK, &list)
@@ -202,6 +206,16 @@ func TestE2EProjectPrograms(t *testing.T) {
 	if contains(list.ids(), elsewhere.ID) {
 		t.Fatalf("another project's program is listed")
 	}
+
+	projectAdmin.mustJSON(t, http.MethodGet, "/projects/"+uid+"/programs?include_subprojects=true", nil, http.StatusOK, &list)
+	if ids := list.ids(); list.Meta.Total != 3 || !contains(ids, published.ID) || !contains(ids, pending.ID) || !contains(ids, nested.ID) || contains(ids, elsewhere.ID) {
+		t.Fatalf("with sub-projects: %+v", list)
+	}
+	projectAdmin.mustJSON(t, http.MethodGet, "/projects/"+subproject+"/programs?include_subprojects=true", nil, http.StatusOK, &list)
+	if len(list.Data) != 1 || list.Data[0].ID != nested.ID {
+		t.Fatalf("a sub-project with sub-projects lists only what is below it: %+v", list)
+	}
+	projectAdmin.call(t, http.MethodGet, "/projects/"+uid+"/programs?include_subprojects=yes", nil).expect(http.StatusBadRequest)
 
 	projectAdmin.mustJSON(t, http.MethodGet, "/projects/"+strings.ToUpper(uid)+"/programs?status=pending_review", nil, http.StatusOK, &list)
 	if len(list.Data) != 1 || list.Data[0].ID != pending.ID {

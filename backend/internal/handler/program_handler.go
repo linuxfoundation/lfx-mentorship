@@ -32,7 +32,7 @@ type programService interface {
 	GetCatalog(ctx context.Context, id string) (*models.ProgramCatalogItem, error)
 	ListCatalogMentees(ctx context.Context, programID string) ([]*models.ProgramCatalogMentee, error)
 	ListMine(ctx context.Context, userID string, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error)
-	ListByProject(ctx context.Context, projectUID string, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error)
+	ListByProject(ctx context.Context, projectUID string, includeSubprojects bool, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error)
 	Create(ctx context.Context, input models.ProgramCreateInput) (*models.Program, error)
 	CreateEnrollment(ctx context.Context, input models.ProgramEnrollmentInput) (*models.Program, error)
 	Update(ctx context.Context, id string, input models.ProgramUpdateInput) (*models.Program, error)
@@ -280,14 +280,24 @@ func (h *ProgramHandler) ListMine(w http.ResponseWriter, r *http.Request) {
 }
 
 // ListByProject handles GET /v1/projects/{project_uid}/programs — every
-// program of the project, for the people who manage them. Heimdall authorizes
-// the caller on the project.
+// program of the project, and with include_subprojects=true of every project
+// below it, for the people who manage them. Heimdall authorizes the caller on
+// the project.
 func (h *ProgramHandler) ListByProject(w http.ResponseWriter, r *http.Request) {
 	limit, offset, ok := parsePaginationParams(w, r)
 	if !ok {
 		return
 	}
-	programs, meta, err := h.svc.ListByProject(r.Context(), chi.URLParam(r, "project_uid"), administeredProgramFilter(r, limit, offset))
+	var includeSubprojects bool
+	switch r.URL.Query().Get("include_subprojects") {
+	case "", "false":
+	case "true":
+		includeSubprojects = true
+	default:
+		Error(w, fmt.Errorf("%w: include_subprojects must be true or false", domain.ErrInvalidInput))
+		return
+	}
+	programs, meta, err := h.svc.ListByProject(r.Context(), chi.URLParam(r, "project_uid"), includeSubprojects, administeredProgramFilter(r, limit, offset))
 	if err != nil {
 		Error(w, err)
 		return

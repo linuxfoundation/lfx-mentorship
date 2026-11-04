@@ -91,9 +91,11 @@ type ProgramRepository interface {
 	ListCatalogMentees(ctx context.Context, programID string) ([]*models.ProgramCatalogMentee, error)
 	// ListAdministeredByUser returns the programs userID is an active program admin of, by name.
 	ListAdministeredByUser(ctx context.Context, userID string, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error)
-	// ListAdministeredByProject returns every program of projectUID, in any
-	// status, in the same shape and order as ListAdministeredByUser.
-	ListAdministeredByProject(ctx context.Context, projectUID string, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error)
+	// ListAdministeredByProjects returns every program of the given projects,
+	// in any status, in the same shape and order as ListAdministeredByUser.
+	ListAdministeredByProjects(ctx context.Context, projectUIDs []string, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error)
+	// ListProjectUIDs returns each distinct project UID that has a program.
+	ListProjectUIDs(ctx context.Context) ([]string, error)
 	Create(ctx context.Context, input models.ProgramCreateInput) (*models.Program, error)
 	CreateEnrollment(ctx context.Context, input models.ProgramEnrollmentInput) (*models.Program, error)
 	// Update patches the program and applies changes to the prerequisite tasks of its pending

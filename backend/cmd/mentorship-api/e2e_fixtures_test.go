@@ -28,11 +28,18 @@ func at(offset int) time.Time {
 	return time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, offset)
 }
 
-// newProject registers a Project Service project and returns its UID.
+// newProject registers a top-level Project Service project and returns its UID.
 func newProject(t *testing.T, slug string) string {
 	t.Helper()
+	return newSubproject(t, slug, "")
+}
+
+// newSubproject registers a Project Service project under parentUID and
+// returns its UID.
+func newSubproject(t *testing.T, slug, parentUID string) string {
+	t.Helper()
 	uid := uuid.NewString()
-	e2e.fakes.addProject(uid, fakeProject{Slug: slug, Name: strings.ToUpper(slug[:1]) + slug[1:], Logo: "https://projects.example.org/" + slug + ".png"})
+	e2e.fakes.addProject(uid, fakeProject{Slug: slug, Name: strings.ToUpper(slug[:1]) + slug[1:], Logo: "https://projects.example.org/" + slug + ".png", Parent: parentUID})
 	return uid
 }
 

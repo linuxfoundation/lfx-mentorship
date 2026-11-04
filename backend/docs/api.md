@@ -20,7 +20,7 @@ The gateway-authorized API uses canonical resource paths:
 - User application reads use `/me/applications`.
 - Mentor self-service program requests use `/me/program-memberships`.
 - Program admins list their programs with `/me/programs`.
-- Project admins list a project's programs with `/projects/{project_uid}/programs`.
+- Project admins list a project's programs with `/projects/{project_uid}/programs`, and a foundation's with `include_subprojects=true`.
 - Mentors list the programs they mentor with `/me/mentor-programs`.
 - Program-admin collection reads use Query Service
   `/query/resources?v=1&type=mentorship_program&filter_grants=direct`.
@@ -1701,7 +1701,25 @@ administers a program. The gateway checks `mentorship_program_creator` on
 `mentorship_program_admin`: exactly the users who hold `writer` on every
 program of the project through the project.
 
-**Errors** `400` (`project_uid` not a UUID, unknown `status`, non-integer `limit`/`offset`), `401` (no principal), `403` at the gateway (no access to the project)
+With `include_subprojects=true` the list also covers the programs of every
+project below `project_uid` in Project Service's hierarchy, at any depth, so a
+foundation lists all its sub-projects' programs. Each row's `project_uid` and
+`project_name` say which project it belongs to. Project Service only answers
+each project's parent, so the API asks it about the projects that have
+programs and walks up, one request per level of nesting.
+
+The gateway check is still on `project_uid` alone. A foundation writer holds
+`writer` on every sub-project through `writer from parent`, but the
+foundation's `mentorship_program_admin` does not pass down, so a foundation
+program admin is listed sub-project programs whose admin pages answer `403`.
+
+**Query parameters** as for `GET /v1/me/programs`, plus:
+
+| Parameter | Values | Description |
+|---|---|---|
+| `include_subprojects` | `true\|false` | Also list the programs of every project below `project_uid` (default `false`) |
+
+**Errors** `400` (`project_uid` not a UUID, unknown `status`, `include_subprojects` other than `true` or `false`, non-integer `limit`/`offset`), `401` (no principal), `403` at the gateway (no access to the project), `503` (with `include_subprojects=true`, Project Service did not answer)
 
 ---
 

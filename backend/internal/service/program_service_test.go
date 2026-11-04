@@ -171,11 +171,30 @@ type stubProjectLookup struct {
 	project *models.ProjectMetadata
 	err     error
 	gotUID  string
+	// parents is Project Service's hierarchy: a project UID to its parent,
+	// "" at the top. GetParentUIDs answers from it and records each request.
+	parents     map[string]string
+	parentsErr  error
+	parentCalls [][]string
 }
 
 func (s *stubProjectLookup) GetProject(_ context.Context, uid string) (*models.ProjectMetadata, error) {
 	s.gotUID = uid
 	return s.project, s.err
+}
+
+func (s *stubProjectLookup) GetParentUIDs(_ context.Context, uids []string) (map[string]string, error) {
+	s.parentCalls = append(s.parentCalls, slices.Clone(uids))
+	if s.parentsErr != nil {
+		return nil, s.parentsErr
+	}
+	found := make(map[string]string)
+	for _, uid := range uids {
+		if parent, ok := s.parents[uid]; ok {
+			found[uid] = parent
+		}
+	}
+	return found, nil
 }
 
 // enrollmentWithProjectMetadata is a valid enrollment whose project slug and
@@ -1745,16 +1764,16 @@ func TestProgramService_ListMine_WrapsRepoError(t *testing.T) {
 }
 
 func TestProgramService_ListByProject_CanonicalizesProjectAndFilter(t *testing.T) {
-	var gotProject string
+	var gotProjects []string
 	var gotFilter models.AdministeredProgramFilter
 	repo := &stubProgRepo{
-		listByProject: func(_ context.Context, uid string, f models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
-			gotProject, gotFilter = uid, f
+		listByProjects: func(_ context.Context, uids []string, f models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+			gotProjects, gotFilter = uids, f
 			return []*models.AdministeredProgram{{ID: "p1"}}, &models.PaginationMeta{Total: 1}, nil
 		},
 	}
 	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
-	got, meta, err := svc.ListByProject(context.Background(), "AAAAAAAA-0000-0000-0000-000000000001", models.AdministeredProgramFilter{
+	got, meta, err := svc.ListByProject(context.Background(), "AAAAAAAA-0000-0000-0000-000000000001", false, models.AdministeredProgramFilter{
 		Limit:  5,
 		Search: "  grid  ",
 		Status: models.AdministeredProgramStatusHidden,
@@ -1762,8 +1781,8 @@ func TestProgramService_ListByProject_CanonicalizesProjectAndFilter(t *testing.T
 	if err != nil {
 		t.Fatalf("ListByProject: %v", err)
 	}
-	if gotProject != "aaaaaaaa-0000-0000-0000-000000000001" {
-		t.Errorf("project = %q; want the canonical lowercase UUID", gotProject)
+	if !slices.Equal(gotProjects, []string{"aaaaaaaa-0000-0000-0000-000000000001"}) {
+		t.Errorf("projects = %q; want only the canonical lowercase UUID", gotProjects)
 	}
 	want := models.AdministeredProgramFilter{Limit: 5, Search: "grid", Status: models.AdministeredProgramStatusHidden}
 	if gotFilter != want {
@@ -1776,7 +1795,7 @@ func TestProgramService_ListByProject_CanonicalizesProjectAndFilter(t *testing.T
 
 func TestProgramService_ListByProject_RejectsBadInput(t *testing.T) {
 	repo := &stubProgRepo{
-		listByProject: func(context.Context, string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+		listByProjects: func(context.Context, []string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
 			t.Fatal("repo must not be called for invalid input")
 			return nil, nil, nil
 		},
@@ -1785,12 +1804,12 @@ func TestProgramService_ListByProject_RejectsBadInput(t *testing.T) {
 	const projectUID = "00000000-0000-0000-0000-000000000001"
 
 	for _, uid := range []string{"", "not-a-uuid"} {
-		if _, _, err := svc.ListByProject(context.Background(), uid, models.AdministeredProgramFilter{}); !errors.Is(err, domain.ErrInvalidInput) {
+		if _, _, err := svc.ListByProject(context.Background(), uid, false, models.AdministeredProgramFilter{}); !errors.Is(err, domain.ErrInvalidInput) {
 			t.Errorf("project %q: got %v; want ErrInvalidInput", uid, err)
 		}
 	}
 	for _, status := range []models.AdministeredProgramStatus{"pending-review", "published"} {
-		if _, _, err := svc.ListByProject(context.Background(), projectUID, models.AdministeredProgramFilter{Status: status}); !errors.Is(err, domain.ErrInvalidInput) {
+		if _, _, err := svc.ListByProject(context.Background(), projectUID, false, models.AdministeredProgramFilter{Status: status}); !errors.Is(err, domain.ErrInvalidInput) {
 			t.Errorf("status %q: got %v; want ErrInvalidInput", status, err)
 		}
 	}
@@ -1799,13 +1818,127 @@ func TestProgramService_ListByProject_RejectsBadInput(t *testing.T) {
 func TestProgramService_ListByProject_WrapsRepoError(t *testing.T) {
 	repoErr := errors.New("db down")
 	repo := &stubProgRepo{
-		listByProject: func(context.Context, string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+		listByProjects: func(context.Context, []string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
 			return nil, nil, repoErr
 		},
 	}
 	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
-	if _, _, err := svc.ListByProject(context.Background(), "00000000-0000-0000-0000-000000000001", models.AdministeredProgramFilter{}); !errors.Is(err, repoErr) {
+	if _, _, err := svc.ListByProject(context.Background(), "00000000-0000-0000-0000-000000000001", false, models.AdministeredProgramFilter{}); !errors.Is(err, repoErr) {
 		t.Errorf("got %v; want wrapped repo error", err)
+	}
+}
+
+const foundationUID = "00000000-0000-0000-0000-0000000000f0"
+
+// subprojectRepo has programs in the given projects and records which
+// projects the programs list was asked for.
+func subprojectRepo(projectsWithPrograms []string, gotProjects *[]string) *stubProgRepo {
+	return &stubProgRepo{
+		listProjectUIDs: func(context.Context) ([]string, error) { return projectsWithPrograms, nil },
+		listByProjects: func(_ context.Context, uids []string, _ models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+			*gotProjects = uids
+			return []*models.AdministeredProgram{}, &models.PaginationMeta{}, nil
+		},
+	}
+}
+
+func TestProgramService_ListByProject_SubprojectsAtAnyDepth(t *testing.T) {
+	var gotProjects []string
+	repo := subprojectRepo([]string{foundationUID, "child", "grandchild", "elsewhere", "unknown"}, &gotProjects)
+	// grandchild sits under the foundation through middle, which has no
+	// programs; elsewhere belongs to another foundation; Project Service does
+	// not know unknown.
+	lookup := &stubProjectLookup{parents: map[string]string{
+		"child":            foundationUID,
+		"grandchild":       "middle",
+		"middle":           foundationUID,
+		"elsewhere":        "other-foundation",
+		"other-foundation": "",
+	}}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	svc.SetProjectLookup(lookup)
+
+	if _, _, err := svc.ListByProject(context.Background(), foundationUID, true, models.AdministeredProgramFilter{}); err != nil {
+		t.Fatalf("ListByProject: %v", err)
+	}
+	if want := []string{foundationUID, "child", "grandchild"}; !slices.Equal(gotProjects, want) {
+		t.Errorf("projects = %q; want %q", gotProjects, want)
+	}
+	// One request per level, and none about the foundation itself.
+	wantCalls := [][]string{{"child", "grandchild", "elsewhere", "unknown"}, {"middle", "other-foundation"}}
+	if !slices.EqualFunc(lookup.parentCalls, wantCalls, slices.Equal[[]string]) {
+		t.Errorf("parent lookups = %q; want %q", lookup.parentCalls, wantCalls)
+	}
+}
+
+func TestProgramService_ListByProject_SubprojectsStopAtCycle(t *testing.T) {
+	var gotProjects []string
+	repo := subprojectRepo([]string{"a", "b"}, &gotProjects)
+	lookup := &stubProjectLookup{parents: map[string]string{"a": "b", "b": "a"}}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	svc.SetProjectLookup(lookup)
+
+	if _, _, err := svc.ListByProject(context.Background(), foundationUID, true, models.AdministeredProgramFilter{}); err != nil {
+		t.Fatalf("ListByProject: %v", err)
+	}
+	if want := []string{foundationUID}; !slices.Equal(gotProjects, want) {
+		t.Errorf("projects = %q; want %q", gotProjects, want)
+	}
+	if len(lookup.parentCalls) != 1 {
+		t.Errorf("parent lookups = %q; want one", lookup.parentCalls)
+	}
+}
+
+func TestProgramService_ListByProject_WithoutSubprojectsAsksNoHierarchy(t *testing.T) {
+	var gotProjects []string
+	repo := subprojectRepo([]string{"child"}, &gotProjects)
+	repo.listProjectUIDs = func(context.Context) ([]string, error) {
+		t.Fatal("ListProjectUIDs must not be called without include_subprojects")
+		return nil, nil
+	}
+	lookup := &stubProjectLookup{parents: map[string]string{"child": foundationUID}}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	svc.SetProjectLookup(lookup)
+
+	if _, _, err := svc.ListByProject(context.Background(), foundationUID, false, models.AdministeredProgramFilter{}); err != nil {
+		t.Fatalf("ListByProject: %v", err)
+	}
+	if want := []string{foundationUID}; !slices.Equal(gotProjects, want) || len(lookup.parentCalls) != 0 {
+		t.Errorf("projects = %q, parent lookups = %q; want only the project and no lookups", gotProjects, lookup.parentCalls)
+	}
+}
+
+func TestProgramService_ListByProject_SubprojectErrors(t *testing.T) {
+	repoErr := errors.New("db down")
+	cases := map[string]struct {
+		lookup  *stubProjectLookup
+		repoErr error
+		want    error
+	}{
+		"no project service": {want: domain.ErrUpstreamUnavailable},
+		"project service down": {
+			lookup: &stubProjectLookup{parentsErr: domain.ErrUpstreamUnavailable},
+			want:   domain.ErrUpstreamUnavailable,
+		},
+		"project UIDs unreadable": {lookup: &stubProjectLookup{}, repoErr: repoErr, want: repoErr},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			repo := &stubProgRepo{
+				listProjectUIDs: func(context.Context) ([]string, error) { return []string{"child"}, tc.repoErr },
+				listByProjects: func(context.Context, []string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+					t.Fatal("the programs list must not be read when the hierarchy is unknown")
+					return nil, nil, nil
+				},
+			}
+			svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+			if tc.lookup != nil {
+				svc.SetProjectLookup(tc.lookup)
+			}
+			if _, _, err := svc.ListByProject(context.Background(), foundationUID, true, models.AdministeredProgramFilter{}); !errors.Is(err, tc.want) {
+				t.Errorf("got %v; want %v", err, tc.want)
+			}
+		})
 	}
 }
 

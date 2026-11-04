@@ -19,9 +19,10 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
-// fakeProject is a Project Service project.
+// fakeProject is a Project Service project. Parent is its parent project's
+// UID, empty at the top of the hierarchy.
 type fakeProject struct {
-	Slug, Name, Logo string
+	Slug, Name, Logo, Parent string
 }
 
 // fakeAccount is an LF account known to auth-service.
@@ -77,6 +78,7 @@ func startFakes(nc *nats.Conn) (*fakes, error) {
 		constants.ProjectGetSlugSubject:       f.project(func(p fakeProject) string { return p.Slug }),
 		constants.ProjectGetNameSubject:       f.project(func(p fakeProject) string { return p.Name }),
 		constants.ProjectGetLogoSubject:       f.project(func(p fakeProject) string { return p.Logo }),
+		constants.ProjectListProjectsSubject:  f.listProjects,
 		"lfx.auth-service.email_to_username":  f.emailToUsername,
 		"lfx.auth-service.user_metadata.read": f.userMetadata,
 		"lfx.auth-service.user_emails.read":   f.userEmails,
@@ -330,6 +332,25 @@ func (f *fakes) project(field func(fakeProject) string) nats.MsgHandler {
 		}
 		_ = msg.Respond([]byte(field(p)))
 	}
+}
+
+// listProjects answers list_projects by UID and, like Project Service, skips
+// the UIDs it does not know.
+func (f *fakes) listProjects(msg *nats.Msg) {
+	var req events.ProjectListRequest
+	if err := json.Unmarshal(msg.Data, &req); err != nil {
+		reply(msg, events.RPCError{Code: events.RPCErrorInternal, Message: err.Error()})
+		return
+	}
+	refs := []events.ProjectRef{}
+	f.mu.Lock()
+	for _, uid := range req.UIDs {
+		if p, ok := f.projects[uid]; ok {
+			refs = append(refs, events.ProjectRef{UID: uid, Slug: p.Slug, ParentUID: p.Parent})
+		}
+	}
+	f.mu.Unlock()
+	reply(msg, refs)
 }
 
 func (f *fakes) account(match func(fakeAccount) bool) (fakeAccount, bool) {

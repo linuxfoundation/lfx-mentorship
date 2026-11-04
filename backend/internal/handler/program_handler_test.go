@@ -28,7 +28,7 @@ type stubProgramSvc struct {
 	nameAvailable              func(context.Context, string, string) (bool, error)
 	listMentees                func(context.Context, string) ([]*models.ProgramCatalogMentee, error)
 	listMine                   func(context.Context, string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error)
-	listByProject              func(context.Context, string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error)
+	listByProject              func(context.Context, string, bool, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error)
 	listSkills                 func(context.Context, string) ([]*models.ProgramSkill, error)
 	deleteSkill                func(context.Context, string, string, string) error
 	getCategorizedTransactions func(context.Context, string, string, bool, int, int) (*models.ProgramCategorizedTransactions, error)
@@ -96,9 +96,9 @@ func (s *stubProgramSvc) ListMine(ctx context.Context, userID string, f models.A
 	}
 	return []*models.AdministeredProgram{}, &models.PaginationMeta{}, nil
 }
-func (s *stubProgramSvc) ListByProject(ctx context.Context, projectUID string, f models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+func (s *stubProgramSvc) ListByProject(ctx context.Context, projectUID string, includeSubprojects bool, f models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
 	if s.listByProject != nil {
-		return s.listByProject(ctx, projectUID, f)
+		return s.listByProject(ctx, projectUID, includeSubprojects, f)
 	}
 	return []*models.AdministeredProgram{}, &models.PaginationMeta{}, nil
 }
@@ -819,10 +819,11 @@ func TestProgramHandler_ListMine_InvalidStatus(t *testing.T) {
 func TestProgramHandler_ListByProject_PassesProjectAndFilter(t *testing.T) {
 	const projectUID = "00000000-0000-0000-0000-000000000001"
 	var gotProject string
+	gotSubprojects := true
 	var gotFilter models.AdministeredProgramFilter
 	h := handler.NewProgramHandler(&stubProgramSvc{
-		listByProject: func(_ context.Context, uid string, f models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
-			gotProject, gotFilter = uid, f
+		listByProject: func(_ context.Context, uid string, subprojects bool, f models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+			gotProject, gotSubprojects, gotFilter = uid, subprojects, f
 			return []*models.AdministeredProgram{{ID: "p1", AdminStatus: models.AdministeredProgramStatusPendingReview}},
 				&models.PaginationMeta{Total: 1, Limit: 5, Offset: 10}, nil
 		},
@@ -835,8 +836,8 @@ func TestProgramHandler_ListByProject_PassesProjectAndFilter(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("got %d; want 200: %s", w.Code, w.Body.String())
 	}
-	if gotProject != projectUID {
-		t.Errorf("project = %q; want %q", gotProject, projectUID)
+	if gotProject != projectUID || gotSubprojects {
+		t.Errorf("project = %q, include_subprojects = %v; want %q and false by default", gotProject, gotSubprojects, projectUID)
 	}
 	want := models.AdministeredProgramFilter{Limit: 5, Offset: 10, Search: "grid", Status: models.AdministeredProgramStatusPendingReview}
 	if gotFilter != want {
@@ -856,7 +857,7 @@ func TestProgramHandler_ListByProject_PassesProjectAndFilter(t *testing.T) {
 
 func TestProgramHandler_ListByProject_InvalidInput(t *testing.T) {
 	h := handler.NewProgramHandler(&stubProgramSvc{
-		listByProject: func(context.Context, string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+		listByProject: func(context.Context, string, bool, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
 			return nil, nil, fmt.Errorf("%w: project_uid must be a UUID", domain.ErrInvalidInput)
 		},
 	})
@@ -870,7 +871,7 @@ func TestProgramHandler_ListByProject_InvalidInput(t *testing.T) {
 
 func TestProgramHandler_ListByProject_BadPagination(t *testing.T) {
 	h := handler.NewProgramHandler(&stubProgramSvc{
-		listByProject: func(context.Context, string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+		listByProject: func(context.Context, string, bool, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
 			t.Fatal("service must not be called with bad pagination")
 			return nil, nil, nil
 		},
@@ -880,6 +881,54 @@ func TestProgramHandler_ListByProject_BadPagination(t *testing.T) {
 	h.ListByProject(w, r)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("got %d; want 400", w.Code)
+	}
+}
+
+func TestProgramHandler_ListByProject_IncludeSubprojects(t *testing.T) {
+	for query, want := range map[string]bool{"include_subprojects=true": true, "include_subprojects=false": false} {
+		t.Run(query, func(t *testing.T) {
+			got := !want
+			h := handler.NewProgramHandler(&stubProgramSvc{
+				listByProject: func(_ context.Context, _ string, subprojects bool, _ models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+					got = subprojects
+					return []*models.AdministeredProgram{}, &models.PaginationMeta{}, nil
+				},
+			})
+			w := httptest.NewRecorder()
+			h.ListByProject(w, httptest.NewRequest(http.MethodGet, "/v1/projects/00000000-0000-0000-0000-000000000001/programs?"+query, nil))
+			if w.Code != http.StatusOK || got != want {
+				t.Errorf("got %d, include_subprojects = %v; want 200 and %v", w.Code, got, want)
+			}
+		})
+	}
+}
+
+func TestProgramHandler_ListByProject_BadIncludeSubprojects(t *testing.T) {
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		listByProject: func(context.Context, string, bool, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+			t.Fatal("service must not be called with a bad include_subprojects")
+			return nil, nil, nil
+		},
+	})
+	for _, value := range []string{"yes", "1", "TRUE"} {
+		w := httptest.NewRecorder()
+		h.ListByProject(w, httptest.NewRequest(http.MethodGet, "/v1/projects/00000000-0000-0000-0000-000000000001/programs?include_subprojects="+value, nil))
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("include_subprojects=%s: got %d; want 400", value, w.Code)
+		}
+	}
+}
+
+func TestProgramHandler_ListByProject_ProjectServiceDown(t *testing.T) {
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		listByProject: func(context.Context, string, bool, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+			return nil, nil, fmt.Errorf("resolve project parents: %w", domain.ErrUpstreamUnavailable)
+		},
+	})
+	w := httptest.NewRecorder()
+	h.ListByProject(w, httptest.NewRequest(http.MethodGet, "/v1/projects/00000000-0000-0000-0000-000000000001/programs?include_subprojects=true", nil))
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("got %d; want 503", w.Code)
 	}
 }
 
