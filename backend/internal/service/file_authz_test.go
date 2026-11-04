@@ -15,15 +15,34 @@ import (
 
 type accessCall struct{ object, relation, username string }
 
+// fakeAccessChecker allows every check when allowed is set, otherwise only
+// the objects in allowedObjects, and records each check.
 type fakeAccessChecker struct {
-	allowed bool
-	err     error
-	calls   []accessCall
+	allowed        bool
+	allowedObjects map[string]bool
+	err            error
+	calls          []accessCall
+	batches        int
 }
 
 func (f *fakeAccessChecker) HasAccess(_ context.Context, object, relation, username string) (bool, error) {
 	f.calls = append(f.calls, accessCall{object, relation, username})
 	return f.allowed, f.err
+}
+
+func (f *fakeAccessChecker) AllowedObjects(_ context.Context, objects []string, relation, username string) ([]string, error) {
+	f.batches++
+	var allowed []string
+	for _, object := range objects {
+		f.calls = append(f.calls, accessCall{object, relation, username})
+		if f.allowed || f.allowedObjects[object] {
+			allowed = append(allowed, object)
+		}
+	}
+	if f.err != nil {
+		return nil, f.err
+	}
+	return allowed, nil
 }
 
 func principalCtx(userID, username string) context.Context {

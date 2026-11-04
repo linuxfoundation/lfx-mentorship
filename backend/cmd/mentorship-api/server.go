@@ -174,6 +174,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	}
 	if natsConn != nil {
 		programSvc.SetProjectLookup(projects.NewClient(natsConn))
+		programSvc.SetAccessChecker(fga.NewAccessChecker(natsConn))
 	}
 	programTermSvc := service.NewProgramTermService(programTermRepo, applicationRepo, notifier)
 	programMemberSvc := service.NewProgramMemberService(programMemberRepo, programRepo, userRepo, accounts, notifier, cfg.Local.InviteSecret)

@@ -204,6 +204,17 @@ func (f *fakes) recordTuples(msg *nats.Msg) {
 }
 
 // grantedAt returns when the relay's first grant of a tuple on object to user arrived.
+// grant gives user a tuple on object at once, standing in for a grant another
+// service owns, such as a role on a project.
+func (f *fakes) grant(object, user string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.granted[object] == nil {
+		f.granted[object] = map[string]time.Time{}
+	}
+	f.granted[object][user] = time.Now().Add(-time.Hour)
+}
+
 func (f *fakes) grantedAt(object, user string) (time.Time, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

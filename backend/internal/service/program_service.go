@@ -41,14 +41,15 @@ type enrollmentPrerequisite struct {
 
 // ProgramService orchestrates program reads and writes.
 type ProgramService struct {
-	repo       domain.ProgramRepository
-	termRepo   domain.ProgramTermRepository
-	appRepo    domain.ApplicationRepository
-	memberRepo domain.ProgramMemberRepository
-	notifier   domain.Notifier
-	cfClient   clients.CrowdfundingClient
-	projects   domain.ProjectLookup
-	access     domain.AccessWaiter
+	repo          domain.ProgramRepository
+	termRepo      domain.ProgramTermRepository
+	appRepo       domain.ApplicationRepository
+	memberRepo    domain.ProgramMemberRepository
+	notifier      domain.Notifier
+	cfClient      clients.CrowdfundingClient
+	projects      domain.ProjectLookup
+	access        domain.AccessWaiter
+	accessChecker domain.AccessChecker
 }
 
 // NewProgramService returns a ProgramService.
@@ -73,6 +74,13 @@ func (s *ProgramService) SetProjectLookup(projects domain.ProjectLookup) {
 // write to the new program, or the waiter gives up.
 func (s *ProgramService) SetAccessWaiter(access domain.AccessWaiter) {
 	s.access = access
+}
+
+// SetAccessChecker sets the fga-sync check that limits a project's
+// sub-project programs to the sub-projects the caller may manage. Without it,
+// the list with sub-projects is unavailable.
+func (s *ProgramService) SetAccessChecker(checker domain.AccessChecker) {
+	s.accessChecker = checker
 }
 
 // programTransitions defines the valid next states for each program status.
@@ -281,11 +289,18 @@ func (s *ProgramService) ListMine(ctx context.Context, userID string, filter mod
 	return programs, meta, nil
 }
 
+// The project relation Heimdall checks on the project programs list: project
+// writer_guard or mentorship_program_admin, the project half of program writer.
+const (
+	projectFGAObjectPrefix  = "project:"
+	projectProgramsRelation = "mentorship_program_creator"
+)
+
 // ListByProject returns every program of the project, in any status, in the
 // admin programs list shape. With includeSubprojects it also returns the
-// programs of every project below it in Project Service's hierarchy, at any
-// depth. Heimdall has already checked the caller may manage the project's
-// programs.
+// programs of each project below it in Project Service's hierarchy, at any
+// depth, whose programs the caller may manage. Heimdall has already checked
+// the caller may manage the project's own programs.
 func (s *ProgramService) ListByProject(ctx context.Context, projectUID string, includeSubprojects bool, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
 	ctx, span := programSvcTracer.Start(ctx, "ProgramService.ListByProject")
 	defer span.End()
@@ -301,10 +316,12 @@ func (s *ProgramService) ListByProject(ctx context.Context, projectUID string, i
 
 	projectUIDs := []string{uid.String()}
 	if includeSubprojects {
-		if projectUIDs, err = s.projectAndSubprojects(ctx, uid.String()); err != nil {
+		subprojects, err := s.manageableSubprojects(ctx, uid.String())
+		if err != nil {
 			span.RecordError(err)
 			return nil, nil, fmt.Errorf("list project programs: %w", err)
 		}
+		projectUIDs = append(projectUIDs, subprojects...)
 	}
 	programs, meta, err := s.repo.ListAdministeredByProjects(ctx, projectUIDs, filter)
 	if err != nil {
@@ -314,14 +331,51 @@ func (s *ProgramService) ListByProject(ctx context.Context, projectUID string, i
 	return programs, meta, nil
 }
 
-// projectAndSubprojects returns rootUID and each project with a program that
-// sits below it in Project Service's hierarchy. Project Service only answers
-// "what is this project's parent", so it starts from the projects that have
-// programs and walks up, one request per level of nesting.
-func (s *ProgramService) projectAndSubprojects(ctx context.Context, rootUID string) ([]string, error) {
-	if s.projects == nil {
-		return nil, fmt.Errorf("project hierarchy needs Project Service: %w", domain.ErrUpstreamUnavailable)
+// manageableSubprojects returns the projects below rootUID that have programs
+// and whose programs the caller may manage. Heimdall's check on rootUID does
+// not cover them: project writer passes down to sub-projects, but
+// mentorship_program_admin does not, so each one is checked, all in one
+// fga-sync request.
+func (s *ProgramService) manageableSubprojects(ctx context.Context, rootUID string) ([]string, error) {
+	principal := auth.PrincipalFromContext(ctx)
+	if principal == nil || principal.Username == "" {
+		return nil, domain.ErrUnauthorized
 	}
+	if s.projects == nil || s.accessChecker == nil {
+		return nil, fmt.Errorf("sub-projects need Project Service and fga-sync: %w", domain.ErrUpstreamUnavailable)
+	}
+	subprojects, err := s.subprojectsWithPrograms(ctx, rootUID)
+	if err != nil {
+		return nil, err
+	}
+
+	objects := make([]string, 0, len(subprojects))
+	for _, uid := range subprojects {
+		// The UID is interpolated into fga-sync's "object#relation@user" check
+		// line, so only a UUID may reach it.
+		if _, err := uuid.Parse(uid); err == nil {
+			objects = append(objects, projectFGAObjectPrefix+uid)
+		}
+	}
+	if len(objects) == 0 {
+		return nil, nil
+	}
+	allowed, err := s.accessChecker.AllowedObjects(ctx, objects, projectProgramsRelation, principal.Username)
+	if err != nil {
+		return nil, fmt.Errorf("%w: sub-project access check: %w", domain.ErrUpstreamUnavailable, err)
+	}
+	uids := make([]string, len(allowed))
+	for i, object := range allowed {
+		uids[i] = strings.TrimPrefix(object, projectFGAObjectPrefix)
+	}
+	return uids, nil
+}
+
+// subprojectsWithPrograms returns each project with a program that sits below
+// rootUID in Project Service's hierarchy. Project Service only answers "what
+// is this project's parent", so it starts from the projects that have
+// programs and walks up, one request per level of nesting.
+func (s *ProgramService) subprojectsWithPrograms(ctx context.Context, rootUID string) ([]string, error) {
 	candidates, err := s.repo.ListProjectUIDs(ctx)
 	if err != nil {
 		return nil, err
@@ -346,7 +400,7 @@ func (s *ProgramService) projectAndSubprojects(ctx context.Context, rootUID stri
 		pending = unknownProjects(next, parents)
 	}
 
-	uids := []string{rootUID}
+	var uids []string
 	for _, uid := range candidates {
 		if uid != rootUID && isBelowProject(uid, rootUID, parents) {
 			uids = append(uids, uid)

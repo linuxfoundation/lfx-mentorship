@@ -1828,7 +1828,15 @@ func TestProgramService_ListByProject_WrapsRepoError(t *testing.T) {
 	}
 }
 
-const foundationUID = "00000000-0000-0000-0000-0000000000f0"
+const (
+	foundationUID      = "00000000-0000-0000-0000-0000000000f0"
+	childUID           = "00000000-0000-0000-0000-0000000000c1"
+	grandchildUID      = "00000000-0000-0000-0000-0000000000c2"
+	middleUID          = "00000000-0000-0000-0000-0000000000c3"
+	elsewhereUID       = "00000000-0000-0000-0000-0000000000e1"
+	otherFoundationUID = "00000000-0000-0000-0000-0000000000e0"
+	unknownUID         = "00000000-0000-0000-0000-0000000000d1"
+)
 
 // subprojectRepo has programs in the given projects and records which
 // projects the programs list was asked for.
@@ -1842,100 +1850,160 @@ func subprojectRepo(projectsWithPrograms []string, gotProjects *[]string) *stubP
 	}
 }
 
+// subprojectSvc lists through repo, resolving parents with lookup and
+// sub-project access with checker; a nil one is left unconfigured.
+func subprojectSvc(repo *stubProgRepo, lookup *stubProjectLookup, checker *fakeAccessChecker) *service.ProgramService {
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	if lookup != nil {
+		svc.SetProjectLookup(lookup)
+	}
+	if checker != nil {
+		svc.SetAccessChecker(checker)
+	}
+	return svc
+}
+
+// foundationTree has the foundation's child, its grandchild under middle
+// (which has no programs), a project of another foundation, and a project
+// Project Service does not know.
+func foundationTree() ([]string, *stubProjectLookup) {
+	return []string{foundationUID, childUID, grandchildUID, elsewhereUID, unknownUID}, &stubProjectLookup{parents: map[string]string{
+		childUID:           foundationUID,
+		grandchildUID:      middleUID,
+		middleUID:          foundationUID,
+		elsewhereUID:       otherFoundationUID,
+		otherFoundationUID: "",
+	}}
+}
+
 func TestProgramService_ListByProject_SubprojectsAtAnyDepth(t *testing.T) {
 	var gotProjects []string
-	repo := subprojectRepo([]string{foundationUID, "child", "grandchild", "elsewhere", "unknown"}, &gotProjects)
-	// grandchild sits under the foundation through middle, which has no
-	// programs; elsewhere belongs to another foundation; Project Service does
-	// not know unknown.
-	lookup := &stubProjectLookup{parents: map[string]string{
-		"child":            foundationUID,
-		"grandchild":       "middle",
-		"middle":           foundationUID,
-		"elsewhere":        "other-foundation",
-		"other-foundation": "",
-	}}
-	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
-	svc.SetProjectLookup(lookup)
+	withPrograms, lookup := foundationTree()
+	checker := &fakeAccessChecker{allowed: true}
+	svc := subprojectSvc(subprojectRepo(withPrograms, &gotProjects), lookup, checker)
 
-	if _, _, err := svc.ListByProject(context.Background(), foundationUID, true, models.AdministeredProgramFilter{}); err != nil {
+	if _, _, err := svc.ListByProject(principalCtx("user-1", "ada"), foundationUID, true, models.AdministeredProgramFilter{}); err != nil {
 		t.Fatalf("ListByProject: %v", err)
 	}
-	if want := []string{foundationUID, "child", "grandchild"}; !slices.Equal(gotProjects, want) {
+	if want := []string{foundationUID, childUID, grandchildUID}; !slices.Equal(gotProjects, want) {
 		t.Errorf("projects = %q; want %q", gotProjects, want)
 	}
 	// One request per level, and none about the foundation itself.
-	wantCalls := [][]string{{"child", "grandchild", "elsewhere", "unknown"}, {"middle", "other-foundation"}}
-	if !slices.EqualFunc(lookup.parentCalls, wantCalls, slices.Equal[[]string]) {
-		t.Errorf("parent lookups = %q; want %q", lookup.parentCalls, wantCalls)
+	wantLookups := [][]string{{childUID, grandchildUID, elsewhereUID, unknownUID}, {middleUID, otherFoundationUID}}
+	if !slices.EqualFunc(lookup.parentCalls, wantLookups, slices.Equal[[]string]) {
+		t.Errorf("parent lookups = %q; want %q", lookup.parentCalls, wantLookups)
+	}
+	// The sub-projects are checked in one request; the foundation is Heimdall's.
+	wantChecks := []accessCall{
+		{"project:" + childUID, "mentorship_program_creator", "ada"},
+		{"project:" + grandchildUID, "mentorship_program_creator", "ada"},
+	}
+	if checker.batches != 1 || !slices.Equal(checker.calls, wantChecks) {
+		t.Errorf("%d access requests with %+v; want one with %+v", checker.batches, checker.calls, wantChecks)
+	}
+}
+
+func TestProgramService_ListByProject_SubprojectsLimitedToCallerAccess(t *testing.T) {
+	var gotProjects []string
+	withPrograms, lookup := foundationTree()
+	// A foundation program admin who is also program admin of grandchild only.
+	checker := &fakeAccessChecker{allowedObjects: map[string]bool{"project:" + grandchildUID: true}}
+	svc := subprojectSvc(subprojectRepo(withPrograms, &gotProjects), lookup, checker)
+
+	if _, _, err := svc.ListByProject(principalCtx("user-1", "ada"), foundationUID, true, models.AdministeredProgramFilter{}); err != nil {
+		t.Fatalf("ListByProject: %v", err)
+	}
+	if want := []string{foundationUID, grandchildUID}; !slices.Equal(gotProjects, want) {
+		t.Errorf("projects = %q; want %q", gotProjects, want)
 	}
 }
 
 func TestProgramService_ListByProject_SubprojectsStopAtCycle(t *testing.T) {
+	const a, b = "00000000-0000-0000-0000-0000000000a1", "00000000-0000-0000-0000-0000000000b1"
 	var gotProjects []string
-	repo := subprojectRepo([]string{"a", "b"}, &gotProjects)
-	lookup := &stubProjectLookup{parents: map[string]string{"a": "b", "b": "a"}}
-	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
-	svc.SetProjectLookup(lookup)
+	lookup := &stubProjectLookup{parents: map[string]string{a: b, b: a}}
+	checker := &fakeAccessChecker{allowed: true}
+	svc := subprojectSvc(subprojectRepo([]string{a, b}, &gotProjects), lookup, checker)
 
-	if _, _, err := svc.ListByProject(context.Background(), foundationUID, true, models.AdministeredProgramFilter{}); err != nil {
+	if _, _, err := svc.ListByProject(principalCtx("user-1", "ada"), foundationUID, true, models.AdministeredProgramFilter{}); err != nil {
 		t.Fatalf("ListByProject: %v", err)
 	}
 	if want := []string{foundationUID}; !slices.Equal(gotProjects, want) {
 		t.Errorf("projects = %q; want %q", gotProjects, want)
 	}
-	if len(lookup.parentCalls) != 1 {
-		t.Errorf("parent lookups = %q; want one", lookup.parentCalls)
+	if len(lookup.parentCalls) != 1 || checker.batches != 0 {
+		t.Errorf("parent lookups = %q, access requests = %d; want one lookup and no access request", lookup.parentCalls, checker.batches)
+	}
+}
+
+func TestProgramService_ListByProject_NonUUIDSubprojectIsNeverChecked(t *testing.T) {
+	const injected = "x#writer@user:ada\nproject:y"
+	var gotProjects []string
+	lookup := &stubProjectLookup{parents: map[string]string{injected: foundationUID, childUID: foundationUID}}
+	checker := &fakeAccessChecker{allowed: true}
+	svc := subprojectSvc(subprojectRepo([]string{injected, childUID}, &gotProjects), lookup, checker)
+
+	if _, _, err := svc.ListByProject(principalCtx("user-1", "ada"), foundationUID, true, models.AdministeredProgramFilter{}); err != nil {
+		t.Fatalf("ListByProject: %v", err)
+	}
+	if want := []string{foundationUID, childUID}; !slices.Equal(gotProjects, want) || len(checker.calls) != 1 {
+		t.Errorf("projects = %q, checks = %+v; want only %s checked and listed", gotProjects, checker.calls, childUID)
 	}
 }
 
 func TestProgramService_ListByProject_WithoutSubprojectsAsksNoHierarchy(t *testing.T) {
 	var gotProjects []string
-	repo := subprojectRepo([]string{"child"}, &gotProjects)
+	repo := subprojectRepo([]string{childUID}, &gotProjects)
 	repo.listProjectUIDs = func(context.Context) ([]string, error) {
 		t.Fatal("ListProjectUIDs must not be called without include_subprojects")
 		return nil, nil
 	}
-	lookup := &stubProjectLookup{parents: map[string]string{"child": foundationUID}}
-	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
-	svc.SetProjectLookup(lookup)
+	lookup := &stubProjectLookup{parents: map[string]string{childUID: foundationUID}}
+	checker := &fakeAccessChecker{allowed: true}
+	svc := subprojectSvc(repo, lookup, checker)
 
 	if _, _, err := svc.ListByProject(context.Background(), foundationUID, false, models.AdministeredProgramFilter{}); err != nil {
 		t.Fatalf("ListByProject: %v", err)
 	}
-	if want := []string{foundationUID}; !slices.Equal(gotProjects, want) || len(lookup.parentCalls) != 0 {
-		t.Errorf("projects = %q, parent lookups = %q; want only the project and no lookups", gotProjects, lookup.parentCalls)
+	if want := []string{foundationUID}; !slices.Equal(gotProjects, want) || len(lookup.parentCalls) != 0 || checker.batches != 0 {
+		t.Errorf("projects = %q, parent lookups = %q, access requests = %d; want only the project, nothing asked", gotProjects, lookup.parentCalls, checker.batches)
 	}
 }
 
 func TestProgramService_ListByProject_SubprojectErrors(t *testing.T) {
 	repoErr := errors.New("db down")
+	tree := func() *stubProjectLookup {
+		return &stubProjectLookup{parents: map[string]string{childUID: foundationUID}}
+	}
 	cases := map[string]struct {
+		ctx     context.Context
 		lookup  *stubProjectLookup
+		checker *fakeAccessChecker
 		repoErr error
 		want    error
 	}{
-		"no project service": {want: domain.ErrUpstreamUnavailable},
-		"project service down": {
-			lookup: &stubProjectLookup{parentsErr: domain.ErrUpstreamUnavailable},
-			want:   domain.ErrUpstreamUnavailable,
-		},
-		"project UIDs unreadable": {lookup: &stubProjectLookup{}, repoErr: repoErr, want: repoErr},
+		"no caller":               {ctx: context.Background(), lookup: tree(), checker: &fakeAccessChecker{allowed: true}, want: domain.ErrUnauthorized},
+		"no project service":      {checker: &fakeAccessChecker{allowed: true}, want: domain.ErrUpstreamUnavailable},
+		"no fga-sync":             {lookup: tree(), want: domain.ErrUpstreamUnavailable},
+		"project service down":    {lookup: &stubProjectLookup{parentsErr: domain.ErrUpstreamUnavailable}, checker: &fakeAccessChecker{allowed: true}, want: domain.ErrUpstreamUnavailable},
+		"project UIDs unreadable": {lookup: tree(), checker: &fakeAccessChecker{allowed: true}, repoErr: repoErr, want: repoErr},
+		"fga-sync down":           {lookup: tree(), checker: &fakeAccessChecker{err: errors.New("access check: no responders")}, want: domain.ErrUpstreamUnavailable},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			repo := &stubProgRepo{
-				listProjectUIDs: func(context.Context) ([]string, error) { return []string{"child"}, tc.repoErr },
+				listProjectUIDs: func(context.Context) ([]string, error) { return []string{childUID}, tc.repoErr },
 				listByProjects: func(context.Context, []string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
-					t.Fatal("the programs list must not be read when the hierarchy is unknown")
+					t.Fatal("the programs list must not be read when the sub-projects are unknown")
 					return nil, nil, nil
 				},
 			}
-			svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
-			if tc.lookup != nil {
-				svc.SetProjectLookup(tc.lookup)
+			ctx := tc.ctx
+			if ctx == nil {
+				ctx = principalCtx("user-1", "ada")
 			}
-			if _, _, err := svc.ListByProject(context.Background(), foundationUID, true, models.AdministeredProgramFilter{}); !errors.Is(err, tc.want) {
+			svc := subprojectSvc(repo, tc.lookup, tc.checker)
+			if _, _, err := svc.ListByProject(ctx, foundationUID, true, models.AdministeredProgramFilter{}); !errors.Is(err, tc.want) {
 				t.Errorf("got %v; want %v", err, tc.want)
 			}
 		})
