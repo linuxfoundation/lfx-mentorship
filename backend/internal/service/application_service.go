@@ -149,6 +149,11 @@ func (s *ApplicationService) requireProgramAdmin(ctx context.Context, programTer
 	return nil
 }
 
+// errMentorApplicationStatus refuses any status change of a mentor application. Mentors join and
+// leave a program only through its members, so an application never grants or revokes a mentor's
+// membership; the only mentor applications are records imported from legacy.
+var errMentorApplicationStatus = fmt.Errorf("%w: a mentor application's status cannot change; mentors join and leave a program through its members", domain.ErrInvalidStateTransition)
+
 // applicationTransitions maps current → allowed next statuses.
 var applicationTransitions = map[models.ApplicationStatus][]models.ApplicationStatus{
 	models.ApplicationStatusPending: {
@@ -427,8 +432,8 @@ func (s *ApplicationService) withCurrentPrerequisites(ctx context.Context, progr
 // When accepting, attendance_type is required, except when undoing a graduation, which keeps the
 // stored one. Re-opening a mentee application adds any prerequisite task it is missing.
 // A mentee is notified when their application is accepted, declined, withdrawn, or graduated, but
-// not when a program admin undoes their graduation or re-opens their application;
-// program admins are notified when a mentor withdraws their application.
+// not when a program admin undoes their graduation or re-opens their application.
+// A mentor application's status never changes.
 func (s *ApplicationService) Update(ctx context.Context, id string, input models.ApplicationUpdateInput) (*models.Application, error) {
 	ctx, span := applicationSvcTracer.Start(ctx, "ApplicationService.Update")
 	defer span.End()
@@ -467,6 +472,9 @@ func (s *ApplicationService) Update(ctx context.Context, id string, input models
 					return nil, err
 				}
 			}
+			if current.Role == models.ApplicationRoleMentor {
+				return nil, errMentorApplicationStatus
+			}
 			allowed := applicationTransitions[current.Status]
 			ok := false
 			for _, candidate := range allowed {
@@ -474,10 +482,6 @@ func (s *ApplicationService) Update(ctx context.Context, id string, input models
 					ok = true
 					break
 				}
-			}
-			// Only a mentee's graduation can be undone; re-accepting a mentor would re-add their membership.
-			if current.Status == models.ApplicationStatusGraduated && current.Role != models.ApplicationRoleMentee {
-				ok = false
 			}
 			if !ok {
 				return nil, fmt.Errorf("%w: cannot transition application from %q to %q", domain.ErrInvalidStateTransition, current.Status, next)
@@ -507,7 +511,7 @@ func (s *ApplicationService) Update(ctx context.Context, id string, input models
 
 			// A program's prerequisite edits reach only its pending applications, so a re-opened
 			// mentee application gets a task for any prerequisite added while it was closed.
-			if next == models.ApplicationStatusPending && current.Role == models.ApplicationRoleMentee {
+			if next == models.ApplicationStatusPending {
 				if err := s.withCurrentPrerequisites(ctx, current.ProgramTermID, &input); err != nil {
 					return nil, err
 				}
@@ -522,7 +526,7 @@ func (s *ApplicationService) Update(ctx context.Context, id string, input models
 	}
 
 	// Post-update side-effects.
-	if input.Status != nil && a.Role == models.ApplicationRoleMentee {
+	if input.Status != nil {
 		switch *input.Status {
 		case models.ApplicationStatusAccepted:
 			// An undone graduation sends nothing: the mentee was accepted before, and the graduation email has gone out.
@@ -542,24 +546,6 @@ func (s *ApplicationService) Update(ctx context.Context, id string, input models
 			s.notifier.NotifyMenteeGraduated(ctx, id)
 		}
 	}
-	if input.Status != nil && a.Role == models.ApplicationRoleMentor {
-		withdrew := *input.Status == models.ApplicationStatusWithdrawn
-		// A decline answers only an outstanding request (ExpectedStatus is the status the write applied
-		// from). Declining an accepted mentor leaves their approved membership in place, so it sends nothing.
-		declinedRequest := *input.Status == models.ApplicationStatusDeclined && input.ExpectedStatus != nil &&
-			*input.ExpectedStatus == models.ApplicationStatusPending
-		if withdrew || declinedRequest {
-			// The write has landed, so a failed lookup costs only the notice.
-			if term, err := s.termRepo.GetByID(ctx, a.ProgramTermID); err != nil {
-				span.RecordError(err)
-			} else if withdrew {
-				s.notifier.NotifyAdminMentorWithdrew(ctx, term.ProgramID, a.UserID)
-			} else {
-				s.notifier.NotifyMentorDeclined(ctx, term.ProgramID, a.UserID)
-			}
-		}
-	}
-
 	return a, nil
 }
 
@@ -628,6 +614,9 @@ func (s *ApplicationService) WithdrawForMenteeAfterGatewayAuthorization(ctx cont
 // The write applies only while the row keeps the status read before it, so a concurrent change fails
 // rather than being overwritten and notified twice.
 func (s *ApplicationService) assistedWithdraw(ctx context.Context, application *models.Application) (*models.Application, error) {
+	if application.Role == models.ApplicationRoleMentor {
+		return nil, errMentorApplicationStatus
+	}
 	if application.Status == models.ApplicationStatusDeclined || application.Status == models.ApplicationStatusGraduated {
 		return nil, fmt.Errorf("%w: cannot withdraw a %s application", domain.ErrInvalidStateTransition, application.Status)
 	}
@@ -636,7 +625,7 @@ func (s *ApplicationService) assistedWithdraw(ctx context.Context, application *
 	if err != nil {
 		return nil, fmt.Errorf("assisted withdrawal: %w", err)
 	}
-	if application.Status != models.ApplicationStatusWithdrawn && updated.Role == models.ApplicationRoleMentee {
+	if application.Status != models.ApplicationStatusWithdrawn {
 		s.notifier.NotifyMenteeWithdrawn(ctx, updated.ID)
 	}
 	return updated, nil
@@ -662,12 +651,10 @@ func (s *ApplicationService) BulkDeclineByTerm(ctx context.Context, termID, acto
 	return len(declined), nil
 }
 
-// notifyMenteesDeclined tells each mentee among the bulk-declined applications; mentor applications get no email.
+// notifyMenteesDeclined tells the mentee of each bulk-declined application.
 func notifyMenteesDeclined(ctx context.Context, notifier domain.Notifier, declined []*models.Application) {
 	for _, a := range declined {
-		if a.Role == models.ApplicationRoleMentee {
-			notifier.NotifyMenteeDeclined(ctx, a.ID)
-		}
+		notifier.NotifyMenteeDeclined(ctx, a.ID)
 	}
 }
 

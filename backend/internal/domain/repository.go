@@ -170,7 +170,7 @@ type ApplicationRepository interface {
 	MarkTasksSubmitted(ctx context.Context, id string) (bool, error)
 	Delete(ctx context.Context, id string) error
 
-	// CountBlockingAppsForProgram returns applications in a non-terminal state across all terms of a program.
+	// CountBlockingAppsForProgram returns mentee applications in a non-terminal state across all terms of a program.
 	CountBlockingAppsForProgram(ctx context.Context, programID string) (int, error)
 	// CountAcceptedByTerm returns the count of accepted applications for a term.
 	CountAcceptedByTerm(ctx context.Context, termID string) (int, error)
