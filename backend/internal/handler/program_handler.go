@@ -32,6 +32,7 @@ type programService interface {
 	GetCatalog(ctx context.Context, id string) (*models.ProgramCatalogItem, error)
 	ListCatalogMentees(ctx context.Context, programID string) ([]*models.ProgramCatalogMentee, error)
 	ListMine(ctx context.Context, userID string, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error)
+	ListByProject(ctx context.Context, projectUID string, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error)
 	Create(ctx context.Context, input models.ProgramCreateInput) (*models.Program, error)
 	CreateEnrollment(ctx context.Context, input models.ProgramEnrollmentInput) (*models.Program, error)
 	Update(ctx context.Context, id string, input models.ProgramUpdateInput) (*models.Program, error)
@@ -270,17 +271,37 @@ func (h *ProgramHandler) ListMine(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	programs, meta, err := h.svc.ListMine(r.Context(), principal.UserID, models.AdministeredProgramFilter{
-		Limit:  limit,
-		Offset: offset,
-		Search: r.URL.Query().Get("search"),
-		Status: models.AdministeredProgramStatus(r.URL.Query().Get("status")),
-	})
+	programs, meta, err := h.svc.ListMine(r.Context(), principal.UserID, administeredProgramFilter(r, limit, offset))
 	if err != nil {
 		Error(w, err)
 		return
 	}
 	JSON(w, http.StatusOK, map[string]any{"data": programs, "meta": meta})
+}
+
+// ListByProject handles GET /v1/projects/{project_uid}/programs — every
+// program of the project, for the people who manage them. Heimdall authorizes
+// the caller on the project.
+func (h *ProgramHandler) ListByProject(w http.ResponseWriter, r *http.Request) {
+	limit, offset, ok := parsePaginationParams(w, r)
+	if !ok {
+		return
+	}
+	programs, meta, err := h.svc.ListByProject(r.Context(), chi.URLParam(r, "project_uid"), administeredProgramFilter(r, limit, offset))
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]any{"data": programs, "meta": meta})
+}
+
+func administeredProgramFilter(r *http.Request, limit, offset int) models.AdministeredProgramFilter {
+	return models.AdministeredProgramFilter{
+		Limit:  limit,
+		Offset: offset,
+		Search: r.URL.Query().Get("search"),
+		Status: models.AdministeredProgramStatus(r.URL.Query().Get("status")),
+	}
 }
 
 // GetCatalog handles GET /v1/programs/{id}/catalog.

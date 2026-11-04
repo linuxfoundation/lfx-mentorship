@@ -442,6 +442,32 @@ func TestMentorCandidatesRequiresProgramWriter(t *testing.T) {
 	}
 }
 
+// The project programs list exposes unpublished programs, so it is checked on
+// the project and never admits anonymous or unchecked callers.
+func TestProjectProgramsRequiresProjectProgramWriter(t *testing.T) {
+	block := ruleBlock(t, "project-programs")
+	if strings.Count(block, "- path:") != 1 || !strings.Contains(block, "- path: /mentorship/v1/projects/:project_uid/programs\n") {
+		t.Errorf("project-programs rule must cover only its route:\n%s", block)
+	}
+	if !strings.Contains(block, "methods: [GET]\n") {
+		t.Errorf("project-programs rule must allow only GET:\n%s", block)
+	}
+	expected := `      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'project:{{ "{{- .Request.URL.Captures.project_uid | lower -}}" }}'
+              relation: mentorship_program_creator
+        - finalizer: create_jwt`
+	if !strings.Contains(block, expected) {
+		t.Errorf("project-programs rule lacks oidc -> openfga project mentorship_program_creator -> create_jwt sequence:\n%s", block)
+	}
+	if strings.Contains(block, "anonymous_authenticator") || strings.Contains(block, "allow_all") {
+		t.Errorf("project-programs rule must not admit anonymous or unchecked callers:\n%s", block)
+	}
+}
+
 // The caller's program lists take the user from the principal, so the gateway
 // needs only a signed-in user.
 func TestMeProgramListsNeedOnlyASignedInUser(t *testing.T) {

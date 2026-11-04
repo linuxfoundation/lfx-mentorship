@@ -20,6 +20,7 @@ The gateway-authorized API uses canonical resource paths:
 - User application reads use `/me/applications`.
 - Mentor self-service program requests use `/me/program-memberships`.
 - Program admins list their programs with `/me/programs`.
+- Project admins list a project's programs with `/projects/{project_uid}/programs`.
 - Mentors list the programs they mentor with `/me/mentor-programs`.
 - Program-admin collection reads use Query Service
   `/query/resources?v=1&type=mentorship_program&filter_grants=direct`.
@@ -1688,6 +1689,19 @@ this is not yet a Query Service collection.
 ```
 
 **Errors** `400` (unknown `status`, non-integer `limit`/`offset`), `401` (no principal, or a machine-to-machine client)
+
+#### `GET /v1/projects/{project_uid}/programs` 🔒
+
+Lists every program of the project, in any status, for the Project lens in
+Self Serve. It takes the same query parameters, returns the same
+`AdministeredProgram` rows, and uses the same order as
+[`GET /v1/me/programs`](#get-v1meprograms-), but it does not depend on who
+administers a program. The gateway checks `mentorship_program_creator` on
+`project:{project_uid}`, which is project `writer_guard` or the project's
+`mentorship_program_admin`: exactly the users who hold `writer` on every
+program of the project through the project.
+
+**Errors** `400` (`project_uid` not a UUID, unknown `status`, non-integer `limit`/`offset`), `401` (no principal), `403` at the gateway (no access to the project)
 
 ---
 

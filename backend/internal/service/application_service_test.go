@@ -234,6 +234,7 @@ type stubProgRepo struct {
 	getCatalog        func(context.Context, string) (*models.ProgramCatalogItem, error)
 	listMentees       func(context.Context, string) ([]*models.ProgramCatalogMentee, error)
 	listAdministered  func(context.Context, string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error)
+	listByProject     func(context.Context, string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error)
 	create            func(context.Context, models.ProgramCreateInput) (*models.Program, error)
 	createEnrollment  func(context.Context, models.ProgramEnrollmentInput) (*models.Program, error)
 	update            func(context.Context, string, models.ProgramUpdateInput) (*models.Program, error)
@@ -303,6 +304,12 @@ func (m *stubProgRepo) ListCatalogMentees(ctx context.Context, id string) ([]*mo
 func (m *stubProgRepo) ListAdministeredByUser(ctx context.Context, userID string, f models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
 	if m.listAdministered != nil {
 		return m.listAdministered(ctx, userID, f)
+	}
+	return []*models.AdministeredProgram{}, &models.PaginationMeta{}, nil
+}
+func (m *stubProgRepo) ListAdministeredByProject(ctx context.Context, projectUID string, f models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+	if m.listByProject != nil {
+		return m.listByProject(ctx, projectUID, f)
 	}
 	return []*models.AdministeredProgram{}, &models.PaginationMeta{}, nil
 }
