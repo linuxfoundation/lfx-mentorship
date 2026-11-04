@@ -177,6 +177,42 @@ func TestE2EProgramLifecycle(t *testing.T) {
 	})
 }
 
+// Heimdall authorizes the project, so the backend lists every program of the
+// project for a caller who administers none of them.
+func TestE2EProjectPrograms(t *testing.T) {
+	reset(t)
+	admin := signIn(t, "admin")
+	projectAdmin := signIn(t, "project-admin")
+	uid := newProject(t, "projectlist")
+
+	var pending, published program
+	admin.mustJSON(t, http.MethodPost, "/programs", enrollmentBody("Project Pending", uid), http.StatusCreated, &pending)
+	admin.mustJSON(t, http.MethodPost, "/programs", enrollmentBody("Project Published", uid), http.StatusCreated, &published)
+	uploadLogo(t, admin, published.ID).expect(http.StatusCreated)
+	approver(t).call(t, http.MethodPost, "/programs/"+published.ID+"/decision", map[string]any{"status": "published"}).expect(http.StatusOK)
+	elsewhere := createProgram(t, admin, "Elsewhere Program")
+
+	var list programPage
+	projectAdmin.mustJSON(t, http.MethodGet, "/projects/"+uid+"/programs", nil, http.StatusOK, &list)
+	if list.Meta.Total != 2 || len(list.Data) != 2 ||
+		list.Data[0].ID != published.ID || list.Data[0].AdminStatus != "open" ||
+		list.Data[1].ID != pending.ID || list.Data[1].AdminStatus != "pending_review" {
+		t.Fatalf("project programs: %+v", list)
+	}
+	if contains(list.ids(), elsewhere.ID) {
+		t.Fatalf("another project's program is listed")
+	}
+
+	projectAdmin.mustJSON(t, http.MethodGet, "/projects/"+strings.ToUpper(uid)+"/programs?status=pending_review", nil, http.StatusOK, &list)
+	if len(list.Data) != 1 || list.Data[0].ID != pending.ID {
+		t.Fatalf("pending_review filter with an uppercase project UID: %+v", list)
+	}
+
+	projectAdmin.call(t, http.MethodGet, "/projects/not-a-uuid/programs", nil).expect(http.StatusBadRequest)
+	projectAdmin.call(t, http.MethodGet, "/projects/"+uid+"/programs?status=bogus", nil).expect(http.StatusBadRequest)
+	anonymous().call(t, http.MethodGet, "/projects/"+uid+"/programs", nil).expect(http.StatusUnauthorized)
+}
+
 func TestE2EProgramRejection(t *testing.T) {
 	reset(t)
 	admin := signIn(t, "admin")

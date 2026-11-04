@@ -268,11 +268,8 @@ func (s *ProgramService) ListMine(ctx context.Context, userID string, filter mod
 	if userID == "" {
 		return nil, nil, fmt.Errorf("%w: caller identity is required", domain.ErrUnauthorized)
 	}
-	if filter.Status != "" && !filter.Status.IsValid() {
-		return nil, nil, fmt.Errorf("%w: status must be open, pending_review, completed, rejected, or hidden", domain.ErrInvalidInput)
-	}
-	var err error
-	if filter.Search, err = normalizeSearch(filter.Search); err != nil {
+	filter, err := validateAdministeredProgramFilter(filter)
+	if err != nil {
 		return nil, nil, err
 	}
 
@@ -282,6 +279,41 @@ func (s *ProgramService) ListMine(ctx context.Context, userID string, filter mod
 		return nil, nil, fmt.Errorf("list my programs: %w", err)
 	}
 	return programs, meta, nil
+}
+
+// ListByProject returns every program of the project, in any status, in the
+// admin programs list shape. Heimdall has already checked the caller may
+// manage the project's programs.
+func (s *ProgramService) ListByProject(ctx context.Context, projectUID string, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+	ctx, span := programSvcTracer.Start(ctx, "ProgramService.ListByProject")
+	defer span.End()
+	span.SetAttributes(attribute.String("project.uid", projectUID))
+
+	uid, err := uuid.Parse(projectUID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: project_uid must be a UUID", domain.ErrInvalidInput)
+	}
+	if filter, err = validateAdministeredProgramFilter(filter); err != nil {
+		return nil, nil, err
+	}
+
+	programs, meta, err := s.repo.ListAdministeredByProject(ctx, uid.String(), filter)
+	if err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("list project programs: %w", err)
+	}
+	return programs, meta, nil
+}
+
+// validateAdministeredProgramFilter checks the status and normalizes the
+// search of an admin programs list filter.
+func validateAdministeredProgramFilter(filter models.AdministeredProgramFilter) (models.AdministeredProgramFilter, error) {
+	if filter.Status != "" && !filter.Status.IsValid() {
+		return filter, fmt.Errorf("%w: status must be open, pending_review, completed, rejected, or hidden", domain.ErrInvalidInput)
+	}
+	var err error
+	filter.Search, err = normalizeSearch(filter.Search)
+	return filter, err
 }
 
 // Create validates input and creates a program.

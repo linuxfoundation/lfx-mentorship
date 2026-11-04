@@ -951,6 +951,90 @@ func TestProgramListAdministeredIntegration_GroupsStatusAndScopesToActiveAdmin(t
 	}
 }
 
+func TestProgramListAdministeredByProjectIntegration_ScopesToProjectInEveryStatus(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	const (
+		fixtureProjectUID = "00000000-0000-0000-0000-000000000099"
+		otherProjectUID   = "00000000-0000-0000-0000-000000000098"
+		pendingID         = "00000000-0000-0000-0000-000000000070"
+		hiddenID          = "00000000-0000-0000-0000-000000000071"
+		otherProjectID    = "00000000-0000-0000-0000-000000000072"
+		noProjectID       = "00000000-0000-0000-0000-000000000073"
+	)
+	// No program_members rows: the list does not depend on who administers a program.
+	if _, err := pool.Exec(ctx, `INSERT INTO programs (id, lf_project_uid, name, slug, status, lf_project_name) VALUES
+		('`+pendingID+`', '`+fixtureProjectUID+`', 'Beta', 'beta', 'pending', 'CNCF'),
+		('`+hiddenID+`', '`+fixtureProjectUID+`', 'Hidden', 'hidden', 'hidden', NULL),
+		('`+otherProjectID+`', '`+otherProjectUID+`', 'Other', 'other', 'published', NULL),
+		('`+noProjectID+`', NULL, 'Orphan', 'orphan', 'published', NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES
+		('00000000-0000-0000-0000-000000000074', $1, $2, 'mentee', 'accepted')`, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatal(err)
+	}
+	repo := NewProgramRepository(pool)
+
+	programs, meta, err := repo.ListAdministeredByProject(ctx, fixtureProjectUID, models.AdministeredProgramFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	type row struct {
+		id     string
+		status models.AdministeredProgramStatus
+	}
+	want := []row{
+		{fixture.ProgramID, models.AdministeredProgramStatusOpen},
+		{pendingID, models.AdministeredProgramStatusPendingReview},
+		{hiddenID, models.AdministeredProgramStatusHidden},
+	}
+	if meta.Total != len(want) || len(programs) != len(want) {
+		t.Fatalf("total=%d len=%d; want %d", meta.Total, len(programs), len(want))
+	}
+	for i, w := range want {
+		if p := programs[i]; p.ID != w.id || p.AdminStatus != w.status {
+			t.Errorf("programs[%d] = {%s %s}; want %+v", i, p.ID, p.AdminStatus, w)
+		}
+	}
+	if s := programs[0].Stats; s.Mentees != 1 {
+		t.Errorf("fixture program stats = %+v; want 1 mentee", s)
+	}
+
+	filtered, meta, err := repo.ListAdministeredByProject(ctx, fixtureProjectUID, models.AdministeredProgramFilter{Status: models.AdministeredProgramStatusHidden})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Total != 1 || len(filtered) != 1 || filtered[0].ID != hiddenID {
+		t.Errorf("status=hidden: total=%d programs=%+v; want only %s", meta.Total, filtered, hiddenID)
+	}
+
+	searched, meta, err := repo.ListAdministeredByProject(ctx, fixtureProjectUID, models.AdministeredProgramFilter{Search: "cncf"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Total != 1 || len(searched) != 1 || searched[0].ID != pendingID {
+		t.Errorf("search=cncf: total=%d programs=%+v; want only %s", meta.Total, searched, pendingID)
+	}
+
+	paged, meta, err := repo.ListAdministeredByProject(ctx, fixtureProjectUID, models.AdministeredProgramFilter{Limit: 1, Offset: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Total != len(want) || len(paged) != 1 || paged[0].ID != hiddenID {
+		t.Errorf("limit=1 offset=2: total=%d programs=%+v; want %s of %d", meta.Total, paged, hiddenID, len(want))
+	}
+
+	none, meta, err := repo.ListAdministeredByProject(ctx, "00000000-0000-0000-0000-000000000097", models.AdministeredProgramFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Total != 0 || len(none) != 0 {
+		t.Errorf("unknown project: total=%d programs=%+v; want none", meta.Total, none)
+	}
+}
+
 func TestProgramTermDeleteIntegration_BlocksWhenApplicationsExist(t *testing.T) {
 	pool := integrationPool(t)
 	fixture := seedIntegrationFixture(t, pool)

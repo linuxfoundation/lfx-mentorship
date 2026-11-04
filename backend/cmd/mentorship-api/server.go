@@ -370,6 +370,9 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			r.Post("/programs/{id}/skills", programH.AddSkill)
 			r.Delete("/programs/{id}/skills/{skillId}", programH.DeleteSkill)
 
+			// Project programs
+			r.Get("/projects/{project_uid}/programs", programH.ListByProject)
+
 			// Program members
 			r.Get("/programs/{id}/mentor-candidates", programMemberH.SearchCandidates)
 			r.Post("/programs/{id}/members", programMemberH.Create)

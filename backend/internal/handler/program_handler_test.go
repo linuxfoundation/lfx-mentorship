@@ -28,6 +28,7 @@ type stubProgramSvc struct {
 	nameAvailable              func(context.Context, string, string) (bool, error)
 	listMentees                func(context.Context, string) ([]*models.ProgramCatalogMentee, error)
 	listMine                   func(context.Context, string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error)
+	listByProject              func(context.Context, string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error)
 	listSkills                 func(context.Context, string) ([]*models.ProgramSkill, error)
 	deleteSkill                func(context.Context, string, string, string) error
 	getCategorizedTransactions func(context.Context, string, string, bool, int, int) (*models.ProgramCategorizedTransactions, error)
@@ -92,6 +93,12 @@ func (s *stubProgramSvc) ListCatalogMentees(ctx context.Context, id string) ([]*
 func (s *stubProgramSvc) ListMine(ctx context.Context, userID string, f models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
 	if s.listMine != nil {
 		return s.listMine(ctx, userID, f)
+	}
+	return []*models.AdministeredProgram{}, &models.PaginationMeta{}, nil
+}
+func (s *stubProgramSvc) ListByProject(ctx context.Context, projectUID string, f models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+	if s.listByProject != nil {
+		return s.listByProject(ctx, projectUID, f)
 	}
 	return []*models.AdministeredProgram{}, &models.PaginationMeta{}, nil
 }
@@ -804,6 +811,73 @@ func TestProgramHandler_ListMine_InvalidStatus(t *testing.T) {
 	r := requestWithPrincipal(httptest.NewRequest(http.MethodGet, "/v1/me/programs?status=bogus", nil), "caller-user")
 	w := httptest.NewRecorder()
 	h.ListMine(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("got %d; want 400", w.Code)
+	}
+}
+
+func TestProgramHandler_ListByProject_PassesProjectAndFilter(t *testing.T) {
+	const projectUID = "00000000-0000-0000-0000-000000000001"
+	var gotProject string
+	var gotFilter models.AdministeredProgramFilter
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		listByProject: func(_ context.Context, uid string, f models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+			gotProject, gotFilter = uid, f
+			return []*models.AdministeredProgram{{ID: "p1", AdminStatus: models.AdministeredProgramStatusPendingReview}},
+				&models.PaginationMeta{Total: 1, Limit: 5, Offset: 10}, nil
+		},
+	})
+	r := httptest.NewRequest(http.MethodGet, "/v1/projects/"+projectUID+"/programs?search=grid&status=pending_review&limit=5&offset=10", nil)
+	r = requestWithChiParam(requestWithPrincipal(r, "caller-user"), "project_uid", projectUID)
+	w := httptest.NewRecorder()
+	h.ListByProject(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d; want 200: %s", w.Code, w.Body.String())
+	}
+	if gotProject != projectUID {
+		t.Errorf("project = %q; want %q", gotProject, projectUID)
+	}
+	want := models.AdministeredProgramFilter{Limit: 5, Offset: 10, Search: "grid", Status: models.AdministeredProgramStatusPendingReview}
+	if gotFilter != want {
+		t.Errorf("filter = %+v; want %+v", gotFilter, want)
+	}
+	var body struct {
+		Data []models.AdministeredProgram `json:"data"`
+		Meta models.PaginationMeta        `json:"meta"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.Data) != 1 || body.Data[0].ID != "p1" || body.Meta.Total != 1 {
+		t.Fatalf("unexpected body: %+v", body)
+	}
+}
+
+func TestProgramHandler_ListByProject_InvalidInput(t *testing.T) {
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		listByProject: func(context.Context, string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+			return nil, nil, fmt.Errorf("%w: project_uid must be a UUID", domain.ErrInvalidInput)
+		},
+	})
+	r := requestWithChiParam(httptest.NewRequest(http.MethodGet, "/v1/projects/not-a-uuid/programs", nil), "project_uid", "not-a-uuid")
+	w := httptest.NewRecorder()
+	h.ListByProject(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("got %d; want 400", w.Code)
+	}
+}
+
+func TestProgramHandler_ListByProject_BadPagination(t *testing.T) {
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		listByProject: func(context.Context, string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+			t.Fatal("service must not be called with bad pagination")
+			return nil, nil, nil
+		},
+	})
+	r := httptest.NewRequest(http.MethodGet, "/v1/projects/00000000-0000-0000-0000-000000000001/programs?limit=abc", nil)
+	w := httptest.NewRecorder()
+	h.ListByProject(w, r)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("got %d; want 400", w.Code)
 	}

@@ -16,6 +16,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 var programTracer = otel.Tracer("programs-db")
@@ -220,10 +221,11 @@ func programListOrder(alias, statusColumn string) string {
 		ELSE 5 END, LOWER(` + alias + `.name), ` + alias + `.id`
 }
 
-// administeredProgramsFrom selects the programs $1 is an active program admin
-// of, with the admin status. A published program is completed once all its
-// terms are closed; with no terms at all it is still open.
-const administeredProgramsFrom = `
+// administeredProgramsFrom selects the programs matched by scope, with the
+// admin status. scope joins or filters programs on $1. A published program is
+// completed once all its terms are closed; with no terms at all it is still open.
+func administeredProgramsFrom(scope string) string {
+	return `
 	FROM (
 		SELECT programs.id, programs.slug, programs.name, programs.lf_project_uid, programs.lf_project_name,
 			programs.logo_url, programs.status, programs.created_on, programs.updated_on,
@@ -234,10 +236,18 @@ const administeredProgramsFrom = `
 				WHEN programs.status = 'rejected' THEN 'rejected'
 				ELSE 'hidden' -- archived | hidden
 			END AS admin_status
-		FROM programs
-		JOIN program_members pm ON pm.program_id = programs.id
-		WHERE pm.user_id = $1 AND pm.member_type = 'program_admin' AND pm.status = 'approved'
+		FROM programs` + scope + `
 	) ap`
+}
+
+// administeredByUserScope keeps the programs $1 is an active program admin of.
+const administeredByUserScope = `
+		JOIN program_members pm ON pm.program_id = programs.id
+		WHERE pm.user_id = $1 AND pm.member_type = 'program_admin' AND pm.status = 'approved'`
+
+// administeredByProjectScope keeps the programs of project $1.
+const administeredByProjectScope = `
+		WHERE programs.lf_project_uid = $1`
 
 // ListAdministeredByUser returns the programs userID is an active program
 // admin of, ordered by programListOrder. Stats are counted for the returned
@@ -247,6 +257,23 @@ func (r *ProgramRepository) ListAdministeredByUser(ctx context.Context, userID s
 	defer span.End()
 	span.SetAttributes(attribute.String("db.user_id", userID))
 
+	return r.listAdministered(ctx, span, administeredByUserScope, userID, filter)
+}
+
+// ListAdministeredByProject returns the programs of projectUID in any status,
+// in the same shape and order as ListAdministeredByUser.
+func (r *ProgramRepository) ListAdministeredByProject(ctx context.Context, projectUID string, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+	ctx, span := programTracer.Start(ctx, "db.programs.ListAdministeredByProject")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.project_uid", projectUID))
+
+	return r.listAdministered(ctx, span, administeredByProjectScope, projectUID, filter)
+}
+
+// listAdministered pages the admin programs list over the programs that scope
+// selects for scopeArg.
+func (r *ProgramRepository) listAdministered(ctx context.Context, span trace.Span, scope, scopeArg string, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+	from := administeredProgramsFrom(scope)
 	limit := filter.Limit
 	if limit <= 0 || limit > 100 {
 		limit = 20
@@ -256,7 +283,7 @@ func (r *ProgramRepository) ListAdministeredByUser(ctx context.Context, userID s
 		offset = 0
 	}
 
-	args := []any{userID}
+	args := []any{scopeArg}
 	where := ` WHERE 1=1`
 	if filter.Status != "" {
 		args = append(args, string(filter.Status))
@@ -268,7 +295,7 @@ func (r *ProgramRepository) ListAdministeredByUser(ctx context.Context, userID s
 	}
 
 	var total int
-	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*)`+administeredProgramsFrom+where, args...).Scan(&total); err != nil {
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*)`+from+where, args...).Scan(&total); err != nil {
 		span.RecordError(err)
 		return nil, nil, fmt.Errorf("count administered programs: %w", err)
 	}
@@ -278,7 +305,7 @@ func (r *ProgramRepository) ListAdministeredByUser(ctx context.Context, userID s
 			page.status, page.admin_status, page.created_on, page.updated_on,
 			(SELECT COUNT(*) FROM program_members m WHERE m.program_id = page.id AND m.member_type = 'mentor' AND m.status = 'approved'),
 			mentees.accepted, mentees.graduated
-		FROM (SELECT ap.*` + administeredProgramsFrom + where +
+		FROM (SELECT ap.*` + from + where +
 		programListOrder("ap", "admin_status") + fmt.Sprintf(` LIMIT $%d OFFSET $%d`, len(args)-1, len(args)) + `) page
 		LEFT JOIN LATERAL (
 			SELECT COUNT(*) FILTER (WHERE a.status = 'accepted') AS accepted,

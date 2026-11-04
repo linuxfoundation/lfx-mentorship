@@ -1744,6 +1744,71 @@ func TestProgramService_ListMine_WrapsRepoError(t *testing.T) {
 	}
 }
 
+func TestProgramService_ListByProject_CanonicalizesProjectAndFilter(t *testing.T) {
+	var gotProject string
+	var gotFilter models.AdministeredProgramFilter
+	repo := &stubProgRepo{
+		listByProject: func(_ context.Context, uid string, f models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+			gotProject, gotFilter = uid, f
+			return []*models.AdministeredProgram{{ID: "p1"}}, &models.PaginationMeta{Total: 1}, nil
+		},
+	}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	got, meta, err := svc.ListByProject(context.Background(), "AAAAAAAA-0000-0000-0000-000000000001", models.AdministeredProgramFilter{
+		Limit:  5,
+		Search: "  grid  ",
+		Status: models.AdministeredProgramStatusHidden,
+	})
+	if err != nil {
+		t.Fatalf("ListByProject: %v", err)
+	}
+	if gotProject != "aaaaaaaa-0000-0000-0000-000000000001" {
+		t.Errorf("project = %q; want the canonical lowercase UUID", gotProject)
+	}
+	want := models.AdministeredProgramFilter{Limit: 5, Search: "grid", Status: models.AdministeredProgramStatusHidden}
+	if gotFilter != want {
+		t.Errorf("filter = %+v; want %+v", gotFilter, want)
+	}
+	if len(got) != 1 || meta.Total != 1 {
+		t.Errorf("got %d programs, total %d; want 1, 1", len(got), meta.Total)
+	}
+}
+
+func TestProgramService_ListByProject_RejectsBadInput(t *testing.T) {
+	repo := &stubProgRepo{
+		listByProject: func(context.Context, string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+			t.Fatal("repo must not be called for invalid input")
+			return nil, nil, nil
+		},
+	}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	const projectUID = "00000000-0000-0000-0000-000000000001"
+
+	for _, uid := range []string{"", "not-a-uuid"} {
+		if _, _, err := svc.ListByProject(context.Background(), uid, models.AdministeredProgramFilter{}); !errors.Is(err, domain.ErrInvalidInput) {
+			t.Errorf("project %q: got %v; want ErrInvalidInput", uid, err)
+		}
+	}
+	for _, status := range []models.AdministeredProgramStatus{"pending-review", "published"} {
+		if _, _, err := svc.ListByProject(context.Background(), projectUID, models.AdministeredProgramFilter{Status: status}); !errors.Is(err, domain.ErrInvalidInput) {
+			t.Errorf("status %q: got %v; want ErrInvalidInput", status, err)
+		}
+	}
+}
+
+func TestProgramService_ListByProject_WrapsRepoError(t *testing.T) {
+	repoErr := errors.New("db down")
+	repo := &stubProgRepo{
+		listByProject: func(context.Context, string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+			return nil, nil, repoErr
+		},
+	}
+	svc := newProgramSvc(repo, &stubTermRepo{}, &stubAppRepo{})
+	if _, _, err := svc.ListByProject(context.Background(), "00000000-0000-0000-0000-000000000001", models.AdministeredProgramFilter{}); !errors.Is(err, repoErr) {
+		t.Errorf("got %v; want wrapped repo error", err)
+	}
+}
+
 // validEnrollment passes every CreateEnrollment check when no Project Service lookup is configured.
 func validEnrollment() models.ProgramEnrollmentInput {
 	projectUID := "00000000-0000-0000-0000-000000000001"
