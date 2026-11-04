@@ -413,34 +413,43 @@ func TestE2EMenteeJourney(t *testing.T) {
 	})
 }
 
-// The apply route takes mentee applications only: mentors request to join through the program's
-// members. Mentor applications imported from legacy can still be decided.
+// Mentors join and leave a program only through its members; applications are for mentees. The apply
+// route takes mentee applications only, and a mentor application imported from legacy is a fixed
+// record: no application route grants a mentor membership, or seems to revoke one while it stays.
 func TestE2EMentorApplication(t *testing.T) {
 	reset(t)
 	admin := signIn(t, "admin")
 	p := publishProgram(t, admin, "Mentor Application Program")
 	volunteer := signIn(t, "mentor-applicant")
+	mentor := signIn(t, "mentor")
 
 	volunteer.call(t, http.MethodPost, applicationsPath(p), map[string]any{"role": "mentor"}).expect(http.StatusBadRequest)
 
-	app := application{ID: "00000000-0000-4000-8000-0000000000a1"}
-	dbExec(t, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentor', 'pending')`, app.ID, p.TermID, volunteer.ID)
-	admin.mustJSON(t, http.MethodPatch, "/applications/"+app.ID+"/status", map[string]any{"status": "accepted", "attendance_type": "full_time"}, http.StatusOK, &app)
+	// A pending mentor application is neither accepted nor withdrawn, and grants nothing.
+	pendingID := "00000000-0000-4000-8000-0000000000a1"
+	dbExec(t, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentor', 'pending')`, pendingID, p.TermID, volunteer.ID)
+	res := admin.call(t, http.MethodPatch, "/applications/"+pendingID+"/status", map[string]any{"status": "accepted", "attendance_type": "full_time"}).expect(http.StatusConflict)
+	if !strings.Contains(res.errorMessage(), "members") {
+		t.Fatalf("got %q; want the admin pointed at the program's members", res.errorMessage())
+	}
+	volunteer.call(t, http.MethodPost, "/applications/"+pendingID+"/withdraw", nil).expect(http.StatusConflict)
+	if n := dbCount(t, "SELECT count(*) FROM program_members WHERE user_id = $1", volunteer.ID); n != 0 {
+		t.Fatalf("mentor applicant has %d memberships; want none", n)
+	}
 
-	var roster struct {
-		Data []member `json:"data"`
+	// An approved mentor's accepted application can be neither declined nor withdrawn: the mentor is
+	// removed through the program's members, so their access never outlives what the admin sees.
+	acceptedID := "00000000-0000-4000-8000-0000000000a2"
+	dbExec(t, `INSERT INTO program_members (id, program_id, user_id, member_type, status) VALUES ('00000000-0000-4000-8000-0000000000a3', $1, $2, 'mentor', 'approved')`, p.ID, mentor.ID)
+	dbExec(t, `INSERT INTO applications (id, program_term_id, user_id, role, status, attendance_type) VALUES ($1, $2, $3, 'mentor', 'accepted', 'full_time')`, acceptedID, p.TermID, mentor.ID)
+	admin.call(t, http.MethodPatch, "/applications/"+acceptedID+"/status", map[string]any{"status": "declined"}).expect(http.StatusConflict)
+	admin.call(t, http.MethodPost, "/applications/"+acceptedID+"/withdraw-for-mentee", nil).expect(http.StatusConflict)
+	if n := dbCount(t, "SELECT count(*) FROM applications WHERE role = 'mentor' AND ((id = $1 AND status = 'pending') OR (id = $2 AND status = 'accepted'))", pendingID, acceptedID); n != 2 {
+		t.Fatalf("%d of 2 mentor applications kept their status", n)
 	}
-	anonymous().mustJSON(t, http.MethodGet, "/programs/"+p.ID+"/members", nil, http.StatusOK, &roster)
-	if len(roster.Data) != 1 || roster.Data[0].UserID != volunteer.ID || roster.Data[0].Status != "approved" {
-		t.Fatalf("accepted mentor is not on the roster: %+v", roster)
-	}
-	awaitFGA(t, "lfx.fga-sync.member_put", func(m fgaMessage) bool {
-		return m.ObjectType == "mentorship_program" && m.Data.UID == p.ID && m.Data.Username == "mentor-applicant"
-	})
-	// Accepting a mentor application sends no mentee welcome.
 	awaitEmailsSent(t)
-	if n := len(e2e.fakes.emailsTo(volunteer.Email)); n != 0 {
-		t.Fatalf("mentor applicant got %d emails; want none", n)
+	if n := len(e2e.fakes.emailsTo(volunteer.Email)) + len(e2e.fakes.emailsTo(mentor.Email)); n != 0 {
+		t.Fatalf("mentors got %d emails; want none", n)
 	}
 }
 

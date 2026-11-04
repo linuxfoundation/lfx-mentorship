@@ -2020,7 +2020,7 @@ Admin sets it on acceptance. The application's `start_date_time` and
 
 #### `POST /v1/program-terms/{id}/applications/bulk-decline` 🔒
 
-Decline all `pending` applications for a term in one action.
+Decline all `pending` mentee applications for a term in one action.
 
 **Response** `200`
 ```json
@@ -2397,7 +2397,9 @@ pending ──► accepted ──► graduated
 | `accepted` | `declined` | Program Admin | |
 | `declined` | `pending` | Program Admin | Re-open a declined application; no email. See **Re-opening** below |
 | `withdrawn` | `pending` | Program Admin | Re-open a withdrawn application; no email. See **Re-opening** below. `409` while the applicant holds another active (not withdrawn) application in the term, even at the pending limit |
-| `graduated` | `accepted` | Program Admin | Undo a mentee's graduation; no email. Keeps the stored `attendance_type`, even an empty one imported from legacy; one sent with the request is ignored. `422` if the mentee holds another accepted mentorship or the term is no longer open; `409` for a mentor application |
+| `graduated` | `accepted` | Program Admin | Undo a mentee's graduation; no email. Keeps the stored `attendance_type`, even an empty one imported from legacy; one sent with the request is ignored. `422` if the mentee holds another accepted mentorship or the term is no longer open |
+
+**Mentor applications.** Applications are for mentees; mentors join and leave a program through its members (`/v1/programs/{id}/members`). A mentor application imported from legacy keeps its status: a status change, self-withdrawal or `withdraw-for-mentee` on one is `409`. It also takes no part in the term and program checks: bulk decline and closing a term decline only pending mentee applications, and only mentee applications keep a term from closing or a program from being hidden.
 
 **Re-opening** a declined or withdrawn application (`→ pending`) is checked like a new application:
 

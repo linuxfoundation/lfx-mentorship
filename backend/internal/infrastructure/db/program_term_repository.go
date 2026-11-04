@@ -422,14 +422,14 @@ func (r *ProgramTermRepository) CloseWithBulkDecline(ctx context.Context, id str
 	}
 
 	var accepted int
-	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM applications WHERE program_term_id = $1 AND status = 'accepted'`, id).Scan(&accepted); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM applications WHERE program_term_id = $1 AND role = 'mentee' AND status = 'accepted'`, id).Scan(&accepted); err != nil {
 		return nil, nil, fmt.Errorf("count accepted applications for close: %w", err)
 	}
 	if accepted > 0 {
 		return nil, nil, fmt.Errorf("%w: term has %d accepted application(s)", domain.ErrStateLocked, accepted)
 	}
 
-	rows, err := tx.Query(ctx, `UPDATE applications SET status = 'declined' WHERE program_term_id = $1 AND status = 'pending' RETURNING `+applicationCols, id)
+	rows, err := tx.Query(ctx, `UPDATE applications SET status = 'declined' WHERE program_term_id = $1 AND role = 'mentee' AND status = 'pending' RETURNING `+applicationCols, id)
 	if err != nil {
 		return nil, nil, fmt.Errorf("decline pending applications for close: %w", err)
 	}
