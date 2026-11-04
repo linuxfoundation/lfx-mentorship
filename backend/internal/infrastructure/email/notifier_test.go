@@ -770,9 +770,9 @@ func TestNotifyProgramSubmitted(t *testing.T) {
 	if review.Subject != "LFX Mentorship program submission is pending your review." {
 		t.Fatalf("review subject = %q", review.Subject)
 	}
-	reviewURL := testSelfServeURL + "/mentorship/program-review/p1?decision="
-	mustContain(t, "review text", review.Text, "Hi LF Mentorship team!", "submitted for review by Mo Mentor (mentor@linuxfoundation.org).", "View Submission: "+testPublicSiteURL+"/programs/p1\nApprove: "+reviewURL+"approve\nReject: "+reviewURL+"reject\n")
-	mustContain(t, "review html", review.HTML, `href="`+testPublicSiteURL+`/programs/p1"`, ">View Submission</a>", `href="`+reviewURL+`approve"`, ">Approve</a>", `href="`+reviewURL+`reject"`, ">Reject</a>", "Kernel &lt;Dev&gt;")
+	reviewURL := testSelfServeURL + "/mentorship/program-review/p1"
+	mustContain(t, "review text", review.Text, "Hi LF Mentorship team!", "submitted for review by Mo Mentor (mentor@linuxfoundation.org).", "View Submission: "+reviewURL+"\nApprove: "+reviewURL+"?decision=approve\nReject: "+reviewURL+"?decision=reject\n")
+	mustContain(t, "review html", review.HTML, `href="`+reviewURL+`"`, ">View Submission</a>", `href="`+reviewURL+`?decision=approve"`, ">Approve</a>", `href="`+reviewURL+`?decision=reject"`, ">Reject</a>", "Kernel &lt;Dev&gt;")
 }
 
 func TestNotifyProgramSubmitted_EveryReviewInboxGetsACopy(t *testing.T) {
