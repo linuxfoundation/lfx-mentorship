@@ -370,7 +370,7 @@ func (n *Notifier) NotifyProgramSubmitted(ctx context.Context, programID, submit
 		data := templateData{
 			RecipientName: reviewGreeting,
 			ProgramName:   program.Name,
-			ProgramURL:    n.pendingProgramURL(program.ID),
+			ProgramURL:    n.programReviewURL(program.ID, ""),
 			ApproveURL:    n.programReviewURL(program.ID, reviewDecisionApprove),
 			RejectURL:     n.programReviewURL(program.ID, reviewDecisionReject),
 		}
@@ -1117,12 +1117,6 @@ func (n *Notifier) programURL(program *models.Program) string {
 	return n.publicURL + "/programs/" + url.PathEscape(ref)
 }
 
-// pendingProgramURL is the public site's page for a program awaiting review. It links by ID: the
-// public site resolves only published programs' slugs, but reads any visible program by its ID.
-func (n *Notifier) pendingProgramURL(programID string) string {
-	return n.publicURL + "/programs/" + url.PathEscape(programID)
-}
-
 // selfServeLink is the Self Serve page at path.
 func (n *Notifier) selfServeLink(path string) string {
 	return n.selfServeURL + path
@@ -1133,9 +1127,13 @@ func (n *Notifier) adminProgramURL(programID string) string {
 	return n.selfServeLink(selfServeAdminProgramPath + url.PathEscape(programID))
 }
 
-// programReviewURL opens the LF staff review page for the program with decision preselected.
+// programReviewURL opens the LF staff review page for the program, with decision preselected
+// when it is non-empty.
 func (n *Notifier) programReviewURL(programID, decision string) string {
-	return n.selfServeLink(selfServeProgramReviewPath + url.PathEscape(programID) + "?decision=" + decision)
+	if decision != "" {
+		decision = "?decision=" + decision
+	}
+	return n.selfServeLink(selfServeProgramReviewPath + url.PathEscape(programID) + decision)
 }
 
 func deref(s *string) string {
