@@ -37,6 +37,10 @@ export interface ProgramCatalogItem {
   name: string;
   slug: string;
   status: string;
+  /** The owning LF project; upstream omits these when the program has none. */
+  project_uid?: string;
+  project_name?: string;
+  project_slug?: string;
   is_paid?: boolean;
   description?: string;
   logo_url?: string;
@@ -79,8 +83,6 @@ export interface ProgramCatalogListResponse {
   data: ProgramCatalogItem[];
   meta: { total: number; limit: number; offset: number };
 }
-
-const EMPTY_FOUNDATION = { id: '', name: '', slug: '' };
 
 function toDate(iso?: string): string {
   if (!iso) return '';
@@ -163,7 +165,11 @@ export function mapCatalogItemToProgram(item: ProgramCatalogItem): Program {
     logoUrl: item.logo_url,
     skills: item.skills ?? [],
     status: toProgramCardStatus(terms),
-    foundation: EMPTY_FOUNDATION,
+    foundation: {
+      id: item.project_uid ?? '',
+      slug: item.project_slug ?? '',
+      name: item.project_name?.trim() ?? '',
+    },
     terms,
     updatedAt: item.updated_on,
     repositoryUrl: item.repo_link,

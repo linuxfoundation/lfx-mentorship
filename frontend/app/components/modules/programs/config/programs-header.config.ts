@@ -37,5 +37,8 @@ export const PROGRAM_SORT_OPTIONS: ProgramSortOption[] = [
   { value: 'updated_newest', label: 'Updated (Newest First)' },
 ];
 
-export const PROGRAMS_HEADER_SUBTITLE =
-  'All programs across 42 foundations, including terms already under way.';
+/** The header subtitle; it names the foundation count once the platform summary has one. */
+export const PROGRAMS_HEADER_SUBTITLE = (foundationCount?: number): string =>
+  foundationCount
+    ? `All programs across ${foundationCount} foundations, including terms already under way.`
+    : 'All programs, including terms already under way.';

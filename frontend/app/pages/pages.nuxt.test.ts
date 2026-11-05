@@ -97,7 +97,7 @@ const mentorDetail: MentorDetail = {
   ],
 };
 
-const programs: ProgramsListResponse = { data: [program], total: 1, foundationCount: 0 };
+const programs: ProgramsListResponse = { data: [program], total: 1 };
 const mentees: MenteesListResponse = { data: [menteeDetail], total: 1 };
 const mentors: MentorsListResponse = { data: [mentorDetail], total: 1 };
 
@@ -143,6 +143,7 @@ describe('public pages', () => {
     const page = await render('/programs');
     await vi.waitFor(() => expect(page.text()).toContain('Cloud Native Mentorship'));
     expect(page.text()).toContain('Go');
+    await vi.waitFor(() => expect(page.text()).toContain('All programs across 5 foundations'));
   });
 
   it('renders the program enrollment landing page', async () => {

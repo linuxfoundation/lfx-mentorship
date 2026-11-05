@@ -24,6 +24,5 @@ export default defineEventHandler(async (event): Promise<ProgramsListResponse> =
   return {
     data: catalog.data.map(mapCatalogItemToProgram),
     total: catalog.meta.total,
-    foundationCount: 0,
   };
 });
