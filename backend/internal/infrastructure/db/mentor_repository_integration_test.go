@@ -127,6 +127,33 @@ func TestMentorRepositoryIntegration_ListMentoredByUserScopesToActivePublished(t
 	}
 }
 
+func TestMentorRepositoryIntegration_ProfileProgramsCarryProjectName(t *testing.T) {
+	pool := integrationPool(t)
+	seed := newMentoredSeed(t, pool)
+	seed.user("mentor")
+	seed.program("mine", "Mine", "published")
+	seed.member("mine", "mentor", "mentor", "approved")
+	if _, err := pool.Exec(context.Background(), `INSERT INTO programs (id, name, slug, status) VALUES ($1, 'Unlinked', 'unlinked', 'published')`, seed.id("unlinked")); err != nil {
+		t.Fatal(err)
+	}
+	seed.member("unlinked", "mentor", "mentor", "approved")
+
+	detail, err := NewMentorRepository(pool).GetByUserID(context.Background(), seed.id("mentor"))
+	if err != nil {
+		t.Fatalf("GetByUserID: %v", err)
+	}
+	if len(detail.Programs) != 2 {
+		t.Fatalf("programs = %+v; want both mentor programs", detail.Programs)
+	}
+	// Programs are ordered by name: Mine, then Unlinked.
+	if got := detail.Programs[0].ProjectName; got == nil || *got != "Mine Project" {
+		t.Errorf("Mine project_name = %v; want %q", got, "Mine Project")
+	}
+	if got := detail.Programs[1].ProjectName; got != nil {
+		t.Errorf("Unlinked project_name = %q; want none for a program with no project", *got)
+	}
+}
+
 // A program is completed once all its terms are closed and open otherwise, the
 // same grouping as admin_status, so the admin and mentor lists agree on it.
 func TestMentorRepositoryIntegration_ListMentoredByUserStatusAndOrder(t *testing.T) {

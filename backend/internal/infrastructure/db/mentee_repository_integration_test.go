@@ -44,6 +44,9 @@ func TestMenteeRepositoryIntegration_ProfileResolvesForApplicantsWithoutTheirSta
 	if len(page.Data) != 1 || page.Data[0].UserID != seed.id("accepted") || page.Meta.Total != 1 {
 		t.Fatalf("directory = %d mentees (total %d); want only the accepted mentee", len(page.Data), page.Meta.Total)
 	}
+	if card := page.Data[0].Program; card == nil || card.ProjectName == nil || *card.ProjectName != "Prog Project" {
+		t.Errorf("card program = %+v; want the program's project name", card)
+	}
 	summary, err := repo.Summary(ctx)
 	if err != nil {
 		t.Fatalf("Summary: %v", err)
@@ -107,6 +110,11 @@ func TestMenteeRepositoryIntegration_ProfileShowsOnlyAcceptedAndGraduatedProgram
 		t.Errorf("joined_at = %v; want the accepted application's %v, not the earlier declined one", detail.JoinedAt, acceptedOn)
 	}
 	if len(detail.Programs) != 1 || detail.Programs[0].ID != seed.id("accepted-prog") {
-		t.Errorf("programs = %+v; want only the accepted program", detail.Programs)
+		t.Fatalf("programs = %+v; want only the accepted program", detail.Programs)
+	}
+	for label, got := range map[string]*string{"header program": detail.Program.ProjectName, "programs[0]": detail.Programs[0].ProjectName} {
+		if got == nil || *got != "Accepted Prog Project" {
+			t.Errorf("%s project_name = %v; want the program's project name", label, got)
+		}
 	}
 }

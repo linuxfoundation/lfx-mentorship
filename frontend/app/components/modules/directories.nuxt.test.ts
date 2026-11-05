@@ -67,10 +67,10 @@ for (const { name, item } of directories) {
     if (mode === 'error' || (mode === 'fail-next' && offset > 0)) {
       throw createError({ statusCode: 500, message: `${name} backend down` });
     }
-    if (mode === 'empty') return { data: [], total: 0, foundationCount: 0 };
+    if (mode === 'empty') return { data: [], total: 0 };
     // Two items per page out of three, so the first page always leaves more to load.
     const items = offset === 0 ? [item(1), item(2)] : [item(3)];
-    return { data: items, total: 3, foundationCount: 0 };
+    return { data: items, total: 3 };
   });
 }
 

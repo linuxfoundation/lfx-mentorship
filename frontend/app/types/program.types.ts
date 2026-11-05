@@ -106,6 +106,4 @@ export interface ProgramsListResponse {
   data: Program[];
   /** Total matching programs after filters (used for pagination). */
   total: number;
-  /** Unique foundations in the catalog, used by the programs header summary. */
-  foundationCount: number;
 }

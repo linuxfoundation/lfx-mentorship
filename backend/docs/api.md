@@ -810,7 +810,8 @@ The response `status` is the stored application status — `accepted` or `gradua
         "id": "uuid",
         "name": "Kubernetes Contributors",
         "slug": "kubernetes-contributors",
-        "logo_url": "https://..."
+        "logo_url": "https://...",
+        "project_name": "Kubernetes"
       },
       "mentors": [
         {
@@ -827,7 +828,7 @@ The response `status` is the stored application status — `accepted` or `gradua
 }
 ```
 
-`meta.total` is the filtered count. Unfiltered header totals live on `GET /v1/mentees/summary`. Email is not included.
+`meta.total` is the filtered count. Unfiltered header totals live on `GET /v1/mentees/summary`. Email is not included. `program.project_name` is the name of the LF project that owns the program, omitted when the program has none; the mentee and mentor detail `programs` carry it the same way.
 
 ---
 
@@ -861,7 +862,7 @@ Unlike the directory, the profile also resolves for applicants, so Program Admin
   "skills": ["Go"],
   "status": "accepted",
   "joined_at": "2024-01-15T00:00:00Z",
-  "program": { "id": "uuid", "name": "Kubernetes Contributors", "slug": "kubernetes-contributors" },
+  "program": { "id": "uuid", "name": "Kubernetes Contributors", "slug": "kubernetes-contributors", "project_name": "Kubernetes" },
   "mentors": [],
   "github_url": "https://github.com/alex",
   "linkedin_url": "https://linkedin.com/in/alex",
@@ -872,6 +873,7 @@ Unlike the directory, the profile also resolves for applicants, so Program Admin
       "slug": "kubernetes-contributors",
       "description": "...",
       "logo_url": "https://...",
+      "project_name": "Kubernetes",
       "status": "accepted",
       "skills": ["Go", "Kubernetes"],
       "terms": [
@@ -965,6 +967,7 @@ Public mentor profile by **user ID**. Programs, mentees, and profile links are l
       "slug": "kubernetes-contributors",
       "description": "...",
       "logo_url": "https://...",
+      "project_name": "Kubernetes",
       "skills": ["Go", "Kubernetes"],
       "terms": [
         {
