@@ -15,7 +15,7 @@ describe('useSanitize', () => {
     const html =
       '<h2>Goals</h2><p><strong>Bold</strong> <em>it</em> <u>u</u> <s>s</s> <code>x</code></p>' +
       '<ul><li>one</li></ul><ol><li>two</li></ol><blockquote>q</blockquote><pre>code</pre>' +
-      '<p><a href="https://example.org" target="_blank" rel="noopener noreferrer">link</a><br>next</p>';
+      '<p><a href="https://example.org">link</a><br>next</p>';
     expect(renderDescription(html)).toBe(html);
   });
 
@@ -38,6 +38,11 @@ describe('useSanitize', () => {
       '<p>a</p>',
     ],
     ['a javascript: link', '<a href="javascript:alert(1)">a</a>', '<a>a</a>'],
+    [
+      'a link target and rel (reverse tabnabbing)',
+      '<a href="https://example.org" target="_blank" rel="opener">a</a>',
+      '<a href="https://example.org">a</a>',
+    ],
     ['data attributes', '<p data-x="1">a</p>', '<p>a</p>'],
     ['an iframe', '<iframe src="https://evil.example"></iframe><p>a</p>', '<p>a</p>'],
   ])('removes %s from HTML descriptions', (_name, raw, expected) => {

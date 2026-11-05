@@ -36,6 +36,8 @@ export const RICH_TEXT_SANITIZE_CONFIG = {
     'a',
     'span',
   ],
-  ALLOWED_ATTR: ['href', 'target', 'rel'],
+  // No `target` or `rel`: an author could set target="_blank" rel="opener" and hand the linked
+  // page window.opener. Links open in the same tab.
+  ALLOWED_ATTR: ['href'],
   ALLOW_DATA_ATTR: false,
 };
