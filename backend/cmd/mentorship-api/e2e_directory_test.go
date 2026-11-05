@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -238,7 +239,17 @@ func TestE2EApproverRoster(t *testing.T) {
 	candidate.call(t, http.MethodGet, path, nil).expect(http.StatusForbidden)
 	candidate.call(t, http.MethodPost, path, map[string]any{"user_id": manager.ID}).expect(http.StatusForbidden)
 	anonymous().call(t, http.MethodGet, path, nil).expect(http.StatusUnauthorized)
-	manager.call(t, http.MethodPost, path, map[string]any{"user_id": manager.ID}).expect(http.StatusForbidden)
+	// Postgres reads every one of these spellings as the manager's own UUID.
+	selfSpellings := []string{
+		manager.ID,
+		strings.ToUpper(manager.ID),
+		"{" + manager.ID + "}",
+		strings.ReplaceAll(manager.ID, "-", ""),
+	}
+	for _, self := range selfSpellings {
+		manager.call(t, http.MethodPost, path, map[string]any{"user_id": self}).expect(http.StatusForbidden)
+	}
+	manager.call(t, http.MethodPost, path, map[string]any{"user_id": "not-a-uuid"}).expect(http.StatusBadRequest)
 	manager.send(t, http.MethodPost, path, strings.NewReader("{"), "application/json", nil).expect(http.StatusBadRequest)
 
 	var added struct {
@@ -260,7 +271,10 @@ func TestE2EApproverRoster(t *testing.T) {
 	}
 	manager.call(t, http.MethodPost, path, map[string]any{"user_id": "00000000-0000-4000-8000-000000000000"}).expect(http.StatusUnprocessableEntity)
 
-	manager.call(t, http.MethodDelete, path+"/"+manager.ID, nil).expect(http.StatusForbidden)
+	for _, self := range selfSpellings {
+		manager.call(t, http.MethodDelete, path+"/"+url.PathEscape(self), nil).expect(http.StatusForbidden)
+	}
+	manager.call(t, http.MethodDelete, path+"/not-a-uuid", nil).expect(http.StatusBadRequest)
 	candidate.call(t, http.MethodDelete, path+"/"+candidate.ID, nil).expect(http.StatusForbidden)
 	manager.call(t, http.MethodDelete, path+"/"+candidate.ID, nil).expect(http.StatusNoContent)
 	manager.mustJSON(t, http.MethodGet, path, nil, http.StatusOK, &list)
