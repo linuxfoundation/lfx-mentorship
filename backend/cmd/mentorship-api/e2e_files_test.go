@@ -97,6 +97,8 @@ func TestE2EProgramLogoFiles(t *testing.T) {
 		if !bytes.Equal(res.Body, pngBytes(t)) || res.Header.Get("Content-Type") != "image/png" || res.Header.Get("X-Content-Type-Options") != "nosniff" {
 			t.Fatalf("download: %d bytes, headers %v", len(res.Body), res.Header)
 		}
+		// The program is still pending, so its logo is hidden from anonymous callers.
+		anonymous().call(t, http.MethodGet, logoPath+"/logo-download", nil).expect(http.StatusNotFound)
 		ranged := admin.send(t, http.MethodGet, logoPath+"/logo-download", nil, "", map[string]string{"Range": "bytes=0-7"}).expect(http.StatusPartialContent)
 		if len(ranged.Body) != 8 || ranged.Header.Get("Content-Range") == "" {
 			t.Fatalf("range: %d bytes, headers %v", len(ranged.Body), ranged.Header)
