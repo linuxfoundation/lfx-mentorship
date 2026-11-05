@@ -552,23 +552,54 @@ func TestProgramHandler_ResolveID_RejectedReturns404ToAnonymous(t *testing.T) {
 	}
 }
 
-func TestProgramHandler_GetCatalog_PendingReturnsOK(t *testing.T) {
-	h := handler.NewProgramHandler(&stubProgramSvc{
-		getCatalog: func(_ context.Context, id string) (*models.ProgramCatalogItem, error) {
-			return &models.ProgramCatalogItem{
-				Program: models.Program{ID: id, Name: "Pending Program", Status: models.ProgramStatusPending},
-				Skills:  []string{},
-				Terms:   []models.ProgramCatalogTerm{},
-				Mentors: []models.ProgramCatalogMentor{},
-			}, nil
-		},
-	})
-	r := httptest.NewRequest(http.MethodGet, "/v1/programs/pending-1/catalog", nil)
-	r = requestWithChiParam(r, "id", "pending-1")
-	w := httptest.NewRecorder()
-	h.GetCatalog(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("got %d; want 200", w.Code)
+func TestProgramHandler_GetCatalog_Pending(t *testing.T) {
+	owner := "owner"
+	gateway, err := auth.NewJWTAuthenticator(context.Background(), auth.JWTAuthConfig{DisabledMockLocalPrincipal: "approver", AllowMockPrincipalBypass: true}, nil)
+	if err != nil {
+		t.Fatalf("NewJWTAuthenticator: %v", err)
+	}
+	for _, tc := range []struct {
+		name      string
+		principal *models.Principal
+		viaGW     bool
+		want      int
+	}{
+		{name: "anonymous", want: http.StatusNotFound},
+		{name: "signed-in non-owner off the gateway", principal: &models.Principal{UserID: "someone", Username: "someone"}, want: http.StatusNotFound},
+		{name: "owner", principal: &models.Principal{UserID: "owner-user", Username: owner}, want: http.StatusOK},
+		{name: "signed-in caller Heimdall authorized", viaGW: true, want: http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			catalogRead := false
+			var serve http.Handler = http.HandlerFunc(handler.NewProgramHandler(&stubProgramSvc{
+				getBySlug: func(_ context.Context, slug string) (*models.Program, error) {
+					return &models.Program{ID: "pending-uuid", Slug: slug, Status: models.ProgramStatusPending, LFID: &owner}, nil
+				},
+				getCatalog: func(_ context.Context, id string) (*models.ProgramCatalogItem, error) {
+					catalogRead = true
+					if id != "pending-uuid" {
+						t.Errorf("catalog id = %q; want pending-uuid", id)
+					}
+					return &models.ProgramCatalogItem{Program: models.Program{ID: id, Status: models.ProgramStatusPending}}, nil
+				},
+			}).GetCatalog)
+			if tc.viaGW {
+				serve = gateway.GatewayMiddleware(serve)
+			}
+			r := httptest.NewRequest(http.MethodGet, "/v1/programs/my-pending/catalog", nil)
+			r = requestWithChiParam(r, "id", "my-pending")
+			if tc.principal != nil {
+				r = r.WithContext(auth.ContextWithPrincipal(r.Context(), tc.principal))
+			}
+			w := httptest.NewRecorder()
+			serve.ServeHTTP(w, r)
+			if w.Code != tc.want {
+				t.Fatalf("got %d; want %d", w.Code, tc.want)
+			}
+			if catalogRead != (tc.want == http.StatusOK) {
+				t.Fatalf("catalog read = %v; want %v", catalogRead, tc.want == http.StatusOK)
+			}
+		})
 	}
 }
 

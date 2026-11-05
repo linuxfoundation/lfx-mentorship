@@ -79,8 +79,10 @@ func TestE2EProgramLifecycle(t *testing.T) {
 		}
 	})
 
-	t.Run("a pending program is readable but not listed", func(t *testing.T) {
-		anonymous().call(t, http.MethodGet, "/programs/"+id, nil).expect(http.StatusOK)
+	t.Run("a pending program is not public", func(t *testing.T) {
+		anonymous().call(t, http.MethodGet, "/programs/"+id, nil).expect(http.StatusNotFound)
+		anonymous().call(t, http.MethodGet, "/programs/"+id+"/catalog", nil).expect(http.StatusNotFound)
+		admin.call(t, http.MethodGet, "/programs/"+id, nil).expect(http.StatusOK)
 		anonymous().call(t, http.MethodGet, "/programs/resolve/lifecycle-program", nil).expect(http.StatusNotFound)
 		var list programPage
 		anonymous().mustJSON(t, http.MethodGet, "/programs", nil, http.StatusOK, &list)
@@ -357,7 +359,7 @@ func TestE2EProgramUpdate(t *testing.T) {
 				Skill string `json:"skill"`
 			} `json:"data"`
 		}
-		anonymous().mustJSON(t, http.MethodGet, path+"/skills", nil, http.StatusOK, &skills)
+		admin.mustJSON(t, http.MethodGet, path+"/skills", nil, http.StatusOK, &skills)
 		if len(skills.Data) != 2 {
 			t.Fatalf("skills: %+v", skills)
 		}
@@ -375,7 +377,7 @@ func TestE2EProgramUpdate(t *testing.T) {
 				Name string `json:"name"`
 			} `json:"data"`
 		}
-		anonymous().mustJSON(t, http.MethodGet, path+"/terms?status=open", nil, http.StatusOK, &list)
+		admin.mustJSON(t, http.MethodGet, path+"/terms?status=open", nil, http.StatusOK, &list)
 		if len(list.Data) != 2 {
 			t.Fatalf("open terms: %+v", list)
 		}
@@ -463,7 +465,8 @@ func TestE2EProgramReadModels(t *testing.T) {
 		if item.ID != p.ID || item.Mentors == nil {
 			t.Fatalf("catalog item: %+v", item)
 		}
-		anonymous().call(t, http.MethodGet, "/programs/"+pending.ID+"/catalog", nil).expect(http.StatusOK)
+		anonymous().call(t, http.MethodGet, "/programs/"+pending.ID+"/catalog", nil).expect(http.StatusNotFound)
+		admin.call(t, http.MethodGet, "/programs/"+pending.ID+"/catalog", nil).expect(http.StatusOK)
 		anonymous().call(t, http.MethodGet, "/programs/00000000-0000-4000-8000-000000000000/catalog", nil).expect(http.StatusNotFound)
 
 		var header struct {

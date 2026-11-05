@@ -135,8 +135,7 @@ export function mapCatalogMentee(mentee: ProgramCatalogMentee): ProgramMentee {
   };
 }
 
-// A UUID is read as is: the resolver hides a pending program's ID, but the catalog reads serve a
-// pending program to anyone holding its ID, which the program review email links by.
+// A UUID is already the program's ID; only a slug needs resolving.
 async function resolveProgramUID(id: string): Promise<string> {
   if (isUUID(id)) return id;
   const config = useRuntimeConfig();
@@ -163,7 +162,7 @@ export function mapCatalogItemToProgram(item: ProgramCatalogItem): Program {
     description: item.description ?? '',
     logoUrl: item.logo_url,
     skills: item.skills ?? [],
-    status: item.status === 'pending' ? 'pending' : toProgramCardStatus(terms),
+    status: toProgramCardStatus(terms),
     foundation: EMPTY_FOUNDATION,
     terms,
     updatedAt: item.updated_on,

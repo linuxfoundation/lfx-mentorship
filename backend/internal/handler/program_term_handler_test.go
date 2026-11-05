@@ -15,6 +15,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/handler"
+	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/auth"
 )
 
 type stubProgramTermSvc struct {
@@ -209,9 +210,10 @@ func TestProgramTermHandler_GetApplyTarget_NoProjectOmitsProjectName(t *testing.
 // A pending program stays visible to its admin, but submit refuses an unpublished program, so the
 // apply page must not report it as accepting.
 func TestProgramTermHandler_GetApplyTarget_UnpublishedProgramNotAccepting(t *testing.T) {
+	owner := "owner"
 	pending := &stubProgramSvc{
 		getBySlug: func(_ context.Context, id string) (*models.Program, error) {
-			return &models.Program{ID: id, Name: "LFX Mentorship", Status: models.ProgramStatusPending}, nil
+			return &models.Program{ID: id, Name: "LFX Mentorship", Status: models.ProgramStatusPending, LFID: &owner}, nil
 		},
 	}
 	h := handler.NewProgramTermHandler(&stubProgramTermSvc{
@@ -220,8 +222,10 @@ func TestProgramTermHandler_GetApplyTarget_UnpublishedProgramNotAccepting(t *tes
 		},
 	}, pending)
 
+	r := applyTargetRequest()
+	r = r.WithContext(auth.ContextWithPrincipal(r.Context(), &models.Principal{UserID: "owner-user", Username: owner}))
 	w := httptest.NewRecorder()
-	h.GetApplyTarget(w, applyTargetRequest())
+	h.GetApplyTarget(w, r)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("got %d; want 200", w.Code)
