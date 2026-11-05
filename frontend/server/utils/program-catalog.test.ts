@@ -51,10 +51,6 @@ describe('mapCatalogItemToProgram', () => {
     });
   });
 
-  it('keeps a pending program pending whatever its terms say', () => {
-    expect(mapCatalogItemToProgram(item({ status: 'pending' })).status).toBe('pending');
-  });
-
   it('maps terms, trimming dates and normalising unknown statuses to open', () => {
     const program = mapCatalogItemToProgram(
       item({

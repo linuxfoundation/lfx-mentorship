@@ -2,8 +2,8 @@
 
 ## Status Mapping
 
-Program creation persists the canonical backend status `pending`. The BFF catalog
-mapping shows a `pending` program in its pending-review display state.
+Program creation persists the canonical backend status `pending`. The public site
+shows published programs only; approvers review a `pending` program in Self Serve.
 
 **Base URL**: `https://lfx-api.<environment>/mentorship/v1` through the Heimdall gateway.
 **Content-Type**: `application/json` for all request and response bodies  
@@ -743,7 +743,7 @@ LF project / foundation is not included yet — `programs.lfid` remains the owne
 
 #### `GET /v1/programs/{id}/catalog` 🔓
 
-Same catalog shape as `GET /v1/programs/catalog` for a single program (UUID or slug). Hidden programs follow the same FR-009 404 rule as `GET /v1/programs/{id}`.
+Same catalog shape as `GET /v1/programs/catalog` for a single program (UUID or slug). Serves `published` and `pending` programs only; any other status is `404`. A `pending` program follows the FR-009 rule of `GET /v1/programs/{id}`: `404` to anonymous callers, served to approvers previewing it in Self Serve.
 
 **Response** `200` → `<ProgramCatalogItem>`  
 **Errors** `404`
@@ -1032,9 +1032,7 @@ Aggregated marketing/landing counts plus a small graduated-mentee preview. All c
 
 Fetch a program by UUID or slug.
 
-> **FR-009**: If the program has `status = "hidden"`, the endpoint returns `404` for all callers whose `principal.Username` does not match `program.lfid` (the owner's LF ID). Unauthenticated callers always receive `404` for hidden programs.
->
-> **Known gap**: the visibility-gated routes are registered without auth middleware, so no principal is ever present on them and the owner exception is currently unreachable — hidden programs return `404` to everyone, owner included. Tracked separately.
+> **FR-009**: Only a `published` program is public. Any other status (`pending`, `hidden`, `rejected`, `archived`) returns `404` to anonymous callers. A signed-in caller has passed Heimdall's `viewer` check on the program — this is how an approver previews a `pending` program in Self Serve — and gets it, as does the owner (`principal.Username` matches `program.lfid`).
 
 **Response** `200` → `<Program>`  
 **Errors** `404`
@@ -2470,7 +2468,7 @@ incomplete ──► in_progress ──► submitted ──► complete
 | FR-003 | Max 4 open terms per program | `ProgramTermService.Create`, `.Update` |
 | FR-004 | Submission requires all required fields + ≥1 open term | `ProgramService.Update` |
 | FR-008 | Hide blocked while pending/accepted/graduated apps exist | `ProgramService.Update` |
-| FR-009 | Hidden programs return 404 to non-owners | `handler.resolveVisibleProgram`, used by `ProgramHandler.GetByID` and `ProgramMemberHandler.List` |
+| FR-009 | Unpublished programs return 404 to anonymous callers | `handler.resolveVisibleProgram`, used by `ProgramHandler.GetByID`, `ProgramHandler.GetCatalog` and the program sub-resources |
 | FR-013 | Close term blocked while accepted apps exist | `ProgramTermService.Update` |
 | FR-014 | Reopen term only if end_date in the future | `ProgramTermService.Update` |
 | FR-016 | Apply only when term is open AND within window | `ApplicationService.Create` |

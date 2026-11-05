@@ -135,15 +135,18 @@ type programLookup interface {
 
 // resolveVisibleProgram loads the program named by the {programID} path
 // parameter, or {id} on routes without one, which may be a UUID or a slug, and
-// enforces FR-009: a hidden program is a 404 for everyone but its owner. Every
-// public read of a program or of one of its sub-resources must go through
-// this, or a hidden program stays reachable to anyone holding its ID.
+// enforces FR-009: a program that is not published (pending review, hidden,
+// rejected, archived) is a 404 for anonymous callers. A signed-in caller passed
+// Heimdall's viewer check, which is how an approver previews a pending program
+// in Self Serve; off the gateway, only the owner gets through. Every public
+// read of a program or of one of its sub-resources must go through this, or an
+// unpublished program stays reachable to anyone holding its ID.
 func resolveVisibleProgram(w http.ResponseWriter, r *http.Request, svc programLookup) (*models.Program, bool) {
 	program, ok := lookupProgram(w, r, svc)
 	if !ok {
 		return nil, false
 	}
-	if program.Status != models.ProgramStatusPublished && program.Status != models.ProgramStatusPending {
+	if program.Status != models.ProgramStatusPublished {
 		principal := auth.PrincipalFromContext(r.Context())
 		if auth.IsGatewayPrincipal(r.Context()) && principal != nil && principal.UserID != "_anonymous" {
 			return program, true
@@ -314,10 +317,15 @@ func administeredProgramFilter(r *http.Request, limit, offset int) models.Admini
 	}
 }
 
-// GetCatalog handles GET /v1/programs/{id}/catalog.
+// GetCatalog handles GET /v1/programs/{id}/catalog. The FR-009 gate keeps a
+// pending program from anonymous callers; the service then serves only
+// published and pending programs.
 func (h *ProgramHandler) GetCatalog(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	item, err := h.svc.GetCatalog(r.Context(), id)
+	program, ok := resolveVisibleProgram(w, r, h.svc)
+	if !ok {
+		return
+	}
+	item, err := h.svc.GetCatalog(r.Context(), program.ID)
 	if err != nil {
 		Error(w, err)
 		return
