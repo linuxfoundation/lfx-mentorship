@@ -327,7 +327,6 @@ func TestManagementReadsRequireManagerAuthorization(t *testing.T) {
 	ruleset := string(contents)
 	for _, route := range []string{
 		"/mentorship/v1/programs/:id/management-summary",
-		"/mentorship/v1/programs/:id/member-management",
 		"/mentorship/v1/programs/:id/term-management",
 	} {
 		start := strings.Index(ruleset, route)
@@ -416,6 +415,33 @@ func TestProgramVisibilityRequiresProgramWriter(t *testing.T) {
 	}
 	if strings.Contains(block, "anonymous_authenticator") || strings.Contains(block, "allow_all") || strings.Contains(block, "mentorship_approver_team") {
 		t.Errorf("program-visibility rule must check only the program writer relation:\n%s", block)
+	}
+}
+
+// The member-management list carries every mentor row's email and LFID in any
+// status, invited and declined included, so it is checked on writer: manager
+// would also admit the program's mentors.
+func TestMemberManagementRequiresProgramWriter(t *testing.T) {
+	block := ruleBlock(t, "program-member-management")
+	if strings.Count(block, "- path:") != 1 || !strings.Contains(block, "- path: /mentorship/v1/programs/:id/member-management\n") {
+		t.Errorf("member-management rule must cover only its route:\n%s", block)
+	}
+	if !strings.Contains(block, "methods: [GET]\n") {
+		t.Errorf("member-management rule must allow only GET:\n%s", block)
+	}
+	expected := `      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_program:{{ "{{- .Request.URL.Captures.id -}}" }}'
+              relation: writer
+        - finalizer: create_jwt`
+	if !strings.Contains(block, expected) {
+		t.Errorf("member-management rule lacks oidc -> openfga writer -> create_jwt sequence:\n%s", block)
+	}
+	if strings.Contains(block, "anonymous_authenticator") || strings.Contains(block, "allow_all") {
+		t.Errorf("member-management rule must not admit anonymous or unchecked callers:\n%s", block)
 	}
 }
 
