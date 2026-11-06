@@ -1,1 +1,9 @@
-* @linuxfoundation/lfx-mentorship
+# Copyright The Linux Foundation and each contributor to LFX.
+# SPDX-License-Identifier: MIT
+
+*                 @linuxfoundation/lfx-mentorship
+
+# ARCHITECTURE.md is the cross-component contract and is owned by the
+# architecture review team. This overrides the * rule above. The working
+# documents under docs/rewrite/ stay with the mentorship team.
+/ARCHITECTURE.md  @linuxfoundation/lfx-architecture-team
