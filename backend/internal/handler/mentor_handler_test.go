@@ -171,7 +171,7 @@ func TestMentorHandler_ListMine_ScopesToPrincipal(t *testing.T) {
 			return []*models.MentoredProgram{{
 				ID:     "p1",
 				Name:   "GridFlow",
-				Status: models.MentoredProgramStatusOpen,
+				Status: models.MentoredProgramStatusAccepting,
 				Stats:  models.MentoredProgramStats{Mentees: 3, Applicants: 12, TasksToReview: 2},
 			}}, &models.PaginationMeta{Total: 1, Limit: 5, Offset: 10}, nil
 		},
@@ -201,7 +201,7 @@ func TestMentorHandler_ListMine_ScopesToPrincipal(t *testing.T) {
 		t.Fatalf("unexpected body: %+v", body)
 	}
 	got := body.Data[0]
-	if got.Status != models.MentoredProgramStatusOpen ||
+	if got.Status != models.MentoredProgramStatusAccepting ||
 		got.Stats != (models.MentoredProgramStats{Mentees: 3, Applicants: 12, TasksToReview: 2}) {
 		t.Errorf("row = %+v; want an open program with the service's stats", got)
 	}

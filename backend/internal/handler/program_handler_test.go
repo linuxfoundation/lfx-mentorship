@@ -776,12 +776,12 @@ func TestProgramHandler_ListMine_ScopesToPrincipal(t *testing.T) {
 			return []*models.AdministeredProgram{{
 				ID:          "p1",
 				Name:        "GridFlow",
-				AdminStatus: models.AdministeredProgramStatusOpen,
+				AdminStatus: models.AdministeredProgramStatusAccepting,
 				Stats:       models.ProgramHeaderStats{Mentors: 2, Mentees: 3, Graduated: 6},
 			}}, &models.PaginationMeta{Total: 1, Limit: 5, Offset: 10}, nil
 		},
 	})
-	r := httptest.NewRequest(http.MethodGet, "/v1/me/programs?search=grid&status=open&limit=5&offset=10", nil)
+	r := httptest.NewRequest(http.MethodGet, "/v1/me/programs?search=grid&status=accepting&limit=5&offset=10", nil)
 	r = requestWithPrincipal(r, "caller-user")
 	w := httptest.NewRecorder()
 	h.ListMine(w, r)
@@ -792,7 +792,7 @@ func TestProgramHandler_ListMine_ScopesToPrincipal(t *testing.T) {
 	if gotUser != "caller-user" {
 		t.Errorf("user = %q; want caller-user", gotUser)
 	}
-	want := models.AdministeredProgramFilter{Limit: 5, Offset: 10, Search: "grid", Status: models.AdministeredProgramStatusOpen}
+	want := models.AdministeredProgramFilter{Limit: 5, Offset: 10, Search: "grid", Status: models.AdministeredProgramStatusAccepting}
 	if gotFilter != want {
 		t.Errorf("filter = %+v; want %+v", gotFilter, want)
 	}

@@ -875,12 +875,14 @@ func TestProgramListAdministeredIntegration_GroupsStatusAndScopesToActiveAdmin(t
 		id     string
 		status models.AdministeredProgramStatus
 	}
-	// Ordered by admin_status (open, pending_review, completed, hidden, then
-	// the rest), then by name.
+	// Ordered by admin_status (accepting, in_progress, upcoming, pending_review,
+	// completed, hidden, then the rest), then by name. The fixture program's open
+	// term is taking applications; a program with no terms, or only deleted ones,
+	// is upcoming.
 	want := []row{
-		{fixture.ProgramID, models.AdministeredProgramStatusOpen},
-		{noTermsID, models.AdministeredProgramStatusOpen},
-		{deletedTermID, models.AdministeredProgramStatusOpen},
+		{fixture.ProgramID, models.AdministeredProgramStatusAccepting},
+		{noTermsID, models.AdministeredProgramStatusUpcoming},
+		{deletedTermID, models.AdministeredProgramStatusUpcoming},
 		{pendingID, models.AdministeredProgramStatusPendingReview},
 		{completedID, models.AdministeredProgramStatusCompleted},
 		{hiddenID, models.AdministeredProgramStatusHidden},
@@ -918,7 +920,8 @@ func TestProgramListAdministeredIntegration_GroupsStatusAndScopesToActiveAdmin(t
 
 	for status, wantIDs := range map[models.AdministeredProgramStatus][]string{
 		models.AdministeredProgramStatusCompleted: {completedID},
-		models.AdministeredProgramStatusOpen:      {fixture.ProgramID, noTermsID, deletedTermID},
+		models.AdministeredProgramStatusAccepting: {fixture.ProgramID},
+		models.AdministeredProgramStatusUpcoming:  {noTermsID, deletedTermID},
 		models.AdministeredProgramStatusHidden:    {hiddenID, archivedID},
 	} {
 		got, meta, err := repo.ListAdministeredByUser(ctx, fixture.UserID, models.AdministeredProgramFilter{Status: status})
@@ -986,7 +989,7 @@ func TestProgramListAdministeredByProjectsIntegration_ScopesToProjectsInEverySta
 		status models.AdministeredProgramStatus
 	}
 	want := []row{
-		{fixture.ProgramID, models.AdministeredProgramStatusOpen},
+		{fixture.ProgramID, models.AdministeredProgramStatusAccepting},
 		{pendingID, models.AdministeredProgramStatusPendingReview},
 		{hiddenID, models.AdministeredProgramStatusHidden},
 	}

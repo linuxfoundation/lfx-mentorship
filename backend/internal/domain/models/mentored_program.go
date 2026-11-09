@@ -3,20 +3,22 @@
 
 package models
 
-// MentoredProgramStatus groups a mentor's program by its terms, as
-// AdministeredProgramStatus does for a published program: open while it has an
-// open term or no terms yet, completed once all its terms are closed.
+// MentoredProgramStatus groups a mentor's program by its terms with the same
+// rule and values AdministeredProgramStatus uses for a published program.
 type MentoredProgramStatus string
 
 const (
-	MentoredProgramStatusOpen      MentoredProgramStatus = "open"
-	MentoredProgramStatusCompleted MentoredProgramStatus = "completed"
+	MentoredProgramStatusAccepting  MentoredProgramStatus = "accepting"
+	MentoredProgramStatusInProgress MentoredProgramStatus = "in_progress"
+	MentoredProgramStatusUpcoming   MentoredProgramStatus = "upcoming"
+	MentoredProgramStatusCompleted  MentoredProgramStatus = "completed"
 )
 
 // IsValid reports whether the status value is one of the allowed enum members.
 func (s MentoredProgramStatus) IsValid() bool {
 	switch s {
-	case MentoredProgramStatusOpen, MentoredProgramStatusCompleted:
+	case MentoredProgramStatusAccepting, MentoredProgramStatusInProgress, MentoredProgramStatusUpcoming,
+		MentoredProgramStatusCompleted:
 		return true
 	}
 	return false

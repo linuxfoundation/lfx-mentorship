@@ -261,15 +261,12 @@ func (r *MentorRepository) GetByUserID(ctx context.Context, userID string) (*mod
 }
 
 // mentoredProgramsFrom selects the published programs $1 is an active mentor
-// of, with the status the admin list also shows for them: completed once all
-// the program's terms are closed, otherwise open.
+// of, with the status the admin list also shows for them
+// (sqlPublishedProgramTermStatus).
 const mentoredProgramsFrom = `
 	FROM (
 		SELECT programs.id, programs.slug, programs.name, programs.lf_project_name, programs.logo_url,
-			CASE WHEN ` + sqlProgramTermsAllClosed + `
-				THEN '` + string(models.MentoredProgramStatusCompleted) + `'
-				ELSE '` + string(models.MentoredProgramStatusOpen) + `'
-			END AS status
+			` + sqlPublishedProgramTermStatus + ` AS status
 		FROM programs
 		JOIN program_members pm ON pm.program_id = programs.id
 		WHERE pm.user_id = $1 AND pm.member_type = 'mentor' AND pm.status = 'approved'
