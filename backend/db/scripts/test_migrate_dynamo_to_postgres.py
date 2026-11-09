@@ -11,6 +11,7 @@ import json
 import os
 import sys
 import types
+from decimal import Decimal
 
 import psycopg2
 import pytest
@@ -156,6 +157,24 @@ def test_task_templates_reduce_to_prerequisite_shape():
         {"name": "Code of Conduct", "description": None, "submitFile": None, "dueDate": None, "custom": False},
         {"name": "Uncategorised", "description": None, "submitFile": None, "dueDate": None, "custom": False},
     ]
+
+
+LITERAL_NUL_ESCAPE = "x\\u0000\"y"  # a backslash, the text u0000, then a quote: no real NUL
+
+
+def test_to_jsonb_preserves_literal_nul_escape_text():
+    value = {"bio": LITERAL_NUL_ESCAPE, "skills": [LITERAL_NUL_ESCAPE + "\\"]}
+    assert json.loads(m._to_jsonb(value)) == value
+
+
+def test_to_jsonb_strips_real_nul_from_keys_and_nested_values():
+    encoded = m._to_jsonb({"a\x00b": ["x\x00y", {"k": "z\x00", "n": Decimal("1.5")}], "t": ("\x00",)})
+    assert "\\u0000" not in encoded
+    assert json.loads(encoded) == {"ab": ["xy", {"k": "z", "n": 1.5}], "t": [""]}
+
+
+def test_to_jsonb_null_stays_null():
+    assert m._to_jsonb(None) is None
 
 
 @pytest.mark.parametrize("legacy", [None, [], {}, [{"name": "Weekly report", "category": "non_prerequisite"}], [{"name": "Demo", "category": "nonPrerequisite"}], [{"name": " ", "category": "prerequisite"}]])
@@ -315,6 +334,11 @@ def cursor():
     finally:
         conn.rollback()
         conn.close()
+
+
+def test_postgres_accepts_to_jsonb_output(cursor):
+    cursor.execute("SELECT %s::jsonb", (m._to_jsonb({"bio": LITERAL_NUL_ESCAPE, "nul": "a\x00b"}),))
+    assert cursor.fetchone()[0] == {"bio": LITERAL_NUL_ESCAPE, "nul": "ab"}
 
 
 def upsert(cur, resolved, **source):
