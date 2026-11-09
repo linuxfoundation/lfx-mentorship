@@ -129,8 +129,9 @@ Mentorship sits **behind the LFX v2 API Gateway (Heimdall), authorizing against 
 Consequences:
 
 - **Applications are their own FGA type.** Not an attribute of a program.
-- **LF staff act through the project `writer` relation**, which is also the population that grants
-  roles to others; there is no mentorship-specific global admin role.
+- **LF staff act through the project `writer_guard`** (project writers plus the platform
+  `global_writer` team, which project-service grants on every project); that population also grants
+  roles to others, and there is no mentorship-specific global admin role.
 - **Program approval is a global team membership check** on the decision route: approvers are one
   platform-wide population, so the route checks `member` on a team object rather than a relation on
   `project`.
@@ -164,8 +165,8 @@ rather than schema:
   `member` on the static object `mentorship_approver_team:global`. Folding it into `writer` would let
   every program admin approve their own program, so `PATCH /programs/{uid}` must reject a `status`
   field rather than silently ignoring it.
-- **Project `writer` reaches everything by inheritance**, three levels down to tasks; this is how LF
-  staff act on any program (§3.1).
+- **Project `writer_guard` reaches everything by inheritance**, three levels down to tasks; this is
+  how LF staff act on every program whose project carries the `global_writer` grant (§3.1).
 - **One service owns all tuples on an FGA object.** `project#mentorship_program_admin` is owned end
   to end by [lfx-v2-project-service](https://github.com/linuxfoundation/lfx-v2-project-service) —
   storage, the management API, and emission in its full-state `update_access`. Mentorship only
@@ -321,5 +322,5 @@ Listed so that nobody builds against them.
 
 | Decision | What is open |
 |---|---|
-| **`/me` lists of programs and applications** | `/v1/me/programs`, `/v1/me/mentor-programs` and `/v1/me/applications` are still served by this service (§3.2). The platform pieces that replace them exist: `/my-grants` returns the caller's direct grants with their relation, Query Service lists the objects and counts them with `group_by`, and the status grouping derives from the term dates in the document. What remains is moving Self Serve onto them; until then the routes stay `allow_all` and `/me`-bound (§3.3) |
+| **`/me` lists of programs and applications** | `/v1/me/programs`, `/v1/me/mentor-programs` and `/v1/me/applications` are still served by this service (§3.2). The platform pieces that replace them exist: `/my-grants` returns the caller's direct grants with their relation, and Query Service lists the objects and counts them with `group_by`. On our side the program index document must first carry the term dates and the per-program counts these lists show (today it carries only mentor, mentee and graduate totals); then Self Serve moves onto them. Until then the routes stay `allow_all` and `/me`-bound (§3.3) |
 | **Approver-roster administration** | Who administers the approver population and where. The platform pattern is a `team:` object whose membership LFX Product Support manages in the back-office tooling, with no service API; adopting it would replace `mentorship_approver_team:global` and this service's roster routes, which stay off the gateway until this is decided |
