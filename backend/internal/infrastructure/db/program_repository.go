@@ -203,27 +203,54 @@ func (r *ProgramRepository) GetHeaderProjection(ctx context.Context, programID s
 const sqlUnreviewedProgramStatuses = `('` + string(models.ProgramStatusPending) + `')`
 
 // sqlProgramTermsAllClosed is true for a programs row that has a closed term
-// and no open one; deleted terms are ignored. A published program in that state
-// is completed on the admin and mentor programs lists, and otherwise open.
+// and no open one; deleted terms are ignored.
 const sqlProgramTermsAllClosed = `(NOT EXISTS (SELECT 1 FROM program_terms pt WHERE pt.program_id = programs.id AND pt.status = 'open')
 	AND EXISTS (SELECT 1 FROM program_terms pt WHERE pt.program_id = programs.id AND pt.status = 'closed'))`
 
+// sqlHasTermInProgress is true for a programs row with an open term that has
+// started and not yet ended.
+const sqlHasTermInProgress = `EXISTS (
+	SELECT 1 FROM program_terms pt
+	WHERE pt.program_id = programs.id
+	  AND pt.status = 'open'
+	  AND pt.start_date_time <= NOW() AND NOW() <= pt.end_date_time
+)`
+
+// sqlPublishedProgramTermStatus is the status of a published programs row on
+// the admin and mentor programs lists, from its terms; deleted terms are
+// ignored. The first match wins:
+//   - completed: a closed term and no open one
+//   - accepting: an open term inside its application window
+//   - in_progress: an open term inside its term window
+//   - upcoming: an open term whose application window has not opened, or no terms yet
+//   - in_progress: any other open term, as the public catalog labels it
+const sqlPublishedProgramTermStatus = `CASE
+	WHEN ` + sqlProgramTermsAllClosed + ` THEN '` + string(models.AdministeredProgramStatusCompleted) + `'
+	WHEN ` + sqlHasAcceptingTerm + ` THEN '` + string(models.AdministeredProgramStatusAccepting) + `'
+	WHEN ` + sqlHasTermInProgress + ` THEN '` + string(models.AdministeredProgramStatusInProgress) + `'
+	WHEN ` + sqlHasComingSoonTerm + ` OR NOT ` + sqlHasOpenTerm + ` THEN '` + string(models.AdministeredProgramStatusUpcoming) + `'
+	ELSE '` + string(models.AdministeredProgramStatusInProgress) + `'
+END`
+
 // programListOrder orders the rows of alias on the admin and mentor programs
-// lists by their statusColumn (open, pending_review, completed, hidden, then
-// the rest), then by name, then by id. Mentor rows are only open or completed,
-// which share their values with AdministeredProgramStatus.
+// lists by their statusColumn (accepting, in_progress, upcoming,
+// pending_review, completed, hidden, then the rest), then by name, then by id.
+// Mentor rows take only the published values, which MentoredProgramStatus
+// shares with AdministeredProgramStatus.
 func programListOrder(alias, statusColumn string) string {
 	return ` ORDER BY CASE ` + alias + `.` + statusColumn + `
-		WHEN '` + string(models.AdministeredProgramStatusOpen) + `' THEN 1
-		WHEN '` + string(models.AdministeredProgramStatusPendingReview) + `' THEN 2
-		WHEN '` + string(models.AdministeredProgramStatusCompleted) + `' THEN 3
-		WHEN '` + string(models.AdministeredProgramStatusHidden) + `' THEN 4
-		ELSE 5 END, LOWER(` + alias + `.name), ` + alias + `.id`
+		WHEN '` + string(models.AdministeredProgramStatusAccepting) + `' THEN 1
+		WHEN '` + string(models.AdministeredProgramStatusInProgress) + `' THEN 2
+		WHEN '` + string(models.AdministeredProgramStatusUpcoming) + `' THEN 3
+		WHEN '` + string(models.AdministeredProgramStatusPendingReview) + `' THEN 4
+		WHEN '` + string(models.AdministeredProgramStatusCompleted) + `' THEN 5
+		WHEN '` + string(models.AdministeredProgramStatusHidden) + `' THEN 6
+		ELSE 7 END, LOWER(` + alias + `.name), ` + alias + `.id`
 }
 
 // administeredProgramsFrom selects the programs matched by scope, with the
-// admin status. scope joins or filters programs on $1. A published program is
-// completed once all its terms are closed; with no terms at all it is still open.
+// admin status. scope joins or filters programs on $1. A published program
+// takes sqlPublishedProgramTermStatus.
 func administeredProgramsFrom(scope string) string {
 	return `
 	FROM (
@@ -231,8 +258,7 @@ func administeredProgramsFrom(scope string) string {
 			programs.logo_url, programs.status, programs.created_on, programs.updated_on,
 			CASE
 				WHEN programs.status IN ` + sqlUnreviewedProgramStatuses + ` THEN 'pending_review'
-				WHEN programs.status = 'published' AND ` + sqlProgramTermsAllClosed + ` THEN 'completed'
-				WHEN programs.status = 'published' THEN 'open'
+				WHEN programs.status = 'published' THEN ` + sqlPublishedProgramTermStatus + `
 				WHEN programs.status = 'rejected' THEN 'rejected'
 				ELSE 'hidden' -- archived | hidden
 			END AS admin_status

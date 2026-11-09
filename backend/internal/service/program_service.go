@@ -439,7 +439,7 @@ func isBelowProject(uid, rootUID string, parents map[string]string) bool {
 // search of an admin programs list filter.
 func validateAdministeredProgramFilter(filter models.AdministeredProgramFilter) (models.AdministeredProgramFilter, error) {
 	if filter.Status != "" && !filter.Status.IsValid() {
-		return filter, fmt.Errorf("%w: status must be open, pending_review, completed, rejected, or hidden", domain.ErrInvalidInput)
+		return filter, fmt.Errorf("%w: status must be accepting, in_progress, upcoming, pending_review, completed, rejected, or hidden", domain.ErrInvalidInput)
 	}
 	var err error
 	filter.Search, err = normalizeSearch(filter.Search)

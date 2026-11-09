@@ -206,7 +206,7 @@ func TestE2EProjectPrograms(t *testing.T) {
 	var list programPage
 	projectAdmin.mustJSON(t, http.MethodGet, "/projects/"+uid+"/programs", nil, http.StatusOK, &list)
 	if list.Meta.Total != 2 || len(list.Data) != 2 ||
-		list.Data[0].ID != published.ID || list.Data[0].AdminStatus != "open" ||
+		list.Data[0].ID != published.ID || list.Data[0].AdminStatus != "accepting" ||
 		list.Data[1].ID != pending.ID || list.Data[1].AdminStatus != "pending_review" {
 		t.Fatalf("project programs: %+v", list)
 	}
@@ -520,7 +520,7 @@ func TestE2EProgramReadModels(t *testing.T) {
 	})
 
 	t.Run("my programs filters", func(t *testing.T) {
-		for status, want := range map[string]int{"": 2, "open": 1, "pending_review": 1, "completed": 0} {
+		for status, want := range map[string]int{"": 2, "accepting": 1, "pending_review": 1, "completed": 0} {
 			var mine programPage
 			admin.mustJSON(t, http.MethodGet, "/me/programs?status="+status, nil, http.StatusOK, &mine)
 			if len(mine.Data) != want {
@@ -528,6 +528,8 @@ func TestE2EProgramReadModels(t *testing.T) {
 			}
 		}
 		admin.call(t, http.MethodGet, "/me/programs?status=bogus", nil).expect(http.StatusBadRequest)
+		// open was split into accepting, in_progress and upcoming.
+		admin.call(t, http.MethodGet, "/me/programs?status=open", nil).expect(http.StatusBadRequest)
 		other := signIn(t, "other")
 		var mine programPage
 		other.mustJSON(t, http.MethodGet, "/me/programs", nil, http.StatusOK, &mine)

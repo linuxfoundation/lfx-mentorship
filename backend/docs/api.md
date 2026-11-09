@@ -1651,28 +1651,38 @@ matches `GET /v1/programs/{id}/header`.
   "project_name": "LF Energy",
   "logo_url":     "https://...",
   "status":       "published",
-  "admin_status": "open",
+  "admin_status": "accepting",
   "stats":        { "mentors": 2, "mentees": 3, "graduated": 6 },
   "created_on":   "2026-01-01T00:00:00Z",
   "updated_on":   "2026-01-01T00:00:00Z"
 }
 ```
 
-`admin_status` groups `status` with the program's terms:
+`admin_status` groups `status` with the program's terms, ignoring deleted
+terms:
 
 | `admin_status` | When |
 |---|---|
 | `pending_review` | `status` is `pending` |
-| `open` | `status` is `published` and the program has an open term, or no terms yet |
-| `completed` | `status` is `published` and every term is closed (deleted terms are ignored) |
+| `completed` | `status` is `published`, the program has a closed term, and no term is open |
+| `accepting` | `status` is `published` and an open term is inside its application window |
+| `in_progress` | `status` is `published`, no open term is taking applications, and an open term is inside its term window |
+| `upcoming` | `status` is `published`, no open term is taking applications or running, and either an open term's application window has not opened yet or the program has no terms |
+| `in_progress` | `status` is `published` and none of the above matches: an open term whose applications have closed but which has not started, which has ended without being closed, or which has no dates. The public catalog labels these terms "In Progress" too |
 | `rejected` | `status` is `rejected` |
 | `hidden` | `status` is `archived` or `hidden` |
+
+The rows for a published program are checked in order, and the first match
+wins. A program with one term taking applications and another already running
+is `accepting`. The application window is compared by UTC calendar day, with
+both days included, as it is for applying. The term window compares
+`start_date_time` and `end_date_time` with the current time.
 
 #### `GET /v1/me/programs` 🔒
 
 Lists the programs the caller is an active `program_admin` of, ordered by
-`admin_status` (`open`, `pending_review`, `completed`, `hidden`, then
-`rejected`), then by name. The user is always the principal. The gateway requires only a signed-in user
+`admin_status` (`accepting`, `in_progress`, `upcoming`, `pending_review`,
+`completed`, `hidden`, then `rejected`), then by name. The user is always the principal. The gateway requires only a signed-in user
 (`oidc`); see the [route matrix](../../docs/rewrite/06-route-matrix.md) for why
 this is not yet a Query Service collection.
 
@@ -1681,7 +1691,7 @@ this is not yet a Query Service collection.
 | Parameter | Values | Description |
 |---|---|---|
 | `search` | — | Case-insensitive match on program or project name |
-| `status` | `open\|pending_review\|completed\|rejected\|hidden` | Filter by `admin_status` |
+| `status` | `accepting\|in_progress\|upcoming\|pending_review\|completed\|rejected\|hidden` | Filter by `admin_status` |
 | `limit` / `offset` | — | Pagination (default 20, max 100) |
 
 **Response** `200`
@@ -1742,14 +1752,14 @@ are omitted when absent.
   "name":         "Example Program",
   "project_name": "Example Project",
   "logo_url":     "https://...",
-  "status":       "open",
+  "status":       "accepting",
   "stats":        { "mentees": 3, "applicants": 12, "tasks_to_review": 2 }
 }
 ```
 
-`status` uses the same rule as the `open` and `completed` values of
-[`admin_status`](#administeredprogram-object): `completed` once every term is
-closed (deleted terms are ignored), otherwise `open`.
+`status` is the [`admin_status`](#administeredprogram-object) of a published
+program: `accepting`, `in_progress`, `upcoming`, or `completed`, with the same
+rule.
 
 `stats` counts the program's `open` terms only; closed and deleted terms are
 not counted, so a `completed` program has zero `stats`:
@@ -1761,7 +1771,7 @@ not counted, so a `completed` program has zero `stats`:
 #### `GET /v1/me/mentor-programs` 🔒
 
 Lists the `published` programs the caller is an `approved` mentor of, ordered by
-`status` (`open`, then `completed`), then by name. The user
+`status` (`accepting`, `in_progress`, `upcoming`, then `completed`), then by name. The user
 is always the principal. The gateway requires only a signed-in user (`oidc`);
 see the [route matrix](../../docs/rewrite/06-route-matrix.md) for why this is
 not a Query Service collection. A caller who mentors no programs gets `200`
