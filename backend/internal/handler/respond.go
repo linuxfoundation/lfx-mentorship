@@ -103,10 +103,39 @@ func mapError(err error) (int, string) {
 // Error writes a JSON error response derived from a domain error.
 func Error(w http.ResponseWriter, err error) {
 	status, msg := mapError(err)
-	if status == http.StatusInternalServerError {
+	switch status {
+	case http.StatusInternalServerError:
 		slog.Error("internal error", "error", err)
+	case http.StatusServiceUnavailable:
+		slog.Error("upstream unavailable", "error", err)
+	case http.StatusConflict, http.StatusUnprocessableEntity:
+		slog.Warn("request rejected", "status", status, "reason", rejectionReason(err))
 	}
 	JSON(w, status, errorBody{Error: msg})
+}
+
+// rejectionSentinels are the errors a 409 or 422 maps from, most specific first.
+var rejectionSentinels = []error{
+	domain.ErrEmailInUse,
+	domain.ErrInvalidStateTransition,
+	domain.ErrStateLocked,
+	domain.ErrIneligible,
+	domain.ErrConflict,
+}
+
+// rejectionReason names a rejection by its sentinel or SQLSTATE only: the wrapped message can
+// carry an LFID or an email address, which must not reach the logs.
+func rejectionReason(err error) string {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return "sqlstate " + pgErr.Code
+	}
+	for _, sentinel := range rejectionSentinels {
+		if errors.Is(err, sentinel) {
+			return sentinel.Error()
+		}
+	}
+	return "unknown"
 }
 
 // newInvalidInput is a convenience wrapper for creating ErrInvalidInput errors.
