@@ -28,6 +28,7 @@ const multipartOverheadBytes = 1 << 20
 const taskFileFormField = "file"
 
 type fileService interface {
+	AuthorizeProgramLogoUpload(ctx context.Context, programID string) error
 	UploadProgramLogo(ctx context.Context, programID string, data []byte) (*models.UploadedFile, error)
 	DeleteProgramLogo(ctx context.Context, programID string) error
 	DownloadProgramLogo(ctx context.Context, program *models.Program, byteRange string) (*domain.StoredObject, error)
@@ -53,11 +54,17 @@ func (h *FileHandler) UploadProgramLogo(w http.ResponseWriter, r *http.Request) 
 		Error(w, domain.ErrUnauthorized)
 		return
 	}
+	programID := chi.URLParam(r, "id")
+	// The gateway does not authorize this route, so no body is read for a caller who may not write.
+	if err := h.svc.AuthorizeProgramLogoUpload(r.Context(), programID); err != nil {
+		Error(w, err)
+		return
+	}
 	data, ok := readUploadBody(w, r, service.MaxLogoBytes)
 	if !ok {
 		return
 	}
-	uploaded, err := h.svc.UploadProgramLogo(r.Context(), chi.URLParam(r, "id"), data)
+	uploaded, err := h.svc.UploadProgramLogo(r.Context(), programID, data)
 	if err != nil {
 		Error(w, err)
 		return

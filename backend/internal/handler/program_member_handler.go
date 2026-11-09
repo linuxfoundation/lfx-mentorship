@@ -28,6 +28,8 @@ type programMemberService interface {
 	DeclineMineInvite(ctx context.Context, id, userID string) error
 }
 
+// ListMentorManagement handles GET /v1/programs/{id}/member-management — Heimdall requires program writer,
+// since rows carry email and LFID in every status.
 func (h *ProgramMemberHandler) ListMentorManagement(w http.ResponseWriter, r *http.Request) {
 	if auth.PrincipalFromContext(r.Context()) == nil {
 		Error(w, domain.ErrUnauthorized)

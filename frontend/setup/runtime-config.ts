@@ -18,9 +18,7 @@ const selfServeUrl =
   (isProduction ? 'https://app.lfx.dev' : 'https://app.dev.lfx.dev');
 const crowdfundingUrl =
   process.env.NUXT_PUBLIC_CROWDFUNDING_URL ||
-  (isProduction
-    ? 'https://crowdfunding.lfx.linuxfoundation.org'
-    : 'https://crowdfunding.dev.lfx.dev');
+  (isProduction ? 'https://crowdfunding.linuxfoundation.org' : 'https://crowdfunding.dev.lfx.dev');
 
 export default {
   // Server-only

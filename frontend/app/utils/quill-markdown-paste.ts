@@ -10,6 +10,7 @@ import DOMPurify from 'isomorphic-dompurify';
 import { marked } from 'marked';
 import Delta from 'quill-delta';
 import type { Op } from 'quill-delta';
+import { RICH_TEXT_SANITIZE_CONFIG } from './rich-text';
 
 type Token = marked.Token;
 
@@ -19,38 +20,6 @@ marked.setOptions({
   headerIds: false,
   mangle: false,
 });
-
-const DOMPURIFY_CONFIG = {
-  ALLOWED_TAGS: [
-    'h1',
-    'h2',
-    'h3',
-    'h4',
-    'h5',
-    'h6',
-    'p',
-    'br',
-    'ul',
-    'ol',
-    'li',
-    'strong',
-    'b',
-    'em',
-    'i',
-    'u',
-    's',
-    'del',
-    'blockquote',
-    'pre',
-    'code',
-    'a',
-    'span',
-  ],
-  ALLOWED_ATTR: ['href', 'target', 'rel'],
-  ALLOW_DATA_ATTR: false,
-  FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed', 'form', 'input'],
-  FORBID_CONTENTS: ['script', 'style'],
-};
 
 type QuillLike = {
   clipboard: {
@@ -112,7 +81,7 @@ export function sanitizeQuillHtml(html: string): string {
   if (!html) {
     return '';
   }
-  return DOMPurify.sanitize(html, DOMPURIFY_CONFIG);
+  return DOMPurify.sanitize(html, RICH_TEXT_SANITIZE_CONFIG);
 }
 
 /** Converts Markdown to a Quill Delta without assigning user HTML to the DOM. */

@@ -168,3 +168,38 @@ func updatePrerequisiteTask(ctx context.Context, tx pgx.Tx, t *models.Task, p mo
 	}
 	return enqueueTaskIndex(ctx, tx, updated, "updated")
 }
+
+// addMissingPrerequisiteTasks gives a re-opened mentee application an incomplete task for each of
+// the program's prerequisites it has no prerequisite task of, matched by PrerequisiteKey, inside the
+// caller's transaction. Prerequisite edits reach only pending applications (applyPrerequisiteChanges),
+// so one declined or withdrawn meanwhile missed a prerequisite added then. Its existing tasks are
+// left as they are: with no record of the prerequisites it last saw, an edit or removal since cannot
+// be told apart from a reviewer's change to this applicant's task. A name a legacy program stores
+// twice gets one task.
+func addMissingPrerequisiteTasks(ctx context.Context, tx pgx.Tx, application *models.Application, prerequisites []models.PrerequisiteTemplate) error {
+	rows, err := tx.Query(ctx, `SELECT name FROM tasks WHERE application_id = $1 AND category = $2 FOR UPDATE`,
+		application.ID, models.TaskCategoryPrerequisite)
+	if err != nil {
+		return fmt.Errorf("lock prerequisite tasks for re-open: %w", err)
+	}
+	names, err := pgx.CollectRows(rows, pgx.RowTo[*string])
+	if err != nil {
+		return fmt.Errorf("load prerequisite tasks for re-open: %w", err)
+	}
+	present := make(map[string]bool, len(names))
+	for _, name := range names {
+		if name != nil {
+			present[models.PrerequisiteKey(*name)] = true
+		}
+	}
+	var added []models.TaskCreateInput
+	for _, p := range prerequisites {
+		key := models.PrerequisiteKey(p.Name)
+		if present[key] {
+			continue
+		}
+		present[key] = true
+		added = append(added, p.NewTask(uuid.New().String(), application.ProgramTermID, application.UserID))
+	}
+	return insertApplicationTasks(ctx, tx, application, added)
+}

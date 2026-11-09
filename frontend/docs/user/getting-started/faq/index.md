@@ -9,7 +9,7 @@ intercom_collection: LFX Mentorship
 
 ## Is there a stipend?
 
-Some LFX Mentorship programs offer a stipend and some do not. Where a stipend is offered it varies by program and by your country of residence, and the program page states it before you apply.
+Some LFX Mentorship programs offer a stipend and some do not. Where a stipend is offered it varies by program and by your country of residence, and the program page states it before you apply. See [Stipends](../../stipends/).
 
 ## Who can apply?
 

@@ -19,9 +19,10 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
-// fakeProject is a Project Service project.
+// fakeProject is a Project Service project. Parent is its parent project's
+// UID, empty at the top of the hierarchy.
 type fakeProject struct {
-	Slug, Name, Logo string
+	Slug, Name, Logo, Parent string
 }
 
 // fakeAccount is an LF account known to auth-service.
@@ -41,8 +42,15 @@ type fakes struct {
 	// granted is fga-sync's view of who has a tuple on which object, keyed
 	// "{object_type}:{uid}" → username → when the relay's message arrived.
 	granted map[string]map[string]time.Time
-	// accessHold delays granting access after a tuple arrives; the test clock for issue #354.
+	// accessHold delays applying a tuple after the relay's message arrives, standing in
+	// for fga-sync's consumer lag: until it passes, neither read_tuples nor a check sees it.
 	accessHold time.Duration
+	// deniedUntil models OpenFGA's check-query cache: a check answered false from the
+	// store is remembered as false until its entry lapses, however the tuples change in
+	// between. A hit on the entry does not extend it, as in OpenFGA.
+	deniedUntil map[string]time.Time
+	// checkCacheTTL is how long a denial is remembered; defaultCheckCacheTTL unless a test shortens it.
+	checkCacheTTL time.Duration
 	// accessChecks records every lfx.access_check.request body and the answer given.
 	accessChecks []accessCheck
 	// grants records every member_put and update_access message accepted, in order.
@@ -59,6 +67,7 @@ type grant struct {
 type accessCheck struct {
 	Check   string
 	Allowed bool
+	At      time.Time
 }
 
 func startFakes(nc *nats.Conn) (*fakes, error) {
@@ -69,11 +78,13 @@ func startFakes(nc *nats.Conn) (*fakes, error) {
 		constants.ProjectGetSlugSubject:       f.project(func(p fakeProject) string { return p.Slug }),
 		constants.ProjectGetNameSubject:       f.project(func(p fakeProject) string { return p.Name }),
 		constants.ProjectGetLogoSubject:       f.project(func(p fakeProject) string { return p.Logo }),
+		constants.ProjectListProjectsSubject:  f.listProjects,
 		"lfx.auth-service.email_to_username":  f.emailToUsername,
 		"lfx.auth-service.user_metadata.read": f.userMetadata,
 		"lfx.auth-service.user_emails.read":   f.userEmails,
 		"lfx.fga-sync.>":                      f.recordTuples,
 		"lfx.access_check.request":            f.accessCheck,
+		"lfx.access_check.read_tuples":        f.readTuples,
 	}
 	for subject, handler := range subs {
 		if _, err := nc.Subscribe(subject, handler); err != nil {
@@ -93,6 +104,8 @@ func (f *fakes) reset() {
 	f.crowdfundingDown = false
 	f.granted = map[string]map[string]time.Time{}
 	f.accessHold = 0
+	f.deniedUntil = map[string]time.Time{}
+	f.checkCacheTTL = defaultCheckCacheTTL
 	f.accessChecks = nil
 	f.grants = nil
 }
@@ -121,8 +134,8 @@ func (f *fakes) setCrowdfundingDown(down bool) {
 	f.crowdfundingDown = down
 }
 
-// holdAccess makes the fake fga-sync grant a user's access only hold after the
-// relay's tuple arrives, standing in for the sync lag behind issue #354.
+// holdAccess makes the fake fga-sync apply a user's tuple only hold after the
+// relay's message arrives, standing in for the consumer lag behind issue #354.
 func (f *fakes) holdAccess(hold time.Duration) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -190,6 +203,25 @@ func (f *fakes) recordTuples(msg *nats.Msg) {
 	}
 }
 
+// grant gives user a tuple on object at once, standing in for a grant another
+// service owns, such as a role on a project.
+func (f *fakes) grant(object, user string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.granted[object] == nil {
+		f.granted[object] = map[string]time.Time{}
+	}
+	f.granted[object][user] = time.Now().Add(-time.Hour)
+}
+
+// grantedAt returns when the relay's first grant of a tuple on object to user arrived.
+func (f *fakes) grantedAt(object, user string) (time.Time, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	at, ok := f.granted[object][user]
+	return at, ok
+}
+
 // grantsFor returns the grant messages the fake accepted for object, in order.
 func (f *fakes) grantsFor(object string) []grant {
 	f.mu.Lock()
@@ -203,21 +235,70 @@ func (f *fakes) grantsFor(object string) []grant {
 	return out
 }
 
+// defaultCheckCacheTTL mirrors OPENFGA_CHECK_QUERY_CACHE_TTL on dev and prod.
+const defaultCheckCacheTTL = 10 * time.Second
+
+// setCheckCacheTTL shortens how long the fake remembers a denied check.
+func (f *fakes) setCheckCacheTTL(ttl time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.checkCacheTTL = ttl
+}
+
 // accessCheck answers lfx.access_check.request as fga-sync does: one
 // "{check}\t{true|false}" line per "object#relation@user:name" line asked.
+// A denial computed from the store is remembered for checkCacheTTL and served
+// from memory until then, as OpenFGA's check-query cache does; serving it does
+// not extend it.
 func (f *fakes) accessCheck(msg *nats.Msg) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	now := time.Now()
 	var lines []string
 	for _, check := range strings.Split(strings.TrimSpace(string(msg.Data)), "\n") {
 		object, rest, _ := strings.Cut(check, "#")
 		_, user, _ := strings.Cut(rest, "@user:")
-		arrived, ok := f.granted[object][user]
-		allowed := ok && time.Since(arrived) >= f.accessHold
-		f.accessChecks = append(f.accessChecks, accessCheck{Check: check, Allowed: allowed})
+		var allowed bool
+		if now.Before(f.deniedUntil[check]) {
+			allowed = false // cache hit: the stored denial, untouched
+		} else {
+			applied, ok := f.granted[object][user]
+			allowed = ok && now.Sub(applied) >= f.accessHold
+			if !allowed {
+				f.deniedUntil[check] = now.Add(f.checkCacheTTL)
+			}
+		}
+		f.accessChecks = append(f.accessChecks, accessCheck{Check: check, Allowed: allowed, At: now})
 		lines = append(lines, fmt.Sprintf("%s\t%t", check, allowed))
 	}
 	_ = msg.Respond([]byte(strings.Join(lines, "\n")))
+}
+
+// readTuples answers lfx.access_check.read_tuples as fga-sync does: the user's
+// direct tuples on the object type, read from the store with no cache in front.
+func (f *fakes) readTuples(msg *nats.Msg) {
+	var req struct {
+		User       string `json:"user"`
+		ObjectType string `json:"object_type"`
+	}
+	if json.Unmarshal(msg.Data, &req) != nil || req.User == "" || req.ObjectType == "" {
+		reply(msg, map[string]any{"error": "user and object_type are required"})
+		return
+	}
+	user := strings.TrimPrefix(req.User, "user:")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	results := []string{}
+	for object, users := range f.granted {
+		if !strings.HasPrefix(object, req.ObjectType+":") {
+			continue
+		}
+		if applied, ok := users[user]; ok && time.Since(applied) >= f.accessHold {
+			// The fake does not model relations; any relation name stands for the direct tuple.
+			results = append(results, object+"#member@"+req.User)
+		}
+	}
+	reply(msg, map[string]any{"results": results})
 }
 
 // sentEmails returns the emails sent so far.
@@ -262,6 +343,25 @@ func (f *fakes) project(field func(fakeProject) string) nats.MsgHandler {
 		}
 		_ = msg.Respond([]byte(field(p)))
 	}
+}
+
+// listProjects answers list_projects by UID and, like Project Service, skips
+// the UIDs it does not know.
+func (f *fakes) listProjects(msg *nats.Msg) {
+	var req events.ProjectListRequest
+	if err := json.Unmarshal(msg.Data, &req); err != nil {
+		reply(msg, events.RPCError{Code: events.RPCErrorInternal, Message: err.Error()})
+		return
+	}
+	refs := []events.ProjectRef{}
+	f.mu.Lock()
+	for _, uid := range req.UIDs {
+		if p, ok := f.projects[uid]; ok {
+			refs = append(refs, events.ProjectRef{UID: uid, Slug: p.Slug, ParentUID: p.Parent})
+		}
+	}
+	f.mu.Unlock()
+	reply(msg, refs)
 }
 
 func (f *fakes) account(match func(fakeAccount) bool) (fakeAccount, bool) {

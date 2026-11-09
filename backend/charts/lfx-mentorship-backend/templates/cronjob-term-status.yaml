@@ -1,0 +1,75 @@
+# Copyright The Linux Foundation and each contributor to LFX.
+# SPDX-License-Identifier: MIT
+{{- if .Values.termStatusCronJob.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "lfx-v2-mentorship-service.fullname" . }}-term-status
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lfx-v2-mentorship-service.labels" . | nindent 4 }}
+    app.kubernetes.io/component: term-status
+spec:
+  schedule: {{ .Values.termStatusCronJob.schedule | quote }}
+  timeZone: {{ .Values.termStatusCronJob.timeZone | quote }}
+  concurrencyPolicy: {{ .Values.termStatusCronJob.concurrencyPolicy }}
+  successfulJobsHistoryLimit: {{ .Values.termStatusCronJob.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.termStatusCronJob.failedJobsHistoryLimit }}
+  jobTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "lfx-v2-mentorship-service.name" . }}
+    spec:
+      activeDeadlineSeconds: {{ .Values.termStatusCronJob.activeDeadlineSeconds }}
+      # Safe to retry: a rerun closes only the terms still open.
+      backoffLimit: {{ .Values.termStatusCronJob.backoffLimit }}
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: {{ include "lfx-v2-mentorship-service.name" . }}
+            app.kubernetes.io/component: term-status
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "lfx-v2-mentorship-service.serviceAccountName" . }}
+          automountServiceAccountToken: false
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: term-status
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+              image: "{{ .Values.termStatusCronJob.image.repository | default .Values.image.repository }}:{{ .Values.termStatusCronJob.image.tag | default (required "image.tag is required" .Values.image.tag) }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command: ["/app/term-status"]
+              {{- with .Values.env }}
+              env:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
+              envFrom:
+                - configMapRef:
+                    name: {{ include "lfx-v2-mentorship-service.fullname" . }}-config
+                - secretRef:
+                    name: {{ .Values.secretName }}
+              resources:
+                {{- toYaml .Values.termStatusCronJob.resources | nindent 16 }}
+          {{- with .Values.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.topologySpreadConstraints }}
+          topologySpreadConstraints:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

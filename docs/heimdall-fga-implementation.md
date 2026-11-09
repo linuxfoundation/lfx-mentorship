@@ -272,7 +272,7 @@ required components must be present.
 | `FGA_RELAY_INTERVAL` | `1s` | Poll interval for FGA and index relays |
 | `FGA_RELAY_RETRY_DELAY` | `1m` | Delay before retrying an FGA marker |
 | `FGA_RELAY_MAX_ATTEMPTS` | `10` | Attempts before FGA dead letter |
-| `FGA_ACCESS_WAIT_TIMEOUT` | `10s` | How long a program or application create polls `lfx.access_check.request` for the creator's relation (`writer` / `auditor`) before responding anyway; `0` disables, max `15s` |
+| `FGA_ACCESS_WAIT_TIMEOUT` | `10s` | How long a program or application create waits for the creator's relation (`writer` / `auditor`) before responding anyway; `0` disables, max `15s`. The wait first polls `lfx.access_check.read_tuples` (fga-sync ≥ 0.3.14; OpenFGA's Read API, no cache in front) until the creator's direct tuple on the object exists, and only then asks `lfx.access_check.request`: a check made before the tuple exists is answered false and cached, by OpenFGA's check-query cache (10 s TTL) and then by fga-sync, past the end of the wait. The wait is best effort: it retries on a definitive answer, but ends at once when fga-sync does not answer (no responder, or the 2 s request deadline passes), since fga-sync keeps serving a request for up to 10 s after the caller's deadline |
 | `INDEXER_SERVICE_TOKEN` | None | Service credential stamped on index messages; secret value. Without it the index relay idles |
 | `INDEX_RELAY_RETRY_DELAY` | `1m` | Delay after a failed index publish |
 | `INDEX_RELAY_MAX_ATTEMPTS` | `10` | Failed index publishes before dead letter |

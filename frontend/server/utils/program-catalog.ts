@@ -37,6 +37,10 @@ export interface ProgramCatalogItem {
   name: string;
   slug: string;
   status: string;
+  /** The owning LF project; upstream omits these when the program has none. */
+  project_uid?: string;
+  project_name?: string;
+  project_slug?: string;
   is_paid?: boolean;
   description?: string;
   logo_url?: string;
@@ -79,8 +83,6 @@ export interface ProgramCatalogListResponse {
   data: ProgramCatalogItem[];
   meta: { total: number; limit: number; offset: number };
 }
-
-const EMPTY_FOUNDATION = { id: '', name: '', slug: '' };
 
 function toDate(iso?: string): string {
   if (!iso) return '';
@@ -135,8 +137,7 @@ export function mapCatalogMentee(mentee: ProgramCatalogMentee): ProgramMentee {
   };
 }
 
-// A UUID is read as is: the resolver hides a pending program's ID, but the catalog reads serve a
-// pending program to anyone holding its ID, which the program review email links by.
+// A UUID is already the program's ID; only a slug needs resolving.
 async function resolveProgramUID(id: string): Promise<string> {
   if (isUUID(id)) return id;
   const config = useRuntimeConfig();
@@ -163,8 +164,12 @@ export function mapCatalogItemToProgram(item: ProgramCatalogItem): Program {
     description: item.description ?? '',
     logoUrl: item.logo_url,
     skills: item.skills ?? [],
-    status: item.status === 'pending' ? 'pending' : toProgramCardStatus(terms),
-    foundation: EMPTY_FOUNDATION,
+    status: toProgramCardStatus(terms),
+    foundation: {
+      id: item.project_uid ?? '',
+      slug: item.project_slug ?? '',
+      name: item.project_name?.trim() ?? '',
+    },
     terms,
     updatedAt: item.updated_on,
     repositoryUrl: item.repo_link,

@@ -127,6 +127,7 @@ type fileSvcDeps struct {
 	files       *fakeFileRepo
 	scheduler   *fakeScheduler
 	programs    *stubProgRepo
+	admins      *stubMemberRepo
 	tasks       *stubTaskAccess
 	submissions *stubSubmissions
 	logos       *fakeObjectStore
@@ -143,6 +144,9 @@ func (d *fileSvcDeps) build() *service.FileService {
 	if d.programs == nil {
 		d.programs = &stubProgRepo{}
 	}
+	if d.admins == nil {
+		d.admins = &stubMemberRepo{}
+	}
 	if d.tasks == nil {
 		d.tasks = &stubTaskAccess{}
 	}
@@ -157,7 +161,7 @@ func (d *fileSvcDeps) build() *service.FileService {
 	if d.attachments != nil {
 		attachments = d.attachments
 	}
-	return service.NewFileService(d.files, d.scheduler, d.programs, d.tasks, d.submissions, logos, attachments)
+	return service.NewFileService(d.files, d.scheduler, d.programs, d.admins, d.tasks, d.submissions, logos, attachments)
 }
 
 func TestFileService_UploadProgramLogo_ReplaceProtocol(t *testing.T) {

@@ -15,3 +15,13 @@ type AccessWaiter interface {
 	// or the check cannot be made.
 	WaitForAccess(ctx context.Context, object, relation, username string) error
 }
+
+// AccessChecker reports whether user:{username} has relation on object in
+// OpenFGA, through fga-sync's cached check.
+type AccessChecker interface {
+	HasAccess(ctx context.Context, object, relation, username string) (bool, error)
+	// AllowedObjects returns, in their given order, the objects on which
+	// user:{username} has relation, asking fga-sync once for all of them. It
+	// fails when fga-sync does not answer every check.
+	AllowedObjects(ctx context.Context, objects []string, relation, username string) ([]string, error)
+}

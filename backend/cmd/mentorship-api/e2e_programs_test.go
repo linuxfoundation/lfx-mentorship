@@ -79,8 +79,10 @@ func TestE2EProgramLifecycle(t *testing.T) {
 		}
 	})
 
-	t.Run("a pending program is readable but not listed", func(t *testing.T) {
-		anonymous().call(t, http.MethodGet, "/programs/"+id, nil).expect(http.StatusOK)
+	t.Run("a pending program is not public", func(t *testing.T) {
+		anonymous().call(t, http.MethodGet, "/programs/"+id, nil).expect(http.StatusNotFound)
+		anonymous().call(t, http.MethodGet, "/programs/"+id+"/catalog", nil).expect(http.StatusNotFound)
+		admin.call(t, http.MethodGet, "/programs/"+id, nil).expect(http.StatusOK)
 		anonymous().call(t, http.MethodGet, "/programs/resolve/lifecycle-program", nil).expect(http.StatusNotFound)
 		var list programPage
 		anonymous().mustJSON(t, http.MethodGet, "/programs", nil, http.StatusOK, &list)
@@ -175,6 +177,65 @@ func TestE2EProgramLifecycle(t *testing.T) {
 			t.Fatalf("logo neither queued for deletion nor deleted")
 		}
 	})
+}
+
+// Heimdall authorizes the project, so the backend lists every program of the
+// project for a caller who administers none of them.
+func TestE2EProjectPrograms(t *testing.T) {
+	reset(t)
+	admin := signIn(t, "admin")
+	projectAdmin := signIn(t, "project-admin")
+	uid := newProject(t, "projectlist")
+
+	var pending, published program
+	admin.mustJSON(t, http.MethodPost, "/programs", enrollmentBody("Project Pending", uid), http.StatusCreated, &pending)
+	admin.mustJSON(t, http.MethodPost, "/programs", enrollmentBody("Project Published", uid), http.StatusCreated, &published)
+	uploadLogo(t, admin, published.ID).expect(http.StatusCreated)
+	approver(t).call(t, http.MethodPost, "/programs/"+published.ID+"/decision", map[string]any{"status": "published"}).expect(http.StatusOK)
+	elsewhere := createProgram(t, admin, "Elsewhere Program")
+	// nested sits two levels below uid, under a sub-project with no programs,
+	// in a sub-project projectAdmin may manage. denied is in one they may not.
+	subproject := newSubproject(t, "projectlist-sub", uid)
+	nestedProject := newSubproject(t, "projectlist-subsub", subproject)
+	deniedProject := newSubproject(t, "projectlist-denied", uid)
+	var nested, denied program
+	admin.mustJSON(t, http.MethodPost, "/programs", enrollmentBody("Project Nested", nestedProject), http.StatusCreated, &nested)
+	admin.mustJSON(t, http.MethodPost, "/programs", enrollmentBody("Project Denied", deniedProject), http.StatusCreated, &denied)
+	e2e.fakes.grant("project:"+nestedProject, projectAdmin.LFID)
+
+	var list programPage
+	projectAdmin.mustJSON(t, http.MethodGet, "/projects/"+uid+"/programs", nil, http.StatusOK, &list)
+	if list.Meta.Total != 2 || len(list.Data) != 2 ||
+		list.Data[0].ID != published.ID || list.Data[0].AdminStatus != "accepting" ||
+		list.Data[1].ID != pending.ID || list.Data[1].AdminStatus != "pending_review" {
+		t.Fatalf("project programs: %+v", list)
+	}
+	if contains(list.ids(), elsewhere.ID) {
+		t.Fatalf("another project's program is listed")
+	}
+
+	projectAdmin.mustJSON(t, http.MethodGet, "/projects/"+uid+"/programs?include_subprojects=true", nil, http.StatusOK, &list)
+	if ids := list.ids(); list.Meta.Total != 3 || !contains(ids, published.ID) || !contains(ids, pending.ID) || !contains(ids, nested.ID) || contains(ids, elsewhere.ID) || contains(ids, denied.ID) {
+		t.Fatalf("with sub-projects: %+v", list)
+	}
+	checks := e2e.fakes.accessChecksFor("project:" + deniedProject)
+	if len(checks) == 0 || checks[0].Check != "project:"+deniedProject+"#mentorship_program_creator@user:"+projectAdmin.LFID || checks[0].Allowed {
+		t.Fatalf("a sub-project the caller may not manage must be checked and denied: %+v", checks)
+	}
+	projectAdmin.mustJSON(t, http.MethodGet, "/projects/"+subproject+"/programs?include_subprojects=true", nil, http.StatusOK, &list)
+	if len(list.Data) != 1 || list.Data[0].ID != nested.ID {
+		t.Fatalf("a sub-project with sub-projects lists only what is below it: %+v", list)
+	}
+	projectAdmin.call(t, http.MethodGet, "/projects/"+uid+"/programs?include_subprojects=yes", nil).expect(http.StatusBadRequest)
+
+	projectAdmin.mustJSON(t, http.MethodGet, "/projects/"+strings.ToUpper(uid)+"/programs?status=pending_review", nil, http.StatusOK, &list)
+	if len(list.Data) != 1 || list.Data[0].ID != pending.ID {
+		t.Fatalf("pending_review filter with an uppercase project UID: %+v", list)
+	}
+
+	projectAdmin.call(t, http.MethodGet, "/projects/not-a-uuid/programs", nil).expect(http.StatusBadRequest)
+	projectAdmin.call(t, http.MethodGet, "/projects/"+uid+"/programs?status=bogus", nil).expect(http.StatusBadRequest)
+	anonymous().call(t, http.MethodGet, "/projects/"+uid+"/programs", nil).expect(http.StatusUnauthorized)
 }
 
 func TestE2EProgramRejection(t *testing.T) {
@@ -298,7 +359,7 @@ func TestE2EProgramUpdate(t *testing.T) {
 				Skill string `json:"skill"`
 			} `json:"data"`
 		}
-		anonymous().mustJSON(t, http.MethodGet, path+"/skills", nil, http.StatusOK, &skills)
+		admin.mustJSON(t, http.MethodGet, path+"/skills", nil, http.StatusOK, &skills)
 		if len(skills.Data) != 2 {
 			t.Fatalf("skills: %+v", skills)
 		}
@@ -316,7 +377,7 @@ func TestE2EProgramUpdate(t *testing.T) {
 				Name string `json:"name"`
 			} `json:"data"`
 		}
-		anonymous().mustJSON(t, http.MethodGet, path+"/terms?status=open", nil, http.StatusOK, &list)
+		admin.mustJSON(t, http.MethodGet, path+"/terms?status=open", nil, http.StatusOK, &list)
 		if len(list.Data) != 2 {
 			t.Fatalf("open terms: %+v", list)
 		}
@@ -404,7 +465,8 @@ func TestE2EProgramReadModels(t *testing.T) {
 		if item.ID != p.ID || item.Mentors == nil {
 			t.Fatalf("catalog item: %+v", item)
 		}
-		anonymous().call(t, http.MethodGet, "/programs/"+pending.ID+"/catalog", nil).expect(http.StatusOK)
+		anonymous().call(t, http.MethodGet, "/programs/"+pending.ID+"/catalog", nil).expect(http.StatusNotFound)
+		admin.call(t, http.MethodGet, "/programs/"+pending.ID+"/catalog", nil).expect(http.StatusOK)
 		anonymous().call(t, http.MethodGet, "/programs/00000000-0000-4000-8000-000000000000/catalog", nil).expect(http.StatusNotFound)
 
 		var header struct {
@@ -458,7 +520,7 @@ func TestE2EProgramReadModels(t *testing.T) {
 	})
 
 	t.Run("my programs filters", func(t *testing.T) {
-		for status, want := range map[string]int{"": 2, "open": 1, "pending_review": 1, "completed": 0} {
+		for status, want := range map[string]int{"": 2, "accepting": 1, "pending_review": 1, "completed": 0} {
 			var mine programPage
 			admin.mustJSON(t, http.MethodGet, "/me/programs?status="+status, nil, http.StatusOK, &mine)
 			if len(mine.Data) != want {
@@ -466,6 +528,8 @@ func TestE2EProgramReadModels(t *testing.T) {
 			}
 		}
 		admin.call(t, http.MethodGet, "/me/programs?status=bogus", nil).expect(http.StatusBadRequest)
+		// open was split into accepting, in_progress and upcoming.
+		admin.call(t, http.MethodGet, "/me/programs?status=open", nil).expect(http.StatusBadRequest)
 		other := signIn(t, "other")
 		var mine programPage
 		other.mustJSON(t, http.MethodGet, "/me/programs", nil, http.StatusOK, &mine)

@@ -44,8 +44,9 @@ const (
 	e2eLogosBucket  = "e2e-logos"
 	e2eFilesBucket  = "e2e-attachments"
 	apiPrefix       = "/mentorship/v1"
-	// e2eAccessWaitTimeout bounds a create's wait for the fake fga-sync to grant the creator access.
-	e2eAccessWaitTimeout = time.Second
+	// e2eAccessWaitTimeout bounds a create's wait for the fake fga-sync to apply the creator's tuple.
+	// It covers relay delivery plus TestE2ECreateWaitsForCreatorAccess's one-second apply hold.
+	e2eAccessWaitTimeout = 2 * time.Second
 )
 
 // e2e is the process-wide environment: one API server and its fake dependencies, shared by every test.
@@ -55,6 +56,7 @@ type environment struct {
 	baseURL string
 	pool    *pgxpool.Pool
 	key     *rsa.PrivateKey
+	nc      *nats.Conn
 	js      jetstream.JetStream
 	fakes   *fakes
 	s3      gofakes3.Backend
@@ -197,7 +199,7 @@ func startEnvironment(ctx context.Context, dsn string) (*environment, func(), er
 	api := httptest.NewServer(srv.router)
 	closers = append(closers, api.Close)
 
-	return &environment{baseURL: api.URL, pool: srv.pool, key: key, js: js, fakes: fk, s3: s3Backend, email: srv.emailNotifier}, cleanup, nil
+	return &environment{baseURL: api.URL, pool: srv.pool, key: key, nc: nc, js: js, fakes: fk, s3: s3Backend, email: srv.emailNotifier}, cleanup, nil
 }
 
 // reset empties every table and every fake, so each test starts from a blank platform.

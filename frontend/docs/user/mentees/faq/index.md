@@ -1,8 +1,8 @@
 ---
 title: Mentees FAQ
 description: Common questions about mentee applications, withdrawals, tasks and graduation.
-tags: [faq, mentees, applications, withdraw, tasks, stipend]
-last_updated: 2026-10-26
+tags: [faq, mentees, applications, withdraw, re-open, graduation, tasks, stipend]
+last_updated: 2026-11-02
 display_order: 9
 intercom_collection: LFX Mentorship
 ---
@@ -23,6 +23,16 @@ In LFX, the Linux Foundation's software platform, open your mentee overview at [
 
 Yes, you can reapply — to a different program, or to a later term of the same program. **Declined** is the status for any application that is not taken on; it is not a ban.
 
+## I withdrew, or was declined, by mistake — can it be undone?
+
+Yes. Ask a Program Admin of the program to re-open the application. It goes back to **Pending**, and they decide on it again. You cannot re-open it yourself, and no email is sent. Your tasks stay as they were, and if the program added a prerequisite in the meantime, you get a task for it.
+
+A re-opened application counts as one of your three open applications again, so it can't be re-opened while you already have three. It also can't be re-opened once the term has closed, or while you have another open application to the same term.
+
+## I was marked as graduated by mistake — can it be undone?
+
+Yes. A Program Admin of the program can undo the graduation, which puts you back to **Accepted** on the term. No email is sent. It can't be undone if you have since been accepted onto another program, or once the term has ended.
+
 ## Where are my tasks?
 
 Under **My Tasks** in LFX at [app.lfx.dev/mentorship/mentee](https://app.lfx.dev/mentorship/mentee). Tasks set before you are accepted are part of your application; tasks set after you are accepted are the term's work.
@@ -33,7 +43,7 @@ You can take part in only one LFX Mentorship program in your career.
 
 ## When do I get paid?
 
-Where a program is funded, the stipend is paid in milestone installments across the term, and the final installment follows the final evaluation. Amounts vary by program and by your country of residence.
+Where a program is funded, the stipend is paid in two installments, after a satisfactory midterm evaluation and after the final evaluation. You request each one with an expense report; see [Get Paid](../../stipends/get-paid/). The amount depends on your country of residence; see [Stipend Amounts by Country](../../stipends/stipend-amounts/).
 
 ## Why is my profile not in the mentee directory?
 

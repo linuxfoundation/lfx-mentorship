@@ -146,7 +146,6 @@ describe('BFF route handlers', () => {
     await expect(call(await load('./programs/index.get'))).resolves.toEqual({
       data: [],
       total: 0,
-      foundationCount: 0,
     });
   });
 });

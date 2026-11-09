@@ -28,7 +28,6 @@ func NewMentorService(repo domain.MentorRepository) *MentorService {
 }
 
 func normalizeMentorFilter(filter models.MentorFilter) models.MentorFilter {
-	filter.Search = strings.TrimSpace(filter.Search)
 	filter.Skill = strings.TrimSpace(filter.Skill)
 	if strings.EqualFold(filter.Skill, "all") {
 		filter.Skill = ""
@@ -71,6 +70,10 @@ func (s *MentorService) List(ctx context.Context, filter models.MentorFilter) (*
 	ctx, span := mentorSvcTracer.Start(ctx, "MentorService.List")
 	defer span.End()
 
+	var err error
+	if filter.Search, err = normalizeSearch(filter.Search); err != nil {
+		return nil, err
+	}
 	page, err := s.repo.List(ctx, normalizeMentorFilter(filter))
 	if err != nil {
 		span.RecordError(err)

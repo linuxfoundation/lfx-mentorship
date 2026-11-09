@@ -6,13 +6,19 @@ package models
 import "time"
 
 // AdministeredProgramStatus is the status a program admin sees on their
-// programs list. It groups ProgramStatus with the program's terms: a published
-// program with an open term, or with no terms yet, is open; one whose
-// non-deleted terms are all closed is completed.
+// programs list. It groups ProgramStatus with the program's terms, ignoring
+// deleted ones. A published program is, in order of precedence:
+//   - completed when it has a closed term and no open one
+//   - accepting when an open term is inside its application window
+//   - in_progress when an open term is inside its term window
+//   - upcoming when an open term's application window has not opened, or it has no terms yet
+//   - in_progress otherwise (an open term between or past its windows, or without dates)
 type AdministeredProgramStatus string
 
 const (
-	AdministeredProgramStatusOpen          AdministeredProgramStatus = "open"
+	AdministeredProgramStatusAccepting     AdministeredProgramStatus = "accepting"
+	AdministeredProgramStatusInProgress    AdministeredProgramStatus = "in_progress"
+	AdministeredProgramStatusUpcoming      AdministeredProgramStatus = "upcoming"
 	AdministeredProgramStatusPendingReview AdministeredProgramStatus = "pending_review"
 	AdministeredProgramStatusCompleted     AdministeredProgramStatus = "completed"
 	AdministeredProgramStatusRejected      AdministeredProgramStatus = "rejected"
@@ -22,7 +28,8 @@ const (
 // IsValid reports whether the status value is one of the allowed enum members.
 func (s AdministeredProgramStatus) IsValid() bool {
 	switch s {
-	case AdministeredProgramStatusOpen, AdministeredProgramStatusPendingReview, AdministeredProgramStatusCompleted,
+	case AdministeredProgramStatusAccepting, AdministeredProgramStatusInProgress, AdministeredProgramStatusUpcoming,
+		AdministeredProgramStatusPendingReview, AdministeredProgramStatusCompleted,
 		AdministeredProgramStatusRejected, AdministeredProgramStatusHidden:
 		return true
 	}

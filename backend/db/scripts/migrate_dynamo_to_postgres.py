@@ -346,6 +346,21 @@ def _without_resume_link(links):
     return links
 
 
+def _strip_nul(value):
+    """Remove U+0000 from every string, keys included: PostgreSQL rejects it in jsonb.
+
+    This works on the decoded values. Editing the encoded JSON text instead cannot tell
+    the escape of a real NUL from an escaped backslash followed by the text u0000.
+    """
+    if isinstance(value, str):
+        return value.replace("\x00", "")
+    if isinstance(value, dict):
+        return {_strip_nul(k): _strip_nul(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_strip_nul(v) for v in value]
+    return value
+
+
 def _to_jsonb(value) -> str | None:
     if value is None:
         return None
@@ -355,8 +370,7 @@ def _to_jsonb(value) -> str | None:
             return float(obj)
         raise TypeError(f"Cannot serialize {type(obj)}")
 
-    # PostgreSQL rejects \u0000 inside JSON text columns
-    return json.dumps(value, default=_default).replace("\\u0000", "")
+    return json.dumps(_strip_nul(value), default=_default)
 
 
 def _due_date(value) -> str | None:

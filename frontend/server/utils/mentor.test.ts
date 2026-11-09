@@ -80,6 +80,7 @@ describe('mapMentorDetail', () => {
           id: 'p1',
           name: 'Cloud Native',
           slug: 'cn',
+          project_name: ' CNCF ',
           mentors: [{ id: 'm1', user_id: 'mu1', name: ' ', introduction: ' Co-mentor ' }],
           terms: [
             {
@@ -113,6 +114,7 @@ describe('mapMentorDetail', () => {
     expect(detail.programs[0]).toMatchObject({
       title: 'Cloud Native',
       description: '',
+      foundationLabel: 'CNCF',
       logoInitials: 'CN',
       // The open Fall term has no application window, so the program is running.
       status: 'in-progress',

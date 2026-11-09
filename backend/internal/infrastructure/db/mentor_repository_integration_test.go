@@ -71,6 +71,15 @@ func (s *mentoredSeed) term(program, label, status string, start *time.Time) str
 	return s.id(label)
 }
 
+// windowTerm seeds an open term whose application and term windows start and
+// end the given number of days from now.
+func (s *mentoredSeed) windowTerm(program, label string, appStart, appEnd, start, end int) {
+	s.t.Helper()
+	s.exec(`INSERT INTO program_terms (id, program_id, name, status, application_start_date, application_end_date, start_date_time, end_date_time)
+		VALUES ($1, $2, $3, 'open', $4, $5, $6, $7)`,
+		s.id(label), s.id(program), label, daysFromNow(appStart), daysFromNow(appEnd), daysFromNow(start), daysFromNow(end))
+}
+
 func (s *mentoredSeed) application(label, term, user, role, status string, createdOn time.Time) string {
 	s.t.Helper()
 	s.exec(`INSERT INTO applications (id, program_term_id, user_id, role, status, created_on) VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -127,8 +136,37 @@ func TestMentorRepositoryIntegration_ListMentoredByUserScopesToActivePublished(t
 	}
 }
 
-// A program is completed once all its terms are closed and open otherwise, the
-// same grouping as admin_status, so the admin and mentor lists agree on it.
+func TestMentorRepositoryIntegration_ProfileProgramsCarryProjectName(t *testing.T) {
+	pool := integrationPool(t)
+	seed := newMentoredSeed(t, pool)
+	seed.user("mentor")
+	seed.program("mine", "Mine", "published")
+	seed.member("mine", "mentor", "mentor", "approved")
+	if _, err := pool.Exec(context.Background(), `INSERT INTO programs (id, name, slug, status) VALUES ($1, 'Unlinked', 'unlinked', 'published')`, seed.id("unlinked")); err != nil {
+		t.Fatal(err)
+	}
+	seed.member("unlinked", "mentor", "mentor", "approved")
+
+	detail, err := NewMentorRepository(pool).GetByUserID(context.Background(), seed.id("mentor"))
+	if err != nil {
+		t.Fatalf("GetByUserID: %v", err)
+	}
+	if len(detail.Programs) != 2 {
+		t.Fatalf("programs = %+v; want both mentor programs", detail.Programs)
+	}
+	// Programs are ordered by name: Mine, then Unlinked.
+	if got := detail.Programs[0].ProjectName; got == nil || *got != "Mine Project" {
+		t.Errorf("Mine project_name = %v; want %q", got, "Mine Project")
+	}
+	if got := detail.Programs[1].ProjectName; got != nil {
+		t.Errorf("Unlinked project_name = %q; want none for a program with no project", *got)
+	}
+}
+
+// A program is completed once all its terms are closed; otherwise its open
+// terms make it accepting, then in_progress, then upcoming, falling back to
+// in_progress. This is the same grouping as admin_status, so the admin and
+// mentor lists agree on it.
 func TestMentorRepositoryIntegration_ListMentoredByUserStatusAndOrder(t *testing.T) {
 	pool := integrationPool(t)
 	ctx := context.Background()
@@ -140,12 +178,25 @@ func TestMentorRepositoryIntegration_ListMentoredByUserStatusAndOrder(t *testing
 		seed.member(label, "both", "mentor", "approved")
 	}
 
+	both("applying", "india")
+	seed.windowTerm("applying", "applying-term", -1, 10, 20, 100)
+	// Inside both windows: accepting wins over in_progress.
+	both("overlap", "Hotel")
+	seed.windowTerm("overlap", "overlap-term", -1, 10, -5, 30)
+	// A running term wins over the program's upcoming one.
 	both("running", "delta")
-	seed.term("running", "running-open", "open", daysFromNow(-10))
+	seed.windowTerm("running", "running-term", -40, -20, -10, 30)
+	seed.windowTerm("running", "running-next", 30, 40, 50, 100)
+	// Applications closed, term not started: in_progress, as the catalog labels it.
+	both("between", "golf")
+	seed.windowTerm("between", "between-term", -20, -5, 5, 60)
+	// No windows set: in_progress, as the catalog labels it.
+	both("undated", "juliet")
+	seed.term("undated", "undated-term", "open", daysFromNow(-10))
 	both("no-terms", "Bravo")
 	both("mixed", "charlie")
 	seed.term("mixed", "mixed-closed", "closed", daysFromNow(-200))
-	seed.term("mixed", "mixed-open", "open", daysFromNow(30))
+	seed.windowTerm("mixed", "mixed-open", 10, 20, 30, 90)
 	both("deleted-only", "echo")
 	seed.term("deleted-only", "deleted-only-term", "deleted", daysFromNow(-5))
 	both("done", "foxtrot")
@@ -163,10 +214,14 @@ func TestMentorRepositoryIntegration_ListMentoredByUserStatusAndOrder(t *testing
 		status  models.MentoredProgramStatus
 	}
 	want := []row{
-		{"no-terms", models.MentoredProgramStatusOpen},
-		{"mixed", models.MentoredProgramStatusOpen},
-		{"running", models.MentoredProgramStatusOpen},
-		{"deleted-only", models.MentoredProgramStatusOpen},
+		{"overlap", models.MentoredProgramStatusAccepting},
+		{"applying", models.MentoredProgramStatusAccepting},
+		{"running", models.MentoredProgramStatusInProgress},
+		{"between", models.MentoredProgramStatusInProgress},
+		{"undated", models.MentoredProgramStatusInProgress},
+		{"no-terms", models.MentoredProgramStatusUpcoming},
+		{"mixed", models.MentoredProgramStatusUpcoming},
+		{"deleted-only", models.MentoredProgramStatusUpcoming},
 		{"done-early", models.MentoredProgramStatusCompleted},
 		{"done", models.MentoredProgramStatusCompleted},
 	}

@@ -58,7 +58,7 @@ func TestProgramTermService_Close_NotifiesDeclinedMentees(t *testing.T) {
 	termRepo := &stubTermRepo{closeWithBulkDecline: func(_ context.Context, id string) (*models.ProgramTerm, []*models.Application, error) {
 		return &models.ProgramTerm{ID: id, Status: models.ProgramTermStatusClosed}, []*models.Application{
 			{ID: "a1", Role: models.ApplicationRoleMentee},
-			{ID: "a2", Role: models.ApplicationRoleMentor},
+			{ID: "a2", Role: models.ApplicationRoleMentee},
 		}, nil
 	}}
 	n := &stubNotifier{}
@@ -66,8 +66,8 @@ func TestProgramTermService_Close_NotifiesDeclinedMentees(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	if declined != 2 || n.menteeDeclinedCalls != 1 {
-		t.Fatalf("declined = %d, notifications = %d; want 2 declined and 1 mentee notified", declined, n.menteeDeclinedCalls)
+	if declined != 2 || n.menteeDeclinedCalls != 2 {
+		t.Fatalf("declined = %d, notifications = %d; want 2 declined and 2 mentees notified", declined, n.menteeDeclinedCalls)
 	}
 }
 

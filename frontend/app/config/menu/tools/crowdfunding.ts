@@ -6,7 +6,7 @@ const crowdfunding: ToolsItem = {
   name: 'Crowdfunding',
   description: 'Create a crowdfunding campaign',
   icon: 'chart-pie',
-  link: 'https://crowdfunding.lfx.linuxfoundation.org',
+  link: 'https://crowdfunding.linuxfoundation.org',
 };
 
 export default crowdfunding;

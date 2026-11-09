@@ -119,7 +119,7 @@ func mentorListWhere(filter models.MentorFilter, args []any) (string, []any) {
 		)`, len(args))
 	}
 	if filter.Search != "" {
-		args = append(args, "%"+filter.Search+"%")
+		args = append(args, containsPattern(filter.Search))
 		where += fmt.Sprintf(` AND COALESCE(name, '') ILIKE $%d`, len(args))
 	}
 	return where, args
@@ -261,15 +261,12 @@ func (r *MentorRepository) GetByUserID(ctx context.Context, userID string) (*mod
 }
 
 // mentoredProgramsFrom selects the published programs $1 is an active mentor
-// of, with the status the admin list also shows for them: completed once all
-// the program's terms are closed, otherwise open.
+// of, with the status the admin list also shows for them
+// (sqlPublishedProgramTermStatus).
 const mentoredProgramsFrom = `
 	FROM (
 		SELECT programs.id, programs.slug, programs.name, programs.lf_project_name, programs.logo_url,
-			CASE WHEN ` + sqlProgramTermsAllClosed + `
-				THEN '` + string(models.MentoredProgramStatusCompleted) + `'
-				ELSE '` + string(models.MentoredProgramStatusOpen) + `'
-			END AS status
+			` + sqlPublishedProgramTermStatus + ` AS status
 		FROM programs
 		JOIN program_members pm ON pm.program_id = programs.id
 		WHERE pm.user_id = $1 AND pm.member_type = 'mentor' AND pm.status = 'approved'
@@ -342,7 +339,7 @@ func (r *MentorRepository) ListMentoredByUser(ctx context.Context, userID string
 
 func (r *MentorRepository) loadMentorPrograms(ctx context.Context, userID string) ([]models.MentorProgram, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT p.id, p.name, p.slug, p.description, p.logo_url
+		SELECT p.id, p.name, p.slug, p.description, p.logo_url, p.lf_project_name
 		FROM program_members pm
 		JOIN programs p ON p.id = pm.program_id
 		WHERE pm.user_id = $1
@@ -359,7 +356,7 @@ func (r *MentorRepository) loadMentorPrograms(ctx context.Context, userID string
 	ids := []string{}
 	for rows.Next() {
 		var program models.MentorProgram
-		if err := rows.Scan(&program.ID, &program.Name, &program.Slug, &program.Description, &program.LogoURL); err != nil {
+		if err := rows.Scan(&program.ID, &program.Name, &program.Slug, &program.Description, &program.LogoURL, &program.ProjectName); err != nil {
 			return nil, fmt.Errorf("scan mentor program: %w", err)
 		}
 		program.Skills = []string{}

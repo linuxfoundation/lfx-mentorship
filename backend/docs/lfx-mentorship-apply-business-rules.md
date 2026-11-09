@@ -160,15 +160,15 @@ stateDiagram-v2
 | `accepted` requires the term to still be `open` (checked under lock) | repo L578 |
 | Accepting a mentee refuses while they hold another mentee application `accepted` in a term that hasn't ended (per-mentee lock). Graduating elsewhere doesn't block an acceptance, as in legacy | repo L583 |
 | Moving into a blocking status (`pending`, `accepted`, `graduated`) is refused while the program is hidden | repo L597, L934 |
-| Accepting a mentor application ensures an approved mentor membership | repo L627 |
+| A mentor application's status never changes: a status change, self-withdrawal or `withdraw-for-mentee` on one is refused (`409`). Mentors join and leave a program only through its members | service L476, L618 |
 | Tasks' `application_status` is synced on every status change | repo L631 |
-| `withdraw-for-mentee`: a Program Admin can withdraw a `pending` or `accepted` application; `declined` and `graduated` are final and refused; an already `withdrawn` one is a no-op | service L574 |
-| Bulk decline: only `pending` rows in the term become `declined` | repo L1021 |
+| `withdraw-for-mentee`: a Program Admin can withdraw a `pending` or `accepted` mentee application; `declined` and `graduated` are final and refused; an already `withdrawn` one is a no-op | service L574 |
+| Bulk decline: only `pending` mentee rows in the term become `declined` | repo L1130 |
 
 Notifications:
 
 - **Mentee applications.** The mentee is notified on `accepted`, `declined`, `withdrawn` and `graduated`, including bulk decline and assisted withdrawal. Assisted withdrawal skips the notice when the application was already `withdrawn`.
-- **Mentor applications (imported from legacy).** Program Admins are notified when the mentor self-withdraws. The mentor is notified when a `pending` request is declined. Bulk decline and assisted withdrawal send nothing.
+- **Mentor applications (imported from legacy).** Nothing is sent: their status never changes.
 
 ---
 
@@ -255,7 +255,7 @@ A review of the apply flow found 13 gaps. All 13 are closed: 12 by a code change
 
 **Gap 5: `role` from the request body.**
 - **Before:** any program `viewer` could create a mentor application, and accepting it granted an approved mentor membership.
-- **After:** `role` defaults to `mentee`, and anything else is a 400. Mentors request to join through `POST /programs/{id}/members` (FR-023). Mentor applications imported from legacy can still be decided. The mentor branch of the "application received" notification is removed.
+- **After:** `role` defaults to `mentee`, and anything else is a 400. Mentors request to join through `POST /programs/{id}/members` (FR-023). Mentor applications imported from legacy can't be decided: their status never changes, so no application route grants or revokes a mentor's membership. The mentor branch of the "application received" notification is removed.
 - **Docs:** `06-route-matrix.md` and `07-email-delivery.md`.
 - **Tests:** `TestApplicationService_Create_MenteeOnly`, and e2e `TestE2EMentorApplication`.
 

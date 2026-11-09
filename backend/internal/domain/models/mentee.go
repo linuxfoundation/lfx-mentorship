@@ -28,10 +28,11 @@ func (s MenteeStatus) IsValid() bool {
 
 // MenteeProgramRef is the featured (or listed) program on a mentee card.
 type MenteeProgramRef struct {
-	ID      string  `json:"id"`
-	Name    string  `json:"name"`
-	Slug    string  `json:"slug"`
-	LogoURL *string `json:"logo_url,omitempty"`
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	Slug        string  `json:"slug"`
+	LogoURL     *string `json:"logo_url,omitempty"`
+	ProjectName *string `json:"project_name,omitempty"`
 }
 
 // MenteeProgramTerm is one term the mentee enrolled in on a program.
@@ -50,6 +51,7 @@ type MenteeProgram struct {
 	Slug        string                 `json:"slug"`
 	Description *string                `json:"description,omitempty"`
 	LogoURL     *string                `json:"logo_url,omitempty"`
+	ProjectName *string                `json:"project_name,omitempty"`
 	Status      MenteeStatus           `json:"status"`
 	Skills      []string               `json:"skills"`
 	Terms       []MenteeProgramTerm    `json:"terms"`
