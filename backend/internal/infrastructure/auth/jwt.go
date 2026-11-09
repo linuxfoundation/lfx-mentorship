@@ -40,10 +40,20 @@ type JWTAuthConfig struct {
 	DisabledMockLocalPrincipal string
 }
 
+// HeimdallClaims are the custom claims Heimdall's create_jwt finalizer adds.
+// principal is always present. email arrives only on routes whose pipeline
+// runs the oidc_contextualizer (chart value app.use_oidc_contextualizer), and
+// the gateway has already refused the request if it was unverified. The name
+// and picture claims are carried the same way once the platform's finalizer
+// emits them; they are optional here so the backend is ready when it does.
 type HeimdallClaims struct {
-	Principal string `json:"principal"`
-	Email     string `json:"email,omitempty"`
-	Scope     string `json:"scope,omitempty"`
+	Principal  string `json:"principal"`
+	Email      string `json:"email,omitempty"`
+	Scope      string `json:"scope,omitempty"`
+	Name       string `json:"name,omitempty"`
+	GivenName  string `json:"given_name,omitempty"`
+	FamilyName string `json:"family_name,omitempty"`
+	Picture    string `json:"picture,omitempty"`
 }
 
 func (c *HeimdallClaims) Validate(_ context.Context) error {
@@ -166,7 +176,16 @@ func (a *JWTAuthenticator) extractHeimdallPrincipal(r *http.Request) (*models.Pr
 	if !ok {
 		return nil, errors.New("unexpected Heimdall custom claims type")
 	}
-	return &models.Principal{UserID: claims.Principal, Username: claims.Principal, Email: claims.Email, Scope: claims.Scope}, nil
+	return &models.Principal{
+		UserID:     claims.Principal,
+		Username:   claims.Principal,
+		Email:      claims.Email,
+		Scope:      claims.Scope,
+		Name:       claims.Name,
+		GivenName:  claims.GivenName,
+		FamilyName: claims.FamilyName,
+		Picture:    claims.Picture,
+	}, nil
 }
 
 func bearerToken(r *http.Request) (string, error) {

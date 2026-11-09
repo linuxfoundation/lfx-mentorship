@@ -60,9 +60,12 @@ func (h *UserHandler) BootstrapMe(w http.ResponseWriter, r *http.Request) {
 	if principal.Email != "" {
 		input.Email = &principal.Email
 	}
-	if input.Name == nil && principal.Name != "" {
-		input.Name = &principal.Name
-	}
+	// The body may name the user (Self Serve knows the signed-in profile); the
+	// token's claims fill whatever it leaves out.
+	fillFromClaim(&input.Name, principal.Name)
+	fillFromClaim(&input.GivenName, principal.GivenName)
+	fillFromClaim(&input.FamilyName, principal.FamilyName)
+	fillFromClaim(&input.AvatarURL, principal.Picture)
 	input.LFID = &principal.Username
 	user, err := h.svc.Bootstrap(r.Context(), principal.Username, input)
 	if err != nil {
@@ -109,4 +112,11 @@ func (h *UserHandler) DeleteMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// fillFromClaim sets field to claim when the body left it empty and the token has it.
+func fillFromClaim(field **string, claim string) {
+	if *field == nil && claim != "" {
+		*field = &claim
+	}
 }

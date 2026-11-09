@@ -201,28 +201,42 @@ CSV columns:
 
 ## Task Status Transitions
 
-### Existing endpoint — now with actor-based validation
+### Endpoints — with actor-based validation
 
 ```
-PATCH /v1/tasks/{id}
+PATCH /v1/tasks/{id}/submission
 Authorization: Bearer {token}
 Content-Type: application/json
 
-{ "status": "incomplete" | "in_progress" | "submitted" | "complete" }
+{ "status": "in_progress" | "submitted" }
 ```
 
+```
+PATCH /v1/tasks/{id}/review
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{ "status": "complete" | "incomplete" }
+```
+
+`PATCH /v1/tasks/{id}` is a reviewer's full edit of a task, with no transition guard; it rejects
+the task's assignee.
+
 **Actor rules**:
-- **Mentee** (caller is the task's `assignee_id`): may transition `incomplete → in_progress`
-  and `in_progress → submitted` only.
+- **Mentee** (caller is the task's `assignee_id`), through `/submission`: may transition
+  `incomplete → in_progress`, `in_progress → submitted` and `submitted → in_progress` only.
+  Uploading a file through `POST /v1/tasks/{id}/file-upload` also marks the task `submitted`.
 - **Program Admin / Mentor** (caller is the program's member with `member_type = program_admin |
-  mentor` and `status = approved`): may transition `submitted → complete` or reset any state
-  to `incomplete`.
+  mentor` and `status = approved`), through `/review`: may transition `submitted → complete` or
+  reset any state to `incomplete`.
+- A transition is checked against the task's status when the request is read; if the status
+  changes before the write, the request fails with `409 Conflict`.
 
 **Side effect when `submitted` or `complete`**: if all `prerequisite` tasks on the same
 `application_id` are now `submitted` or `complete`, the service sets
 `applications.tasks_submitted = true` and fires the admin notification hook.
 
-**Responses**: `200 OK` | `403 Forbidden` | `422 Unprocessable Entity`
+**Responses**: `200 OK` | `403 Forbidden` | `409 Conflict` | `422 Unprocessable Entity`
 
 ---
 

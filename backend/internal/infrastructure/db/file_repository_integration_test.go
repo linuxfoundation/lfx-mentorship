@@ -80,6 +80,10 @@ func TestFileRepositoryIntegration_ReplaceCancelsGraceEntryAndQueuesPrevious(t *
 	if err := files.ReplaceTaskFile(ctx, domain.FileReplacement{RowID: fileTestTask, Next: "key-1", PendingDeletionID: first}); err != nil {
 		t.Fatalf("first replace: %v", err)
 	}
+	var status models.TaskStatus
+	if err := pool.QueryRow(ctx, `SELECT status FROM tasks WHERE id = $1`, fileTestTask).Scan(&status); err != nil || status != models.TaskStatusSubmitted {
+		t.Fatalf("status = %q (err %v); an upload submits the task", status, err)
+	}
 	second, _ := queue.Schedule(ctx, domain.ObjectBucketAttachments, "key-2", time.Hour)
 	if err := files.ReplaceTaskFile(ctx, domain.FileReplacement{RowID: fileTestTask, Previous: ptrTo("key-1"), Next: "key-2", PendingDeletionID: second}); err != nil {
 		t.Fatalf("second replace: %v", err)

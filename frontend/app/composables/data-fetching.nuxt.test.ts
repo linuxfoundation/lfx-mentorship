@@ -53,7 +53,7 @@ describe('single-resource queries', () => {
       'useProgramSponsors',
       (id: string) => useProgramSponsors(id),
       '/api/programs/p1/sponsors',
-      [{ id: 's1' }],
+      { sponsors: [{ id: 's1' }], crowdfundingInitiative: true },
     ],
     ['useMentee', (id: string) => useMentee(id), '/api/mentees/p1', { id: 'p1' }],
     ['useMentor', (id: string) => useMentor(id), '/api/mentors/p1', { id: 'p1' }],

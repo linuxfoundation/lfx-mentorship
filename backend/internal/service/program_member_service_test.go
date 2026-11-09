@@ -925,6 +925,143 @@ func TestProgramMemberService_WithdrawMine_InvalidIDIsNotFound(t *testing.T) {
 	}
 }
 
+// answerMineInviteCase runs AcceptMineInvite or DeclineMineInvite and reads
+// the admin notifications that answer sends.
+type answerMineInviteCase struct {
+	run      func(*service.ProgramMemberService, context.Context, string, string) error
+	want     models.ProgramMemberStatus
+	notified func(*stubNotifier) int
+}
+
+var answerMineInviteCases = map[string]answerMineInviteCase{
+	"accept": {
+		run:      (*service.ProgramMemberService).AcceptMineInvite,
+		want:     models.ProgramMemberStatusApproved,
+		notified: func(n *stubNotifier) int { return n.adminMentorAcceptedCalls },
+	},
+	"decline": {
+		run:      (*service.ProgramMemberService).DeclineMineInvite,
+		want:     models.ProgramMemberStatusDeclined,
+		notified: func(n *stubNotifier) int { return n.adminMentorDeclinedCalls },
+	},
+}
+
+func TestProgramMemberService_AnswerMineInvite_FromInvited(t *testing.T) {
+	for action, tc := range answerMineInviteCases {
+		t.Run(action, func(t *testing.T) {
+			var gotFrom []models.ProgramMemberStatus
+			var updatedStatus models.ProgramMemberStatus
+			memberRepo := &stubMemberRepo{
+				getByID: func(_ context.Context, id string) (*models.ProgramMember, error) {
+					return &models.ProgramMember{ID: id, ProgramID: selfProgramID, UserID: "user-1", MemberType: models.MemberTypeMentor, Status: memberStatus(models.ProgramMemberStatusInvited)}, nil
+				},
+				updateIfStatus: func(_ context.Context, id string, from []models.ProgramMemberStatus, in models.ProgramMemberUpdateInput) (*models.ProgramMember, error) {
+					gotFrom, updatedStatus = from, *in.Status
+					return &models.ProgramMember{ID: id, Status: in.Status}, nil
+				},
+			}
+			n := &stubNotifier{}
+			svc := newMemberSvc(memberRepo, &stubProgRepo{}, n)
+			if err := tc.run(svc, context.Background(), selfMemberID, "user-1"); err != nil {
+				t.Fatalf("%s: %v", action, err)
+			}
+			if updatedStatus != tc.want {
+				t.Errorf("status = %q; want %q", updatedStatus, tc.want)
+			}
+			if !slices.Equal(gotFrom, []models.ProgramMemberStatus{models.ProgramMemberStatusInvited}) {
+				t.Errorf("from = %v; want invited only", gotFrom)
+			}
+			if got := tc.notified(n); got != 1 {
+				t.Errorf("admin notified %d times; want 1", got)
+			}
+		})
+	}
+}
+
+func TestProgramMemberService_AnswerMineInvite_OtherStatusesConflict(t *testing.T) {
+	for action, tc := range answerMineInviteCases {
+		for _, status := range []models.ProgramMemberStatus{
+			models.ProgramMemberStatusRequested,
+			models.ProgramMemberStatusPending,
+			models.ProgramMemberStatusApproved,
+			models.ProgramMemberStatusDeclined,
+			models.ProgramMemberStatusWithdrawn,
+		} {
+			t.Run(action+"/"+string(status), func(t *testing.T) {
+				memberRepo := &stubMemberRepo{
+					getByID: func(_ context.Context, id string) (*models.ProgramMember, error) {
+						return &models.ProgramMember{ID: id, UserID: "user-1", MemberType: models.MemberTypeMentor, Status: memberStatus(status)}, nil
+					},
+					updateIfStatus: func(context.Context, string, []models.ProgramMemberStatus, models.ProgramMemberUpdateInput) (*models.ProgramMember, error) {
+						t.Fatal("repo.UpdateIfStatus must not be called")
+						return nil, nil
+					},
+				}
+				n := &stubNotifier{}
+				svc := newMemberSvc(memberRepo, &stubProgRepo{}, n)
+				if err := tc.run(svc, context.Background(), selfMemberID, "user-1"); !errors.Is(err, domain.ErrInvalidStateTransition) {
+					t.Errorf("expected ErrInvalidStateTransition, got %v", err)
+				}
+				if got := tc.notified(n); got != 0 {
+					t.Errorf("admin notified %d times; want 0", got)
+				}
+			})
+		}
+	}
+}
+
+// Another user's row, or the caller's own program_admin row, is a 404 so
+// member IDs cannot be probed.
+func TestProgramMemberService_AnswerMineInvite_NotCallersMentorRow(t *testing.T) {
+	for action, tc := range answerMineInviteCases {
+		for name, row := range map[string]models.ProgramMember{
+			"other user":    {UserID: "user-2", MemberType: models.MemberTypeMentor},
+			"program admin": {UserID: "user-1", MemberType: models.MemberTypeProgramAdmin},
+		} {
+			t.Run(action+"/"+name, func(t *testing.T) {
+				memberRepo := &stubMemberRepo{
+					getByID: func(_ context.Context, id string) (*models.ProgramMember, error) {
+						m := row
+						m.ID = id
+						m.Status = memberStatus(models.ProgramMemberStatusInvited)
+						return &m, nil
+					},
+					updateIfStatus: func(context.Context, string, []models.ProgramMemberStatus, models.ProgramMemberUpdateInput) (*models.ProgramMember, error) {
+						t.Fatal("repo.UpdateIfStatus must not be called")
+						return nil, nil
+					},
+				}
+				svc := newMemberSvc(memberRepo, &stubProgRepo{}, &stubNotifier{})
+				if err := tc.run(svc, context.Background(), selfMemberID, "user-1"); !errors.Is(err, domain.ErrProgramMemberNotFound) {
+					t.Errorf("expected ErrProgramMemberNotFound, got %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestProgramMemberService_AnswerMineInvite_InvalidIDOrCaller(t *testing.T) {
+	for action, tc := range answerMineInviteCases {
+		memberRepo := &stubMemberRepo{
+			getByID: func(context.Context, string) (*models.ProgramMember, error) {
+				t.Fatal("repo must not be queried")
+				return nil, nil
+			},
+		}
+		svc := newMemberSvc(memberRepo, &stubProgRepo{}, &stubNotifier{})
+		t.Run(action+"/non-UUID id", func(t *testing.T) {
+			if err := tc.run(svc, context.Background(), "not-a-uuid", "user-1"); !errors.Is(err, domain.ErrProgramMemberNotFound) {
+				t.Errorf("expected ErrProgramMemberNotFound, got %v", err)
+			}
+		})
+		t.Run(action+"/no caller", func(t *testing.T) {
+			if err := tc.run(svc, context.Background(), selfMemberID, ""); !errors.Is(err, domain.ErrUnauthorized) {
+				t.Errorf("expected ErrUnauthorized, got %v", err)
+			}
+		})
+	}
+}
+
 // ── Lifecycle and invite-email changes ───────────────────────────────────────
 
 func TestProgramMemberService_Create_RequestedMentor_SendsNoInvite(t *testing.T) {

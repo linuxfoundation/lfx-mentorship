@@ -109,8 +109,17 @@ func TestSend_Rejected(t *testing.T) {
 	stub := &requesterStub{reply: mustJSON(t, emailapi.SendEmailErrorResponse{Error: "to, subject, html, and text are required"})}
 
 	_, err := NewClient(stub, Config{}).Send(context.Background(), Message{})
-	if !errors.Is(err, ErrRejected) {
+	if !errors.Is(err, ErrRejected) || errors.Is(err, ErrThrottled) {
 		t.Fatalf("err = %v, want ErrRejected", err)
+	}
+}
+
+func TestSend_Throttled(t *testing.T) {
+	stub := &requesterStub{reply: mustJSON(t, emailapi.SendEmailErrorResponse{Error: "sending throttled"})}
+
+	_, err := NewClient(stub, Config{}).Send(context.Background(), Message{})
+	if !errors.Is(err, ErrThrottled) || errors.Is(err, ErrRejected) {
+		t.Fatalf("err = %v, want ErrThrottled only: a throttled send can be retried", err)
 	}
 }
 

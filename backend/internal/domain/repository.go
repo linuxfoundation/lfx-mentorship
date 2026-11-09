@@ -18,8 +18,9 @@ type UserRepository interface {
 	Create(ctx context.Context, input models.UserCreateInput) (*models.User, error)
 	UpsertByLFID(ctx context.Context, input models.UserCreateInput) (*models.User, error)
 	// BootstrapByLFID upserts the caller's own row from their verified identity, taking the email
-	// back from any other LF account's row that still holds it.
-	BootstrapByLFID(ctx context.Context, input models.UserCreateInput) (*models.User, error)
+	// back from any other row that still holds it. fill sets only columns still NULL at write
+	// time and never takes an email from another row (ErrEmailInUse instead).
+	BootstrapByLFID(ctx context.Context, input models.UserCreateInput, fill models.UserIdentityFill) (*models.User, error)
 	// SearchCandidates matches part of a name or an LFID prefix, never an email.
 	SearchCandidates(ctx context.Context, query string, limit int) ([]*models.User, error)
 	Update(ctx context.Context, id string, input models.UserUpdateInput) (*models.User, error)
@@ -90,9 +91,17 @@ type ProgramRepository interface {
 	ListCatalogMentees(ctx context.Context, programID string) ([]*models.ProgramCatalogMentee, error)
 	// ListAdministeredByUser returns the programs userID is an active program admin of, by name.
 	ListAdministeredByUser(ctx context.Context, userID string, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error)
+	// ListAdministeredByProjects returns every program of the given projects,
+	// in any status, in the same shape and order as ListAdministeredByUser.
+	ListAdministeredByProjects(ctx context.Context, projectUIDs []string, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error)
+	// ListProjectUIDs returns each distinct project UID that has a program.
+	ListProjectUIDs(ctx context.Context) ([]string, error)
 	Create(ctx context.Context, input models.ProgramCreateInput) (*models.Program, error)
 	CreateEnrollment(ctx context.Context, input models.ProgramEnrollmentInput) (*models.Program, error)
-	Update(ctx context.Context, id string, input models.ProgramUpdateInput) (*models.Program, error)
+	// Update patches the program and applies changes to the prerequisite tasks of its pending
+	// mentee applications in the same transaction. It returns the applications it flagged
+	// tasks_submitted.
+	Update(ctx context.Context, id string, input models.ProgramUpdateInput, changes models.PrerequisiteChanges) (*models.Program, []string, error)
 	Delete(ctx context.Context, id string) error
 
 	// Skills
@@ -119,6 +128,13 @@ type ProgramTermRepository interface {
 	Update(ctx context.Context, id string, input models.ProgramTermUpdateInput) (*models.ProgramTerm, error)
 	Delete(ctx context.Context, id string) error
 	CloseWithBulkDecline(ctx context.Context, id string) (*models.ProgramTerm, []*models.Application, error)
+
+	// ListEndedIDs returns the IDs of the open terms that ended before now and have no pending or
+	// accepted mentee application left.
+	ListEndedIDs(ctx context.Context, now time.Time) ([]string, error)
+	// CloseEnded closes a term ListEndedIDs returned, after checking under lock that it still
+	// qualifies. A term that no longer does returns ErrInvalidStateTransition.
+	CloseEnded(ctx context.Context, id string, now time.Time) (*models.ProgramTerm, error)
 
 	// CountOpenTermsByProgram returns the number of terms with status='open' for a program.
 	CountOpenTermsByProgram(ctx context.Context, programID string) (int, error)
@@ -159,7 +175,7 @@ type ApplicationRepository interface {
 	MarkTasksSubmitted(ctx context.Context, id string) (bool, error)
 	Delete(ctx context.Context, id string) error
 
-	// CountBlockingAppsForProgram returns applications in a non-terminal state across all terms of a program.
+	// CountBlockingAppsForProgram returns mentee applications in a non-terminal state across all terms of a program.
 	CountBlockingAppsForProgram(ctx context.Context, programID string) (int, error)
 	// CountAcceptedByTerm returns the count of accepted applications for a term.
 	CountAcceptedByTerm(ctx context.Context, termID string) (int, error)
@@ -192,7 +208,8 @@ type FileReplacement struct {
 // deletion in the same transaction.
 type FileRepository interface {
 	ReplaceProgramLogo(ctx context.Context, r FileReplacement) error
-	// ReplaceTaskFile returns ErrStateLocked once the task is complete or its application is withdrawn.
+	// ReplaceTaskFile also marks the task submitted. It returns ErrStateLocked once the task is
+	// complete or its application is withdrawn.
 	ReplaceTaskFile(ctx context.Context, r FileReplacement) error
 	ClearProgramLogo(ctx context.Context, programID, previous string) error
 	// ClearTaskFile returns ErrStateLocked unless the task is incomplete or in progress and its

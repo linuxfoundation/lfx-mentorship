@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -40,13 +41,15 @@ type enrollmentPrerequisite struct {
 
 // ProgramService orchestrates program reads and writes.
 type ProgramService struct {
-	repo       domain.ProgramRepository
-	termRepo   domain.ProgramTermRepository
-	appRepo    domain.ApplicationRepository
-	memberRepo domain.ProgramMemberRepository
-	notifier   domain.Notifier
-	cfClient   clients.CrowdfundingClient
-	projects   domain.ProjectLookup
+	repo          domain.ProgramRepository
+	termRepo      domain.ProgramTermRepository
+	appRepo       domain.ApplicationRepository
+	memberRepo    domain.ProgramMemberRepository
+	notifier      domain.Notifier
+	cfClient      clients.CrowdfundingClient
+	projects      domain.ProjectLookup
+	access        domain.AccessWaiter
+	accessChecker domain.AccessChecker
 }
 
 // NewProgramService returns a ProgramService.
@@ -65,6 +68,19 @@ func (s *ProgramService) SetCrowdfundingClient(client clients.CrowdfundingClient
 // are stored, which only local development without NATS relies on.
 func (s *ProgramService) SetProjectLookup(projects domain.ProjectLookup) {
 	s.projects = projects
+}
+
+// SetAccessWaiter makes CreateEnrollment respond only once the creator can
+// write to the new program, or the waiter gives up.
+func (s *ProgramService) SetAccessWaiter(access domain.AccessWaiter) {
+	s.access = access
+}
+
+// SetAccessChecker sets the fga-sync check that limits a project's
+// sub-project programs to the sub-projects the caller may manage. Without it,
+// the list with sub-projects is unavailable.
+func (s *ProgramService) SetAccessChecker(checker domain.AccessChecker) {
+	s.accessChecker = checker
 }
 
 // programTransitions defines the valid next states for each program status.
@@ -109,6 +125,10 @@ func (s *ProgramService) List(ctx context.Context, filter models.ProgramFilter) 
 	ctx, span := programSvcTracer.Start(ctx, "ProgramService.List")
 	defer span.End()
 
+	var err error
+	if filter.Search, err = normalizeSearch(filter.Search); err != nil {
+		return nil, nil, err
+	}
 	programs, meta, err := s.repo.List(ctx, filter)
 	if err != nil {
 		span.RecordError(err)
@@ -177,6 +197,10 @@ func (s *ProgramService) ListCatalog(ctx context.Context, filter models.ProgramF
 	ctx, span := programSvcTracer.Start(ctx, "ProgramService.ListCatalog")
 	defer span.End()
 
+	var err error
+	if filter.Search, err = normalizeSearch(filter.Search); err != nil {
+		return nil, nil, err
+	}
 	filter = normalizeCatalogFilter(filter)
 
 	items, meta, err := s.repo.ListCatalog(ctx, filter)
@@ -189,7 +213,6 @@ func (s *ProgramService) ListCatalog(ctx context.Context, filter models.ProgramF
 }
 
 func normalizeCatalogFilter(filter models.ProgramFilter) models.ProgramFilter {
-	filter.Search = strings.TrimSpace(filter.Search)
 	filter.Skill = strings.TrimSpace(filter.Skill)
 	if strings.EqualFold(filter.Skill, "all") {
 		filter.Skill = ""
@@ -253,10 +276,10 @@ func (s *ProgramService) ListMine(ctx context.Context, userID string, filter mod
 	if userID == "" {
 		return nil, nil, fmt.Errorf("%w: caller identity is required", domain.ErrUnauthorized)
 	}
-	if filter.Status != "" && !filter.Status.IsValid() {
-		return nil, nil, fmt.Errorf("%w: status must be open, pending_review, completed, rejected, or hidden", domain.ErrInvalidInput)
+	filter, err := validateAdministeredProgramFilter(filter)
+	if err != nil {
+		return nil, nil, err
 	}
-	filter.Search = strings.TrimSpace(filter.Search)
 
 	programs, meta, err := s.repo.ListAdministeredByUser(ctx, userID, filter)
 	if err != nil {
@@ -266,6 +289,163 @@ func (s *ProgramService) ListMine(ctx context.Context, userID string, filter mod
 	return programs, meta, nil
 }
 
+// The project relation Heimdall checks on the project programs list: project
+// writer_guard or mentorship_program_admin, the project half of program writer.
+const (
+	projectFGAObjectPrefix  = "project:"
+	projectProgramsRelation = "mentorship_program_creator"
+)
+
+// ListByProject returns every program of the project, in any status, in the
+// admin programs list shape. With includeSubprojects it also returns the
+// programs of each project below it in Project Service's hierarchy, at any
+// depth, whose programs the caller may manage. Heimdall has already checked
+// the caller may manage the project's own programs.
+func (s *ProgramService) ListByProject(ctx context.Context, projectUID string, includeSubprojects bool, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+	ctx, span := programSvcTracer.Start(ctx, "ProgramService.ListByProject")
+	defer span.End()
+	span.SetAttributes(attribute.String("project.uid", projectUID), attribute.Bool("include_subprojects", includeSubprojects))
+
+	uid, err := uuid.Parse(projectUID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: project_uid must be a UUID", domain.ErrInvalidInput)
+	}
+	if filter, err = validateAdministeredProgramFilter(filter); err != nil {
+		return nil, nil, err
+	}
+
+	projectUIDs := []string{uid.String()}
+	if includeSubprojects {
+		subprojects, err := s.manageableSubprojects(ctx, uid.String())
+		if err != nil {
+			span.RecordError(err)
+			return nil, nil, fmt.Errorf("list project programs: %w", err)
+		}
+		projectUIDs = append(projectUIDs, subprojects...)
+	}
+	programs, meta, err := s.repo.ListAdministeredByProjects(ctx, projectUIDs, filter)
+	if err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("list project programs: %w", err)
+	}
+	return programs, meta, nil
+}
+
+// manageableSubprojects returns the projects below rootUID that have programs
+// and whose programs the caller may manage. Heimdall's check on rootUID does
+// not cover them: project writer passes down to sub-projects, but
+// mentorship_program_admin does not, so each one is checked, all in one
+// fga-sync request.
+func (s *ProgramService) manageableSubprojects(ctx context.Context, rootUID string) ([]string, error) {
+	principal := auth.PrincipalFromContext(ctx)
+	if principal == nil || principal.Username == "" {
+		return nil, domain.ErrUnauthorized
+	}
+	if s.projects == nil || s.accessChecker == nil {
+		return nil, fmt.Errorf("sub-projects need Project Service and fga-sync: %w", domain.ErrUpstreamUnavailable)
+	}
+	subprojects, err := s.subprojectsWithPrograms(ctx, rootUID)
+	if err != nil {
+		return nil, err
+	}
+
+	objects := make([]string, 0, len(subprojects))
+	for _, uid := range subprojects {
+		// The UID is interpolated into fga-sync's "object#relation@user" check
+		// line, so only a UUID may reach it.
+		if _, err := uuid.Parse(uid); err == nil {
+			objects = append(objects, projectFGAObjectPrefix+uid)
+		}
+	}
+	if len(objects) == 0 {
+		return nil, nil
+	}
+	allowed, err := s.accessChecker.AllowedObjects(ctx, objects, projectProgramsRelation, principal.Username)
+	if err != nil {
+		return nil, fmt.Errorf("%w: sub-project access check: %w", domain.ErrUpstreamUnavailable, err)
+	}
+	uids := make([]string, len(allowed))
+	for i, object := range allowed {
+		uids[i] = strings.TrimPrefix(object, projectFGAObjectPrefix)
+	}
+	return uids, nil
+}
+
+// subprojectsWithPrograms returns each project with a program that sits below
+// rootUID in Project Service's hierarchy. Project Service only answers "what
+// is this project's parent", so it starts from the projects that have
+// programs and walks up, one request per level of nesting.
+func (s *ProgramService) subprojectsWithPrograms(ctx context.Context, rootUID string) ([]string, error) {
+	candidates, err := s.repo.ListProjectUIDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// parents maps each project already asked about to its parent: "" at the
+	// top of the hierarchy, or when Project Service does not know the project.
+	// rootUID is never asked about, so the walk stops there.
+	parents := map[string]string{rootUID: ""}
+	for pending := unknownProjects(candidates, parents); len(pending) > 0; {
+		found, err := s.projects.GetParentUIDs(ctx, pending)
+		if err != nil {
+			return nil, fmt.Errorf("resolve project parents: %w", err)
+		}
+		next := make([]string, 0, len(pending))
+		for _, uid := range pending {
+			parents[uid] = found[uid]
+			if found[uid] != "" {
+				next = append(next, found[uid])
+			}
+		}
+		pending = unknownProjects(next, parents)
+	}
+
+	var uids []string
+	for _, uid := range candidates {
+		if uid != rootUID && isBelowProject(uid, rootUID, parents) {
+			uids = append(uids, uid)
+		}
+	}
+	return uids, nil
+}
+
+// unknownProjects returns the distinct UIDs whose parent is not yet in parents.
+func unknownProjects(uids []string, parents map[string]string) []string {
+	queued := make(map[string]bool, len(uids))
+	unknown := make([]string, 0, len(uids))
+	for _, uid := range uids {
+		if _, known := parents[uid]; !known && !queued[uid] {
+			queued[uid] = true
+			unknown = append(unknown, uid)
+		}
+	}
+	return unknown
+}
+
+// isBelowProject reports whether rootUID is an ancestor of uid. It stops at a
+// cycle rather than looping, though Project Service should never hold one.
+func isBelowProject(uid, rootUID string, parents map[string]string) bool {
+	visited := map[string]bool{uid: true}
+	for parent := parents[uid]; parent != "" && !visited[parent]; parent = parents[parent] {
+		if parent == rootUID {
+			return true
+		}
+		visited[parent] = true
+	}
+	return false
+}
+
+// validateAdministeredProgramFilter checks the status and normalizes the
+// search of an admin programs list filter.
+func validateAdministeredProgramFilter(filter models.AdministeredProgramFilter) (models.AdministeredProgramFilter, error) {
+	if filter.Status != "" && !filter.Status.IsValid() {
+		return filter, fmt.Errorf("%w: status must be accepting, in_progress, upcoming, pending_review, completed, rejected, or hidden", domain.ErrInvalidInput)
+	}
+	var err error
+	filter.Search, err = normalizeSearch(filter.Search)
+	return filter, err
+}
+
 // Create validates input and creates a program.
 func (s *ProgramService) Create(ctx context.Context, input models.ProgramCreateInput) (*models.Program, error) {
 	ctx, span := programSvcTracer.Start(ctx, "ProgramService.Create")
@@ -273,6 +453,9 @@ func (s *ProgramService) Create(ctx context.Context, input models.ProgramCreateI
 
 	if strings.TrimSpace(input.Name) == "" {
 		return nil, fmt.Errorf("%w: name is required", domain.ErrInvalidInput)
+	}
+	if err := validateName("name", &input.Name); err != nil {
+		return nil, err
 	}
 	if err := reservedFileField("logo_url", input.LogoURL); err != nil {
 		return nil, err
@@ -363,10 +546,19 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 			}
 			templates = append(templates, taskTemplate{Name: prerequisite.Name, Description: prerequisite.Description, SubmitFile: submitFile, DueDate: prerequisite.DueDate})
 		}
-		input.Prerequisites, _ = json.Marshal(templates)
+		marshaled, _ := json.Marshal(templates)
+		// The same rules a program update applies, so names are unique as the sync matches them.
+		normalized, err := normalizeTaskTemplates(marshaled, nil)
+		if err != nil {
+			return nil, err
+		}
+		input.Prerequisites = normalized
 	}
 	if strings.TrimSpace(input.Program.Name) == "" {
 		return nil, fmt.Errorf("%w: name is required", domain.ErrInvalidInput)
+	}
+	if err := validateName("name", &input.Program.Name); err != nil {
+		return nil, err
 	}
 	available, err := s.repo.NameAvailable(ctx, input.Program.Name, "")
 	if err != nil {
@@ -406,6 +598,7 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 		return nil, err
 	}
 	s.notifier.NotifyProgramSubmitted(ctx, p.ID, input.Program.CreatorUserID)
+	awaitCreatorAccess(ctx, s.access, programFGAObjectPrefix+p.ID, programCreatorRelation)
 	return p, nil
 }
 
@@ -511,6 +704,9 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 	if input.Status != nil && !input.Status.IsValid() {
 		return nil, fmt.Errorf("%w: invalid status %q", domain.ErrInvalidInput, *input.Status)
 	}
+	if err := validateName("name", input.Name); err != nil {
+		return nil, err
+	}
 	if input.ProgramTermStatus != nil && !input.ProgramTermStatus.IsValid() {
 		return nil, fmt.Errorf("%w: invalid program term status %q", domain.ErrInvalidInput, *input.ProgramTermStatus)
 	}
@@ -531,6 +727,7 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 			return nil, err
 		}
 	}
+	var prerequisiteChanges models.PrerequisiteChanges
 	if len(input.TaskTemplates) > 0 {
 		current, err := s.repo.GetByID(ctx, id)
 		if err != nil {
@@ -538,6 +735,20 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 			return nil, fmt.Errorf("get program for update: %w", err)
 		}
 		if input.TaskTemplates, err = normalizeTaskTemplates(input.TaskTemplates, current.TaskTemplates); err != nil {
+			return nil, err
+		}
+		if prerequisiteChanges, err = diffPrerequisites(current.TaskTemplates, input.TaskTemplates); err != nil {
+			return nil, err
+		}
+		input.ExpectedTaskTemplates = current.TaskTemplates
+	}
+	if input.LFID != nil {
+		current, err := s.repo.GetByID(ctx, id)
+		if err != nil {
+			span.RecordError(err)
+			return nil, fmt.Errorf("get program for update: %w", err)
+		}
+		if input.LFID, err = keepProgramLFID(current.LFID, *input.LFID); err != nil {
 			return nil, err
 		}
 	}
@@ -631,7 +842,7 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 		}
 	}
 
-	p, err := s.repo.Update(ctx, id, input)
+	p, flagged, err := s.repo.Update(ctx, id, input, prerequisiteChanges)
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("update program: %w", err)
@@ -639,13 +850,18 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 	if input.EditorID != "" {
 		s.notifier.NotifyProgramUpdated(ctx, id, input.EditorID)
 	}
+	// Removing a prerequisite completed these applicants' tasks, as their last submission would have.
+	for _, applicationID := range flagged {
+		s.notifier.NotifyAdminTasksSubmitted(ctx, applicationID)
+	}
 	return p, nil
 }
 
 // normalizeTaskTemplates validates a program update's task templates and returns them in the
 // shape applications clone: a blank submitFile or dueDate is cleared, and submitFile may only be
 // "required". A template that leaves custom out keeps the flag of the current template with the
-// same name (ignoring case), so an edit that does not send it keeps the migrated value.
+// same name (ignoring case), so an edit that does not send it keeps the migrated value. Names must
+// be unique, ignoring case: the name is what matches a template to its applicants' tasks.
 func normalizeTaskTemplates(raw, current json.RawMessage) (json.RawMessage, error) {
 	var incoming []struct {
 		Name        string  `json:"name"`
@@ -666,15 +882,21 @@ func normalizeTaskTemplates(raw, current json.RawMessage) (json.RawMessage, erro
 	}
 	customByName := make(map[string]templateFlag, len(existing))
 	for _, template := range existing {
-		customByName[strings.ToLower(strings.TrimSpace(template.Name))] = template.Custom
+		customByName[models.PrerequisiteKey(template.Name)] = template.Custom
 	}
 	templates := make([]taskTemplate, 0, len(incoming))
+	seen := make(map[string]struct{}, len(incoming))
 	for _, in := range incoming {
 		name := strings.TrimSpace(in.Name)
 		if name == "" {
 			return nil, fmt.Errorf("%w: task template name is required", domain.ErrInvalidInput)
 		}
-		template := taskTemplate{Name: name, Custom: customByName[strings.ToLower(name)]}
+		key := models.PrerequisiteKey(name)
+		if _, dup := seen[key]; dup {
+			return nil, fmt.Errorf("%w: task template name %q is used more than once", domain.ErrInvalidInput, name)
+		}
+		seen[key] = struct{}{}
+		template := taskTemplate{Name: name, Custom: customByName[key]}
 		if in.Custom != nil {
 			template.Custom = templateFlag(*in.Custom)
 		}
@@ -697,6 +919,80 @@ func normalizeTaskTemplates(raw, current json.RawMessage) (json.RawMessage, erro
 		templates = append(templates, template)
 	}
 	return json.Marshal(templates)
+}
+
+// keepProgramLFID returns the lfid a program update may store. lfid records the program's creator,
+// who owns it (FR-009) and whom legacy prerequisite clones are recognized by, so it can be set while
+// empty but not changed once set. The stored LFID resent in another case or with surrounding space
+// keeps the stored value, since a different spelling would stop matching those clones. The
+// repository re-checks under the program lock.
+func keepProgramLFID(current *string, next string) (*string, error) {
+	next = strings.TrimSpace(next)
+	if current == nil || strings.TrimSpace(*current) == "" {
+		return &next, nil
+	}
+	if strings.EqualFold(strings.TrimSpace(*current), next) {
+		return current, nil
+	}
+	return nil, fmt.Errorf("%w: lfid records the program's creator and cannot be changed once set", domain.ErrInvalidInput)
+}
+
+// diffPrerequisites compares a program's current task templates with the normalized templates
+// replacing them, matching each by its PrerequisiteKey. Content is compared as applications
+// clone it, so a template stored before normalization is not edited just by being saved again.
+func diffPrerequisites(current, next json.RawMessage) (models.PrerequisiteChanges, error) {
+	before, err := decodePrerequisites(current)
+	if err != nil {
+		return models.PrerequisiteChanges{}, fmt.Errorf("decode current task templates: %w", err)
+	}
+	after, err := decodePrerequisites(next)
+	if err != nil {
+		return models.PrerequisiteChanges{}, fmt.Errorf("decode task templates: %w", err)
+	}
+	beforeByKey := make(map[string]models.PrerequisiteTemplate, len(before))
+	for _, p := range before {
+		beforeByKey[models.PrerequisiteKey(p.Name)] = p
+	}
+	var changes models.PrerequisiteChanges
+	kept := make(map[string]bool, len(after))
+	for _, p := range after {
+		key := models.PrerequisiteKey(p.Name)
+		kept[key] = true
+		old, ok := beforeByKey[key]
+		switch {
+		case !ok:
+			changes.Added = append(changes.Added, p)
+		case !reflect.DeepEqual(old, p):
+			changes.Edited = append(changes.Edited, p)
+		}
+	}
+	for _, p := range before {
+		if key := models.PrerequisiteKey(p.Name); !kept[key] {
+			kept[key] = true // a name stored twice is removed once
+			changes.Removed = append(changes.Removed, key)
+		}
+	}
+	return changes, nil
+}
+
+// decodePrerequisites decodes stored or normalized task templates into prerequisites, skipping
+// any without a name.
+func decodePrerequisites(raw json.RawMessage) ([]models.PrerequisiteTemplate, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var templates []taskTemplate
+	if err := json.Unmarshal(raw, &templates); err != nil {
+		return nil, err
+	}
+	prerequisites := make([]models.PrerequisiteTemplate, 0, len(templates))
+	for _, t := range templates {
+		if strings.TrimSpace(t.Name) == "" {
+			continue
+		}
+		prerequisites = append(prerequisites, t.prerequisite())
+	}
+	return prerequisites, nil
 }
 
 // validateOpenTerms checks a program update's open-term set and trims term names
@@ -917,8 +1213,9 @@ func aggregateProgramSponsors(transactions []models.ProgramTransaction) []models
 	return out
 }
 
-// GetProgramSponsors returns backend-aggregated sponsor cards for a program.
-func (s *ProgramService) GetProgramSponsors(ctx context.Context, programID, categoryType string, subscriptionOnly bool, aggregate bool) ([]models.ProgramSponsor, error) {
+// GetProgramSponsors returns backend-aggregated sponsor cards for a program. A
+// program with no crowdfunding initiative yet has no sponsors rather than an error.
+func (s *ProgramService) GetProgramSponsors(ctx context.Context, programID, categoryType string, subscriptionOnly bool, aggregate bool) (*models.ProgramSponsors, error) {
 	ctx, span := programSvcTracer.Start(ctx, "ProgramService.GetProgramSponsors")
 	defer span.End()
 
@@ -937,6 +1234,9 @@ func (s *ProgramService) GetProgramSponsors(ctx context.Context, programID, cate
 	all := make([]models.ProgramTransaction, 0, pageSize)
 
 	firstPage, err := s.cfClient.GetCategorizedTransactions(ctx, programID, categoryType, subscriptionOnly, pageSize, 0)
+	if errors.Is(err, domain.ErrInitiativeNotFound) {
+		return &models.ProgramSponsors{Data: []models.ProgramSponsor{}}, nil
+	}
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("get sponsors transactions page: %w", err)
@@ -944,7 +1244,7 @@ func (s *ProgramService) GetProgramSponsors(ctx context.Context, programID, cate
 	all = append(all, firstPage.OrganizationTransactions...)
 	all = append(all, firstPage.IndividualTransactions...)
 	if !aggregate {
-		return aggregateProgramSponsors(all), nil
+		return withInitiative(aggregateProgramSponsors(all)), nil
 	}
 
 	effectivePageSize := firstPage.Limit
@@ -954,7 +1254,7 @@ func (s *ProgramService) GetProgramSponsors(ctx context.Context, programID, cate
 
 	totalCount := firstPage.TotalCount
 	if totalCount <= effectivePageSize {
-		return aggregateProgramSponsors(all), nil
+		return withInitiative(aggregateProgramSponsors(all)), nil
 	}
 
 	const aggregateWorkers = 4
@@ -1009,5 +1309,10 @@ func (s *ProgramService) GetProgramSponsors(ctx context.Context, programID, cate
 	default:
 	}
 
-	return aggregateProgramSponsors(all), nil
+	return withInitiative(aggregateProgramSponsors(all)), nil
+}
+
+// withInitiative wraps the sponsors of a program that has a crowdfunding initiative.
+func withInitiative(sponsors []models.ProgramSponsor) *models.ProgramSponsors {
+	return &models.ProgramSponsors{Data: sponsors, CrowdfundingInitiative: true}
 }

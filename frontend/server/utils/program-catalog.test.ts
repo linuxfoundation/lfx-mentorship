@@ -51,8 +51,13 @@ describe('mapCatalogItemToProgram', () => {
     });
   });
 
-  it('keeps a pending program pending whatever its terms say', () => {
-    expect(mapCatalogItemToProgram(item({ status: 'pending' })).status).toBe('pending');
+  it('maps the owning project to the foundation, and leaves it empty without one', () => {
+    expect(
+      mapCatalogItemToProgram(
+        item({ project_uid: 'proj-1', project_slug: 'cncf', project_name: ' CNCF ' }),
+      ).foundation,
+    ).toEqual({ id: 'proj-1', slug: 'cncf', name: 'CNCF' });
+    expect(mapCatalogItemToProgram(item()).foundation).toEqual({ id: '', slug: '', name: '' });
   });
 
   it('maps terms, trimming dates and normalising unknown statuses to open', () => {

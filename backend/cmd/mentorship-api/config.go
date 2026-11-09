@@ -6,6 +6,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"net/mail"
 	"net/url"
 	"os"
@@ -14,6 +15,14 @@ import (
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/auth"
+)
+
+// A create waits up to defaultAccessWaitTimeout for its creator's FGA relation.
+// The cap keeps the wait well inside the request timeout (80% of the 30s write
+// timeout), which also covers the create's own work and upstream lookups.
+const (
+	defaultAccessWaitTimeout = 10 * time.Second
+	maxAccessWaitTimeout     = 15 * time.Second
 )
 
 // Config holds all runtime configuration for the service.
@@ -81,6 +90,9 @@ type FGAConfig struct {
 	RelayInterval    time.Duration
 	RelayRetryDelay  time.Duration
 	RelayMaxAttempts int
+	// AccessWaitTimeout bounds how long a create waits for its creator's
+	// relation to reach OpenFGA; zero disables the wait.
+	AccessWaitTimeout time.Duration
 }
 
 // IndexerConfig configures authenticated index publishing and retry behavior.
@@ -103,6 +115,8 @@ type EmailConfig struct {
 	AllowedRecipients []string
 	// CopyInbox is the LF staff inbox sent every mentee acceptance and a copy of every other email.
 	CopyInbox string
+	// SendRate caps notification sends per second; see email.NotifierConfig.SendRate.
+	SendRate float64
 }
 
 // CrowdfundingConfig holds outbound crowdfunding API settings.
@@ -189,6 +203,13 @@ func loadConfig() (*Config, error) {
 			return nil, fmt.Errorf("FGA_RELAY_RETRY_DELAY: must be a positive duration")
 		}
 	}
+	accessWaitTimeout := defaultAccessWaitTimeout
+	if v := os.Getenv("FGA_ACCESS_WAIT_TIMEOUT"); v != "" {
+		accessWaitTimeout, err = time.ParseDuration(v)
+		if err != nil || accessWaitTimeout < 0 || accessWaitTimeout > maxAccessWaitTimeout {
+			return nil, fmt.Errorf("FGA_ACCESS_WAIT_TIMEOUT: must be a duration from 0 (off) to %s", maxAccessWaitTimeout)
+		}
+	}
 	indexRetryDelay := time.Minute
 	if v := os.Getenv("INDEX_RELAY_RETRY_DELAY"); v != "" {
 		indexRetryDelay, err = time.ParseDuration(v)
@@ -240,11 +261,12 @@ func loadConfig() (*Config, error) {
 			HeimdallIssuer:   heimdallIssuer,
 		},
 		FGA: FGAConfig{
-			NATSURL:          os.Getenv("FGA_NATS_URL"),
-			RelayBatch:       relayBatch,
-			RelayInterval:    relayInterval,
-			RelayRetryDelay:  relayRetryDelay,
-			RelayMaxAttempts: relayMaxAttempts,
+			NATSURL:           os.Getenv("FGA_NATS_URL"),
+			RelayBatch:        relayBatch,
+			RelayInterval:     relayInterval,
+			RelayRetryDelay:   relayRetryDelay,
+			RelayMaxAttempts:  relayMaxAttempts,
+			AccessWaitTimeout: accessWaitTimeout,
 		},
 		Indexer: IndexerConfig{
 			ServiceToken: os.Getenv("INDEXER_SERVICE_TOKEN"),
@@ -280,6 +302,10 @@ func loadEmailConfig(natsConfigured bool) (EmailConfig, error) {
 	if !natsConfigured {
 		return cfg, nil
 	}
+	var err error
+	if cfg.SendRate, err = parseSendRate(); err != nil {
+		return EmailConfig{}, err
+	}
 	for _, kv := range [][2]string{{"PUBLIC_SITE_URL", cfg.PublicSiteURL}, {"SELF_SERVE_URL", cfg.SelfServeURL}} {
 		if u, err := url.Parse(kv[1]); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
 			return EmailConfig{}, fmt.Errorf("%s must be an absolute http(s) URL with no query or fragment when FGA_NATS_URL is set", kv[0])
@@ -288,7 +314,6 @@ func loadEmailConfig(natsConfigured bool) (EmailConfig, error) {
 	if addr, err := mail.ParseAddress(cfg.CopyInbox); err != nil || addr.Address != cfg.CopyInbox {
 		return EmailConfig{}, fmt.Errorf("EMAIL_COPY_INBOX must be a bare email address when FGA_NATS_URL is set")
 	}
-	var err error
 	if cfg.ReviewInboxes, err = addressList("EMAIL_REVIEW_INBOX"); err != nil {
 		return EmailConfig{}, err
 	}
@@ -303,6 +328,19 @@ func loadEmailConfig(natsConfigured bool) (EmailConfig, error) {
 		return EmailConfig{}, fmt.Errorf("EMAIL_ALLOWED_RECIPIENTS is set but lists no addresses")
 	}
 	return cfg, nil
+}
+
+// defaultEmailSendRate is per API pod. With the chart's ten-pod ceiling and the reminder job's
+// own rate (4/s), the defaults total 14 per second, the lowest SES rate any environment runs at.
+const defaultEmailSendRate = "1"
+
+// parseSendRate reads EMAIL_SEND_RATE, the notification sends allowed per second.
+func parseSendRate() (float64, error) {
+	r, err := strconv.ParseFloat(getEnv("EMAIL_SEND_RATE", defaultEmailSendRate), 64)
+	if err != nil || math.IsNaN(r) || math.IsInf(r, 0) || r <= 0 {
+		return 0, fmt.Errorf("EMAIL_SEND_RATE: must be a positive number of sends per second")
+	}
+	return r, nil
 }
 
 // addressList reads key as comma-separated bare email addresses, skipping blank entries.

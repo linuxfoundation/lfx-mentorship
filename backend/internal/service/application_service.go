@@ -30,6 +30,7 @@ type ApplicationService struct {
 	memberRepo  domain.ProgramMemberRepository
 	profileRepo domain.UserProfileRepository
 	notifier    domain.Notifier
+	access      domain.AccessWaiter
 }
 
 // taskTemplate mirrors the shape stored in programs.task_templates JSONB.
@@ -57,6 +58,22 @@ func (f *templateFlag) UnmarshalJSON(data []byte) error {
 	}
 	*f = templateFlag(strings.EqualFold(strings.TrimSpace(legacy), "true"))
 	return nil
+}
+
+// prerequisite returns the template as applications clone it.
+func (t taskTemplate) prerequisite() models.PrerequisiteTemplate {
+	var description *string
+	if t.Description != nil && strings.TrimSpace(*t.Description) != "" {
+		trimmed := strings.TrimSpace(*t.Description)
+		description = &trimmed
+	}
+	return models.PrerequisiteTemplate{
+		Name:        strings.TrimSpace(t.Name),
+		Description: description,
+		SubmitFile:  cloneSubmitFile(t.SubmitFile),
+		DueDate:     cloneDueDate(t.DueDate),
+		Custom:      bool(t.Custom),
+	}
 }
 
 // cloneSubmitFile keeps a template's submitFile only when it is "required". Templates saved before
@@ -88,6 +105,12 @@ func NewApplicationService(
 	notifier domain.Notifier,
 ) *ApplicationService {
 	return &ApplicationService{repo: repo, taskRepo: taskRepo, termRepo: termRepo, programRepo: programRepo, memberRepo: memberRepo, profileRepo: profileRepo, notifier: notifier}
+}
+
+// SetAccessWaiter makes Create respond only once the applicant can read the
+// new application, or the waiter gives up.
+func (s *ApplicationService) SetAccessWaiter(access domain.AccessWaiter) {
+	s.access = access
 }
 
 func (s *ApplicationService) isActiveReviewer(ctx context.Context, programID, actorID string) (bool, error) {
@@ -126,6 +149,11 @@ func (s *ApplicationService) requireProgramAdmin(ctx context.Context, programTer
 	return nil
 }
 
+// errMentorApplicationStatus refuses any status change of a mentor application. Mentors join and
+// leave a program only through its members, so an application never grants or revokes a mentor's
+// membership; the only mentor applications are records imported from legacy.
+var errMentorApplicationStatus = fmt.Errorf("%w: a mentor application's status cannot change; mentors join and leave a program through its members", domain.ErrInvalidStateTransition)
+
 // applicationTransitions maps current → allowed next statuses.
 var applicationTransitions = map[models.ApplicationStatus][]models.ApplicationStatus{
 	models.ApplicationStatusPending: {
@@ -141,9 +169,11 @@ var applicationTransitions = map[models.ApplicationStatus][]models.ApplicationSt
 		models.ApplicationStatusGraduated,
 		models.ApplicationStatusDeclined,
 	},
-	models.ApplicationStatusDeclined:  {models.ApplicationStatusPending}, // allow re-open by admin
-	models.ApplicationStatusWithdrawn: {},
-	models.ApplicationStatusGraduated: {},
+	// A program admin can walk back an end state: re-open a declined or withdrawn
+	// application, or undo a mentee's graduation (see Update).
+	models.ApplicationStatusDeclined:  {models.ApplicationStatusPending},
+	models.ApplicationStatusWithdrawn: {models.ApplicationStatusPending},
+	models.ApplicationStatusGraduated: {models.ApplicationStatusAccepted},
 }
 
 // GetByID returns the application with the given ID.
@@ -210,6 +240,10 @@ func (s *ApplicationService) ListByProgram(ctx context.Context, programID string
 	if filter.Status != "" && !filter.Status.IsValid() {
 		return nil, nil, fmt.Errorf("%w: status must be applied, tasks_submitted, or an application status", domain.ErrInvalidInput)
 	}
+	var err error
+	if filter.Search, err = normalizeSearch(filter.Search); err != nil {
+		return nil, nil, err
+	}
 	return s.repo.ListByProgram(ctx, programID, filter)
 }
 
@@ -254,7 +288,8 @@ func (s *ApplicationService) ListByUser(ctx context.Context, userID string, filt
 //     confirmed (FR-025, FR-028).
 //   - Reapplication only from withdrawn, never from declined, up to the withdrawal limit (FR-030).
 //   - Under lock, in the repository: the program is published, and the applicant holds no
-//     accepted or graduated mentee application.
+//     accepted or graduated mentee application, and has fewer than
+//     MaxPendingMenteeApplications pending in open terms.
 func (s *ApplicationService) Create(ctx context.Context, programTermID string, input models.ApplicationCreateInput) (*models.Application, error) {
 	ctx, span := applicationSvcTracer.Start(ctx, "ApplicationService.Create")
 	defer span.End()
@@ -332,6 +367,7 @@ func (s *ApplicationService) Create(ctx context.Context, programTermID string, i
 			return nil, fmt.Errorf("reapply application: %w", err)
 		}
 		s.notifier.NotifyMenteeApplicationReceived(ctx, a.ID)
+		awaitCreatorAccess(ctx, s.access, applicationFGAObjectPrefix+a.ID, applicationCreatorRelation)
 		return a, nil
 	}
 
@@ -346,6 +382,7 @@ func (s *ApplicationService) Create(ctx context.Context, programTermID string, i
 		return nil, fmt.Errorf("create application: %w", err)
 	}
 	s.notifier.NotifyMenteeApplicationReceived(ctx, a.ID)
+	awaitCreatorAccess(ctx, s.access, applicationFGAObjectPrefix+a.ID, applicationCreatorRelation)
 	return a, nil
 }
 
@@ -357,42 +394,46 @@ func (s *ApplicationService) prerequisiteTasks(ctx context.Context, programTermI
 	if len(prog.TaskTemplates) == 0 {
 		return nil, nil
 	}
-	var templates []taskTemplate
-	if err := json.Unmarshal(prog.TaskTemplates, &templates); err != nil {
+	// Program update requires a name; decodePrerequisites skips one saved before it did.
+	prerequisites, err := decodePrerequisites(prog.TaskTemplates)
+	if err != nil {
 		return nil, fmt.Errorf("decode program task templates: %w", err)
 	}
-	tasks := make([]models.TaskCreateInput, 0, len(templates))
-	for _, tmpl := range templates {
-		// Program update requires a name; one saved before it did would clone a blank task.
-		if strings.TrimSpace(tmpl.Name) == "" {
-			continue
-		}
-		category := models.TaskCategoryPrerequisite
-		termID := programTermID
-		createdBy := input.UserID
-		name := tmpl.Name
-		tasks = append(tasks, models.TaskCreateInput{
-			ID:            uuid.New().String(),
-			ProgramTermID: &termID,
-			AssigneeID:    input.UserID,
-			Name:          &name,
-			Description:   tmpl.Description,
-			SubmitFile:    cloneSubmitFile(tmpl.SubmitFile),
-			DueDate:       cloneDueDate(tmpl.DueDate),
-			Custom:        bool(tmpl.Custom),
-			Category:      &category,
-			Status:        models.TaskStatusIncomplete,
-			CreatedBy:     &createdBy,
-		})
+	tasks := make([]models.TaskCreateInput, 0, len(prerequisites))
+	for _, p := range prerequisites {
+		tasks = append(tasks, p.NewTask(uuid.New().String(), programTermID, input.UserID))
 	}
 	return tasks, nil
 }
 
+// withCurrentPrerequisites has the update of a re-opened mentee application add a task for each of
+// the program's prerequisites it has none of, and pins the templates they were read from.
+func (s *ApplicationService) withCurrentPrerequisites(ctx context.Context, programTermID string, input *models.ApplicationUpdateInput) error {
+	term, err := s.termRepo.GetByID(ctx, programTermID)
+	if err != nil {
+		return fmt.Errorf("get program term for re-open: %w", err)
+	}
+	prog, err := s.programRepo.GetByID(ctx, term.ProgramID)
+	if err != nil {
+		return fmt.Errorf("get program task templates for re-open: %w", err)
+	}
+	prerequisites, err := decodePrerequisites(prog.TaskTemplates)
+	if err != nil {
+		return fmt.Errorf("decode program task templates: %w", err)
+	}
+	input.AddMissingPrerequisites = true
+	input.Prerequisites = prerequisites
+	input.ExpectedTaskTemplates = prog.TaskTemplates
+	return nil
+}
+
 // Update applies status changes to an application.
 // Enforces the state machine defined in applicationTransitions.
-// When accepting, attendance_type is required.
-// A mentee is notified when their application is accepted, declined, withdrawn, or graduated;
-// program admins are notified when a mentor withdraws their application.
+// When accepting, attendance_type is required, except when undoing a graduation, which keeps the
+// stored one. Re-opening a mentee application adds any prerequisite task it is missing.
+// A mentee is notified when their application is accepted, declined, withdrawn, or graduated, but
+// not when a program admin undoes their graduation or re-opens their application.
+// A mentor application's status never changes.
 func (s *ApplicationService) Update(ctx context.Context, id string, input models.ApplicationUpdateInput) (*models.Application, error) {
 	ctx, span := applicationSvcTracer.Start(ctx, "ApplicationService.Update")
 	defer span.End()
@@ -431,6 +472,9 @@ func (s *ApplicationService) Update(ctx context.Context, id string, input models
 					return nil, err
 				}
 			}
+			if current.Role == models.ApplicationRoleMentor {
+				return nil, errMentorApplicationStatus
+			}
 			allowed := applicationTransitions[current.Status]
 			ok := false
 			for _, candidate := range allowed {
@@ -450,14 +494,26 @@ func (s *ApplicationService) Update(ctx context.Context, id string, input models
 				return nil, fmt.Errorf("%w: only the applicant may withdraw their application", domain.ErrForbidden)
 			}
 
-			// Accept guard: attendance_type is required when accepting.
-			if next == models.ApplicationStatusAccepted {
+			// Undoing a graduation keeps the attendance type the mentee was accepted with, even a
+			// legacy graduate's empty one, so any sent with it is ignored and none is required.
+			if current.Status == models.ApplicationStatusGraduated {
+				input.AttendanceType = nil
+			} else if next == models.ApplicationStatusAccepted {
+				// Accept guard: attendance_type is required when accepting.
 				attType := input.AttendanceType
 				if attType == nil {
 					attType = current.AttendanceType
 				}
 				if attType == nil || *attType == "" {
 					return nil, fmt.Errorf("%w: attendance_type is required when accepting an application", domain.ErrInvalidInput)
+				}
+			}
+
+			// A program's prerequisite edits reach only its pending applications, so a re-opened
+			// mentee application gets a task for any prerequisite added while it was closed.
+			if next == models.ApplicationStatusPending {
+				if err := s.withCurrentPrerequisites(ctx, current.ProgramTermID, &input); err != nil {
+					return nil, err
 				}
 			}
 		}
@@ -470,9 +526,13 @@ func (s *ApplicationService) Update(ctx context.Context, id string, input models
 	}
 
 	// Post-update side-effects.
-	if input.Status != nil && a.Role == models.ApplicationRoleMentee {
+	if input.Status != nil {
 		switch *input.Status {
 		case models.ApplicationStatusAccepted:
+			// An undone graduation sends nothing: the mentee was accepted before, and the graduation email has gone out.
+			if input.ExpectedStatus != nil && *input.ExpectedStatus == models.ApplicationStatusGraduated {
+				break
+			}
 			attType := ""
 			if a.AttendanceType != nil {
 				attType = string(*a.AttendanceType)
@@ -486,24 +546,6 @@ func (s *ApplicationService) Update(ctx context.Context, id string, input models
 			s.notifier.NotifyMenteeGraduated(ctx, id)
 		}
 	}
-	if input.Status != nil && a.Role == models.ApplicationRoleMentor {
-		withdrew := *input.Status == models.ApplicationStatusWithdrawn
-		// A decline answers only an outstanding request (ExpectedStatus is the status the write applied
-		// from). Declining an accepted mentor leaves their approved membership in place, so it sends nothing.
-		declinedRequest := *input.Status == models.ApplicationStatusDeclined && input.ExpectedStatus != nil &&
-			*input.ExpectedStatus == models.ApplicationStatusPending
-		if withdrew || declinedRequest {
-			// The write has landed, so a failed lookup costs only the notice.
-			if term, err := s.termRepo.GetByID(ctx, a.ProgramTermID); err != nil {
-				span.RecordError(err)
-			} else if withdrew {
-				s.notifier.NotifyAdminMentorWithdrew(ctx, term.ProgramID, a.UserID)
-			} else {
-				s.notifier.NotifyMentorDeclined(ctx, term.ProgramID, a.UserID)
-			}
-		}
-	}
-
 	return a, nil
 }
 
@@ -572,6 +614,9 @@ func (s *ApplicationService) WithdrawForMenteeAfterGatewayAuthorization(ctx cont
 // The write applies only while the row keeps the status read before it, so a concurrent change fails
 // rather than being overwritten and notified twice.
 func (s *ApplicationService) assistedWithdraw(ctx context.Context, application *models.Application) (*models.Application, error) {
+	if application.Role == models.ApplicationRoleMentor {
+		return nil, errMentorApplicationStatus
+	}
 	if application.Status == models.ApplicationStatusDeclined || application.Status == models.ApplicationStatusGraduated {
 		return nil, fmt.Errorf("%w: cannot withdraw a %s application", domain.ErrInvalidStateTransition, application.Status)
 	}
@@ -580,7 +625,7 @@ func (s *ApplicationService) assistedWithdraw(ctx context.Context, application *
 	if err != nil {
 		return nil, fmt.Errorf("assisted withdrawal: %w", err)
 	}
-	if application.Status != models.ApplicationStatusWithdrawn && updated.Role == models.ApplicationRoleMentee {
+	if application.Status != models.ApplicationStatusWithdrawn {
 		s.notifier.NotifyMenteeWithdrawn(ctx, updated.ID)
 	}
 	return updated, nil
@@ -606,12 +651,10 @@ func (s *ApplicationService) BulkDeclineByTerm(ctx context.Context, termID, acto
 	return len(declined), nil
 }
 
-// notifyMenteesDeclined tells each mentee among the bulk-declined applications; mentor applications get no email.
+// notifyMenteesDeclined tells the mentee of each bulk-declined application.
 func notifyMenteesDeclined(ctx context.Context, notifier domain.Notifier, declined []*models.Application) {
 	for _, a := range declined {
-		if a.Role == models.ApplicationRoleMentee {
-			notifier.NotifyMenteeDeclined(ctx, a.ID)
-		}
+		notifier.NotifyMenteeDeclined(ctx, a.ID)
 	}
 }
 

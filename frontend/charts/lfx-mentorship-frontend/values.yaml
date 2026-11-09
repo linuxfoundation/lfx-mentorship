@@ -104,15 +104,6 @@ config:
   # fallback with "", which turns the cross-service links in the header and on
   # the program page into same-origin paths this site does not serve. Set them
   # per environment instead — see values/{dev,staging,prod} in lfx-v2-argocd.
-  #
-  # NUXT_PUBLIC_INTERCOM_APP_ID is absent here for the same reason, and must be
-  # set explicitly in production. The image is built with no NUXT_PUBLIC_* set,
-  # so setup/runtime-config.ts derives intercomAppId from the build-time appEnv
-  # ("development") and bakes the dev workspace id into the bundle; unlike the
-  # URLs above it is not re-derived from NUXT_PUBLIC_APP_ENV at startup. An
-  # empty value here would blank that baked id, leaving useIntercom() to reject
-  # with "No Intercom app ID configured" in every non-production deployment.
-  # templates/validate.yaml requires it when NUXT_PUBLIC_APP_ENV=production.
 
 # ── Additional environment variables ─────────────────────────────────────────
 # Rendered as a Kubernetes env: list on the Deployment. Supports the full env

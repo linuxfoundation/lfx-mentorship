@@ -11,6 +11,7 @@ import json
 import os
 import sys
 import types
+from decimal import Decimal
 
 import psycopg2
 import pytest
@@ -158,6 +159,24 @@ def test_task_templates_reduce_to_prerequisite_shape():
     ]
 
 
+LITERAL_NUL_ESCAPE = "x\\u0000\"y"  # a backslash, the text u0000, then a quote: no real NUL
+
+
+def test_to_jsonb_preserves_literal_nul_escape_text():
+    value = {"bio": LITERAL_NUL_ESCAPE, "skills": [LITERAL_NUL_ESCAPE + "\\"]}
+    assert json.loads(m._to_jsonb(value)) == value
+
+
+def test_to_jsonb_strips_real_nul_from_keys_and_nested_values():
+    encoded = m._to_jsonb({"a\x00b": ["x\x00y", {"k": "z\x00", "n": Decimal("1.5")}], "t": ("\x00",)})
+    assert "\\u0000" not in encoded
+    assert json.loads(encoded) == {"ab": ["xy", {"k": "z", "n": 1.5}], "t": [""]}
+
+
+def test_to_jsonb_null_stays_null():
+    assert m._to_jsonb(None) is None
+
+
 @pytest.mark.parametrize("legacy", [None, [], {}, [{"name": "Weekly report", "category": "non_prerequisite"}], [{"name": "Demo", "category": "nonPrerequisite"}], [{"name": " ", "category": "prerequisite"}]])
 def test_task_templates_without_prerequisites_are_null(legacy):
     assert m._task_templates(legacy) is None
@@ -261,6 +280,29 @@ DUPLICATE_PROFILES = [
 ]
 
 
+def user_rows(monkeypatch, users):
+    captured = []
+    monkeypatch.setattr(m.psycopg2.extras, "execute_batch", lambda cur, sql, rows, page_size=0: captured.append(rows) if "INSERT INTO users" in sql else None)
+    m.migrate_users(None, users, _Files())
+    return {row[0]: row for row in captured[0]}
+
+
+# users.created_on and updated_on are NOT NULL (migration 005); a legacy record
+# can lack either, so the import falls back on the other, then on the run time (#364).
+def test_user_timestamps_never_null(monkeypatch):
+    other = USER.replace("2222", "3333", 1)
+    both = USER.replace("2222", "4444", 1)
+    rows = user_rows(monkeypatch, [
+        {"id": USER, "lfid": "no-stamps", "email": "a@example.org"},
+        {"id": other, "lfid": "created-only", "email": "b@example.org", "createdAt": "2024-02-01T00:00:00Z"},
+        {"id": both, "lfid": "both", "email": "c@example.org", "createdAt": "2024-02-01T00:00:00Z", "updatedAt": "2024-03-01T00:00:00Z"},
+    ])
+    created, updated = rows[USER][7], rows[USER][8]
+    assert created is not None and updated is not None and created == updated, "no legacy stamps: both fall back on the run time, equal"
+    assert rows[other][7] == rows[other][8] == m._parse_ts("2024-02-01T00:00:00Z"), "a missing updatedAt takes createdAt"
+    assert (rows[both][7], rows[both][8]) == (m._parse_ts("2024-02-01T00:00:00Z"), m._parse_ts("2024-03-01T00:00:00Z"))
+
+
 def test_user_keeps_only_newest_mentee_profile(monkeypatch):
     captured = []
     monkeypatch.setattr(m.psycopg2.extras, "execute_batch", lambda cur, sql, rows, page_size=0: captured.append(rows))
@@ -292,6 +334,11 @@ def cursor():
     finally:
         conn.rollback()
         conn.close()
+
+
+def test_postgres_accepts_to_jsonb_output(cursor):
+    cursor.execute("SELECT %s::jsonb", (m._to_jsonb({"bio": LITERAL_NUL_ESCAPE, "nul": "a\x00b"}),))
+    assert cursor.fetchone()[0] == {"bio": LITERAL_NUL_ESCAPE, "nul": "ab"}
 
 
 def upsert(cur, resolved, **source):

@@ -8,6 +8,7 @@ package db
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -25,13 +26,72 @@ func TestUserRepository_UpsertByLFID_EmailInUse(t *testing.T) {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM users WHERE email LIKE '%.inuse@example.org'`)
 	})
 	lfid, email := "inuse_lfid", "legacy.inuse@example.org"
-	repo := NewUserRepository(pool)
-	if _, err := repo.UpsertByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email}); !errors.Is(err, domain.ErrEmailInUse) {
+	if _, err := NewUserRepository(pool).UpsertByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email}); !errors.Is(err, domain.ErrEmailInUse) {
 		t.Fatalf("UpsertByLFID err = %v; want ErrEmailInUse", err)
 	}
-	// Bootstrap releases an address only from another LF account, never from a legacy row.
-	if _, err := repo.BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email}); !errors.Is(err, domain.ErrEmailInUse) {
-		t.Fatalf("BootstrapByLFID err = %v; want ErrEmailInUse", err)
+}
+
+// An imported row without an LFID that still holds the verified token email gives it up like any
+// other stale holder, so it cannot block the owner's sign-in.
+func TestUserRepository_BootstrapByLFID_ReleasesEmailFromImportedRow(t *testing.T) {
+	pool := integrationPool(t)
+	ctx := context.Background()
+	const imported = "00000000-0000-0000-0000-0000000000b1"
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, email) VALUES ($1, 'imported.release@example.org')`, imported); err != nil {
+		t.Fatal(err)
+	}
+	lfid, email := "imported_owner", "imported.release@example.org"
+	u, err := NewUserRepository(pool).BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email}, models.UserIdentityFill{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.ID == imported || u.Email == nil || *u.Email != email {
+		t.Fatalf("user = %+v; want a new row with email %q", u, email)
+	}
+	var importedEmail *string
+	if err := pool.QueryRow(ctx, `SELECT email FROM users WHERE id = $1`, imported).Scan(&importedEmail); err != nil {
+		t.Fatal(err)
+	}
+	if importedEmail != nil {
+		t.Fatalf("imported row email = %q; want NULL", *importedEmail)
+	}
+}
+
+// Several first sign-ins for one LFID arrive together (Self Serve sends two PUT /v1/me on a third
+// of first visits). All find no row; without serialisation the later inserts fail on
+// users_email_key before the lfid arbiter applies. Without the per-LFID lock this fails in more
+// than half of the iterations.
+func TestUserRepository_BootstrapByLFID_ConcurrentFirstSignIns(t *testing.T) {
+	pool := integrationPool(t)
+	ctx := context.Background()
+	repo := NewUserRepository(pool)
+	for i := 0; i < 100; i++ {
+		lfid, email := fmt.Sprintf("race_%d", i), fmt.Sprintf("race_%d@example.org", i)
+		const callers = 4
+		var wg sync.WaitGroup
+		errs := make(chan error, callers)
+		for c := 0; c < callers; c++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_, err := repo.BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email}, models.UserIdentityFill{})
+				errs <- err
+			}()
+		}
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			if err != nil {
+				t.Fatalf("iteration %d: %v", i, err)
+			}
+		}
+		var rows int
+		if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE lfid = $1 OR email = $2`, lfid, email).Scan(&rows); err != nil {
+			t.Fatal(err)
+		}
+		if rows != 1 {
+			t.Fatalf("iteration %d: rows for the LFID or email = %d; want 1", i, rows)
+		}
 	}
 }
 
@@ -47,7 +107,7 @@ func TestUserRepository_BootstrapByLFID_ReleasesEmailFromAnotherAccount(t *testi
 		_, _ = pool.Exec(context.Background(), `DELETE FROM users WHERE lfid IN ('squatter_lfid', 'owner_lfid')`)
 	})
 	lfid, email := "owner_lfid", "owner.release@example.org"
-	u, err := NewUserRepository(pool).BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email})
+	u, err := NewUserRepository(pool).BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email}, models.UserIdentityFill{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,8 +133,10 @@ func TestUserRepository_BootstrapByLFID_KeepsEmailWithoutClaim(t *testing.T) {
 	})
 	repo := NewUserRepository(pool)
 	for lfid, upsert := range map[string]func(context.Context, models.UserCreateInput) (*models.User, error){
-		"noclaim_upsert":    repo.UpsertByLFID,
-		"noclaim_bootstrap": repo.BootstrapByLFID,
+		"noclaim_upsert": repo.UpsertByLFID,
+		"noclaim_bootstrap": func(ctx context.Context, in models.UserCreateInput) (*models.User, error) {
+			return repo.BootstrapByLFID(ctx, in, models.UserIdentityFill{})
+		},
 	} {
 		stored := lfid + ".stored@example.org"
 		if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, lfid) VALUES (gen_random_uuid(), $1, $2)`, stored, lfid); err != nil {
@@ -193,7 +255,7 @@ func TestUserRepository_BootstrapByLFID_SwappedAddressesConcurrently(t *testing.
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				_, err := repo.BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email})
+				_, err := repo.BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email}, models.UserIdentityFill{})
 				errs <- err
 			}()
 		}

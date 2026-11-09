@@ -49,6 +49,23 @@ type MentorCandidate struct {
 	AvatarURL *string `json:"avatar_url,omitempty"`
 }
 
+// UserIdentityFill holds identity values that set only columns still NULL at
+// write time: the LF directory's contribution to a sign-in. The repository
+// applies it in the same statement as the sign-in's own values, so a value a
+// user stored meanwhile is never replaced by the directory's.
+type UserIdentityFill struct {
+	Email      *string
+	Name       *string
+	GivenName  *string
+	FamilyName *string
+	AvatarURL  *string
+}
+
+// IsZero reports whether nothing is to be filled.
+func (f UserIdentityFill) IsZero() bool {
+	return f.Email == nil && f.Name == nil && f.GivenName == nil && f.FamilyName == nil && f.AvatarURL == nil
+}
+
 // UserUpdateInput is the request body for updating a user.
 type UserUpdateInput struct {
 	Email      *string `json:"email,omitempty"`

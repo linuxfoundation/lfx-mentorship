@@ -154,14 +154,51 @@ spec:
             values:
               aud: {{ .Values.app.audience | quote }}
 
+    # PUT /me creates the local user from the token, so this rule runs the
+    # oidc_contextualizer: without it the JWT carries no email and new users
+    # are stored with none (issue #360). Only this route and the mentorship
+    # request below run it: each run is an IdP userinfo call, which Auth0
+    # limits per user to a burst of 10 and 5 a minute, shared with every
+    # other caller, and Self Serve reads several /me routes per page.
+    - id: rule:lfx:lfx-mentorship-backend:identity-bootstrap
+      allow_encoded_slashes: "off"
+      match:
+        methods: [PUT]
+        routes:
+          - path: /mentorship/v1/me
+      execute:
+        - authenticator: oidc
+        {{- if .Values.app.use_oidc_contextualizer }}
+        - contextualizer: oidc_contextualizer
+        {{- end }}
+        - authorizer: allow_all
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
     # Authenticated routes without an object in the path. The by-id profile
-    # routes check ownership in the service.
+    # routes check ownership in the service. /me itself is matched by method:
+    # PUT is the bootstrap rule above, the rest are here.
     - id: rule:lfx:lfx-mentorship-backend:identity
+      allow_encoded_slashes: "off"
+      match:
+        methods: [GET, PATCH, DELETE]
+        routes:
+          - path: /mentorship/v1/me
+      execute:
+        - authenticator: oidc
+        - authorizer: allow_all
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    - id: rule:lfx:lfx-mentorship-backend:identity-collections
       allow_encoded_slashes: "off"
       match:
         methods: [GET, PUT, PATCH, DELETE, POST]
         routes:
-          - path: /mentorship/v1/me
           - path: /mentorship/v1/me/profiles
           - path: /mentorship/v1/me/profiles/:profileType
           - path: /mentorship/v1/me/profiles/by-id/:id
@@ -181,11 +218,30 @@ spec:
     - id: rule:lfx:lfx-mentorship-backend:me-program-memberships
       allow_encoded_slashes: "off"
       match:
-        methods: [GET, POST]
+        methods: [GET]
         routes:
           - path: /mentorship/v1/me/program-memberships
       execute:
         - authenticator: oidc
+        - authorizer: allow_all
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    # Requesting to mentor matches the caller's email against pending invites,
+    # so this route runs the oidc_contextualizer for the email claim.
+    - id: rule:lfx:lfx-mentorship-backend:me-program-membership-request
+      allow_encoded_slashes: "off"
+      match:
+        methods: [POST]
+        routes:
+          - path: /mentorship/v1/me/program-memberships
+      execute:
+        - authenticator: oidc
+        {{- if .Values.app.use_oidc_contextualizer }}
+        - contextualizer: oidc_contextualizer
+        {{- end }}
         - authorizer: allow_all
         - finalizer: create_jwt
           config:
@@ -206,6 +262,34 @@ spec:
             values:
               aud: {{ .Values.app.audience | quote }}
 
+    - id: rule:lfx:lfx-mentorship-backend:me-program-membership-accept
+      allow_encoded_slashes: "off"
+      match:
+        methods: [POST]
+        routes:
+          - path: /mentorship/v1/me/program-memberships/:id/accept
+      execute:
+        - authenticator: oidc
+        - authorizer: allow_all
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    - id: rule:lfx:lfx-mentorship-backend:me-program-membership-decline
+      allow_encoded_slashes: "off"
+      match:
+        methods: [POST]
+        routes:
+          - path: /mentorship/v1/me/program-memberships/:id/decline
+      execute:
+        - authenticator: oidc
+        - authorizer: allow_all
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
     - id: rule:lfx:lfx-mentorship-backend:program-create
       allow_encoded_slashes: "off"
       match:
@@ -215,6 +299,29 @@ spec:
       execute:
         - authenticator: oidc
         - authorizer: allow_all
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
+    # A project's programs in every status, for the Project lens. Every program
+    # inherits its writer from the project, so the check is on the project:
+    # mentorship_program_creator is exactly the project half of program writer
+    # (writer_guard or mentorship_program_admin), so everyone listed can open
+    # each program's admin page.
+    - id: rule:lfx:lfx-mentorship-backend:project-programs
+      allow_encoded_slashes: "off"
+      match:
+        methods: [GET]
+        routes:
+          - path: /mentorship/v1/projects/:project_uid/programs
+      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'project:{{ "{{- .Request.URL.Captures.project_uid | lower -}}" }}'
+              relation: mentorship_program_creator
         - finalizer: create_jwt
           config:
             values:
@@ -253,6 +360,10 @@ spec:
             values:
               aud: {{ .Values.app.audience | quote }}
 
+    # The backend checks writer on this route (FileService.AuthorizeProgramLogoUpload): a new
+    # program's writer tuple can reach OpenFGA long after the create that precedes this upload.
+    # The gateway check stays until heimdall.logoUploadServiceAuthz is set, once every pod
+    # runs an image that checks (values.yaml).
     - id: rule:lfx:lfx-mentorship-backend:program-logo-upload
       allow_encoded_slashes: "off"
       match:
@@ -261,11 +372,15 @@ spec:
           - path: /mentorship/v1/programs/:id/logo-upload
       execute:
         - authenticator: oidc
+        {{- if .Values.heimdall.logoUploadServiceAuthz }}
+        - authorizer: allow_all
+        {{- else }}
         - authorizer: openfga_check
           config:
             values:
               object: 'mentorship_program:{{ "{{- .Request.URL.Captures.id -}}" }}'
               relation: writer
+        {{- end }}
         - finalizer: create_jwt
           config:
             values:
@@ -466,7 +581,7 @@ spec:
           config:
             values:
               object: 'mentorship_program:{{ "{{- .Request.URL.Captures.id -}}" }}'
-              relation: manager
+              relation: writer
         - finalizer: create_jwt
           config:
             values:

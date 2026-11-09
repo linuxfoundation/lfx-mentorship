@@ -32,6 +32,11 @@ WORKDIR /app
 # Nuxt 4 output: .output/server (Node server) + .output/public (static assets)
 COPY --from=builder --chown=appuser:appgroup /build/.output/ ./
 
+# The /docs portal reads this Markdown per request, so the sources ship alongside the
+# server rather than only feeding the build. `getDocsDir()` resolves ./docs/user from
+# this WORKDIR; moving either side means moving both.
+COPY --from=builder --chown=appuser:appgroup /build/docs/user/ ./docs/user/
+
 USER appuser
 
 EXPOSE 3000

@@ -36,7 +36,6 @@ interface TranscendAirgap {
 interface AnalyticsWindow {
   dataLayer?: Record<string, unknown>[];
   airgap?: TranscendAirgap;
-  Intercom?: (...args: unknown[]) => void;
 }
 
 function analyticsWindow(): AnalyticsWindow | undefined {
@@ -66,13 +65,6 @@ function emit(event: FunnelEventName, properties: FunnelProperties): void {
   const payload = { event, ...properties };
   w.dataLayer = w.dataLayer ?? [];
   w.dataLayer.push(payload);
-  if (typeof w.Intercom === 'function') {
-    try {
-      w.Intercom('trackEvent', event, properties);
-    } catch {
-      // Intercom is optional — dataLayer is the source of truth for the funnel.
-    }
-  }
 }
 
 function tryTrack(

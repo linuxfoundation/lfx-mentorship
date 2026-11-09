@@ -53,7 +53,7 @@ describe('mapMenteeItem', () => {
         skills: ['Go'],
         status: 'accepted',
         avatar_url: 'a.png',
-        program: { id: 'p1', name: 'Program', slug: 'program' },
+        program: { id: 'p1', name: 'Program', slug: 'program', project_name: ' CNCF ' },
         mentors: [{ id: 'm1', user_id: 'mu1', name: ' ', introduction: ' ' }],
       }),
     );
@@ -63,7 +63,7 @@ describe('mapMenteeItem', () => {
       skills: ['Go'],
       status: 'active',
       sinceLabel: 'Since Mar. 2026',
-      program: { id: 'p1', name: 'Program', foundationLabel: '' },
+      program: { id: 'p1', name: 'Program', foundationLabel: 'CNCF' },
       mentors: [{ id: 'mu1', name: 'Mentor', introduction: undefined, avatarUrl: undefined }],
       avatarUrl: 'a.png',
     });
@@ -91,6 +91,7 @@ describe('mapMenteeDetail', () => {
           id: 'p1',
           name: 'Cloud Native Program',
           slug: 'cn',
+          project_name: 'CNCF',
           status: 'graduated',
           terms: [
             {
@@ -125,6 +126,7 @@ describe('mapMenteeDetail', () => {
       id: 'p1',
       title: 'Cloud Native Program',
       description: '',
+      foundationLabel: 'CNCF',
       status: 'graduated',
       skills: [],
       logoInitials: 'CN',
@@ -135,6 +137,7 @@ describe('mapMenteeDetail', () => {
       ],
     });
     expect(detail.programs[1]).toMatchObject({
+      foundationLabel: '',
       status: 'active',
       description: 'desc',
       logoInitials: 'K8',

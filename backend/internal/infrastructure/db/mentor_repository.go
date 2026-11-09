@@ -58,7 +58,7 @@ const mentorEligibleCTE = `
 		SELECT
 			j.user_id,
 			j.joined_at,
-			NULLIF(TRIM(COALESCE(NULLIF(TRIM(u.name), ''), CONCAT_WS(' ', up.first_name, up.last_name))), '') AS name,
+			` + sqlUserDisplayName + ` AS name,
 			COALESCE(NULLIF(up.logo_url, ''), u.avatar_url) AS avatar_url,
 			up.introduction,
 			COALESCE((
@@ -119,7 +119,7 @@ func mentorListWhere(filter models.MentorFilter, args []any) (string, []any) {
 		)`, len(args))
 	}
 	if filter.Search != "" {
-		args = append(args, "%"+filter.Search+"%")
+		args = append(args, containsPattern(filter.Search))
 		where += fmt.Sprintf(` AND COALESCE(name, '') ILIKE $%d`, len(args))
 	}
 	return where, args
@@ -261,15 +261,12 @@ func (r *MentorRepository) GetByUserID(ctx context.Context, userID string) (*mod
 }
 
 // mentoredProgramsFrom selects the published programs $1 is an active mentor
-// of, with the status the admin list also shows for them: completed once all
-// the program's terms are closed, otherwise open.
+// of, with the status the admin list also shows for them
+// (sqlPublishedProgramTermStatus).
 const mentoredProgramsFrom = `
 	FROM (
 		SELECT programs.id, programs.slug, programs.name, programs.lf_project_name, programs.logo_url,
-			CASE WHEN ` + sqlProgramTermsAllClosed + `
-				THEN '` + string(models.MentoredProgramStatusCompleted) + `'
-				ELSE '` + string(models.MentoredProgramStatusOpen) + `'
-			END AS status
+			` + sqlPublishedProgramTermStatus + ` AS status
 		FROM programs
 		JOIN program_members pm ON pm.program_id = programs.id
 		WHERE pm.user_id = $1 AND pm.member_type = 'mentor' AND pm.status = 'approved'
@@ -342,7 +339,7 @@ func (r *MentorRepository) ListMentoredByUser(ctx context.Context, userID string
 
 func (r *MentorRepository) loadMentorPrograms(ctx context.Context, userID string) ([]models.MentorProgram, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT p.id, p.name, p.slug, p.description, p.logo_url
+		SELECT p.id, p.name, p.slug, p.description, p.logo_url, p.lf_project_name
 		FROM program_members pm
 		JOIN programs p ON p.id = pm.program_id
 		WHERE pm.user_id = $1
@@ -359,7 +356,7 @@ func (r *MentorRepository) loadMentorPrograms(ctx context.Context, userID string
 	ids := []string{}
 	for rows.Next() {
 		var program models.MentorProgram
-		if err := rows.Scan(&program.ID, &program.Name, &program.Slug, &program.Description, &program.LogoURL); err != nil {
+		if err := rows.Scan(&program.ID, &program.Name, &program.Slug, &program.Description, &program.LogoURL, &program.ProjectName); err != nil {
 			return nil, fmt.Errorf("scan mentor program: %w", err)
 		}
 		program.Skills = []string{}
@@ -461,11 +458,11 @@ func (r *MentorRepository) loadMentorsByProgram(ctx context.Context, ids []strin
 		return out, nil
 	}
 	rows, err := r.pool.Query(ctx, `
-		SELECT pm.id, pm.program_id, pm.user_id, u.name, COALESCE(NULLIF(up.logo_url, ''), u.avatar_url)
+		SELECT pm.id, pm.program_id, pm.user_id, `+sqlUserDisplayName+`, COALESCE(NULLIF(up.logo_url, ''), u.avatar_url)
 		FROM program_members pm
 		LEFT JOIN users u ON u.id = pm.user_id
 		LEFT JOIN LATERAL (
-			SELECT logo_url
+			SELECT logo_url, first_name, last_name
 			FROM user_profiles
 			WHERE user_id = pm.user_id
 			  AND profile_type = 'mentor'
@@ -475,7 +472,7 @@ func (r *MentorRepository) loadMentorsByProgram(ctx context.Context, ids []strin
 		WHERE pm.program_id = ANY($1::uuid[])
 		  AND pm.member_type = 'mentor'
 		  AND pm.status = 'approved'
-		ORDER BY u.name NULLS LAST, pm.created_on`, ids)
+		ORDER BY `+sqlUserDisplayName+` NULLS LAST, pm.created_on`, ids)
 	if err != nil {
 		return nil, fmt.Errorf("list mentor program mentors: %w", err)
 	}
@@ -495,7 +492,7 @@ func (r *MentorRepository) loadMentorMentees(ctx context.Context, mentorUserID s
 	rows, err := r.pool.Query(ctx, `
 		SELECT DISTINCT ON (a.user_id, CASE WHEN a.status = 'graduated' THEN 1 ELSE 0 END)
 			a.user_id, a.status, p.name, pt.name,
-			NULLIF(TRIM(COALESCE(NULLIF(TRIM(u.name), ''), CONCAT_WS(' ', up.first_name, up.last_name))), ''),
+			`+sqlUserDisplayName+`,
 			COALESCE(NULLIF(up.logo_url, ''), u.avatar_url),
 			up.introduction
 		FROM applications a

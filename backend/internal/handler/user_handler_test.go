@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
@@ -20,8 +21,8 @@ import (
 type stubUserSvc struct {
 	getByID   func(context.Context, string) (*models.User, error)
 	bootstrap func(context.Context, string, models.UserUpdateInput) (*models.User, error)
-	update  func(context.Context, string, models.UserUpdateInput) (*models.User, error)
-	delete  func(context.Context, string, string) error
+	update    func(context.Context, string, models.UserUpdateInput) (*models.User, error)
+	delete    func(context.Context, string, string) error
 }
 
 func (s *stubUserSvc) GetByID(ctx context.Context, id string) (*models.User, error) {
@@ -222,6 +223,81 @@ func TestUserHandler_BootstrapMe_TakesEmailFromPrincipal(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The token's identity claims fill whatever the body leaves out, so a new user
+// is stored with a name and avatar even when the client sends none (#360).
+func TestUserHandler_BootstrapMe_FillsNameFromClaimsWhenBodyOmitsIt(t *testing.T) {
+	principal := &models.Principal{
+		Username: "caller", Email: "caller@example.org",
+		Name: "Claim Name", GivenName: "Claim", FamilyName: "Name", Picture: "https://img.example.org/claim.png",
+	}
+	for name, tc := range map[string]struct {
+		body map[string]string
+		want models.UserUpdateInput
+	}{
+		"empty body takes every claim": {
+			body: map[string]string{},
+			want: models.UserUpdateInput{
+				Email: ptrString("caller@example.org"), LFID: ptrString("caller"),
+				Name: ptrString("Claim Name"), GivenName: ptrString("Claim"), FamilyName: ptrString("Name"), AvatarURL: ptrString("https://img.example.org/claim.png"),
+			},
+		},
+		"body wins where set, claims fill the rest": {
+			body: map[string]string{"name": "Body Name", "given_name": "Body", "email": "victim@example.org"},
+			want: models.UserUpdateInput{
+				Email: ptrString("caller@example.org"), LFID: ptrString("caller"),
+				Name: ptrString("Body Name"), GivenName: ptrString("Body"), FamilyName: ptrString("Name"), AvatarURL: ptrString("https://img.example.org/claim.png"),
+			},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var gotInput models.UserUpdateInput
+			svc := &stubUserSvc{bootstrap: func(_ context.Context, lfid string, input models.UserUpdateInput) (*models.User, error) {
+				gotInput = input
+				return &models.User{LFID: &lfid}, nil
+			}}
+			body, _ := json.Marshal(tc.body)
+			r := httptest.NewRequest(http.MethodPut, "/v1/me", bytes.NewReader(body))
+			r.Header.Set("Content-Type", "application/json")
+			r = r.WithContext(auth.ContextWithPrincipal(r.Context(), principal))
+			w := httptest.NewRecorder()
+
+			handler.NewUserHandler(svc).BootstrapMe(w, r)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("got %d; want 200", w.Code)
+			}
+			if !reflect.DeepEqual(gotInput, tc.want) {
+				t.Fatalf("input = %s; want %s", describeInput(gotInput), describeInput(tc.want))
+			}
+		})
+	}
+}
+
+// Without claims and with an empty body, nothing is invented: the row keeps
+// only the identity-bound fields.
+func TestUserHandler_BootstrapMe_NoClaimsNoBodyStoresOnlyLFID(t *testing.T) {
+	var gotInput models.UserUpdateInput
+	svc := &stubUserSvc{bootstrap: func(_ context.Context, lfid string, input models.UserUpdateInput) (*models.User, error) {
+		gotInput = input
+		return &models.User{LFID: &lfid}, nil
+	}}
+	r := httptest.NewRequest(http.MethodPut, "/v1/me", bytes.NewReader([]byte(`{}`)))
+	r.Header.Set("Content-Type", "application/json")
+	r = r.WithContext(auth.ContextWithPrincipal(r.Context(), &models.Principal{Username: "caller"}))
+	w := httptest.NewRecorder()
+
+	handler.NewUserHandler(svc).BootstrapMe(w, r)
+
+	if want := (models.UserUpdateInput{LFID: ptrString("caller")}); !reflect.DeepEqual(gotInput, want) {
+		t.Fatalf("input = %s; want only lfid", describeInput(gotInput))
+	}
+}
+
+func describeInput(in models.UserUpdateInput) string {
+	b, _ := json.Marshal(in)
+	return string(b)
 }
 
 func ptrString(s string) *string { return &s }

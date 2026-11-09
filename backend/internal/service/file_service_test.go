@@ -103,6 +103,14 @@ func (s *stubTaskAccess) GetByIDForActor(context.Context, string, string) (*mode
 	return s.task, s.err
 }
 
+type stubSubmissions struct {
+	submitted []string
+}
+
+func (s *stubSubmissions) TaskSubmitted(_ context.Context, task *models.Task) {
+	s.submitted = append(s.submitted, task.ID)
+}
+
 func storedObject(contentType, cacheControl string) *domain.StoredObject {
 	return &domain.StoredObject{
 		Body:          io.NopCloser(bytes.NewReader([]byte("x"))),
@@ -119,7 +127,9 @@ type fileSvcDeps struct {
 	files       *fakeFileRepo
 	scheduler   *fakeScheduler
 	programs    *stubProgRepo
+	admins      *stubMemberRepo
 	tasks       *stubTaskAccess
+	submissions *stubSubmissions
 	logos       *fakeObjectStore
 	attachments *fakeObjectStore
 }
@@ -134,8 +144,14 @@ func (d *fileSvcDeps) build() *service.FileService {
 	if d.programs == nil {
 		d.programs = &stubProgRepo{}
 	}
+	if d.admins == nil {
+		d.admins = &stubMemberRepo{}
+	}
 	if d.tasks == nil {
 		d.tasks = &stubTaskAccess{}
+	}
+	if d.submissions == nil {
+		d.submissions = &stubSubmissions{}
 	}
 	var logos *service.LogoBucket
 	if d.logos != nil {
@@ -145,7 +161,7 @@ func (d *fileSvcDeps) build() *service.FileService {
 	if d.attachments != nil {
 		attachments = d.attachments
 	}
-	return service.NewFileService(d.files, d.scheduler, d.programs, d.tasks, logos, attachments)
+	return service.NewFileService(d.files, d.scheduler, d.programs, d.admins, d.tasks, d.submissions, logos, attachments)
 }
 
 func TestFileService_UploadProgramLogo_ReplaceProtocol(t *testing.T) {
@@ -346,6 +362,23 @@ func TestFileService_UploadTaskFile(t *testing.T) {
 		if len(d.files.taskFile) != 1 || d.files.taskFile[0].Next != put.key {
 			t.Fatalf("task file column must hold the key: %+v", d.files.taskFile)
 		}
+		if len(d.submissions.submitted) != 1 || d.submissions.submitted[0] != "t1" {
+			t.Fatalf("submitted = %v; the upload must report the task submitted", d.submissions.submitted)
+		}
+	})
+
+	t.Run("failed write does not report a submission", func(t *testing.T) {
+		d := &fileSvcDeps{
+			files:       &fakeFileRepo{replaceErr: domain.ErrConflict},
+			attachments: &fakeObjectStore{},
+			tasks:       &stubTaskAccess{task: &models.Task{ID: "t1", AssigneeID: "mentee", Status: models.TaskStatusInProgress}},
+		}
+		if _, err := d.build().UploadTaskFile(context.Background(), "t1", "mentee", "a.pdf", pdfBytes); !errors.Is(err, domain.ErrConflict) {
+			t.Fatalf("err = %v; want ErrConflict", err)
+		}
+		if len(d.submissions.submitted) != 0 {
+			t.Fatalf("submitted = %v; want none", d.submissions.submitted)
+		}
 	})
 
 	tests := []struct {
@@ -364,8 +397,8 @@ func TestFileService_UploadTaskFile(t *testing.T) {
 			if _, err := d.build().UploadTaskFile(context.Background(), "t1", "actor", "a.pdf", tc.data); !errors.Is(err, tc.want) {
 				t.Fatalf("err = %v; want %v", err, tc.want)
 			}
-			if len(d.attachments.puts) != 0 || len(d.scheduler.entries) != 0 {
-				t.Fatal("rejected upload must not be queued or stored")
+			if len(d.attachments.puts) != 0 || len(d.scheduler.entries) != 0 || len(d.submissions.submitted) != 0 {
+				t.Fatal("rejected upload must not be queued, stored or reported submitted")
 			}
 		})
 	}

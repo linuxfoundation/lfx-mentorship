@@ -186,6 +186,67 @@ func TestTaskService_Update_Assignee_CanMarkInProgress(t *testing.T) {
 	}
 }
 
+func TestTaskService_Update_SubmittedBackToInProgress(t *testing.T) {
+	for name, tc := range map[string]struct {
+		actor string
+		want  error
+	}{
+		"assignee may reopen":    {actor: "user-1"},
+		"non-assignee forbidden": {actor: "reviewer-99", want: domain.ErrForbidden},
+	} {
+		t.Run(name, func(t *testing.T) {
+			appID := "app-1"
+			var written *models.TaskUpdateInput
+			taskRepo := &stubTaskRepo{
+				getByID: func(_ context.Context, id string) (*models.Task, error) {
+					return &models.Task{ID: id, AssigneeID: "user-1", Status: "submitted", ApplicationID: &appID}, nil
+				},
+				update: func(_ context.Context, id string, input models.TaskUpdateInput) (*models.Task, error) {
+					written = &input
+					return &models.Task{ID: id, Status: "in_progress"}, nil
+				},
+			}
+			svc := newTaskSvc(taskRepo, &stubAppRepo{}, &stubTermRepo{}, &stubMemberRepo{})
+			next := models.TaskStatusInProgress
+			_, err := svc.Update(context.Background(), "task-1", models.TaskUpdateInput{Status: &next, ActorID: tc.actor})
+			if !errors.Is(err, tc.want) {
+				t.Errorf("err = %v; want %v", err, tc.want)
+			}
+			// The write must still find the status the reopen was authorized from.
+			if tc.want == nil && (written == nil || written.FromStatus == nil || *written.FromStatus != models.TaskStatusSubmitted) {
+				t.Errorf("written = %+v; want FromStatus submitted", written)
+			}
+		})
+	}
+}
+
+func TestTaskService_TaskSubmitted(t *testing.T) {
+	appID := "app-1"
+	for name, tc := range map[string]struct {
+		task       *models.Task
+		wantMarked string
+		wantNotify int
+	}{
+		"application task flags and notifies": {task: &models.Task{ID: "task-1", ApplicationID: &appID}, wantMarked: appID, wantNotify: 1},
+		"term task has no application":        {task: &models.Task{ID: "task-1"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var markedID string
+			appRepo := &stubAppRepo{
+				markTasksSubmit: func(_ context.Context, id string) (bool, error) {
+					markedID = id
+					return true, nil
+				},
+			}
+			n := &stubNotifier{}
+			service.NewTaskService(&stubTaskRepo{}, appRepo, &stubTermRepo{}, &stubMemberRepo{}, n).TaskSubmitted(context.Background(), tc.task)
+			if markedID != tc.wantMarked || n.tasksSubmittedCalls != tc.wantNotify {
+				t.Errorf("marked %q, notify calls = %d; want %q, %d", markedID, n.tasksSubmittedCalls, tc.wantMarked, tc.wantNotify)
+			}
+		})
+	}
+}
+
 func TestTaskService_Update_Assignee_CannotMarkComplete(t *testing.T) {
 	appID := "app-1"
 	taskRepo := &stubTaskRepo{

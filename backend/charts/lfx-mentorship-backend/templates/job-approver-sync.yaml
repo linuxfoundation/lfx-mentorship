@@ -1,0 +1,68 @@
+# Copyright The Linux Foundation and each contributor to LFX.
+# SPDX-License-Identifier: MIT
+#
+# Reconciles the global approver team with approverTeam.members after each
+# successful install or upgrade, so the values file in lfx-v2-argocd is the
+# record of who may publish or reject programs. The roster's HTTP routes stay
+# off the gateway until a platform staff relation exists
+# (docs/rewrite/blockers.md §3); this hook and one-off Jobs running
+# `/app/approver-admin` are the only ways to change it.
+#
+# A post hook runs after the Deployment, so unlike the migrate hook it can use
+# the chart's ServiceAccount. It still only needs the database connection from
+# the Secret. Each release gets its own Job name so Helm never reuses a
+# completed one, and the Job fails (and so the sync shows as failed) when an
+# LFID has no Mentorship user yet: that approver has to sign in to Self Serve
+# once first.
+{{- if .Values.approverTeam.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ printf "%s-approver-sync-%v" (include "lfx-v2-mentorship-service.fullname" .) .Release.Revision | trunc 63 | trimSuffix "-" }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lfx-v2-mentorship-service.labels" . | nindent 4 }}
+    app.kubernetes.io/component: approver-sync
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.approverTeam.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.approverTeam.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "lfx-v2-mentorship-service.name" . }}
+        app.kubernetes.io/component: approver-sync
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "lfx-v2-mentorship-service.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: approver-sync
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ required "image.tag is required" .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/app/approver-admin", "sync"]
+          args:
+            {{- range .Values.approverTeam.members }}
+            - {{ . | quote }}
+            {{- end }}
+          {{- with .Values.env }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.secretName }}
+          resources:
+            {{- toYaml .Values.approverTeam.resources | nindent 12 }}
+{{- end }}

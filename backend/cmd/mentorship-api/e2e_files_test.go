@@ -62,11 +62,12 @@ func TestE2EProgramLogoFiles(t *testing.T) {
 		admin.send(t, http.MethodPost, logoPath+"/logo-upload", bytes.NewReader(nil), "image/png", nil).expect(http.StatusBadRequest)
 		huge := append(pngBytes(t), make([]byte, 3<<20)...)
 		admin.send(t, http.MethodPost, logoPath+"/logo-upload", bytes.NewReader(huge), "image/png", nil).expect(http.StatusRequestEntityTooLarge)
-		uploadLogo(t, admin, "00000000-0000-4000-8000-000000000000").expect(http.StatusNotFound)
+		uploadLogo(t, admin, "00000000-0000-4000-8000-000000000000").expect(http.StatusForbidden)
 		uploadLogo(t, anonymous(), p.ID).expect(http.StatusUnauthorized)
+		uploadLogo(t, signIn(t, "logo-stranger"), p.ID).expect(http.StatusForbidden)
 	})
 
-	anonymous().call(t, http.MethodGet, logoPath+"/logo-download", nil).expect(http.StatusNotFound)
+	admin.call(t, http.MethodGet, logoPath+"/logo-download", nil).expect(http.StatusNotFound)
 	t.Run("a migrated svg is served as stored", func(t *testing.T) {
 		// The migration copy writes legacy SVG logos that carry no active content; nothing else does.
 		svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg"><rect width="1" height="1"/></svg>`)
@@ -75,7 +76,7 @@ func TestE2EProgramLogoFiles(t *testing.T) {
 			t.Fatalf("put migrated svg: %v", err)
 		}
 		dbExec(t, "UPDATE programs SET logo_url = $2 WHERE id = $1", p.ID, e2eCDNPrefix+"/"+key)
-		res := anonymous().call(t, http.MethodGet, logoPath+"/logo-download", nil).expect(http.StatusOK)
+		res := admin.call(t, http.MethodGet, logoPath+"/logo-download", nil).expect(http.StatusOK)
 		if !bytes.Equal(res.Body, svg) || res.Header.Get("Content-Type") != "image/svg+xml" {
 			t.Fatalf("download: %d bytes, headers %v", len(res.Body), res.Header)
 		}
@@ -92,15 +93,17 @@ func TestE2EProgramLogoFiles(t *testing.T) {
 	}
 
 	t.Run("download and range", func(t *testing.T) {
-		res := anonymous().call(t, http.MethodGet, logoPath+"/logo-download", nil).expect(http.StatusOK)
+		res := admin.call(t, http.MethodGet, logoPath+"/logo-download", nil).expect(http.StatusOK)
 		if !bytes.Equal(res.Body, pngBytes(t)) || res.Header.Get("Content-Type") != "image/png" || res.Header.Get("X-Content-Type-Options") != "nosniff" {
 			t.Fatalf("download: %d bytes, headers %v", len(res.Body), res.Header)
 		}
-		ranged := anonymous().send(t, http.MethodGet, logoPath+"/logo-download", nil, "", map[string]string{"Range": "bytes=0-7"}).expect(http.StatusPartialContent)
+		// The program is still pending, so its logo is hidden from anonymous callers.
+		anonymous().call(t, http.MethodGet, logoPath+"/logo-download", nil).expect(http.StatusNotFound)
+		ranged := admin.send(t, http.MethodGet, logoPath+"/logo-download", nil, "", map[string]string{"Range": "bytes=0-7"}).expect(http.StatusPartialContent)
 		if len(ranged.Body) != 8 || ranged.Header.Get("Content-Range") == "" {
 			t.Fatalf("range: %d bytes, headers %v", len(ranged.Body), ranged.Header)
 		}
-		anonymous().send(t, http.MethodGet, logoPath+"/logo-download", nil, "", map[string]string{"Range": "bytes=999999-"}).expect(http.StatusRequestedRangeNotSatisfiable)
+		admin.send(t, http.MethodGet, logoPath+"/logo-download", nil, "", map[string]string{"Range": "bytes=999999-"}).expect(http.StatusRequestedRangeNotSatisfiable)
 	})
 
 	t.Run("replacing queues the old object for deletion", func(t *testing.T) {
@@ -119,7 +122,7 @@ func TestE2EProgramLogoFiles(t *testing.T) {
 	t.Run("delete clears the logo", func(t *testing.T) {
 		admin.call(t, http.MethodDelete, logoPath+"/logo", nil).expect(http.StatusNoContent)
 		admin.call(t, http.MethodDelete, logoPath+"/logo", nil).expect(http.StatusNoContent)
-		anonymous().call(t, http.MethodGet, logoPath+"/logo-download", nil).expect(http.StatusNotFound)
+		admin.call(t, http.MethodGet, logoPath+"/logo-download", nil).expect(http.StatusNotFound)
 		admin.call(t, http.MethodDelete, "/programs/00000000-0000-4000-8000-000000000000/logo", nil).expect(http.StatusNotFound)
 		anonymous().call(t, http.MethodDelete, logoPath+"/logo", nil).expect(http.StatusUnauthorized)
 	})
@@ -186,6 +189,9 @@ func TestE2ETaskFiles(t *testing.T) {
 	})
 
 	t.Run("the assignee removes an unsubmitted file", func(t *testing.T) {
+		// The upload submitted the task, so its file can only be replaced until it is reopened.
+		mentee.call(t, http.MethodDelete, filePath+"/file", nil).expect(http.StatusConflict)
+		mentee.call(t, http.MethodPatch, filePath+"/submission", map[string]any{"status": "in_progress"}).expect(http.StatusOK)
 		admin.call(t, http.MethodDelete, filePath+"/file", nil).expect(http.StatusForbidden)
 		mentee.call(t, http.MethodDelete, filePath+"/file", nil).expect(http.StatusNoContent)
 		mentee.call(t, http.MethodDelete, filePath+"/file", nil).expect(http.StatusNoContent)

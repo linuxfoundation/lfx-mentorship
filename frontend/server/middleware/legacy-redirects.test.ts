@@ -19,6 +19,9 @@ const mockSendRedirect = vi.mocked(h3.sendRedirect);
 
 const ID = '2f1c9a7e-5b3d-4c8e-9f0a-1b2c3d4e5f60';
 const PROJECT = '7a6b5c4d-3e2f-4a1b-9c8d-7e6f5a4b3c2d';
+const SELF_SERVE = 'https://app.dev.lfx.dev';
+
+vi.stubGlobal('useRuntimeConfig', () => ({ public: { selfServeUrl: `${SELF_SERVE}/` } }));
 
 // Simulates a request for the given path on the new host.
 const request = (path: string, method = 'GET'): H3Event => {
@@ -60,14 +63,39 @@ describe('legacy-redirects middleware', () => {
   });
 
   it.each([
-    '/project/applied',
-    '/mentee/applications',
-    '/mentee/tasks',
+    [
+      `/email/process-approval?id=${ID}&action=approve`,
+      `/mentorship/program-review/${ID}?decision=approve`,
+    ],
+    [
+      `/email/process-approval?id=${ID}&action=decline`,
+      `/mentorship/program-review/${ID}?decision=reject`,
+    ],
+    [`/email/process-approval?id=${ID}&action=constructor`, `/mentorship/program-review/${ID}`],
+    ['/email/process-approval?id=a%20b%2Fc', '/mentorship/program-review/a%20b%2Fc'],
+    [`/project/${ID}/mentees`, `/mentorship/admin/${ID}`],
+    [`/project/${ID}/mentees/`, `/mentorship/admin/${ID}`],
+    ['/participate/mentor', '/mentorship/mentor'],
+    [`/participate/mentor/join/${ID}?token=abc`, '/mentorship/mentor'],
+    [`/participate/mentor/decline/${ID}?token=abc`, '/mentorship/mentor'],
+    ['/profile/mentor/edit', '/mentorship/mentor/profile'],
+    ['/mentee/tasks', '/mentorship/mentee/tasks'],
+    ['/mentee/applications', '/mentorship/mentee'],
+    ['/project/applied', '/mentorship/mentee'],
+  ])('sends the legacy signed-in link %s to Self Serve %s', (from, to) => {
+    handler(request(from));
+    expect(mockSendRedirect).toHaveBeenCalledWith(expect.anything(), `${SELF_SERVE}${to}`, 302);
+  });
+
+  it.each([
     '/participate',
     `/participate/mentee/${ID}`,
     '/profile',
     '/profile/edit',
+    '/profile/mentor',
     '/email/verify?token=abc',
+    '/email/process-approval',
+    '/email/process-approval?id=&action=approve',
   ])('sends the legacy flow page %s to the home page without its query', (from) => {
     handler(request(from));
     expect(mockSendRedirect).toHaveBeenCalledWith(expect.anything(), '/', 301);

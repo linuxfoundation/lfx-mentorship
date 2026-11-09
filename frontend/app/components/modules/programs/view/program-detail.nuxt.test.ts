@@ -4,9 +4,10 @@
 import { mountSuspended, registerEndpoint } from '@nuxt/test-utils/runtime';
 import { flushPromises } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import ProgramDetailHeader from '../components/program-detail-header.vue';
 import SignInToApplyModal from '../components/sign-in-to-apply-modal.vue';
 import ProgramDetailView from './program-detail.vue';
-import type { Program } from '~/types/program.types';
+import type { Program, ProgramTerm } from '~/types/program.types';
 
 const day = 24 * 60 * 60 * 1000;
 const iso = (offsetDays: number) => new Date(Date.now() + offsetDays * day).toISOString();
@@ -101,9 +102,10 @@ describe('ProgramDetailView', () => {
       { id: 'u1', name: 'Ada Lovelace', status: 'active', termLabel: 'Fall 2026' },
       { id: 'u2', name: 'Alan Turing', status: 'graduated', termLabel: 'Spring 2025' },
     ]);
-    registerEndpoint('/api/programs/tabs/sponsors', () => [
-      { id: 's1', name: 'ACME Corp', amountCents: 250000 },
-    ]);
+    registerEndpoint('/api/programs/tabs/sponsors', () => ({
+      sponsors: [{ id: 's1', name: 'ACME Corp', amountCents: 250000 }],
+      crowdfundingInitiative: true,
+    }));
     const wrapper = await mountProgram('tabs');
     expect(wrapper.text()).toContain('About the program');
 
@@ -185,6 +187,26 @@ describe('ProgramDetailView', () => {
     );
   });
 
+  it('disables Donate and shows no sponsors when the program has no Crowdfunding initiative', async () => {
+    registerEndpoint('/api/programs/unfunded', () => program('unfunded'));
+    registerEndpoint('/api/programs/unfunded/sponsors', () => ({
+      sponsors: [],
+      crowdfundingInitiative: false,
+    }));
+    const wrapper = await mountProgram('unfunded');
+    const donate = () => wrapper.findAll('button').find((b) => b.text().includes('Donate'))!;
+    await vi.waitFor(() => expect(donate().attributes('disabled')).toBeDefined());
+    const standIn = wrapper.find('[role="button"][aria-disabled="true"]');
+    expect(standIn.attributes('tabindex')).toBe('0');
+    expect(standIn.attributes('aria-label')).toContain('does not have an LFX Crowdfunding page');
+    await donate().trigger('click');
+    expect(openSpy).not.toHaveBeenCalled();
+
+    await tab(wrapper, 'Sponsors');
+    expect(wrapper.text()).toContain('No sponsors listed yet.');
+    expect(wrapper.text()).not.toContain('Unable to load sponsors.');
+  });
+
   it('returns to the overview when the program changes', async () => {
     registerEndpoint('/api/programs/first', () => program('first'));
     registerEndpoint('/api/programs/second', () =>
@@ -194,6 +216,69 @@ describe('ProgramDetailView', () => {
     await tab(wrapper, 'Mentors');
     await wrapper.setProps({ programId: 'second' });
     await vi.waitFor(() => expect(wrapper.text()).toContain('Second program'));
+  });
+});
+
+describe('ProgramDetailHeader', () => {
+  // Terms are passed newest first, as the API lists them, with none accepting.
+  async function sidebar(terms: ProgramTerm[]) {
+    const wrapper = await mountSuspended(ProgramDetailHeader, {
+      props: { program: program('header', { status: 'in-progress', terms, activeTerms: [] }) },
+    });
+    const asides = wrapper.findAll('aside');
+    expect(asides).toHaveLength(1);
+    return asides[0]!.text();
+  }
+
+  const running: ProgramTerm = {
+    id: 'running',
+    name: 'Fall 2026',
+    status: 'open',
+    startsAt: iso(-30),
+    endsAt: iso(30),
+    applicationsStartAt: iso(-60),
+    applicationsCloseAt: iso(-40),
+  };
+  const upcoming: ProgramTerm = {
+    ...running,
+    id: 'upcoming',
+    name: 'Spring 2027',
+    startsAt: iso(60),
+    endsAt: iso(120),
+    applicationsStartAt: iso(10),
+    applicationsCloseAt: iso(20),
+  };
+  const previous: ProgramTerm = {
+    ...running,
+    id: 'previous',
+    name: 'Spring 2026',
+    status: 'closed',
+    startsAt: iso(-200),
+    endsAt: iso(-140),
+  };
+  const older: ProgramTerm = { ...previous, id: 'older', name: 'Fall 2025', startsAt: iso(-400) };
+
+  it('shows the newest term, as current while it is open past its application window', async () => {
+    const text = await sidebar([running, previous]);
+    expect(text).toContain('Current Term');
+    expect(text).toContain('Fall 2026');
+    expect(text).toContain('Applications closed');
+    expect(text).not.toContain('Spring 2026');
+  });
+
+  it('shows the newest closed term as previous', async () => {
+    const text = await sidebar([previous, older]);
+    expect(text).toContain('Previous Term');
+    expect(text).toContain('Spring 2026');
+    expect(text).not.toContain('Fall 2025');
+  });
+
+  it('shows a newer term whose applications have not opened as upcoming', async () => {
+    const text = await sidebar([upcoming, running]);
+    expect(text).toContain('Upcoming Term');
+    expect(text).toContain('Spring 2027');
+    expect(text).toContain('Applications open');
+    expect(text).not.toContain('Applications closed');
   });
 });
 

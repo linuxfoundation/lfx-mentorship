@@ -44,6 +44,9 @@ const (
 	e2eLogosBucket  = "e2e-logos"
 	e2eFilesBucket  = "e2e-attachments"
 	apiPrefix       = "/mentorship/v1"
+	// e2eAccessWaitTimeout bounds a create's wait for the fake fga-sync to apply the creator's tuple.
+	// It covers relay delivery plus TestE2ECreateWaitsForCreatorAccess's one-second apply hold.
+	e2eAccessWaitTimeout = 2 * time.Second
 )
 
 // e2e is the process-wide environment: one API server and its fake dependencies, shared by every test.
@@ -53,6 +56,7 @@ type environment struct {
 	baseURL string
 	pool    *pgxpool.Pool
 	key     *rsa.PrivateKey
+	nc      *nats.Conn
 	js      jetstream.JetStream
 	fakes   *fakes
 	s3      gofakes3.Backend
@@ -164,7 +168,7 @@ func startEnvironment(ctx context.Context, dsn string) (*environment, func(), er
 		JWT:      JWTConfig{HeimdallJWKSURL: jwks.URL, HeimdallAudience: e2eAudience, HeimdallIssuer: e2eIssuer},
 		FGA: FGAConfig{
 			NATSURL: ns.ClientURL(), RelayBatch: 50, RelayInterval: 50 * time.Millisecond,
-			RelayRetryDelay: time.Second, RelayMaxAttempts: 3,
+			RelayRetryDelay: time.Second, RelayMaxAttempts: 3, AccessWaitTimeout: e2eAccessWaitTimeout,
 		},
 		Indexer:      IndexerConfig{ServiceToken: "e2e-indexer-token", RetryDelay: time.Second, MaxAttempts: 3},
 		Email:        EmailConfig{PublicSiteURL: e2eSiteURL, SelfServeURL: e2eSelfServeURL, CopyInbox: e2eCopyInbox, ReviewInboxes: []string{e2eReviewInbox}},
@@ -195,7 +199,7 @@ func startEnvironment(ctx context.Context, dsn string) (*environment, func(), er
 	api := httptest.NewServer(srv.router)
 	closers = append(closers, api.Close)
 
-	return &environment{baseURL: api.URL, pool: srv.pool, key: key, js: js, fakes: fk, s3: s3Backend, email: srv.emailNotifier}, cleanup, nil
+	return &environment{baseURL: api.URL, pool: srv.pool, key: key, nc: nc, js: js, fakes: fk, s3: s3Backend, email: srv.emailNotifier}, cleanup, nil
 }
 
 // reset empties every table and every fake, so each test starts from a blank platform.

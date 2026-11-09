@@ -125,6 +125,10 @@ type ProgramUpdateInput struct {
 	DiscoverSortRank   *int               `json:"discover_sort_rank,omitempty"`
 	MenteeNeeds        json.RawMessage    `json:"mentee_needs,omitempty"`
 	TaskTemplates      json.RawMessage    `json:"task_templates,omitempty"`
+	// ExpectedTaskTemplates, when TaskTemplates is set, are the stored templates the service
+	// diffed TaskTemplates against: the update fails with ErrConflict if they have changed since.
+	// Not persisted.
+	ExpectedTaskTemplates json.RawMessage `json:"-"`
 	// Skills replaces the program's full skill set when non-nil; nil leaves it unchanged.
 	Skills []string `json:"skills,omitempty"`
 	// Terms replaces the program's open terms when non-nil: unlisted open terms are

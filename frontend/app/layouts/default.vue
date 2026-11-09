@@ -9,6 +9,7 @@ SPDX-License-Identifier: MIT
       <slot />
     </main>
     <mentorship-footer />
+    <help-button />
     <share-modal-global />
     <lfx-toast />
   </div>
@@ -17,6 +18,7 @@ SPDX-License-Identifier: MIT
 <script setup lang="ts">
 import MentorshipHeader from '~/components/shared/layout/header.vue';
 import MentorshipFooter from '~/components/shared/layout/footer.vue';
+import HelpButton from '~/components/shared/layout/components/help-button.vue';
 import ShareModalGlobal from '~/components/shared/components/share/share-modal-global.vue';
 import LfxToast from '~/components/uikit/toast/toast.vue';
 import { organizationJsonLd, siteOrigin } from '~/utils/seo';

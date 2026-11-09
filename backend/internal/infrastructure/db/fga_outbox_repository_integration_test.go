@@ -875,12 +875,14 @@ func TestProgramListAdministeredIntegration_GroupsStatusAndScopesToActiveAdmin(t
 		id     string
 		status models.AdministeredProgramStatus
 	}
-	// Ordered by admin_status (open, pending_review, completed, hidden, then
-	// the rest), then by name.
+	// Ordered by admin_status (accepting, in_progress, upcoming, pending_review,
+	// completed, hidden, then the rest), then by name. The fixture program's open
+	// term is taking applications; a program with no terms, or only deleted ones,
+	// is upcoming.
 	want := []row{
-		{fixture.ProgramID, models.AdministeredProgramStatusOpen},
-		{noTermsID, models.AdministeredProgramStatusOpen},
-		{deletedTermID, models.AdministeredProgramStatusOpen},
+		{fixture.ProgramID, models.AdministeredProgramStatusAccepting},
+		{noTermsID, models.AdministeredProgramStatusUpcoming},
+		{deletedTermID, models.AdministeredProgramStatusUpcoming},
 		{pendingID, models.AdministeredProgramStatusPendingReview},
 		{completedID, models.AdministeredProgramStatusCompleted},
 		{hiddenID, models.AdministeredProgramStatusHidden},
@@ -918,7 +920,8 @@ func TestProgramListAdministeredIntegration_GroupsStatusAndScopesToActiveAdmin(t
 
 	for status, wantIDs := range map[models.AdministeredProgramStatus][]string{
 		models.AdministeredProgramStatusCompleted: {completedID},
-		models.AdministeredProgramStatusOpen:      {fixture.ProgramID, noTermsID, deletedTermID},
+		models.AdministeredProgramStatusAccepting: {fixture.ProgramID},
+		models.AdministeredProgramStatusUpcoming:  {noTermsID, deletedTermID},
 		models.AdministeredProgramStatusHidden:    {hiddenID, archivedID},
 	} {
 		got, meta, err := repo.ListAdministeredByUser(ctx, fixture.UserID, models.AdministeredProgramFilter{Status: status})
@@ -948,6 +951,111 @@ func TestProgramListAdministeredIntegration_GroupsStatusAndScopesToActiveAdmin(t
 	}
 	if meta.Total != len(want) || len(paged) != 1 || paged[0].ID != want[1].id {
 		t.Errorf("limit=1 offset=1: total=%d programs=%+v; want %s of %d", meta.Total, paged, want[1].id, len(want))
+	}
+}
+
+func TestProgramListAdministeredByProjectsIntegration_ScopesToProjectsInEveryStatus(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	const (
+		fixtureProjectUID = "00000000-0000-0000-0000-000000000099"
+		otherProjectUID   = "00000000-0000-0000-0000-000000000098"
+		pendingID         = "00000000-0000-0000-0000-000000000070"
+		hiddenID          = "00000000-0000-0000-0000-000000000071"
+		otherProjectID    = "00000000-0000-0000-0000-000000000072"
+		noProjectID       = "00000000-0000-0000-0000-000000000073"
+	)
+	// No program_members rows: the list does not depend on who administers a program.
+	if _, err := pool.Exec(ctx, `INSERT INTO programs (id, lf_project_uid, name, slug, status, lf_project_name) VALUES
+		('`+pendingID+`', '`+fixtureProjectUID+`', 'Beta', 'beta', 'pending', 'CNCF'),
+		('`+hiddenID+`', '`+fixtureProjectUID+`', 'Hidden', 'hidden', 'hidden', NULL),
+		('`+otherProjectID+`', '`+otherProjectUID+`', 'Other', 'other', 'published', NULL),
+		('`+noProjectID+`', NULL, 'Orphan', 'orphan', 'published', NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES
+		('00000000-0000-0000-0000-000000000074', $1, $2, 'mentee', 'accepted')`, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatal(err)
+	}
+	repo := NewProgramRepository(pool)
+
+	programs, meta, err := repo.ListAdministeredByProjects(ctx, []string{fixtureProjectUID}, models.AdministeredProgramFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	type row struct {
+		id     string
+		status models.AdministeredProgramStatus
+	}
+	want := []row{
+		{fixture.ProgramID, models.AdministeredProgramStatusAccepting},
+		{pendingID, models.AdministeredProgramStatusPendingReview},
+		{hiddenID, models.AdministeredProgramStatusHidden},
+	}
+	if meta.Total != len(want) || len(programs) != len(want) {
+		t.Fatalf("total=%d len=%d; want %d", meta.Total, len(programs), len(want))
+	}
+	for i, w := range want {
+		if p := programs[i]; p.ID != w.id || p.AdminStatus != w.status {
+			t.Errorf("programs[%d] = {%s %s}; want %+v", i, p.ID, p.AdminStatus, w)
+		}
+	}
+	if s := programs[0].Stats; s.Mentees != 1 {
+		t.Errorf("fixture program stats = %+v; want 1 mentee", s)
+	}
+
+	filtered, meta, err := repo.ListAdministeredByProjects(ctx, []string{fixtureProjectUID}, models.AdministeredProgramFilter{Status: models.AdministeredProgramStatusHidden})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Total != 1 || len(filtered) != 1 || filtered[0].ID != hiddenID {
+		t.Errorf("status=hidden: total=%d programs=%+v; want only %s", meta.Total, filtered, hiddenID)
+	}
+
+	searched, meta, err := repo.ListAdministeredByProjects(ctx, []string{fixtureProjectUID}, models.AdministeredProgramFilter{Search: "cncf"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Total != 1 || len(searched) != 1 || searched[0].ID != pendingID {
+		t.Errorf("search=cncf: total=%d programs=%+v; want only %s", meta.Total, searched, pendingID)
+	}
+
+	paged, meta, err := repo.ListAdministeredByProjects(ctx, []string{fixtureProjectUID}, models.AdministeredProgramFilter{Limit: 1, Offset: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Total != len(want) || len(paged) != 1 || paged[0].ID != hiddenID {
+		t.Errorf("limit=1 offset=2: total=%d programs=%+v; want %s of %d", meta.Total, paged, hiddenID, len(want))
+	}
+
+	none, meta, err := repo.ListAdministeredByProjects(ctx, []string{"00000000-0000-0000-0000-000000000097"}, models.AdministeredProgramFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Total != 0 || len(none) != 0 {
+		t.Errorf("unknown project: total=%d programs=%+v; want none", meta.Total, none)
+	}
+
+	both, meta, err := repo.ListAdministeredByProjects(ctx, []string{fixtureProjectUID, otherProjectUID}, models.AdministeredProgramFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]string, 0, len(both))
+	for _, p := range both {
+		ids = append(ids, p.ID)
+	}
+	if meta.Total != len(want)+1 || !slices.Contains(ids, otherProjectID) || slices.Contains(ids, noProjectID) {
+		t.Errorf("both projects: total=%d ids=%q; want the %d fixture project programs and %s", meta.Total, ids, len(want), otherProjectID)
+	}
+
+	projectUIDs, err := repo.ListProjectUIDs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(projectUIDs)
+	if want := []string{otherProjectUID, fixtureProjectUID}; !slices.Equal(projectUIDs, want) {
+		t.Errorf("ListProjectUIDs = %q; want each project once and no NULL: %q", projectUIDs, want)
 	}
 }
 
@@ -1176,7 +1284,7 @@ func TestProgramUpdateIntegration_ReplacesSkills(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Skills: []string{"Go", "Kubernetes"}}); err != nil {
+	if _, _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Skills: []string{"Go", "Kubernetes"}}, models.PrerequisiteChanges{}); err != nil {
 		t.Fatalf("update skills: %v", err)
 	}
 	skills, err := repo.ListSkills(ctx, program.ID)
@@ -1205,7 +1313,7 @@ func TestProgramUpdateIntegration_ReplacesSkills(t *testing.T) {
 	}
 
 	name := "Skills Renamed"
-	if _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Name: &name}); err != nil {
+	if _, _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Name: &name}, models.PrerequisiteChanges{}); err != nil {
 		t.Fatalf("update name: %v", err)
 	}
 	if skills, err := repo.ListSkills(ctx, program.ID); err != nil || len(skills) != 2 {
@@ -1259,7 +1367,7 @@ func TestProgramUpdateIntegration_ReplacesOpenTerms(t *testing.T) {
 		return got
 	}
 
-	if _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Terms: []models.ProgramOpenTermInput{term(keptID, "Fall 2026"), term("", "Spring 2027")}}); err != nil {
+	if _, _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Terms: []models.ProgramOpenTermInput{term(keptID, "Fall 2026"), term("", "Spring 2027")}}, models.PrerequisiteChanges{}); err != nil {
 		t.Fatalf("replace open terms: %v", err)
 	}
 	got := termsByName()
@@ -1269,7 +1377,7 @@ func TestProgramUpdateIntegration_ReplacesOpenTerms(t *testing.T) {
 	newID := got["Spring 2027"][0]
 
 	// Only open terms of the program can be listed.
-	if _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Terms: []models.ProgramOpenTermInput{term(keptID, "Fall 2026"), term(newID, "Spring 2027"), term(closedID, "Edited")}}); !errors.Is(err, domain.ErrInvalidInput) {
+	if _, _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Terms: []models.ProgramOpenTermInput{term(keptID, "Fall 2026"), term(newID, "Spring 2027"), term(closedID, "Edited")}}, models.PrerequisiteChanges{}); !errors.Is(err, domain.ErrInvalidInput) {
 		t.Fatalf("listing a closed term: got %v; want ErrInvalidInput", err)
 	}
 
@@ -1277,7 +1385,7 @@ func TestProgramUpdateIntegration_ReplacesOpenTerms(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ('00000000-0000-0000-0000-000000000075', $1, $2, 'mentee', 'pending')`, keptID, userID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Terms: []models.ProgramOpenTermInput{term(newID, "Spring 2027")}}); !errors.Is(err, domain.ErrStateLocked) {
+	if _, _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{Terms: []models.ProgramOpenTermInput{term(newID, "Spring 2027")}}, models.PrerequisiteChanges{}); !errors.Is(err, domain.ErrStateLocked) {
 		t.Fatalf("removing a term with applications: got %v; want ErrStateLocked", err)
 	}
 	if after := termsByName(); after["Fall 2026"] != [2]string{keptID, "open"} || after["Spring 2025"] != [2]string{closedID, "closed"} {
@@ -1299,7 +1407,7 @@ func TestProgramUpdateIntegration_ChangesProject(t *testing.T) {
 	}
 
 	newUID, newSlug, newName := "00000000-0000-0000-0000-000000000098", "new-project", "New Project"
-	updated, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{ProjectUID: &newUID, ProjectSlug: &newSlug, ProjectName: &newName})
+	updated, _, err := repo.Update(ctx, program.ID, models.ProgramUpdateInput{ProjectUID: &newUID, ProjectSlug: &newSlug, ProjectName: &newName}, models.PrerequisiteChanges{})
 	if err != nil {
 		t.Fatalf("update project: %v", err)
 	}
@@ -1312,7 +1420,7 @@ func TestProgramUpdateIntegration_ChangesProject(t *testing.T) {
 	}
 
 	name := "Moving Renamed"
-	if updated, err = repo.Update(ctx, program.ID, models.ProgramUpdateInput{Name: &name}); err != nil {
+	if updated, _, err = repo.Update(ctx, program.ID, models.ProgramUpdateInput{Name: &name}, models.PrerequisiteChanges{}); err != nil {
 		t.Fatalf("update name: %v", err)
 	}
 	if updated.ProjectUID == nil || *updated.ProjectUID != newUID {

@@ -64,6 +64,10 @@ const (
 // as history, so once a user has withdrawn this many for a term they cannot apply to it again.
 const MaxWithdrawnApplicationsPerTerm = 3
 
+// MaxPendingMenteeApplications caps how many mentee applications a user may have under review in
+// open terms at once, as legacy did and the public site promises.
+const MaxPendingMenteeApplications = 3
+
 // IsValid reports whether the status value is one of the allowed enum members.
 func (s ApplicationStatus) IsValid() bool {
 	switch s {
@@ -185,4 +189,10 @@ type ApplicationUpdateInput struct {
 	ActorID string `json:"-"`
 	// ExpectedStatus, when set, makes a status change apply only if the row still has this status.
 	ExpectedStatus *ApplicationStatus `json:"-"`
+	// AddMissingPrerequisites, set when a mentee application is re-opened, gives it a task for each of
+	// Prerequisites it has none of. Prerequisites are the program's, decoded from ExpectedTaskTemplates:
+	// the update fails with ErrConflict if those templates have changed since. Not persisted.
+	AddMissingPrerequisites bool                   `json:"-"`
+	Prerequisites           []PrerequisiteTemplate `json:"-"`
+	ExpectedTaskTemplates   json.RawMessage        `json:"-"`
 }

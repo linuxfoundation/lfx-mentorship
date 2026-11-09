@@ -28,10 +28,11 @@ type stubProgramSvc struct {
 	nameAvailable              func(context.Context, string, string) (bool, error)
 	listMentees                func(context.Context, string) ([]*models.ProgramCatalogMentee, error)
 	listMine                   func(context.Context, string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error)
+	listByProject              func(context.Context, string, bool, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error)
 	listSkills                 func(context.Context, string) ([]*models.ProgramSkill, error)
 	deleteSkill                func(context.Context, string, string, string) error
 	getCategorizedTransactions func(context.Context, string, string, bool, int, int) (*models.ProgramCategorizedTransactions, error)
-	getProgramSponsors         func(context.Context, string, string, bool, bool) ([]models.ProgramSponsor, error)
+	getProgramSponsors         func(context.Context, string, string, bool, bool) (*models.ProgramSponsors, error)
 	createEnrollment           func(context.Context, models.ProgramEnrollmentInput) (*models.Program, error)
 	update                     func(context.Context, string, models.ProgramUpdateInput) (*models.Program, error)
 	hide                       func(context.Context, string) (*models.Program, error)
@@ -95,6 +96,12 @@ func (s *stubProgramSvc) ListMine(ctx context.Context, userID string, f models.A
 	}
 	return []*models.AdministeredProgram{}, &models.PaginationMeta{}, nil
 }
+func (s *stubProgramSvc) ListByProject(ctx context.Context, projectUID string, includeSubprojects bool, f models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+	if s.listByProject != nil {
+		return s.listByProject(ctx, projectUID, includeSubprojects, f)
+	}
+	return []*models.AdministeredProgram{}, &models.PaginationMeta{}, nil
+}
 func (s *stubProgramSvc) Create(context.Context, models.ProgramCreateInput) (*models.Program, error) {
 	return &models.Program{}, nil
 }
@@ -150,11 +157,11 @@ func (s *stubProgramSvc) GetCategorizedTransactions(ctx context.Context, program
 	}
 	return &models.ProgramCategorizedTransactions{}, nil
 }
-func (s *stubProgramSvc) GetProgramSponsors(ctx context.Context, programID, categoryType string, subscriptionOnly bool, aggregate bool) ([]models.ProgramSponsor, error) {
+func (s *stubProgramSvc) GetProgramSponsors(ctx context.Context, programID, categoryType string, subscriptionOnly bool, aggregate bool) (*models.ProgramSponsors, error) {
 	if s.getProgramSponsors != nil {
 		return s.getProgramSponsors(ctx, programID, categoryType, subscriptionOnly, aggregate)
 	}
-	return []models.ProgramSponsor{}, nil
+	return &models.ProgramSponsors{Data: []models.ProgramSponsor{}}, nil
 }
 
 func TestProgramHandler_ListCatalog_OK(t *testing.T) {
@@ -545,23 +552,54 @@ func TestProgramHandler_ResolveID_RejectedReturns404ToAnonymous(t *testing.T) {
 	}
 }
 
-func TestProgramHandler_GetCatalog_PendingReturnsOK(t *testing.T) {
-	h := handler.NewProgramHandler(&stubProgramSvc{
-		getCatalog: func(_ context.Context, id string) (*models.ProgramCatalogItem, error) {
-			return &models.ProgramCatalogItem{
-				Program: models.Program{ID: id, Name: "Pending Program", Status: models.ProgramStatusPending},
-				Skills:  []string{},
-				Terms:   []models.ProgramCatalogTerm{},
-				Mentors: []models.ProgramCatalogMentor{},
-			}, nil
-		},
-	})
-	r := httptest.NewRequest(http.MethodGet, "/v1/programs/pending-1/catalog", nil)
-	r = requestWithChiParam(r, "id", "pending-1")
-	w := httptest.NewRecorder()
-	h.GetCatalog(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("got %d; want 200", w.Code)
+func TestProgramHandler_GetCatalog_Pending(t *testing.T) {
+	owner := "owner"
+	gateway, err := auth.NewJWTAuthenticator(context.Background(), auth.JWTAuthConfig{DisabledMockLocalPrincipal: "approver", AllowMockPrincipalBypass: true}, nil)
+	if err != nil {
+		t.Fatalf("NewJWTAuthenticator: %v", err)
+	}
+	for _, tc := range []struct {
+		name      string
+		principal *models.Principal
+		viaGW     bool
+		want      int
+	}{
+		{name: "anonymous", want: http.StatusNotFound},
+		{name: "signed-in non-owner off the gateway", principal: &models.Principal{UserID: "someone", Username: "someone"}, want: http.StatusNotFound},
+		{name: "owner", principal: &models.Principal{UserID: "owner-user", Username: owner}, want: http.StatusOK},
+		{name: "signed-in caller Heimdall authorized", viaGW: true, want: http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			catalogRead := false
+			var serve http.Handler = http.HandlerFunc(handler.NewProgramHandler(&stubProgramSvc{
+				getBySlug: func(_ context.Context, slug string) (*models.Program, error) {
+					return &models.Program{ID: "pending-uuid", Slug: slug, Status: models.ProgramStatusPending, LFID: &owner}, nil
+				},
+				getCatalog: func(_ context.Context, id string) (*models.ProgramCatalogItem, error) {
+					catalogRead = true
+					if id != "pending-uuid" {
+						t.Errorf("catalog id = %q; want pending-uuid", id)
+					}
+					return &models.ProgramCatalogItem{Program: models.Program{ID: id, Status: models.ProgramStatusPending}}, nil
+				},
+			}).GetCatalog)
+			if tc.viaGW {
+				serve = gateway.GatewayMiddleware(serve)
+			}
+			r := httptest.NewRequest(http.MethodGet, "/v1/programs/my-pending/catalog", nil)
+			r = requestWithChiParam(r, "id", "my-pending")
+			if tc.principal != nil {
+				r = r.WithContext(auth.ContextWithPrincipal(r.Context(), tc.principal))
+			}
+			w := httptest.NewRecorder()
+			serve.ServeHTTP(w, r)
+			if w.Code != tc.want {
+				t.Fatalf("got %d; want %d", w.Code, tc.want)
+			}
+			if catalogRead != (tc.want == http.StatusOK) {
+				t.Fatalf("catalog read = %v; want %v", catalogRead, tc.want == http.StatusOK)
+			}
+		})
 	}
 }
 
@@ -570,7 +608,7 @@ func TestProgramHandler_GetProgramSponsors_OK(t *testing.T) {
 		getByID: func(_ context.Context, id string) (*models.Program, error) {
 			return &models.Program{ID: id, Status: models.ProgramStatusPublished}, nil
 		},
-		getProgramSponsors: func(_ context.Context, programID, categoryType string, subscriptionOnly bool, aggregate bool) ([]models.ProgramSponsor, error) {
+		getProgramSponsors: func(_ context.Context, programID, categoryType string, subscriptionOnly bool, aggregate bool) (*models.ProgramSponsors, error) {
 			if programID != "p1" {
 				t.Errorf("programID = %q; want p1", programID)
 			}
@@ -583,7 +621,7 @@ func TestProgramHandler_GetProgramSponsors_OK(t *testing.T) {
 			if aggregate {
 				t.Error("aggregate = true; want false")
 			}
-			return []models.ProgramSponsor{{ID: "gmc", Name: "GMC", AmountCents: 250000}}, nil
+			return &models.ProgramSponsors{Data: []models.ProgramSponsor{{ID: "gmc", Name: "GMC", AmountCents: 250000}}, CrowdfundingInitiative: true}, nil
 		},
 	})
 
@@ -596,12 +634,13 @@ func TestProgramHandler_GetProgramSponsors_OK(t *testing.T) {
 	}
 
 	var body struct {
-		Data []models.ProgramSponsor `json:"data"`
+		Data                   []models.ProgramSponsor `json:"data"`
+		CrowdfundingInitiative bool                    `json:"crowdfunding_initiative"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(body.Data) != 1 || body.Data[0].ID != "gmc" {
+	if len(body.Data) != 1 || body.Data[0].ID != "gmc" || !body.CrowdfundingInitiative {
 		t.Errorf("unexpected body: %+v", body)
 	}
 }
@@ -611,11 +650,11 @@ func TestProgramHandler_GetProgramSponsors_AggregateQueryParam(t *testing.T) {
 		getByID: func(_ context.Context, id string) (*models.Program, error) {
 			return &models.Program{ID: id, Status: models.ProgramStatusPublished}, nil
 		},
-		getProgramSponsors: func(_ context.Context, _ string, _ string, _ bool, aggregate bool) ([]models.ProgramSponsor, error) {
+		getProgramSponsors: func(_ context.Context, _ string, _ string, _ bool, aggregate bool) (*models.ProgramSponsors, error) {
 			if !aggregate {
 				t.Fatal("aggregate = false; want true")
 			}
-			return []models.ProgramSponsor{}, nil
+			return &models.ProgramSponsors{Data: []models.ProgramSponsor{}}, nil
 		},
 	})
 
@@ -737,12 +776,12 @@ func TestProgramHandler_ListMine_ScopesToPrincipal(t *testing.T) {
 			return []*models.AdministeredProgram{{
 				ID:          "p1",
 				Name:        "GridFlow",
-				AdminStatus: models.AdministeredProgramStatusOpen,
+				AdminStatus: models.AdministeredProgramStatusAccepting,
 				Stats:       models.ProgramHeaderStats{Mentors: 2, Mentees: 3, Graduated: 6},
 			}}, &models.PaginationMeta{Total: 1, Limit: 5, Offset: 10}, nil
 		},
 	})
-	r := httptest.NewRequest(http.MethodGet, "/v1/me/programs?search=grid&status=open&limit=5&offset=10", nil)
+	r := httptest.NewRequest(http.MethodGet, "/v1/me/programs?search=grid&status=accepting&limit=5&offset=10", nil)
 	r = requestWithPrincipal(r, "caller-user")
 	w := httptest.NewRecorder()
 	h.ListMine(w, r)
@@ -753,7 +792,7 @@ func TestProgramHandler_ListMine_ScopesToPrincipal(t *testing.T) {
 	if gotUser != "caller-user" {
 		t.Errorf("user = %q; want caller-user", gotUser)
 	}
-	want := models.AdministeredProgramFilter{Limit: 5, Offset: 10, Search: "grid", Status: models.AdministeredProgramStatusOpen}
+	want := models.AdministeredProgramFilter{Limit: 5, Offset: 10, Search: "grid", Status: models.AdministeredProgramStatusAccepting}
 	if gotFilter != want {
 		t.Errorf("filter = %+v; want %+v", gotFilter, want)
 	}
@@ -805,6 +844,122 @@ func TestProgramHandler_ListMine_InvalidStatus(t *testing.T) {
 	h.ListMine(w, r)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("got %d; want 400", w.Code)
+	}
+}
+
+func TestProgramHandler_ListByProject_PassesProjectAndFilter(t *testing.T) {
+	const projectUID = "00000000-0000-0000-0000-000000000001"
+	var gotProject string
+	gotSubprojects := true
+	var gotFilter models.AdministeredProgramFilter
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		listByProject: func(_ context.Context, uid string, subprojects bool, f models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+			gotProject, gotSubprojects, gotFilter = uid, subprojects, f
+			return []*models.AdministeredProgram{{ID: "p1", AdminStatus: models.AdministeredProgramStatusPendingReview}},
+				&models.PaginationMeta{Total: 1, Limit: 5, Offset: 10}, nil
+		},
+	})
+	r := httptest.NewRequest(http.MethodGet, "/v1/projects/"+projectUID+"/programs?search=grid&status=pending_review&limit=5&offset=10", nil)
+	r = requestWithChiParam(requestWithPrincipal(r, "caller-user"), "project_uid", projectUID)
+	w := httptest.NewRecorder()
+	h.ListByProject(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d; want 200: %s", w.Code, w.Body.String())
+	}
+	if gotProject != projectUID || gotSubprojects {
+		t.Errorf("project = %q, include_subprojects = %v; want %q and false by default", gotProject, gotSubprojects, projectUID)
+	}
+	want := models.AdministeredProgramFilter{Limit: 5, Offset: 10, Search: "grid", Status: models.AdministeredProgramStatusPendingReview}
+	if gotFilter != want {
+		t.Errorf("filter = %+v; want %+v", gotFilter, want)
+	}
+	var body struct {
+		Data []models.AdministeredProgram `json:"data"`
+		Meta models.PaginationMeta        `json:"meta"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.Data) != 1 || body.Data[0].ID != "p1" || body.Meta.Total != 1 {
+		t.Fatalf("unexpected body: %+v", body)
+	}
+}
+
+func TestProgramHandler_ListByProject_InvalidInput(t *testing.T) {
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		listByProject: func(context.Context, string, bool, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+			return nil, nil, fmt.Errorf("%w: project_uid must be a UUID", domain.ErrInvalidInput)
+		},
+	})
+	r := requestWithChiParam(httptest.NewRequest(http.MethodGet, "/v1/projects/not-a-uuid/programs", nil), "project_uid", "not-a-uuid")
+	w := httptest.NewRecorder()
+	h.ListByProject(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("got %d; want 400", w.Code)
+	}
+}
+
+func TestProgramHandler_ListByProject_BadPagination(t *testing.T) {
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		listByProject: func(context.Context, string, bool, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+			t.Fatal("service must not be called with bad pagination")
+			return nil, nil, nil
+		},
+	})
+	r := httptest.NewRequest(http.MethodGet, "/v1/projects/00000000-0000-0000-0000-000000000001/programs?limit=abc", nil)
+	w := httptest.NewRecorder()
+	h.ListByProject(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("got %d; want 400", w.Code)
+	}
+}
+
+func TestProgramHandler_ListByProject_IncludeSubprojects(t *testing.T) {
+	for query, want := range map[string]bool{"include_subprojects=true": true, "include_subprojects=false": false} {
+		t.Run(query, func(t *testing.T) {
+			got := !want
+			h := handler.NewProgramHandler(&stubProgramSvc{
+				listByProject: func(_ context.Context, _ string, subprojects bool, _ models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+					got = subprojects
+					return []*models.AdministeredProgram{}, &models.PaginationMeta{}, nil
+				},
+			})
+			w := httptest.NewRecorder()
+			h.ListByProject(w, httptest.NewRequest(http.MethodGet, "/v1/projects/00000000-0000-0000-0000-000000000001/programs?"+query, nil))
+			if w.Code != http.StatusOK || got != want {
+				t.Errorf("got %d, include_subprojects = %v; want 200 and %v", w.Code, got, want)
+			}
+		})
+	}
+}
+
+func TestProgramHandler_ListByProject_BadIncludeSubprojects(t *testing.T) {
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		listByProject: func(context.Context, string, bool, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+			t.Fatal("service must not be called with a bad include_subprojects")
+			return nil, nil, nil
+		},
+	})
+	for _, value := range []string{"yes", "1", "TRUE"} {
+		w := httptest.NewRecorder()
+		h.ListByProject(w, httptest.NewRequest(http.MethodGet, "/v1/projects/00000000-0000-0000-0000-000000000001/programs?include_subprojects="+value, nil))
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("include_subprojects=%s: got %d; want 400", value, w.Code)
+		}
+	}
+}
+
+func TestProgramHandler_ListByProject_ProjectServiceDown(t *testing.T) {
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		listByProject: func(context.Context, string, bool, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+			return nil, nil, fmt.Errorf("resolve project parents: %w", domain.ErrUpstreamUnavailable)
+		},
+	})
+	w := httptest.NewRecorder()
+	h.ListByProject(w, httptest.NewRequest(http.MethodGet, "/v1/projects/00000000-0000-0000-0000-000000000001/programs?include_subprojects=true", nil))
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("got %d; want 503", w.Code)
 	}
 }
 

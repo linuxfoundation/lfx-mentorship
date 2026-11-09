@@ -4,6 +4,9 @@
   "private": true,
   "packageManager": "pnpm@11.1.2",
   "scripts": {
+    "docs:build": "node scripts/build-docs.mjs",
+    "prebuild": "node scripts/build-docs.mjs",
+    "predev": "node scripts/build-docs.mjs",
     "build": "nuxt build",
     "dev": "nuxt dev --port 3000",
     "generate": "nuxt generate",
@@ -32,7 +35,9 @@
     "chart.js": "^4.5.1",
     "h3": "^1.15.11",
     "isomorphic-dompurify": "^3.22.0",
+    "js-yaml": "^4.3.2",
     "marked": "4.3.0",
+    "minisearch": "^7.2.0",
     "nuxt": "^4.5.2",
     "ofetch": "^1.5.1",
     "pinia": "^3.0.4",
@@ -49,6 +54,7 @@
   "devDependencies": {
     "@nuxt/eslint": "^1.17.0",
     "@nuxt/test-utils": "^4.3.3",
+    "@types/js-yaml": "^4.0.9",
     "@types/marked": "4.3.2",
     "@types/node": "^26.2.0",
     "@vitest/coverage-v8": "4.1.11",

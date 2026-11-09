@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"net/url"
 	"strings"
 	"sync"
@@ -19,6 +20,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"golang.org/x/text/language"
 	"golang.org/x/text/language/display"
+	"golang.org/x/time/rate"
 )
 
 // pageSize is the largest page the member and task repositories serve.
@@ -27,8 +29,10 @@ const pageSize = 100
 // mentorPageSize is the largest page the mentor management listing serves.
 const mentorPageSize = 50
 
-// dispatchTimeout bounds one notification's lookups and sends so a stuck dependency cannot hold shutdown.
-const dispatchTimeout = 30 * time.Second
+// lookupTimeout bounds one notification's recipient and template lookups so a stuck dependency
+// cannot hold shutdown. Sends are not under it: they wait their turn under the send rate, and each
+// request is bounded by the client's own timeout.
+const lookupTimeout = 30 * time.Second
 
 // sendConcurrency caps parallel sends per notification, so slow recipients cannot starve the rest of the deadline.
 const sendConcurrency = 5
@@ -36,6 +40,16 @@ const sendConcurrency = 5
 // maxConcurrentDispatches caps notifications resolving and sending at once across the notifier, so a
 // bulk operation that notifies hundreds of mentees cannot exhaust the database pool or flood NATS.
 const maxConcurrentDispatches = 10
+
+// A throttled send is tried up to throttleAttempts times, the wait doubling from throttleRetryBase,
+// so a send waits at most 15s in backoff.
+const (
+	throttleAttempts  = 5
+	throttleRetryBase = time.Second
+)
+
+// profilePageSize is the largest page the profile listing serves.
+const profilePageSize = 100
 
 var notifierTracer = otel.Tracer("email-notifier")
 
@@ -97,8 +111,12 @@ type NotifierConfig struct {
 	// AllowedRecipients, when set, are the only addresses mail goes to; every other send is suppressed.
 	AllowedRecipients []string
 	// CopyInbox is the LF staff inbox sent every mentee acceptance, with the mentee's country,
-	// and a copy of every other email, with the original recipient in the subject.
+	// and a copy of every other email except prerequisite reminders, with the original recipient in the subject.
 	CopyInbox string
+	// SendRate caps sends per second from this process, keeping bulk runs under the SES sending
+	// rate that every service shares. Each API pod and the reminder job pace separately, so
+	// SendRate × API pods + the job's rate must stay under that limit; 0 leaves sends unpaced.
+	SendRate float64
 }
 
 // Repositories are the lookups the Notifier needs to resolve recipients and template data.
@@ -127,12 +145,21 @@ type Notifier struct {
 	wg                sync.WaitGroup
 	// dispatches holds one slot per notification in progress, up to maxConcurrentDispatches.
 	dispatches chan struct{}
+	// limiter paces every send the notifier makes, retries included.
+	limiter *rate.Limiter
+	// throttleBackoff is the first retry delay for a throttled send; tests shorten it.
+	throttleBackoff time.Duration
+	lookupTimeout   time.Duration
 }
 
 var _ domain.Notifier = (*Notifier)(nil)
 
 // NewNotifier returns a Notifier that sends through sender.
 func NewNotifier(sender Sender, repos Repositories, cfg NotifierConfig, logger *slog.Logger) *Notifier {
+	limit := rate.Inf
+	if cfg.SendRate > 0 {
+		limit = rate.Limit(cfg.SendRate)
+	}
 	return &Notifier{
 		sender:        sender,
 		repos:         repos,
@@ -144,6 +171,9 @@ func NewNotifier(sender Sender, repos Repositories, cfg NotifierConfig, logger *
 
 		allowedRecipients: recipientSet(cfg.AllowedRecipients),
 		copyInbox:         cfg.CopyInbox,
+		limiter:           rate.NewLimiter(limit, 1),
+		throttleBackoff:   throttleRetryBase,
+		lookupTimeout:     lookupTimeout,
 	}
 }
 
@@ -217,7 +247,7 @@ func (n *Notifier) inviterName(ctx context.Context, inviterID string) string {
 	if inviterID == "" {
 		return inviterFallback
 	}
-	inviter, err := n.repos.Users.GetByID(ctx, inviterID)
+	inviter, err := n.user(ctx, inviterID)
 	if err != nil {
 		n.logger.WarnContext(ctx, "mentor inviter unavailable", "error", err)
 		return inviterFallback
@@ -281,7 +311,7 @@ func (n *Notifier) notifyAdminsOfMentor(ctx context.Context, name, programID, us
 		if err != nil {
 			return nil, fmt.Errorf("get program: %w", err)
 		}
-		mentor, err := n.repos.Users.GetByID(ctx, userID)
+		mentor, err := n.user(ctx, userID)
 		if err != nil {
 			return nil, fmt.Errorf("get mentor: %w", err)
 		}
@@ -340,13 +370,13 @@ func (n *Notifier) NotifyProgramSubmitted(ctx context.Context, programID, submit
 		data := templateData{
 			RecipientName: reviewGreeting,
 			ProgramName:   program.Name,
-			ProgramURL:    n.pendingProgramURL(program.ID),
+			ProgramURL:    n.programReviewURL(program.ID, ""),
 			ApproveURL:    n.programReviewURL(program.ID, reviewDecisionApprove),
 			RejectURL:     n.programReviewURL(program.ID, reviewDecisionReject),
 		}
 		// The submitter is context for the reviewer; a failed lookup must not hold back the notice.
 		if submitterID != "" {
-			submitter, err := n.repos.Users.GetByID(ctx, submitterID)
+			submitter, err := n.user(ctx, submitterID)
 			if err != nil {
 				n.logger.WarnContext(ctx, "program submitter unavailable", "user_id", submitterID, "error", err)
 			} else {
@@ -448,7 +478,7 @@ func (n *Notifier) NotifyAdminTasksSubmitted(ctx context.Context, applicationID 
 		if err != nil {
 			return nil, err
 		}
-		mentee, err := n.repos.Users.GetByID(ctx, app.UserID)
+		mentee, err := n.user(ctx, app.UserID)
 		if err != nil {
 			return nil, fmt.Errorf("get mentee: %w", err)
 		}
@@ -491,7 +521,7 @@ func (n *Notifier) NotifyMenteeAccepted(ctx context.Context, applicationID, atte
 		if err != nil {
 			return nil, err
 		}
-		mentee, err := n.repos.Users.GetByID(ctx, app.UserID)
+		mentee, err := n.user(ctx, app.UserID)
 		if err != nil {
 			return nil, fmt.Errorf("get mentee: %w", err)
 		}
@@ -655,7 +685,7 @@ func (n *Notifier) NotifyMenteeWithdrawn(ctx context.Context, applicationID stri
 		if err != nil {
 			return nil, err
 		}
-		mentee, err := n.repos.Users.GetByID(ctx, app.UserID)
+		mentee, err := n.user(ctx, app.UserID)
 		if err != nil {
 			return nil, fmt.Errorf("get mentee: %w", err)
 		}
@@ -781,8 +811,6 @@ func (n *Notifier) dispatch(ctx context.Context, notification string, build func
 		// The deadline starts once a slot is free, so a queued notification is not timed out for waiting.
 		n.dispatches <- struct{}{}
 		defer func() { <-n.dispatches }()
-		ctx, cancel := context.WithTimeout(ctx, dispatchTimeout)
-		defer cancel()
 		// Chi's recoverer does not cover this goroutine; a panic here would take down the API.
 		defer func() {
 			if r := recover(); r != nil {
@@ -792,7 +820,9 @@ func (n *Notifier) dispatch(ctx context.Context, notification string, build func
 		ctx, span := notifierTracer.Start(ctx, "email.notify "+notification)
 		defer span.End()
 
-		msgs, err := build(ctx)
+		lookupCtx, cancel := context.WithTimeout(ctx, n.lookupTimeout)
+		msgs, err := build(lookupCtx)
+		cancel()
 		if err != nil {
 			span.RecordError(err)
 			n.logger.ErrorContext(ctx, "email notification not sent", "notification", notification, "error", err)
@@ -814,7 +844,11 @@ func (n *Notifier) dispatch(ctx context.Context, notification string, build func
 		}
 		slots := make(chan struct{}, sendConcurrency)
 		var sends sync.WaitGroup
-		for _, msg := range append(unique, n.copies(unique)...) {
+		if notification != templateMenteePrerequisiteReminder {
+			// Reminders go out in daily bulk; copying them would double the batch against the SES rate.
+			unique = append(unique, n.copies(unique)...)
+		}
+		for _, msg := range unique {
 			if !n.recipientAllowed(strings.ToLower(msg.To)) {
 				n.logger.InfoContext(ctx, "email notification suppressed", "notification", notification)
 				continue
@@ -829,7 +863,7 @@ func (n *Notifier) dispatch(ctx context.Context, notification string, build func
 						n.logger.ErrorContext(ctx, "email notification panicked", "notification", notification, "panic", r)
 					}
 				}()
-				receipt, err := n.sender.Send(ctx, msg)
+				receipt, err := n.send(ctx, msg)
 				if err != nil {
 					span.RecordError(err)
 					n.logger.ErrorContext(ctx, "email notification not sent", "notification", notification, "error", err)
@@ -840,6 +874,31 @@ func (n *Notifier) dispatch(ctx context.Context, notification string, build func
 		}
 		sends.Wait()
 	}()
+}
+
+// send paces msg under the notifier's send rate and retries it with exponential backoff while SES
+// throttles it. Each retry waits a random time between half and all of the current delay, so
+// sends throttled together do not retry together. ctx carries no deadline of its own: a send that
+// has waited its turn must not expire for having waited, and the client bounds each request.
+func (n *Notifier) send(ctx context.Context, msg Message) (Receipt, error) {
+	delay := n.throttleBackoff
+	for attempt := 1; ; attempt++ {
+		if err := n.limiter.Wait(ctx); err != nil {
+			return Receipt{}, fmt.Errorf("wait for send rate: %w", err)
+		}
+		receipt, err := n.sender.Send(ctx, msg)
+		if !errors.Is(err, ErrThrottled) || attempt == throttleAttempts {
+			return receipt, err
+		}
+		wait := delay/2 + rand.N(delay/2+1)
+		n.logger.WarnContext(ctx, "email send throttled; retrying", "attempt", attempt, "retry_in", wait.String())
+		select {
+		case <-ctx.Done():
+			return Receipt{}, fmt.Errorf("%w: %w", err, ctx.Err())
+		case <-time.After(wait):
+		}
+		delay *= 2
+	}
 }
 
 // copySubjectPrefix starts a copy's subject, followed by the original recipient and "] ".
@@ -971,8 +1030,59 @@ func adminContacts(admins []recipientUser) []adminContact {
 	return contacts
 }
 
-func (n *Notifier) recipient(ctx context.Context, userID string) (*models.User, string, error) {
+// user returns userID's account, filling each missing email, given name and family name from the
+// newest profile that has it: a sign-in without identity claims leaves the account's NULL while the
+// profile holds what the user typed. An account with a full name needs no name parts. A failed
+// profile lookup keeps what was filled so far.
+func (n *Notifier) user(ctx context.Context, userID string) (*models.User, error) {
 	user, err := n.repos.Users.GetByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	filled := *user
+	fields := []profileFallback{{&filled.Email, func(p *models.UserProfile) *string { return p.Email }}}
+	if strings.TrimSpace(deref(user.Name)) == "" {
+		fields = append(fields,
+			profileFallback{&filled.GivenName, func(p *models.UserProfile) *string { return p.FirstName }},
+			profileFallback{&filled.FamilyName, func(p *models.UserProfile) *string { return p.LastName }})
+	}
+	missing := func() bool {
+		for _, f := range fields {
+			if strings.TrimSpace(deref(*f.account)) == "" {
+				return true
+			}
+		}
+		return false
+	}
+	for offset := 0; missing(); {
+		page, meta, err := n.repos.Profiles.List(ctx, models.UserProfileFilter{UserID: userID, Limit: profilePageSize, Offset: offset})
+		if err != nil {
+			n.logger.WarnContext(ctx, "profile fallback unavailable", "user_id", userID, "error", err)
+			break
+		}
+		for _, p := range page {
+			for _, f := range fields {
+				if v := strings.TrimSpace(deref(f.profile(p))); v != "" && strings.TrimSpace(deref(*f.account)) == "" {
+					*f.account = &v
+				}
+			}
+		}
+		offset += len(page)
+		if len(page) == 0 || meta == nil || offset >= meta.Total {
+			break
+		}
+	}
+	return &filled, nil
+}
+
+// profileFallback pairs a user field with the profile field that fills it when it is blank.
+type profileFallback struct {
+	account **string
+	profile func(*models.UserProfile) *string
+}
+
+func (n *Notifier) recipient(ctx context.Context, userID string) (*models.User, string, error) {
+	user, err := n.user(ctx, userID)
 	if err != nil {
 		return nil, "", fmt.Errorf("get user %s: %w", userID, err)
 	}
@@ -1007,12 +1117,6 @@ func (n *Notifier) programURL(program *models.Program) string {
 	return n.publicURL + "/programs/" + url.PathEscape(ref)
 }
 
-// pendingProgramURL is the public site's page for a program awaiting review. It links by ID: the
-// public site resolves only published programs' slugs, but reads any visible program by its ID.
-func (n *Notifier) pendingProgramURL(programID string) string {
-	return n.publicURL + "/programs/" + url.PathEscape(programID)
-}
-
 // selfServeLink is the Self Serve page at path.
 func (n *Notifier) selfServeLink(path string) string {
 	return n.selfServeURL + path
@@ -1023,9 +1127,13 @@ func (n *Notifier) adminProgramURL(programID string) string {
 	return n.selfServeLink(selfServeAdminProgramPath + url.PathEscape(programID))
 }
 
-// programReviewURL opens the LF staff review page for the program with decision preselected.
+// programReviewURL opens the LF staff review page for the program, with decision preselected
+// when it is non-empty.
 func (n *Notifier) programReviewURL(programID, decision string) string {
-	return n.selfServeLink(selfServeProgramReviewPath + url.PathEscape(programID) + "?decision=" + decision)
+	if decision != "" {
+		decision = "?decision=" + decision
+	}
+	return n.selfServeLink(selfServeProgramReviewPath + url.PathEscape(programID) + decision)
 }
 
 func deref(s *string) string {

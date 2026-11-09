@@ -25,3 +25,6 @@ tmp-*
 .env
 .env.*
 !.env.example
+
+# Generated docs search index
+public/assets/docs/search-index.json

@@ -1,0 +1,49 @@
+---
+title: Getting Started FAQ
+description: Common questions about eligibility, stipends, time commitment and applying to LFX Mentorship.
+tags: [faq, eligibility, stipend, applications]
+last_updated: 2026-10-26
+display_order: 9
+intercom_collection: LFX Mentorship
+---
+
+## Is there a stipend?
+
+Some LFX Mentorship programs offer a stipend and some do not. Where a stipend is offered it varies by program and by your country of residence, and the program page states it before you apply. See [Stipends](../../stipends/).
+
+## Who can apply?
+
+Anyone who is 18 or older by the time the program starts, is eligible to work in the country they live in for the duration of the mentorship, and is not taking part in, or has not completed, another Linux Foundation mentorship program.
+
+## Do I need to be a student?
+
+You do not need to be a student. Some programs ask for school enrollment verification as a prerequisite, but many do not. The program page lists the prerequisites.
+
+## How many programs can I apply to?
+
+You can have up to three applications open at a time. Withdrawing an application frees a slot.
+
+## How much time does a term take?
+
+A significant weekly commitment across a multi-week term. Each program page lists its own term dates.
+
+## How are applicants chosen?
+
+The program's mentors and Program Admins review each application against the skills the program lists and the prerequisite tasks you submitted. The Program Admin then accepts applicants for the term.
+
+## What happens at the end of a term?
+
+You complete a final evaluation with your mentor. Graduating is recorded on your public mentee profile.
+
+## Do I need an account to browse?
+
+You do not need an account to browse. Programs, mentees and mentors are all public. You need an [LF ID (Linux Foundation ID)](https://openprofile.dev/) to apply, to mentor, or to administer a program.
+
+## Where do I actually apply?
+
+Applying happens in LFX, the Linux Foundation's software platform, not on this site. **Apply to This Program** on a program page takes you to [app.lfx.dev](https://app.lfx.dev). See [Apply to a Program](../../mentees/apply-to-a-program/).
+
+## Related sections
+
+- [Getting Started](../)
+- [Apply to a Program](../../mentees/apply-to-a-program/)

@@ -6,12 +6,10 @@ import { flushPromises } from '@vue/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { defineComponent, h } from 'vue';
 import DesktopNav from './components/desktop-nav.vue';
+import HelpButton from './components/help-button.vue';
 import MentorshipFooter from './footer.vue';
 import MentorshipHeader from './header.vue';
 import ErrorPage from '~/error.vue';
-
-const intercom = vi.hoisted(() => ({ boot: vi.fn(), show: vi.fn() }));
-vi.mock('~/composables/useIntercom', () => ({ useIntercom: () => intercom }));
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -53,32 +51,56 @@ describe('DesktopNav', () => {
   });
 });
 
-describe('MentorshipFooter', () => {
-  const support = (wrapper: Awaited<ReturnType<typeof mountSuspended>>) =>
-    wrapper.findAll('button').find((b) => b.text() === 'Contact support')!;
+const button = (label: string) =>
+  [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+    (b) => b.textContent?.trim() === label,
+  )!;
+const dialog = () => document.body.querySelector('[role="dialog"]');
 
-  it('opens support chat', async () => {
-    intercom.boot.mockResolvedValue(undefined);
-    const wrapper = await mountSuspended(MentorshipFooter);
+describe('MentorshipFooter', () => {
+  it('points support requests to Self Serve, where chat is available', async () => {
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    const wrapper = await mountSuspended(MentorshipFooter, { attachTo: document.body });
     for (const link of wrapper.findAll('a[target="_blank"]')) {
       expect(link.attributes('rel')).toBe('noopener noreferrer');
     }
-    await support(wrapper).trigger('click');
+    expect(dialog()).toBeNull();
+
+    button('Contact support').click();
     await flushPromises();
-    expect(intercom.show).toHaveBeenCalled();
+    expect(dialog()?.textContent).toContain('sign in to LFX Self Serve');
+
+    button('Go to LFX Self Serve').click();
+    await flushPromises();
+    expect(open).toHaveBeenCalledWith(
+      expect.stringMatching(/\/mentorship\/mentee$/),
+      '_blank',
+      'noopener,noreferrer',
+    );
+    expect(dialog()).toBeNull();
   });
 
-  it('reports an unavailable support chat', async () => {
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const failure = new Error('blocked');
-    intercom.boot.mockRejectedValue(failure);
-    const wrapper = await mountSuspended(MentorshipFooter);
-    await support(wrapper).trigger('click');
+  it('closes the support popup without leaving the site', async () => {
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    await mountSuspended(MentorshipFooter, { attachTo: document.body });
+    button('Contact support').click();
     await flushPromises();
-    expect(consoleError).toHaveBeenCalledWith(
-      '[MentorshipFooter] Intercom is unavailable',
-      failure,
-    );
+
+    document.body.querySelector<HTMLButtonElement>('[aria-label="Close"]')!.click();
+    await flushPromises();
+    expect(dialog()).toBeNull();
+    expect(open).not.toHaveBeenCalled();
+  });
+});
+
+describe('HelpButton', () => {
+  it('opens the support popup', async () => {
+    await mountSuspended(HelpButton, { attachTo: document.body });
+    expect(dialog()).toBeNull();
+
+    button('Help').click();
+    await flushPromises();
+    expect(dialog()?.textContent).toContain('sign in to LFX Self Serve');
   });
 });
 

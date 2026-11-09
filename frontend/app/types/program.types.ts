@@ -3,13 +3,7 @@
 
 import type { MenteeStatus } from './mentee.types';
 
-export const PROGRAM_STATUSES = [
-  'open-soon',
-  'acceptance',
-  'in-progress',
-  'completed',
-  'pending',
-] as const;
+export const PROGRAM_STATUSES = ['open-soon', 'acceptance', 'in-progress', 'completed'] as const;
 
 export type ProgramStatus = (typeof PROGRAM_STATUSES)[number];
 
@@ -76,6 +70,12 @@ export interface ProgramSponsor {
   amountCents: number;
 }
 
+export interface ProgramSponsorsResponse {
+  sponsors: ProgramSponsor[];
+  /** False when the program has no LFX Crowdfunding initiative yet, so it cannot take donations. */
+  crowdfundingInitiative: boolean;
+}
+
 export interface Program {
   id: string;
   slug: string;
@@ -106,6 +106,4 @@ export interface ProgramsListResponse {
   data: Program[];
   /** Total matching programs after filters (used for pagination). */
   total: number;
-  /** Unique foundations in the catalog, used by the programs header summary. */
-  foundationCount: number;
 }

@@ -5,6 +5,7 @@ package lfxmentorshipbackend_test
 
 import (
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -137,7 +138,6 @@ func TestFileRoutesUseTheirClassRelation(t *testing.T) {
 	for _, tc := range []struct {
 		rule, method, path, relation string
 	}{
-		{"program-logo-upload", "POST", "/mentorship/v1/programs/:id/logo-upload", "relation: writer"},
 		{"program-logo-delete", "DELETE", "/mentorship/v1/programs/:id/logo", "relation: writer"},
 		{"programs-public", "GET", "/mentorship/v1/programs/:id/logo-download", "relation: viewer"},
 		{"tasks-file-upload", "POST", "/mentorship/v1/tasks/:id/file-upload", "relation: assignee"},
@@ -158,6 +158,140 @@ func TestFileRoutesUseTheirClassRelation(t *testing.T) {
 	// No private-class download route may be anonymous.
 	if strings.Contains(ruleBlock(t, "tasks-auditor"), "anonymous_authenticator") {
 		t.Error("task file download must not be anonymous")
+	}
+}
+
+// TestProgramLogoUploadRuleFollowsRolloutFlag renders the rule both ways: the
+// gateway check stays by default so a RuleSet applied mid-rollout never meets a
+// pod that does not check, and only the flag moves the decision to the service.
+func TestProgramLogoUploadRuleFollowsRolloutFlag(t *testing.T) {
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skip("helm is not installed")
+	}
+	const fgaCheck = "object: 'mentorship_program:{{- .Request.URL.Captures.id -}}'\n              relation: writer"
+	for name, tc := range map[string]struct {
+		args          []string
+		want, mustNot string
+	}{
+		"default keeps the gateway check": {want: fgaCheck, mustNot: "allow_all"},
+		"flag moves it to the service":    {args: []string{"--set", "heimdall.logoUploadServiceAuthz=true"}, want: "- authorizer: allow_all", mustNot: "openfga_check"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			block := renderedRuleBlock(t, "program-logo-upload", tc.args...)
+			if strings.Count(block, "- path:") != 1 || !strings.Contains(block, "- path: /mentorship/v1/programs/:id/logo-upload\n") || !strings.Contains(block, "methods: [POST]\n") {
+				t.Fatalf("logo upload rule must cover only POST logo-upload:\n%s", block)
+			}
+			if !strings.Contains(block, "- authenticator: oidc") || strings.Contains(block, "anonymous_authenticator") {
+				t.Errorf("logo upload rule must require an authenticated caller:\n%s", block)
+			}
+			if !strings.Contains(block, tc.want) || strings.Contains(block, tc.mustNot) {
+				t.Errorf("logo upload rule: want %q and no %q:\n%s", tc.want, tc.mustNot, block)
+			}
+		})
+	}
+}
+
+// renderedRuleBlock renders the RuleSet through helm and returns the rule with the given id suffix.
+func renderedRuleBlock(t *testing.T, id string, extra ...string) string {
+	t.Helper()
+	rendered := render(t, "templates/ruleset.yaml", extra...)
+	start := strings.Index(rendered, "id: rule:lfx:lfx-mentorship-backend:"+id+"\n")
+	if start < 0 {
+		t.Fatalf("rendered RuleSet is missing rule %q", id)
+	}
+	end := strings.Index(rendered[start:], "\n    - id:")
+	if end < 0 {
+		end = len(rendered) - start
+	}
+	return rendered[start : start+end]
+}
+
+// render renders one template through helm with every required value set, plus extra.
+func render(t *testing.T, template string, extra ...string) string {
+	t.Helper()
+	out, err := tryRender(template, extra...)
+	if err != nil {
+		t.Fatalf("helm template: %v\n%s", err, out)
+	}
+	return out
+}
+
+func tryRender(template string, extra ...string) (string, error) {
+	args := []string{"template", "x", ".", "-s", template,
+		"--set", "image.tag=t",
+		"--set", "secretName=s",
+		"--set", "config.HEIMDALL_JWKS_URL=https://h/jwks",
+		"--set", "config.HEIMDALL_JWT_AUDIENCE=a",
+		"--set", "config.HEIMDALL_JWT_ISSUER=i",
+		"--set", "config.AWS_REGION=us-west-2",
+		"--set", "config.FGA_NATS_URL=nats://nats:4222",
+		"--set", "config.EMAIL_COPY_INBOX=copy@example.org",
+		"--set", "config.EMAIL_REVIEW_INBOX=review@example.org",
+		"--set", "config.PUBLIC_SITE_URL=https://mentorship.example.org",
+		"--set", "config.SELF_SERVE_URL=https://app.example.org",
+		"--set", "lfx.domain=example.org",
+		"--set", "traefik.gateway.name=gw",
+		"--set", "traefik.gateway.namespace=lfx",
+		"--set", "heimdall.enabled=true",
+		"--set", "heimdall.addMiddleware=true",
+		"--set", "heimdall.url=http://heimdall:4456",
+		"--set", "openfga.enabled=true",
+	}
+	out, err := exec.Command("helm", append(args, extra...)...).CombinedOutput()
+	return string(out), err
+}
+
+func TestPrerequisiteReminderSendRate(t *testing.T) {
+	const cronJob = "templates/cronjob-prerequisite-reminder.yaml"
+	enabled := []string{"--set", "prerequisiteReminderCronJob.enabled=true"}
+
+	t.Run("default job rate overrides the ConfigMap", func(t *testing.T) {
+		out := render(t, cronJob, enabled...)
+		if !strings.Contains(out, "- name: EMAIL_SEND_RATE\n                  value: \"4\"") {
+			t.Fatalf("job env must set EMAIL_SEND_RATE=4 by default:\n%s", out)
+		}
+	})
+	t.Run("empty job rate shares the API rate", func(t *testing.T) {
+		if out := render(t, cronJob, append(enabled, "--set", "prerequisiteReminderCronJob.sendRate=")...); strings.Contains(out, "EMAIL_SEND_RATE") {
+			t.Fatalf("job must take EMAIL_SEND_RATE from the ConfigMap when sendRate is empty:\n%s", out)
+		}
+	})
+	t.Run("null job rate shares the API rate", func(t *testing.T) {
+		if out := render(t, cronJob, append(enabled, "--set", "prerequisiteReminderCronJob.sendRate=null")...); strings.Contains(out, "EMAIL_SEND_RATE") {
+			t.Fatalf("a null sendRate must fall back to the API rate:\n%s", out)
+		}
+	})
+	apiRateInEnv := append(append([]string{}, enabled...), "--set", "config.EMAIL_SEND_RATE=", "--set", "env[0].name=EMAIL_SEND_RATE", "--set", "env[0].value=2.5")
+	t.Run("job rate replaces an API rate set in env", func(t *testing.T) {
+		out := render(t, cronJob, apiRateInEnv...)
+		if n := strings.Count(out, "name: EMAIL_SEND_RATE"); n != 1 || !strings.Contains(out, "value: \"4\"") {
+			t.Fatalf("job env must hold one EMAIL_SEND_RATE, the job's 4, not the API's; found %d:\n%s", n, out)
+		}
+	})
+	t.Run("API rate in env reaches the job when its own rate is empty", func(t *testing.T) {
+		out := render(t, cronJob, append(apiRateInEnv, "--set", "prerequisiteReminderCronJob.sendRate=")...)
+		if n := strings.Count(out, "name: EMAIL_SEND_RATE"); n != 1 || !strings.Contains(out, "value: \"2.5\"") {
+			t.Fatalf("job env must hold the API's EMAIL_SEND_RATE once; found %d:\n%s", n, out)
+		}
+	})
+	t.Run("valueFrom API rate is trusted", func(t *testing.T) {
+		render(t, cronJob, append(enabled, "--set", "config.EMAIL_SEND_RATE=", "--set", "env[0].name=EMAIL_SEND_RATE", "--set", "env[0].valueFrom.secretKeyRef.name=s", "--set", "env[0].valueFrom.secretKeyRef.key=k")...)
+	})
+	for name, args := range map[string][]string{
+		"non-numeric job rate": append(enabled, "--set", "prerequisiteReminderCronJob.sendRate=fast"),
+		"negative job rate":    append(enabled, "--set", "prerequisiteReminderCronJob.sendRate=-1"),
+		"zero job rate":        append(enabled, "--set", "prerequisiteReminderCronJob.sendRate=0"),
+		"non-numeric api rate": {"--set", "config.EMAIL_SEND_RATE=fast"},
+		"empty api rate":       {"--set", "config.EMAIL_SEND_RATE="},
+		"zero api rate":        {"--set", "config.EMAIL_SEND_RATE=0.0"},
+		"bad env override":     {"--set", "env[0].name=EMAIL_SEND_RATE", "--set", "env[0].value=fast"},
+		"zero env override":    {"--set", "env[0].name=EMAIL_SEND_RATE", "--set", "env[0].value=0"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if out, err := tryRender(cronJob, args...); err == nil || !strings.Contains(out, "emails per second above zero") {
+				t.Fatalf("render must fail on a bad send rate; err = %v\n%s", err, out)
+			}
+		})
 	}
 }
 
@@ -193,7 +327,6 @@ func TestManagementReadsRequireManagerAuthorization(t *testing.T) {
 	ruleset := string(contents)
 	for _, route := range []string{
 		"/mentorship/v1/programs/:id/management-summary",
-		"/mentorship/v1/programs/:id/member-management",
 		"/mentorship/v1/programs/:id/term-management",
 	} {
 		start := strings.Index(ruleset, route)
@@ -285,6 +418,33 @@ func TestProgramVisibilityRequiresProgramWriter(t *testing.T) {
 	}
 }
 
+// The member-management list carries every mentor row's email and LFID in any
+// status, invited and declined included, so it is checked on writer: manager
+// would also admit the program's mentors.
+func TestMemberManagementRequiresProgramWriter(t *testing.T) {
+	block := ruleBlock(t, "program-member-management")
+	if strings.Count(block, "- path:") != 1 || !strings.Contains(block, "- path: /mentorship/v1/programs/:id/member-management\n") {
+		t.Errorf("member-management rule must cover only its route:\n%s", block)
+	}
+	if !strings.Contains(block, "methods: [GET]\n") {
+		t.Errorf("member-management rule must allow only GET:\n%s", block)
+	}
+	expected := `      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_program:{{ "{{- .Request.URL.Captures.id -}}" }}'
+              relation: writer
+        - finalizer: create_jwt`
+	if !strings.Contains(block, expected) {
+		t.Errorf("member-management rule lacks oidc -> openfga writer -> create_jwt sequence:\n%s", block)
+	}
+	if strings.Contains(block, "anonymous_authenticator") || strings.Contains(block, "allow_all") {
+		t.Errorf("member-management rule must not admit anonymous or unchecked callers:\n%s", block)
+	}
+}
+
 func TestMentorCandidatesRequiresProgramWriter(t *testing.T) {
 	block := ruleBlock(t, "program-mentor-candidates")
 	if strings.Count(block, "- path:") != 1 || !strings.Contains(block, "- path: /mentorship/v1/programs/:id/mentor-candidates\n") {
@@ -308,16 +468,42 @@ func TestMentorCandidatesRequiresProgramWriter(t *testing.T) {
 	}
 }
 
+// The project programs list exposes unpublished programs, so it is checked on
+// the project and never admits anonymous or unchecked callers.
+func TestProjectProgramsRequiresProjectProgramWriter(t *testing.T) {
+	block := ruleBlock(t, "project-programs")
+	if strings.Count(block, "- path:") != 1 || !strings.Contains(block, "- path: /mentorship/v1/projects/:project_uid/programs\n") {
+		t.Errorf("project-programs rule must cover only its route:\n%s", block)
+	}
+	if !strings.Contains(block, "methods: [GET]\n") {
+		t.Errorf("project-programs rule must allow only GET:\n%s", block)
+	}
+	expected := `      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'project:{{ "{{- .Request.URL.Captures.project_uid | lower -}}" }}'
+              relation: mentorship_program_creator
+        - finalizer: create_jwt`
+	if !strings.Contains(block, expected) {
+		t.Errorf("project-programs rule lacks oidc -> openfga project mentorship_program_creator -> create_jwt sequence:\n%s", block)
+	}
+	if strings.Contains(block, "anonymous_authenticator") || strings.Contains(block, "allow_all") {
+		t.Errorf("project-programs rule must not admit anonymous or unchecked callers:\n%s", block)
+	}
+}
+
 // The caller's program lists take the user from the principal, so the gateway
 // needs only a signed-in user.
 func TestMeProgramListsNeedOnlyASignedInUser(t *testing.T) {
-	block := ruleBlock(t, "identity")
+	block := ruleBlock(t, "identity-collections")
 	for _, route := range []string{
 		"/mentorship/v1/me/programs",
 		"/mentorship/v1/me/mentor-programs",
 	} {
 		if !strings.Contains(block, "- path: "+route+"\n") {
-			t.Errorf("identity rule is missing %q:\n%s", route, block)
+			t.Errorf("identity-collections rule is missing %q:\n%s", route, block)
 		}
 	}
 	expected := `      execute:
@@ -325,17 +511,20 @@ func TestMeProgramListsNeedOnlyASignedInUser(t *testing.T) {
         - authorizer: allow_all
         - finalizer: create_jwt`
 	if !strings.Contains(block, expected) {
-		t.Errorf("identity rule lacks oidc -> allow_all -> create_jwt sequence:\n%s", block)
+		t.Errorf("identity-collections rule lacks oidc -> allow_all -> create_jwt sequence:\n%s", block)
 	}
 	if strings.Contains(block, "anonymous_authenticator") {
-		t.Errorf("identity rule must not admit anonymous callers:\n%s", block)
+		t.Errorf("identity-collections rule must not admit anonymous callers:\n%s", block)
 	}
 }
 
 func TestMeProgramMembershipRulesNeedOnlyASignedInUser(t *testing.T) {
 	for id, route := range map[string]string{
 		"me-program-memberships":         "/mentorship/v1/me/program-memberships",
+		"me-program-membership-request":  "/mentorship/v1/me/program-memberships",
 		"me-program-membership-withdraw": "/mentorship/v1/me/program-memberships/:id/withdraw",
+		"me-program-membership-accept":   "/mentorship/v1/me/program-memberships/:id/accept",
+		"me-program-membership-decline":  "/mentorship/v1/me/program-memberships/:id/decline",
 	} {
 		block := ruleBlock(t, id)
 		if strings.Count(block, "- path:") != 1 || !strings.Contains(block, "- path: "+route+"\n") {
@@ -345,11 +534,65 @@ func TestMeProgramMembershipRulesNeedOnlyASignedInUser(t *testing.T) {
         - authenticator: oidc
         - authorizer: allow_all
         - finalizer: create_jwt`
-		if !strings.Contains(block, expected) {
+		if !strings.Contains(withoutContextualizer(block), expected) {
 			t.Errorf("%s rule lacks oidc -> allow_all -> create_jwt sequence", id)
 		}
 		if strings.Contains(block, "anonymous_authenticator") {
 			t.Errorf("%s rule must not admit anonymous callers", id)
 		}
+	}
+}
+
+// withoutContextualizer removes the optional oidc_contextualizer step, so a
+// rule's base pipeline can be asserted whether or not it runs the contextualizer.
+func withoutContextualizer(block string) string {
+	return strings.ReplaceAll(block, `        {{- if .Values.app.use_oidc_contextualizer }}
+        - contextualizer: oidc_contextualizer
+        {{- end }}
+`, "")
+}
+
+// The handlers behind PUT /me and POST /me/program-memberships read the token's
+// email claim, which Heimdall emits only when the pipeline ran the
+// oidc_contextualizer (issue #360). It runs on exactly those two routes, each in
+// its own rule: every run is an IdP userinfo call that Auth0 limits per user to
+// a burst of 10 and 5 a minute, and Self Serve reads several /me routes a page.
+func TestRuleSetRunsOIDCContextualizerOnlyOnBootstrapRoutes(t *testing.T) {
+	contents, err := os.ReadFile("templates/ruleset.yaml")
+	if err != nil {
+		t.Fatalf("read RuleSet: %v", err)
+	}
+	ruleset := string(contents)
+	const contextualizer = `        {{- if .Values.app.use_oidc_contextualizer }}
+        - contextualizer: oidc_contextualizer
+        {{- end }}
+        - authorizer: allow_all`
+	for id, want := range map[string]struct{ method, path string }{
+		"identity-bootstrap":            {"PUT", "/mentorship/v1/me"},
+		"me-program-membership-request": {"POST", "/mentorship/v1/me/program-memberships"},
+	} {
+		block := ruleBlock(t, id)
+		if !strings.Contains(block, "methods: ["+want.method+"]\n") || strings.Count(block, "- path:") != 1 || !strings.Contains(block, "- path: "+want.path+"\n") {
+			t.Errorf("rule %q must match only %s %s:\n%s", id, want.method, want.path, block)
+		}
+		if !strings.Contains(block, "- authenticator: oidc\n"+contextualizer) {
+			t.Errorf("rule %q lacks oidc -> oidc_contextualizer -> allow_all:\n%s", id, block)
+		}
+	}
+	if got := strings.Count(ruleset, "contextualizer: oidc_contextualizer"); got != 2 {
+		t.Errorf("oidc_contextualizer appears %d times; want 2", got)
+	}
+	// The other /me rules read no claim and must not spend the user's userinfo budget.
+	for _, id := range []string{"identity", "identity-collections", "me-program-memberships"} {
+		if strings.Contains(ruleBlock(t, id), "- contextualizer: oidc_contextualizer") {
+			t.Errorf("rule %q runs the oidc_contextualizer; only the two bootstrap routes may", id)
+		}
+	}
+	// /me is split by method, so the two rules together still cover every verb the API serves.
+	if block := ruleBlock(t, "identity"); !strings.Contains(block, "methods: [GET, PATCH, DELETE]\n") || !strings.Contains(block, "- path: /mentorship/v1/me\n") {
+		t.Errorf("identity rule must cover GET, PATCH and DELETE on /mentorship/v1/me:\n%s", block)
+	}
+	if block := ruleBlock(t, "me-program-memberships"); !strings.Contains(block, "methods: [GET]\n") {
+		t.Errorf("me-program-memberships rule must cover only GET:\n%s", block)
 	}
 }

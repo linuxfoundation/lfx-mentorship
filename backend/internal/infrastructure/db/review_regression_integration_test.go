@@ -8,6 +8,7 @@ package db
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -292,15 +293,15 @@ func TestProgramRepositoryIntegration_StatusChangeAppliesOnlyFromExpectedStatus(
 	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
 	repo := NewProgramRepository(pool)
 	published, hidden, archived := models.ProgramStatusPublished, models.ProgramStatusHidden, models.ProgramStatusArchived
-	if _, err := repo.Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &hidden, ExpectedStatus: &published}); err != nil {
+	if _, _, err := repo.Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &hidden, ExpectedStatus: &published}, models.PrerequisiteChanges{}); err != nil {
 		t.Fatalf("hide: %v", err)
 	}
 
 	// An unhide validated against hidden must not overwrite an archive that committed first.
-	if _, err := repo.Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &archived, ExpectedStatus: &hidden}); err != nil {
+	if _, _, err := repo.Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &archived, ExpectedStatus: &hidden}, models.PrerequisiteChanges{}); err != nil {
 		t.Fatalf("archive: %v", err)
 	}
-	if _, err := repo.Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &published, ExpectedStatus: &hidden}); !errors.Is(err, domain.ErrInvalidStateTransition) {
+	if _, _, err := repo.Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &published, ExpectedStatus: &hidden}, models.PrerequisiteChanges{}); !errors.Is(err, domain.ErrInvalidStateTransition) {
 		t.Fatalf("stale unhide err = %v; want ErrInvalidStateTransition", err)
 	}
 	var status models.ProgramStatus
@@ -330,7 +331,7 @@ func TestProgramRepositoryIntegration_HideWaitsForInFlightApplication(t *testing
 	published, hidden := models.ProgramStatusPublished, models.ProgramStatusHidden
 	hideErr := make(chan error, 1)
 	go func() {
-		_, err := NewProgramRepository(pool).Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &hidden, ExpectedStatus: &published})
+		_, _, err := NewProgramRepository(pool).Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &hidden, ExpectedStatus: &published}, models.PrerequisiteChanges{})
 		hideErr <- err
 	}()
 	waitForLockWait(t, pool, hideErr)
@@ -367,7 +368,7 @@ func TestProgramRepositoryIntegration_HideWaitsForApplicationStatusChange(t *tes
 	published, hidden := models.ProgramStatusPublished, models.ProgramStatusHidden
 	hideErr := make(chan error, 1)
 	go func() {
-		_, err := NewProgramRepository(pool).Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &hidden, ExpectedStatus: &published})
+		_, _, err := NewProgramRepository(pool).Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &hidden, ExpectedStatus: &published}, models.PrerequisiteChanges{})
 		hideErr <- err
 	}()
 	waitForLockWait(t, pool, hideErr)
@@ -433,7 +434,7 @@ func TestApplicationRepositoryIntegration_RefusesApplicationToUnpublishedProgram
 		t.Fatalf("insert withdrawn application: %v", err)
 	}
 	published, hidden := models.ProgramStatusPublished, models.ProgramStatusHidden
-	if _, err := NewProgramRepository(pool).Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &hidden, ExpectedStatus: &published}); err != nil {
+	if _, _, err := NewProgramRepository(pool).Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &hidden, ExpectedStatus: &published}, models.PrerequisiteChanges{}); err != nil {
 		t.Fatalf("hide: %v", err)
 	}
 
@@ -639,6 +640,32 @@ func waitForLockWait(t *testing.T, pool *pgxpool.Pool, done <-chan error) {
 	t.Fatal("timed out waiting for the operation to block on a lock")
 }
 
+// A transition is authorized against a status read before the write, so a review that lands in
+// between must not be overwritten: the assignee reopening a task the reviewer just completed fails.
+func TestTaskRepositoryIntegration_UpdateRejectsStaleSourceStatus(t *testing.T) {
+	pool, _ := fileIntegrationPool(t)
+	ctx := context.Background()
+	tasks := NewTaskRepository(pool)
+	if _, err := pool.Exec(ctx, `UPDATE tasks SET status = 'complete' WHERE id = $1`, fileTestTask); err != nil {
+		t.Fatal(err)
+	}
+
+	authorized, reopen := models.TaskStatusSubmitted, models.TaskStatusInProgress
+	if _, err := tasks.Update(ctx, fileTestTask, models.TaskUpdateInput{Status: &reopen, FromStatus: &authorized}); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("stale reopen err = %v; want ErrConflict", err)
+	}
+	var status models.TaskStatus
+	if err := pool.QueryRow(ctx, `SELECT status FROM tasks WHERE id = $1`, fileTestTask).Scan(&status); err != nil || status != models.TaskStatusComplete {
+		t.Fatalf("status = %q (err %v); the completed review must stand", status, err)
+	}
+
+	authorized = models.TaskStatusComplete
+	got, err := tasks.Update(ctx, fileTestTask, models.TaskUpdateInput{Status: &reopen, FromStatus: &authorized})
+	if err != nil || got.Status != models.TaskStatusInProgress {
+		t.Fatalf("current-source update = %+v, %v; want in_progress", got, err)
+	}
+}
+
 // A withdrawn application is kept as history when its applicant reapplies, so its tasks and their
 // files cannot change. The check reads the application itself, not the task's denormalised status.
 func TestTaskRepositoryIntegration_WithdrawnApplicationTasksAreLocked(t *testing.T) {
@@ -822,6 +849,65 @@ func TestApplicationRepositoryIntegration_ListByProgramStatusFilterAndOrder(t *t
 	}
 }
 
+func TestApplicationRepositoryIntegration_ListByProgramFallsBackToMenteeProfile(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := context.Background()
+	const (
+		bareUser    = "00000000-0000-0000-0000-0000000000f1" // signed in without name or email claims
+		namedUser   = "00000000-0000-0000-0000-0000000000f2"
+		bareApp     = "00000000-0000-0000-0000-0000000000f3"
+		namedApp    = "00000000-0000-0000-0000-0000000000f4"
+		profileMail = "ada+profile@example.org"
+	)
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid) VALUES ($1, 'bare')`, bareUser); err != nil {
+		t.Fatalf("insert bare user: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, lfid, name, email) VALUES ($1, 'named', 'Grace Hopper', 'grace@example.org')`, namedUser); err != nil {
+		t.Fatalf("insert named user: %v", err)
+	}
+	for _, p := range []struct{ userID, first, last, email string }{
+		{bareUser, "Ada", "Lovelace", profileMail},
+		{namedUser, "Profile", "Name", "profile@example.org"},
+	} {
+		if _, err := pool.Exec(ctx, `INSERT INTO user_profiles (id, user_id, profile_type, first_name, last_name, email)
+			VALUES (gen_random_uuid(), $1, 'mentee', $2, $3, $4)`, p.userID, p.first, p.last, p.email); err != nil {
+			t.Fatalf("insert mentee profile: %v", err)
+		}
+	}
+	for _, a := range []struct{ id, userID string }{{bareApp, bareUser}, {namedApp, namedUser}} {
+		if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentee', 'pending')`,
+			a.id, fixture.OpenTerm, a.userID); err != nil {
+			t.Fatalf("insert application: %v", err)
+		}
+	}
+	repo := NewApplicationRepository(pool)
+
+	rows, _, err := repo.ListByProgram(ctx, fixture.ProgramID, models.ProgramApplicationFilter{Limit: 50})
+	if err != nil {
+		t.Fatalf("ListByProgram: %v", err)
+	}
+	want := map[string][2]string{bareApp: {"Ada Lovelace", profileMail}, namedApp: {"Grace Hopper", "grace@example.org"}}
+	for _, row := range rows {
+		w, ok := want[row.ApplicationID]
+		if !ok {
+			continue
+		}
+		if row.Name == nil || *row.Name != w[0] || row.Email == nil || *row.Email != w[1] {
+			t.Fatalf("row %s name/email = %v/%v; want %q/%q", row.ApplicationID, row.Name, row.Email, w[0], w[1])
+		}
+		delete(want, row.ApplicationID)
+	}
+	if len(want) != 0 {
+		t.Fatalf("ListByProgram is missing applications %v", want)
+	}
+
+	rows, meta, err := repo.ListByProgram(ctx, fixture.ProgramID, models.ProgramApplicationFilter{Search: "ada+profile", Limit: 50})
+	if err != nil || meta.Total != 1 || len(rows) != 1 || rows[0].ApplicationID != bareApp {
+		t.Fatalf("ListByProgram(search profile email) = %d rows, meta %+v, err = %v; want only %q", len(rows), meta, err, bareApp)
+	}
+}
+
 func indexOutboxFixtureRecord(objectType, objectUID string) domain.IndexOutboxRecord {
 	return domain.IndexOutboxRecord{ObjectType: objectType, ObjectUID: objectUID, Action: "updated", Headers: []byte(`{}`), Data: []byte(`{}`), IndexingConfig: []byte(`{}`)}
 }
@@ -930,6 +1016,131 @@ func TestApplicationRepositoryIntegration_ConcurrentAcceptancesOfOneMentee(t *te
 	}
 }
 
+// seedOpenTerms adds n open terms to the fixture program and returns their ids.
+func seedOpenTerms(t *testing.T, pool *pgxpool.Pool, n int) []string {
+	t.Helper()
+	ids := make([]string, n)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("00000000-0000-0000-0000-0000000001%02d", i)
+		if _, err := pool.Exec(context.Background(), `INSERT INTO program_terms (id, program_id, name, status, application_start_date, application_end_date)
+			SELECT $1, program_id, $2, 'open', NOW() - interval '1 day', NOW() + interval '30 days'
+			FROM program_terms WHERE id = '00000000-0000-0000-0000-000000000011'`, ids[i], fmt.Sprintf("Extra %d", i)); err != nil {
+			t.Fatalf("insert term %d: %v", i, err)
+		}
+	}
+	return ids
+}
+
+// A mentee may have at most MaxPendingMenteeApplications applications pending in open terms;
+// withdrawn and declined applications and those in closed terms do not count.
+func TestApplicationRepositoryIntegration_PendingMenteeApplicationLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		lastStatus  models.ApplicationStatus
+		lastClosed  bool
+		wantRefused bool
+	}{
+		{name: "at the limit", lastStatus: models.ApplicationStatusPending, wantRefused: true},
+		{name: "one withdrawn", lastStatus: models.ApplicationStatusWithdrawn},
+		{name: "one declined", lastStatus: models.ApplicationStatusDeclined},
+		{name: "one in a closed term", lastStatus: models.ApplicationStatusPending, lastClosed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pool := integrationPool(t)
+			fixture := seedIntegrationFixture(t, pool)
+			ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+			terms := seedOpenTerms(t, pool, models.MaxPendingMenteeApplications)
+			for i, term := range terms {
+				status := models.ApplicationStatusPending
+				if i == len(terms)-1 {
+					status = tc.lastStatus
+				}
+				if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentee', $4)`,
+					fmt.Sprintf("00000000-0000-0000-0000-0000000002%02d", i), term, fixture.UserID, status); err != nil {
+					t.Fatalf("insert application %d: %v", i, err)
+				}
+			}
+			if tc.lastClosed {
+				if _, err := pool.Exec(ctx, `UPDATE program_terms SET status = 'closed' WHERE id = $1`, terms[len(terms)-1]); err != nil {
+					t.Fatalf("close term: %v", err)
+				}
+			}
+
+			input := models.ApplicationCreateInput{ID: "00000000-0000-0000-0000-000000000299", UserID: fixture.UserID, Role: models.ApplicationRoleMentee, Status: models.ApplicationStatusPending}
+			_, err := NewApplicationRepository(pool).Create(ctx, fixture.OpenTerm, input)
+			if refused := errors.Is(err, domain.ErrIneligible); refused != tc.wantRefused || (err != nil && !refused) {
+				t.Fatalf("create err = %v; want refused = %v", err, tc.wantRefused)
+			}
+		})
+	}
+}
+
+// Reapplying after a withdrawal is a new application and counts against the pending limit.
+func TestApplicationRepositoryIntegration_ReapplyEnforcesPendingLimit(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+	withdrawnID := "00000000-0000-0000-0000-000000000298"
+	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentee', 'withdrawn')`, withdrawnID, fixture.OpenTerm, fixture.UserID); err != nil {
+		t.Fatalf("insert withdrawn application: %v", err)
+	}
+	for i, term := range seedOpenTerms(t, pool, models.MaxPendingMenteeApplications) {
+		if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentee', 'pending')`,
+			fmt.Sprintf("00000000-0000-0000-0000-0000000002%02d", i), term, fixture.UserID); err != nil {
+			t.Fatalf("insert application %d: %v", i, err)
+		}
+	}
+
+	input := models.ApplicationCreateInput{ID: "00000000-0000-0000-0000-000000000299", UserID: fixture.UserID, Role: models.ApplicationRoleMentee, Status: models.ApplicationStatusPending}
+	if _, err := NewApplicationRepository(pool).ReapplyWithTasks(ctx, withdrawnID, fixture.OpenTerm, input, nil); !errors.Is(err, domain.ErrIneligible) {
+		t.Fatalf("reapply past the pending limit err = %v; want ErrIneligible", err)
+	}
+}
+
+// Applications to different terms lock different term rows; the per-mentee lock still lets only
+// one of two concurrent applications take the last slot.
+func TestApplicationRepositoryIntegration_ConcurrentApplicationsRespectPendingLimit(t *testing.T) {
+	pool := integrationPool(t)
+	fixture := seedIntegrationFixture(t, pool)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+	terms := seedOpenTerms(t, pool, models.MaxPendingMenteeApplications)
+	// Hold all but one slot, then race two applications for it.
+	held, contested := terms[:len(terms)-1], []string{terms[len(terms)-1], fixture.OpenTerm}
+	for i, term := range held {
+		if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentee', 'pending')`,
+			fmt.Sprintf("00000000-0000-0000-0000-0000000002%02d", i), term, fixture.UserID); err != nil {
+			t.Fatalf("insert application %d: %v", i, err)
+		}
+	}
+
+	repo := NewApplicationRepository(pool)
+	start := make(chan struct{})
+	errs := make(chan error, len(contested))
+	for i, term := range contested {
+		input := models.ApplicationCreateInput{ID: fmt.Sprintf("00000000-0000-0000-0000-0000000003%02d", i), UserID: fixture.UserID, Role: models.ApplicationRoleMentee, Status: models.ApplicationStatusPending}
+		go func() {
+			<-start
+			_, err := repo.Create(ctx, term, input)
+			errs <- err
+		}()
+	}
+	close(start)
+	succeeded, refused := 0, 0
+	for range contested {
+		switch err := <-errs; {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, domain.ErrIneligible):
+			refused++
+		default:
+			t.Fatalf("create: %v", err)
+		}
+	}
+	if succeeded != 1 || refused != 1 {
+		t.Fatalf("succeeded %d, refused %d; want exactly one application", succeeded, refused)
+	}
+}
+
 // The window is re-checked under the term lock, and the application's dates come from its term.
 func TestApplicationRepositoryIntegration_CreateUsesTermWindowAndDates(t *testing.T) {
 	pool := integrationPool(t)
@@ -961,58 +1172,23 @@ func TestApplicationRepositoryIntegration_CreateUsesTermWindowAndDates(t *testin
 	}
 }
 
-func TestApplicationRepositoryIntegration_EditingAcceptedMentorKeepsRemoval(t *testing.T) {
+// Mentors take part in a program through its members, so a mentor application, even one left
+// pending or accepted, does not keep the program from being hidden.
+func TestProgramRepositoryIntegration_MentorApplicationsDoNotBlockHiding(t *testing.T) {
 	pool := integrationPool(t)
 	fixture := seedIntegrationFixture(t, pool)
-	ctx := context.Background()
-	appID := "00000000-0000-0000-0000-000000000091"
-	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentor', 'pending')`, appID, fixture.OpenTerm, fixture.UserID); err != nil {
-		t.Fatalf("insert mentor application: %v", err)
+	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES
+		('00000000-0000-0000-0000-000000000091', $1, $3, 'mentor', 'pending'),
+		('00000000-0000-0000-0000-000000000092', $2, $3, 'mentor', 'accepted')`, fixture.OpenTerm, fixture.ClosedTerm, fixture.UserID); err != nil {
+		t.Fatalf("insert mentor applications: %v", err)
 	}
-	apps := NewApplicationRepository(pool)
-	members := NewProgramMemberRepository(pool)
-	memberState := func() (status, operation string) {
-		t.Helper()
-		if err := pool.QueryRow(ctx, `SELECT status FROM program_members WHERE program_id = $1 AND user_id = $2 AND member_type = 'mentor'`, fixture.ProgramID, fixture.UserID).Scan(&status); err != nil {
-			t.Fatalf("read mentor membership: %v", err)
-		}
-		if err := pool.QueryRow(ctx, `SELECT desired_operation FROM fga_outbox WHERE marker_kind = 'membership' AND object_uid = $1 AND relation = 'mentor'`, fixture.ProgramID).Scan(&operation); err != nil {
-			t.Fatalf("read mentor membership marker: %v", err)
-		}
-		return status, operation
+	if n, err := NewApplicationRepository(pool).CountBlockingAppsForProgram(ctx, fixture.ProgramID); err != nil || n != 0 {
+		t.Fatalf("blocking applications = %d, err = %v; want 0", n, err)
 	}
-
-	// Accepting the application makes the applicant an approved mentor.
-	accepted, pending := models.ApplicationStatusAccepted, models.ApplicationStatusPending
-	if _, err := apps.Update(ctx, appID, models.ApplicationUpdateInput{Status: &accepted, ExpectedStatus: &pending}); err != nil {
-		t.Fatalf("accept: %v", err)
-	}
-	if status, operation := memberState(); status != string(models.ProgramMemberStatusApproved) || operation != "sync" {
-		t.Fatalf("after acceptance: member %q, marker %q; want approved, sync", status, operation)
-	}
-
-	// An admin removes the mentor through the member row; the application stays accepted.
-	var memberID string
-	if err := pool.QueryRow(ctx, `SELECT id FROM program_members WHERE program_id = $1 AND user_id = $2 AND member_type = 'mentor'`, fixture.ProgramID, fixture.UserID).Scan(&memberID); err != nil {
-		t.Fatalf("read member id: %v", err)
-	}
-	withdrawn := models.ProgramMemberStatusWithdrawn
-	if _, err := members.Update(ctx, memberID, models.ProgramMemberUpdateInput{Status: &withdrawn}); err != nil {
-		t.Fatalf("withdraw mentor: %v", err)
-	}
-
-	// Content-only edits of the accepted application leave the removal in place.
-	note, evaluation := "keep notes", "partial"
-	for name, input := range map[string]models.ApplicationUpdateInput{
-		"empty":      {},
-		"note":       {ReviewerNote: &note},
-		"evaluation": {Evaluation: &evaluation},
-	} {
-		if _, err := apps.Update(ctx, appID, input); err != nil {
-			t.Fatalf("%s edit: %v", name, err)
-		}
-		if status, operation := memberState(); status != string(models.ProgramMemberStatusWithdrawn) || operation != "remove" {
-			t.Fatalf("after %s edit: member %q, marker %q; want withdrawn, remove", name, status, operation)
-		}
+	published, hidden := models.ProgramStatusPublished, models.ProgramStatusHidden
+	if _, _, err := NewProgramRepository(pool).Update(ctx, fixture.ProgramID, models.ProgramUpdateInput{Status: &hidden, ExpectedStatus: &published}, models.PrerequisiteChanges{}); err != nil {
+		t.Fatalf("hide: %v", err)
 	}
 }

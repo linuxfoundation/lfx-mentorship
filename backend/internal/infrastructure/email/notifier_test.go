@@ -18,6 +18,7 @@ import (
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
+	"golang.org/x/time/rate"
 )
 
 const (
@@ -37,12 +38,21 @@ type senderStub struct {
 	delay       time.Duration
 	inFlight    int
 	maxInFlight int
+	// throttle is how many more sends to each recipient get ErrThrottled.
+	throttle map[string]int
+	attempts map[string]int
+	sentAt   []time.Time
 }
 
 func (s *senderStub) Send(_ context.Context, msg Message) (Receipt, error) {
 	s.mu.Lock()
 	s.inFlight++
 	s.maxInFlight = max(s.maxInFlight, s.inFlight)
+	if s.attempts == nil {
+		s.attempts = map[string]int{}
+	}
+	s.attempts[msg.To]++
+	s.sentAt = append(s.sentAt, time.Now())
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
@@ -57,6 +67,10 @@ func (s *senderStub) Send(_ context.Context, msg Message) (Receipt, error) {
 	defer s.mu.Unlock()
 	if s.failFor[msg.To] {
 		return Receipt{}, ErrRejected
+	}
+	if s.throttle[msg.To] > 0 {
+		s.throttle[msg.To]--
+		return Receipt{}, ErrThrottled
 	}
 	s.sent = append(s.sent, msg)
 	return Receipt{EmailID: "e-" + msg.To}, nil
@@ -166,12 +180,19 @@ func (r *taskRepoStub) ListByApplication(_ context.Context, _ string, filter mod
 type profileRepoStub struct {
 	domain.UserProfileRepository
 	address json.RawMessage
-	err     error
+	// byUser holds the profiles of any type that a lookup by user alone returns.
+	byUser map[string][]*models.UserProfile
+	err    error
 }
 
 func (r *profileRepoStub) List(_ context.Context, filter models.UserProfileFilter) ([]*models.UserProfile, *models.PaginationMeta, error) {
 	if r.err != nil {
 		return nil, nil, r.err
+	}
+	if filter.ProfileType == "" {
+		all := r.byUser[filter.UserID]
+		page := all[min(filter.Offset, len(all)):min(filter.Offset+filter.Limit, len(all))]
+		return page, &models.PaginationMeta{Total: len(all), Limit: filter.Limit, Offset: filter.Offset}, nil
 	}
 	if filter.ProfileType != string(models.UserProfileTypeMentee) || r.address == nil {
 		return nil, &models.PaginationMeta{}, nil
@@ -749,9 +770,9 @@ func TestNotifyProgramSubmitted(t *testing.T) {
 	if review.Subject != "LFX Mentorship program submission is pending your review." {
 		t.Fatalf("review subject = %q", review.Subject)
 	}
-	reviewURL := testSelfServeURL + "/mentorship/program-review/p1?decision="
-	mustContain(t, "review text", review.Text, "Hi LF Mentorship team!", "submitted for review by Mo Mentor (mentor@linuxfoundation.org).", "View Submission: "+testPublicSiteURL+"/programs/p1\nApprove: "+reviewURL+"approve\nReject: "+reviewURL+"reject\n")
-	mustContain(t, "review html", review.HTML, `href="`+testPublicSiteURL+`/programs/p1"`, ">View Submission</a>", `href="`+reviewURL+`approve"`, ">Approve</a>", `href="`+reviewURL+`reject"`, ">Reject</a>", "Kernel &lt;Dev&gt;")
+	reviewURL := testSelfServeURL + "/mentorship/program-review/p1"
+	mustContain(t, "review text", review.Text, "Hi LF Mentorship team!", "submitted for review by Mo Mentor (mentor@linuxfoundation.org).", "View Submission: "+reviewURL+"\nApprove: "+reviewURL+"?decision=approve\nReject: "+reviewURL+"?decision=reject\n")
+	mustContain(t, "review html", review.HTML, `href="`+reviewURL+`"`, ">View Submission</a>", `href="`+reviewURL+`?decision=approve"`, ">Approve</a>", `href="`+reviewURL+`?decision=reject"`, ">Reject</a>", "Kernel &lt;Dev&gt;")
 }
 
 func TestNotifyProgramSubmitted_EveryReviewInboxGetsACopy(t *testing.T) {
@@ -873,6 +894,90 @@ func TestNotifyProfileCreated(t *testing.T) {
 			}
 			mustContain(t, "text", sent[0].Text, tc.want...)
 		})
+	}
+}
+
+func TestNotifyFallsBackToProfileForMissingNameAndEmail(t *testing.T) {
+	f := newFixture()
+	f.users.users["bare"] = &models.User{ID: "bare"}
+	f.profiles.byUser = map[string][]*models.UserProfile{"bare": {
+		{UserID: "bare", ProfileType: string(models.UserProfileTypeMentor)},
+		{UserID: "bare", ProfileType: string(models.UserProfileTypeMentee), FirstName: strPtr("Ada"), LastName: strPtr("Lovelace"), Email: strPtr("ada@example.org")},
+	}}
+	f.n.NotifyProfileCreated(context.Background(), "bare", models.UserProfileTypeMentee)
+
+	sent := f.wait(t)
+	if len(sent) != 1 || sent[0].To != "ada@example.org" || !strings.HasPrefix(sent[0].Text, "Hi Ada!") {
+		t.Fatalf("sent = %+v, want one email to the profile address greeting Ada", sent)
+	}
+}
+
+func TestNotifyKeepsAccountNameAndEmailOverProfile(t *testing.T) {
+	f := newFixture()
+	f.profiles.byUser = map[string][]*models.UserProfile{"mentee": {
+		{UserID: "mentee", FirstName: strPtr("Other"), Email: strPtr("other@example.org")},
+	}}
+	f.n.NotifyProfileCreated(context.Background(), "mentee", models.UserProfileTypeMentee)
+
+	sent := f.wait(t)
+	if len(sent) != 1 || sent[0].To != "mentee@linuxfoundation.org" || !strings.HasPrefix(sent[0].Text, "Hi Mia!") {
+		t.Fatalf("sent = %+v, want the account's address and name", sent)
+	}
+}
+
+func TestNotifierUser_ReadsProfilesBeyondTheFirstPage(t *testing.T) {
+	f := newFixture()
+	f.users.users["bare"] = &models.User{ID: "bare"}
+	profiles := make([]*models.UserProfile, profilePageSize+20)
+	for i := range profiles {
+		profiles[i] = &models.UserProfile{UserID: "bare", ProfileType: string(models.UserProfileTypeMentor)}
+	}
+	profiles[profilePageSize+10].Email = strPtr("older@example.org")
+	f.profiles.byUser = map[string][]*models.UserProfile{"bare": profiles}
+
+	user, err := f.n.user(context.Background(), "bare")
+	if err != nil || deref(user.Email) != "older@example.org" {
+		t.Fatalf("user = %+v, err = %v; want the email from the second page", user, err)
+	}
+}
+
+func TestNotifierUser_FillsNamePartsIndependently(t *testing.T) {
+	for name, tc := range map[string]struct {
+		account       models.User
+		profile       models.UserProfile
+		given, family string
+	}{
+		"account has only a family name": {
+			account: models.User{ID: "partial", FamilyName: strPtr("Hopper")},
+			profile: models.UserProfile{FirstName: strPtr("Grace")},
+			given:   "Grace", family: "Hopper",
+		},
+		"account has only a given name": {
+			account: models.User{ID: "partial", GivenName: strPtr("Grace")},
+			profile: models.UserProfile{FirstName: strPtr("Other"), LastName: strPtr("Hopper")},
+			given:   "Grace", family: "Hopper",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture()
+			f.users.users["partial"] = &tc.account
+			f.profiles.byUser = map[string][]*models.UserProfile{"partial": {&tc.profile}}
+
+			user, err := f.n.user(context.Background(), "partial")
+			if err != nil || deref(user.GivenName) != tc.given || deref(user.FamilyName) != tc.family {
+				t.Fatalf("given/family = %q/%q, err = %v; want %q/%q", deref(user.GivenName), deref(user.FamilyName), err, tc.given, tc.family)
+			}
+		})
+	}
+}
+
+func TestNotifySkipsUserWithoutEmailWhenProfileLookupFails(t *testing.T) {
+	f := newFixture()
+	f.n.repos.Profiles = &profileRepoStub{err: errors.New("db down")}
+	f.n.NotifyProfileCreated(context.Background(), "noaddr", models.UserProfileTypeMentee)
+
+	if sent := f.wait(t); len(sent) != 0 {
+		t.Fatalf("sent = %+v, want nothing for a user with no address anywhere", sent)
 	}
 }
 
@@ -1290,6 +1395,125 @@ func TestNotify_BoundsConcurrentDispatches(t *testing.T) {
 	}
 	if programs.max < 2 || programs.max > maxConcurrentDispatches {
 		t.Fatalf("max notifications in flight = %d, want between 2 and %d", programs.max, maxConcurrentDispatches)
+	}
+}
+
+func TestNotify_PacesSendsAcrossNotifications(t *testing.T) {
+	f := newFixture()
+	const perSecond = 50
+	f.n.limiter = rate.NewLimiter(perSecond, 1)
+
+	// Three notifications send three messages and three copies, at most one per 20ms.
+	for range 3 {
+		f.n.NotifyMentorDeclined(context.Background(), "p1", "mentor")
+	}
+
+	if sent := f.waitAll(t); len(sent) != 6 {
+		t.Fatalf("sent %d messages, want 6", len(sent))
+	}
+	at := slices.SortedFunc(slices.Values(f.sender.sentAt), time.Time.Compare)
+	if spread, want := at[len(at)-1].Sub(at[0]), 5*time.Second/perSecond; spread < want*9/10 {
+		t.Fatalf("6 sends spread over %v, want at least %v at %d per second", spread, want, perSecond)
+	}
+}
+
+func TestNotify_PacedBatchOutlivesLookupDeadline(t *testing.T) {
+	f := newFixture()
+	// The mentee, the HR notice and ten admins make 12 sends plus 11 copies; at 100/s that is over
+	// 200ms, well past a 50ms lookup deadline.
+	f.n.limiter = rate.NewLimiter(100, 1)
+	f.n.lookupTimeout = 50 * time.Millisecond
+	for i := range 10 {
+		id := "admin" + strconv.Itoa(i)
+		f.users.users[id] = &models.User{ID: id, Email: strPtr(id + "@linuxfoundation.org")}
+		f.members.members = append(f.members.members, &models.ProgramMember{UserID: id})
+	}
+
+	f.n.NotifyMenteeAccepted(context.Background(), "a1", "full_time")
+
+	if sent := f.waitAll(t); len(sent) != 23 {
+		t.Fatalf("sent %d messages, want all 23: waiting for the send rate must not expire mail", len(sent))
+	}
+}
+
+func TestNotify_RetriesThrottledSendWithBackoff(t *testing.T) {
+	f := newFixture()
+	f.n.throttleBackoff = 10 * time.Millisecond
+	f.sender.throttle = map[string]int{"mentor@linuxfoundation.org": 2}
+
+	start := time.Now()
+	f.n.NotifyMentorDeclined(context.Background(), "p1", "mentor")
+
+	if sent := f.wait(t); len(sent) != 1 || sent[0].To != "mentor@linuxfoundation.org" {
+		t.Fatalf("sent = %+v, want the mentor's email once SES stops throttling", sent)
+	}
+	if got := f.sender.attempts["mentor@linuxfoundation.org"]; got != 3 {
+		t.Fatalf("attempts = %d, want 3", got)
+	}
+	// The waits are at least half of 10ms, then of 20ms.
+	if elapsed := time.Since(start); elapsed < 15*time.Millisecond {
+		t.Fatalf("retried after %v, want backoff of at least 15ms", elapsed)
+	}
+}
+
+func TestNotify_GivesUpAfterThrottleAttempts(t *testing.T) {
+	f := newFixture()
+	f.n.throttleBackoff = time.Millisecond
+	f.sender.throttle = map[string]int{"mentor@linuxfoundation.org": 100}
+
+	f.n.NotifyMentorDeclined(context.Background(), "p1", "mentor")
+
+	if sent := f.wait(t); len(sent) != 0 {
+		t.Fatalf("sent = %+v, want nothing while SES throttles", sent)
+	}
+	if got := f.sender.attempts["mentor@linuxfoundation.org"]; got != throttleAttempts {
+		t.Fatalf("attempts = %d, want %d", got, throttleAttempts)
+	}
+}
+
+func TestNotify_RejectedSendIsNotRetried(t *testing.T) {
+	f := newFixture()
+	f.n.throttleBackoff = time.Millisecond
+	f.sender.failFor = map[string]bool{"mentor@linuxfoundation.org": true}
+
+	f.n.NotifyMentorDeclined(context.Background(), "p1", "mentor")
+
+	f.wait(t)
+	if got := f.sender.attempts["mentor@linuxfoundation.org"]; got != 1 {
+		t.Fatalf("attempts = %d, want 1: only throttling is retried", got)
+	}
+}
+
+func TestSend_ThrottleRetryStopsAtDeadline(t *testing.T) {
+	f := newFixture()
+	f.n.throttleBackoff = time.Hour
+	f.sender.throttle = map[string]int{"mentor@linuxfoundation.org": 100}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	_, err := f.n.send(ctx, Message{To: "mentor@linuxfoundation.org"})
+
+	if !errors.Is(err, ErrThrottled) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want the throttle error and the deadline", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("send returned after %v, want shortly after the 20ms deadline", elapsed)
+	}
+	if got := f.sender.attempts["mentor@linuxfoundation.org"]; got != 1 {
+		t.Fatalf("attempts = %d, want 1: the deadline passed during the first backoff", got)
+	}
+}
+
+func TestNotifyMenteePrerequisiteReminder_NotCopied(t *testing.T) {
+	prerequisite := models.TaskCategoryPrerequisite
+	f := newFixture()
+	f.tasks.tasks = []*models.Task{{ID: "t1", Name: strPtr("Write an intro"), Category: &prerequisite, Status: models.TaskStatusIncomplete}}
+
+	f.n.NotifyMenteePrerequisiteReminder(context.Background(), "a1")
+
+	if sent := f.waitAll(t); len(sent) != 1 || sent[0].To != "mentee@linuxfoundation.org" {
+		t.Fatalf("sent = %+v, want the reminder to the mentee and no copy to the staff inbox", sent)
 	}
 }
 

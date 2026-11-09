@@ -67,7 +67,7 @@ WITH
 	graduated_mentee_users_data AS (
 		SELECT
 			gmu.user_id,
-			NULLIF(TRIM(COALESCE(NULLIF(TRIM(u.name), ''), CONCAT_WS(' ', up.first_name, up.last_name))), '') AS name,
+			` + sqlUserDisplayName + ` AS name,
 			COALESCE(NULLIF(up.logo_url, ''), u.avatar_url) AS avatar_url,
 			gmu.graduated_on
 		FROM graduated_mentee_users gmu

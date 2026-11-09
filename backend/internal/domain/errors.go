@@ -20,6 +20,7 @@ var (
 	ErrFileNotFound          = errors.New("file not found")
 	ErrAccountNotFound       = errors.New("LF account not found")
 	ErrProjectNotFound       = errors.New("project not found")
+	ErrInitiativeNotFound    = errors.New("crowdfunding initiative not found")
 
 	ErrInvalidInput        = errors.New("invalid input")
 	ErrPayloadTooLarge     = errors.New("payload too large")

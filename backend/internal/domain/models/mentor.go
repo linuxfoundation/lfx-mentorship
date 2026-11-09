@@ -23,6 +23,7 @@ type MentorProgram struct {
 	Slug        string                 `json:"slug"`
 	Description *string                `json:"description,omitempty"`
 	LogoURL     *string                `json:"logo_url,omitempty"`
+	ProjectName *string                `json:"project_name,omitempty"`
 	Skills      []string               `json:"skills"`
 	Terms       []MentorProgramTerm    `json:"terms"`
 	Mentors     []ProgramCatalogMentor `json:"mentors"`

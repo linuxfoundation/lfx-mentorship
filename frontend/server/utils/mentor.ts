@@ -38,6 +38,7 @@ export interface MentorProgram {
   slug: string;
   description?: string;
   logo_url?: string;
+  project_name?: string;
   skills?: string[];
   terms?: MentorProgramTerm[];
   mentors?: MentorApiMentor[];
@@ -164,7 +165,7 @@ function mapProgram(program: MentorProgram): ProfileProgram {
     id: program.id,
     title: program.name,
     description: program.description ?? '',
-    foundationLabel: '',
+    foundationLabel: program.project_name?.trim() ?? '',
     status: toProgramCardStatus(terms.map(mapCatalogTerm)),
     skills: program.skills ?? [],
     terms: terms.map(mapProgramTerm),

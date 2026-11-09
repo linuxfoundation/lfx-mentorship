@@ -178,6 +178,29 @@ func TestE2EMentorInvites(t *testing.T) {
 		newcomer.call(t, http.MethodPost, "/mentor-invites/"+url.PathEscape(token)+"/accept", nil).expect(http.StatusOK)
 	})
 
+	t.Run("answer by membership ID", func(t *testing.T) {
+		mentor := signIn(t, "by-id")
+		var invited member
+		admin.mustJSON(t, http.MethodPost, members, map[string]any{"lfid": "by-id", "member_type": "mentor"}, http.StatusCreated, &invited)
+		mine := "/me/program-memberships/" + invited.ID
+
+		signIn(t, "someone-else").call(t, http.MethodPost, mine+"/accept", nil).expect(http.StatusNotFound)
+		mentor.call(t, http.MethodPost, "/me/program-memberships/not-a-uuid/accept", nil).expect(http.StatusNotFound)
+		mentor.call(t, http.MethodPost, mine+"/withdraw", nil).expect(http.StatusConflict)
+
+		declined := len(emailsAbout(admin.Email, "declined your mentor invitation"))
+		mentor.call(t, http.MethodPost, mine+"/decline", nil).expect(http.StatusNoContent)
+		awaitEmail(t, admin.Email, "declined your mentor invitation", declined+1)
+		mentor.call(t, http.MethodPost, mine+"/decline", nil).expect(http.StatusConflict)
+
+		// Invited again, the same row is answered again.
+		admin.mustJSON(t, http.MethodPost, members, map[string]any{"lfid": "by-id", "member_type": "mentor"}, http.StatusCreated, &invited)
+		accepted := len(emailsAbout(admin.Email, "accepted your invitation to become a mentor"))
+		mentor.call(t, http.MethodPost, mine+"/accept", nil).expect(http.StatusNoContent)
+		awaitEmail(t, admin.Email, "accepted your invitation to become a mentor", accepted+1)
+		mentor.call(t, http.MethodPost, mine+"/accept", nil).expect(http.StatusConflict)
+	})
+
 	t.Run("invite by email", func(t *testing.T) {
 		e2e.fakes.addAccount(fakeAccount{Username: "by-email", Email: "by-email@lf.example.org", Name: "By Email"})
 		var invited member

@@ -27,6 +27,7 @@ export interface MenteeProgramRef {
   name: string;
   slug: string;
   logo_url?: string;
+  project_name?: string;
 }
 
 export interface MenteeProgramTerm {
@@ -43,6 +44,7 @@ export interface MenteeProgram {
   slug: string;
   description?: string;
   logo_url?: string;
+  project_name?: string;
   status: string;
   skills?: string[];
   terms?: MenteeProgramTerm[];
@@ -160,7 +162,7 @@ function mapProgram(program: MenteeProgram): ProfileProgram {
     id: program.id,
     title: program.name,
     description: program.description ?? '',
-    foundationLabel: '',
+    foundationLabel: program.project_name?.trim() ?? '',
     status: mapProgramStatus(program.status),
     skills: program.skills ?? [],
     terms: (program.terms ?? []).map(mapProgramTerm),
@@ -183,7 +185,7 @@ export function mapMenteeItem(item: MenteeItem): Mentee {
       ? {
           id: item.program.id,
           name: item.program.name,
-          foundationLabel: '',
+          foundationLabel: item.program.project_name?.trim() ?? '',
         }
       : {
           id: '',

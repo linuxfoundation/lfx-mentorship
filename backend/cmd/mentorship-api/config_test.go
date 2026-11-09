@@ -17,6 +17,7 @@ func TestLoadEmailConfig(t *testing.T) {
 		"EMAIL_COPY_INBOX":         "copies@linuxfoundation.org",
 		"EMAIL_REVIEW_INBOX":       "review@linuxfoundation.org",
 		"EMAIL_ALLOWED_RECIPIENTS": "",
+		"EMAIL_SEND_RATE":          "",
 	}
 	for name, tc := range map[string]struct {
 		nats     bool
@@ -43,6 +44,13 @@ func TestLoadEmailConfig(t *testing.T) {
 		"blank recipients":            {nats: true, override: map[string]string{"EMAIL_ALLOWED_RECIPIENTS": " "}, wantErr: "EMAIL_ALLOWED_RECIPIENTS"},
 		"copy inbox":                  {nats: true, override: map[string]string{"EMAIL_COPY_INBOX": " copies@linuxfoundation.org "}},
 		"display-name copy inbox":     {nats: true, override: map[string]string{"EMAIL_COPY_INBOX": "Copies <copies@linuxfoundation.org>"}, wantErr: "EMAIL_COPY_INBOX"},
+		"send rate":                   {nats: true, override: map[string]string{"EMAIL_SEND_RATE": "12.5"}},
+		"zero send rate":              {nats: true, override: map[string]string{"EMAIL_SEND_RATE": "0"}, wantErr: "EMAIL_SEND_RATE"},
+		"negative send rate":          {nats: true, override: map[string]string{"EMAIL_SEND_RATE": "-1"}, wantErr: "EMAIL_SEND_RATE"},
+		"infinite send rate":          {nats: true, override: map[string]string{"EMAIL_SEND_RATE": "Inf"}, wantErr: "EMAIL_SEND_RATE"},
+		"nan send rate":               {nats: true, override: map[string]string{"EMAIL_SEND_RATE": "NaN"}, wantErr: "EMAIL_SEND_RATE"},
+		"non-numeric send rate":       {nats: true, override: map[string]string{"EMAIL_SEND_RATE": "fast"}, wantErr: "EMAIL_SEND_RATE"},
+		"bad send rate without nats":  {nats: false, override: map[string]string{"EMAIL_SEND_RATE": "fast"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			for k, v := range valid {
@@ -79,6 +87,13 @@ func TestLoadEmailConfig(t *testing.T) {
 			}
 			if tc.nats && cfg.CopyInbox != "copies@linuxfoundation.org" {
 				t.Fatalf("CopyInbox = %q, want the trimmed address", cfg.CopyInbox)
+			}
+			wantRate := 1.0
+			if name == "send rate" {
+				wantRate = 12.5
+			}
+			if tc.nats && cfg.SendRate != wantRate {
+				t.Fatalf("SendRate = %v, want %v", cfg.SendRate, wantRate)
 			}
 		})
 	}
@@ -149,6 +164,7 @@ func TestLoadConfig(t *testing.T) {
 		"FGA_RELAY_MAX_ATTEMPTS":               "",
 		"FGA_RELAY_INTERVAL":                   "",
 		"FGA_RELAY_RETRY_DELAY":                "",
+		"FGA_ACCESS_WAIT_TIMEOUT":              "",
 		"INDEX_RELAY_RETRY_DELAY":              "",
 		"INDEX_RELAY_MAX_ATTEMPTS":             "",
 		"INDEXER_SERVICE_TOKEN":                "",
@@ -159,6 +175,7 @@ func TestLoadConfig(t *testing.T) {
 		"EMAIL_COPY_INBOX":                     "",
 		"EMAIL_REVIEW_INBOX":                   "",
 		"EMAIL_ALLOWED_RECIPIENTS":             "",
+		"EMAIL_SEND_RATE":                      "",
 		"AWS_REGION":                           "",
 		"LOGOS_S3_BUCKET":                      "",
 		"LOGOS_S3_ENDPOINT_URL":                "",
@@ -184,8 +201,11 @@ func TestLoadConfig(t *testing.T) {
 			"PORT": "9090", "DB_MAX_CONNS": "20", "DB_MIN_CONNS": "4", "JWT_CLOCK_SKEW": "30s",
 			"FGA_RELAY_BATCH_SIZE": "25", "FGA_RELAY_MAX_ATTEMPTS": "3", "FGA_RELAY_INTERVAL": "2s",
 			"FGA_RELAY_RETRY_DELAY": "5m", "INDEX_RELAY_RETRY_DELAY": "3m", "INDEX_RELAY_MAX_ATTEMPTS": "7",
-			"CROWDFUNDING_TIMEOUT": "4s",
+			"CROWDFUNDING_TIMEOUT": "4s", "FGA_ACCESS_WAIT_TIMEOUT": "5s",
 		}},
+		"access wait off":              {override: map[string]string{"FGA_ACCESS_WAIT_TIMEOUT": "0"}},
+		"bad access wait timeout":      {override: map[string]string{"FGA_ACCESS_WAIT_TIMEOUT": "soon"}, wantErr: "FGA_ACCESS_WAIT_TIMEOUT"},
+		"access wait timeout over cap": {override: map[string]string{"FGA_ACCESS_WAIT_TIMEOUT": "20s"}, wantErr: "FGA_ACCESS_WAIT_TIMEOUT"},
 		"partial heimdall config":      {override: map[string]string{"HEIMDALL_JWT_ISSUER": ""}, wantErr: "must be set together"},
 		"no heimdall and no mock":      {override: map[string]string{"HEIMDALL_JWKS_URL": "", "HEIMDALL_JWT_AUDIENCE": "", "HEIMDALL_JWT_ISSUER": ""}, wantErr: "are required"},
 		"non-numeric port":             {override: map[string]string{"PORT": "http"}, wantErr: "PORT"},
@@ -228,11 +248,16 @@ func TestLoadConfig(t *testing.T) {
 			case "defaults":
 				if cfg.Server.Port != 8080 || cfg.Database.MaxConns != 10 || cfg.Database.MinConns != 2 || cfg.JWT.ClockSkew != 5*time.Second ||
 					cfg.FGA.RelayBatch != 50 || cfg.FGA.RelayMaxAttempts != 10 || cfg.FGA.RelayInterval != time.Second || cfg.FGA.RelayRetryDelay != time.Minute ||
+					cfg.FGA.AccessWaitTimeout != 10*time.Second ||
 					cfg.Indexer.RetryDelay != time.Minute || cfg.Indexer.MaxAttempts != 10 || cfg.Crowdfunding.Timeout != 10*time.Second ||
 					cfg.OTel.ServiceName != "lfx-mentorship-api" || cfg.OTel.ServiceVersion != "dev" ||
 					cfg.Storage.Logos.CreateMissingBucket || cfg.Storage.Attachments.CreateMissingBucket ||
 					cfg.Email.PublicSiteURL != "" || cfg.Email.ReviewInboxes != nil || cfg.Email.AllowedRecipients != nil {
 					t.Fatalf("unexpected defaults %+v", cfg)
+				}
+			case "access wait off":
+				if cfg.FGA.AccessWaitTimeout != 0 {
+					t.Fatalf("access wait timeout = %s; want 0 (off)", cfg.FGA.AccessWaitTimeout)
 				}
 			case "mock principal instead of heimdall":
 				if cfg.Local.DisabledMockLocalPrincipal != "localdev" || cfg.JWT.HeimdallJWKSURL != "" {
@@ -241,6 +266,7 @@ func TestLoadConfig(t *testing.T) {
 			case "overrides":
 				if cfg.Server.Port != 9090 || cfg.Database.MaxConns != 20 || cfg.Database.MinConns != 4 || cfg.JWT.ClockSkew != 30*time.Second ||
 					cfg.FGA.RelayBatch != 25 || cfg.FGA.RelayMaxAttempts != 3 || cfg.FGA.RelayInterval != 2*time.Second || cfg.FGA.RelayRetryDelay != 5*time.Minute ||
+					cfg.FGA.AccessWaitTimeout != 5*time.Second ||
 					cfg.Indexer.RetryDelay != 3*time.Minute || cfg.Indexer.MaxAttempts != 7 || cfg.Crowdfunding.Timeout != 4*time.Second {
 					t.Fatalf("overrides not applied %+v", cfg)
 				}

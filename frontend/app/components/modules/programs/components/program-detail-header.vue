@@ -96,15 +96,25 @@ SPDX-License-Identifier: MIT
               button-style="rounded"
               @click="$emit('open-repository')"
             />
-            <lfx-button
+            <lfx-tooltip
               v-if="program.slug"
-              label="Donate"
-              icon="heart"
-              icon-type="solid"
-              type="transparent"
-              button-style="rounded"
-              @click="$emit('donate')"
-            />
+              :content="PROGRAM_DONATE_UNAVAILABLE"
+              :disabled="!donateDisabled"
+              class="inline-flex"
+              v-bind="donateDisabled ? donateUnavailableAttrs : {}"
+            >
+              <lfx-button
+                label="Donate"
+                icon="heart"
+                icon-type="solid"
+                type="transparent"
+                button-style="rounded"
+                :disabled="donateDisabled"
+                :aria-hidden="donateDisabled || undefined"
+                :class="{ 'pointer-events-none': donateDisabled }"
+                @click="$emit('donate')"
+              />
+            </lfx-tooltip>
           </div>
         </div>
       </div>
@@ -115,7 +125,7 @@ SPDX-License-Identifier: MIT
         class="w-full shrink-0 rounded-xl bg-neutral-50 border border-neutral-100 px-4.5 py-4 lg:w-52"
       >
         <p class="text-xs font-semibold uppercase tracking-wide text-neutral-500 mb-3">
-          {{ isAccepting ? 'Accepting Applications' : 'Previous Term' }}
+          {{ termHeading(term) }}
         </p>
         <dl class="flex flex-col gap-3">
           <div class="flex flex-col gap-1">
@@ -125,14 +135,14 @@ SPDX-License-Identifier: MIT
             </dd>
           </div>
           <div
-            v-if="term.applicationsCloseAt"
+            v-if="applicationDate(term).at"
             class="flex flex-col gap-1"
           >
             <dt class="text-xxs text-neutral-500">
-              {{ isAccepting ? 'Applications close' : 'Applications closed' }}
+              {{ applicationDate(term).label }}
             </dt>
             <dd class="text-xs text-neutral-900">
-              {{ formatProgramDate(term.applicationsCloseAt) }}
+              {{ formatProgramDate(applicationDate(term).at!) }}
             </dd>
           </div>
           <div
@@ -159,11 +169,22 @@ SPDX-License-Identifier: MIT
 
 <script setup lang="ts">
 import { PROGRAM_STATUS_CONFIG } from '../config/program-card.config';
+import { PROGRAM_DONATE_UNAVAILABLE } from '../config/program-detail.config';
 import { AppRoute } from '~/config/routes';
 import type { Program, ProgramTerm } from '~/types/program.types';
-import { formatTermLabel } from '~/utils/program-terms';
+import { formatTermLabel, getProgramTermDisplayStatus, sortTermsNewestFirst } from '~/utils/program-terms';
 
-const props = defineProps<{ program: Program }>();
+// donateDisabled: the program has no LFX Crowdfunding initiative to donate to yet.
+const props = defineProps<{ program: Program; donateDisabled?: boolean }>();
+
+// A disabled button leaves the tab order, so the tooltip wrapper stands in for it: focusing it
+// shows the tooltip, and screen readers hear the same explanation.
+const donateUnavailableAttrs = {
+  role: 'button',
+  tabindex: 0,
+  'aria-disabled': 'true',
+  'aria-label': `Donate. ${PROGRAM_DONATE_UNAVAILABLE}`,
+};
 
 defineEmits<{
   (e: 'open-repository' | 'donate'): void;
@@ -187,9 +208,33 @@ const activeTerms = computed(() => props.program.activeTerms);
 const isAccepting = computed(() => activeTerms.value.length > 0);
 const displayTerms = computed(() => {
   if (activeTerms.value.length) return activeTerms.value.slice(0, 2);
-  const last = props.program.terms.at(-1);
-  return last ? [last] : [];
+  const newest = sortTermsNewestFirst(props.program.terms)[0];
+  return newest ? [newest] : [];
 });
+
+// Same rule as the header badge and the Terms tab, so the three never disagree.
+function termHeading(term: ProgramTerm): string {
+  if (isAccepting.value) return 'Accepting Applications';
+  switch (getProgramTermDisplayStatus(term)) {
+    case 'opens-soon':
+      return 'Upcoming Term';
+    case 'in-progress':
+      return 'Current Term';
+    default:
+      return 'Previous Term';
+  }
+}
+
+// An upcoming term shows when applications open; any other term, when they close.
+function applicationDate(term: ProgramTerm): { label: string; at?: string } {
+  if (!isAccepting.value && getProgramTermDisplayStatus(term) === 'opens-soon') {
+    return { label: 'Applications open', at: term.applicationsStartAt };
+  }
+  return {
+    label: isAccepting.value ? 'Applications close' : 'Applications closed',
+    at: term.applicationsCloseAt,
+  };
+}
 </script>
 
 <script lang="ts">
