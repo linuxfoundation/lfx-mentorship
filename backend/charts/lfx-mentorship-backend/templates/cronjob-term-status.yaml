@@ -28,6 +28,7 @@ spec:
           labels:
             app.kubernetes.io/name: {{ include "lfx-v2-mentorship-service.name" . }}
             app.kubernetes.io/component: term-status
+            tags.datadoghq.com/service: {{ include "lfx-v2-mentorship-service.name" . }}
         spec:
           restartPolicy: Never
           serviceAccountName: {{ include "lfx-v2-mentorship-service.serviceAccountName" . }}
