@@ -528,6 +528,8 @@ func TestE2EProgramReadModels(t *testing.T) {
 			}
 		}
 		admin.call(t, http.MethodGet, "/me/programs?status=bogus", nil).expect(http.StatusBadRequest)
+		// open was split into accepting, in_progress and upcoming.
+		admin.call(t, http.MethodGet, "/me/programs?status=open", nil).expect(http.StatusBadRequest)
 		other := signIn(t, "other")
 		var mine programPage
 		other.mustJSON(t, http.MethodGet, "/me/programs", nil, http.StatusOK, &mine)

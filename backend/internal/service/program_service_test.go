@@ -1743,7 +1743,8 @@ func TestProgramService_ListMine_RejectsBadInput(t *testing.T) {
 		t.Errorf("empty user: got %v; want ErrUnauthorized", err)
 	}
 	// The BFF's display value uses a hyphen; the API value is pending_review.
-	for _, status := range []models.AdministeredProgramStatus{"pending-review", "published", "pending"} {
+	// open was split into accepting, in_progress and upcoming.
+	for _, status := range []models.AdministeredProgramStatus{"pending-review", "published", "pending", "open"} {
 		if _, _, err := svc.ListMine(context.Background(), "user-1", models.AdministeredProgramFilter{Status: status}); !errors.Is(err, domain.ErrInvalidInput) {
 			t.Errorf("status %q: got %v; want ErrInvalidInput", status, err)
 		}
@@ -1808,7 +1809,7 @@ func TestProgramService_ListByProject_RejectsBadInput(t *testing.T) {
 			t.Errorf("project %q: got %v; want ErrInvalidInput", uid, err)
 		}
 	}
-	for _, status := range []models.AdministeredProgramStatus{"pending-review", "published"} {
+	for _, status := range []models.AdministeredProgramStatus{"pending-review", "published", "open"} {
 		if _, _, err := svc.ListByProject(context.Background(), projectUID, false, models.AdministeredProgramFilter{Status: status}); !errors.Is(err, domain.ErrInvalidInput) {
 			t.Errorf("status %q: got %v; want ErrInvalidInput", status, err)
 		}

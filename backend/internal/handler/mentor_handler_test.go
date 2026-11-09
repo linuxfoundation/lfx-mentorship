@@ -203,7 +203,7 @@ func TestMentorHandler_ListMine_ScopesToPrincipal(t *testing.T) {
 	got := body.Data[0]
 	if got.Status != models.MentoredProgramStatusAccepting ||
 		got.Stats != (models.MentoredProgramStats{Mentees: 3, Applicants: 12, TasksToReview: 2}) {
-		t.Errorf("row = %+v; want an open program with the service's stats", got)
+		t.Errorf("row = %+v; want an accepting program with the service's stats", got)
 	}
 	// Typed decoding ignores unknown fields, so check the row's keys directly.
 	var fields struct {
