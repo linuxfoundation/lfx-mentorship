@@ -16,6 +16,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 var programTracer = otel.Tracer("programs-db")
@@ -202,42 +203,77 @@ func (r *ProgramRepository) GetHeaderProjection(ctx context.Context, programID s
 const sqlUnreviewedProgramStatuses = `('` + string(models.ProgramStatusPending) + `')`
 
 // sqlProgramTermsAllClosed is true for a programs row that has a closed term
-// and no open one; deleted terms are ignored. A published program in that state
-// is completed on the admin and mentor programs lists, and otherwise open.
+// and no open one; deleted terms are ignored.
 const sqlProgramTermsAllClosed = `(NOT EXISTS (SELECT 1 FROM program_terms pt WHERE pt.program_id = programs.id AND pt.status = 'open')
 	AND EXISTS (SELECT 1 FROM program_terms pt WHERE pt.program_id = programs.id AND pt.status = 'closed'))`
 
+// sqlHasTermInProgress is true for a programs row with an open term that has
+// started and not yet ended.
+const sqlHasTermInProgress = `EXISTS (
+	SELECT 1 FROM program_terms pt
+	WHERE pt.program_id = programs.id
+	  AND pt.status = 'open'
+	  AND pt.start_date_time <= NOW() AND NOW() <= pt.end_date_time
+)`
+
+// sqlPublishedProgramTermStatus is the status of a published programs row on
+// the admin and mentor programs lists, from its terms; deleted terms are
+// ignored. The first match wins:
+//   - completed: a closed term and no open one
+//   - accepting: an open term inside its application window
+//   - in_progress: an open term inside its term window
+//   - upcoming: an open term whose application window has not opened, or no terms yet
+//   - in_progress: any other open term, as the public catalog labels it
+const sqlPublishedProgramTermStatus = `CASE
+	WHEN ` + sqlProgramTermsAllClosed + ` THEN '` + string(models.AdministeredProgramStatusCompleted) + `'
+	WHEN ` + sqlHasAcceptingTerm + ` THEN '` + string(models.AdministeredProgramStatusAccepting) + `'
+	WHEN ` + sqlHasTermInProgress + ` THEN '` + string(models.AdministeredProgramStatusInProgress) + `'
+	WHEN ` + sqlHasComingSoonTerm + ` OR NOT ` + sqlHasOpenTerm + ` THEN '` + string(models.AdministeredProgramStatusUpcoming) + `'
+	ELSE '` + string(models.AdministeredProgramStatusInProgress) + `'
+END`
+
 // programListOrder orders the rows of alias on the admin and mentor programs
-// lists by their statusColumn (open, pending_review, completed, hidden, then
-// the rest), then by name, then by id. Mentor rows are only open or completed,
-// which share their values with AdministeredProgramStatus.
+// lists by their statusColumn (accepting, in_progress, upcoming,
+// pending_review, completed, hidden, then the rest), then by name, then by id.
+// Mentor rows take only the published values, which MentoredProgramStatus
+// shares with AdministeredProgramStatus.
 func programListOrder(alias, statusColumn string) string {
 	return ` ORDER BY CASE ` + alias + `.` + statusColumn + `
-		WHEN '` + string(models.AdministeredProgramStatusOpen) + `' THEN 1
-		WHEN '` + string(models.AdministeredProgramStatusPendingReview) + `' THEN 2
-		WHEN '` + string(models.AdministeredProgramStatusCompleted) + `' THEN 3
-		WHEN '` + string(models.AdministeredProgramStatusHidden) + `' THEN 4
-		ELSE 5 END, LOWER(` + alias + `.name), ` + alias + `.id`
+		WHEN '` + string(models.AdministeredProgramStatusAccepting) + `' THEN 1
+		WHEN '` + string(models.AdministeredProgramStatusInProgress) + `' THEN 2
+		WHEN '` + string(models.AdministeredProgramStatusUpcoming) + `' THEN 3
+		WHEN '` + string(models.AdministeredProgramStatusPendingReview) + `' THEN 4
+		WHEN '` + string(models.AdministeredProgramStatusCompleted) + `' THEN 5
+		WHEN '` + string(models.AdministeredProgramStatusHidden) + `' THEN 6
+		ELSE 7 END, LOWER(` + alias + `.name), ` + alias + `.id`
 }
 
-// administeredProgramsFrom selects the programs $1 is an active program admin
-// of, with the admin status. A published program is completed once all its
-// terms are closed; with no terms at all it is still open.
-const administeredProgramsFrom = `
+// administeredProgramsFrom selects the programs matched by scope, with the
+// admin status. scope joins or filters programs on $1. A published program
+// takes sqlPublishedProgramTermStatus.
+func administeredProgramsFrom(scope string) string {
+	return `
 	FROM (
 		SELECT programs.id, programs.slug, programs.name, programs.lf_project_uid, programs.lf_project_name,
 			programs.logo_url, programs.status, programs.created_on, programs.updated_on,
 			CASE
 				WHEN programs.status IN ` + sqlUnreviewedProgramStatuses + ` THEN 'pending_review'
-				WHEN programs.status = 'published' AND ` + sqlProgramTermsAllClosed + ` THEN 'completed'
-				WHEN programs.status = 'published' THEN 'open'
+				WHEN programs.status = 'published' THEN ` + sqlPublishedProgramTermStatus + `
 				WHEN programs.status = 'rejected' THEN 'rejected'
 				ELSE 'hidden' -- archived | hidden
 			END AS admin_status
-		FROM programs
-		JOIN program_members pm ON pm.program_id = programs.id
-		WHERE pm.user_id = $1 AND pm.member_type = 'program_admin' AND pm.status = 'approved'
+		FROM programs` + scope + `
 	) ap`
+}
+
+// administeredByUserScope keeps the programs $1 is an active program admin of.
+const administeredByUserScope = `
+		JOIN program_members pm ON pm.program_id = programs.id
+		WHERE pm.user_id = $1 AND pm.member_type = 'program_admin' AND pm.status = 'approved'`
+
+// administeredByProjectsScope keeps the programs of the projects in $1.
+const administeredByProjectsScope = `
+		WHERE programs.lf_project_uid = ANY($1)`
 
 // ListAdministeredByUser returns the programs userID is an active program
 // admin of, ordered by programListOrder. Stats are counted for the returned
@@ -247,6 +283,41 @@ func (r *ProgramRepository) ListAdministeredByUser(ctx context.Context, userID s
 	defer span.End()
 	span.SetAttributes(attribute.String("db.user_id", userID))
 
+	return r.listAdministered(ctx, span, administeredByUserScope, userID, filter)
+}
+
+// ListAdministeredByProjects returns the programs of projectUIDs in any
+// status, in the same shape and order as ListAdministeredByUser.
+func (r *ProgramRepository) ListAdministeredByProjects(ctx context.Context, projectUIDs []string, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+	ctx, span := programTracer.Start(ctx, "db.programs.ListAdministeredByProjects")
+	defer span.End()
+	span.SetAttributes(attribute.Int("db.project_count", len(projectUIDs)))
+
+	return r.listAdministered(ctx, span, administeredByProjectsScope, projectUIDs, filter)
+}
+
+// ListProjectUIDs returns each distinct project UID that has a program.
+func (r *ProgramRepository) ListProjectUIDs(ctx context.Context) ([]string, error) {
+	ctx, span := programTracer.Start(ctx, "db.programs.ListProjectUIDs")
+	defer span.End()
+
+	rows, err := r.pool.Query(ctx, `SELECT DISTINCT lf_project_uid FROM programs WHERE lf_project_uid IS NOT NULL`)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("list program project UIDs: %w", err)
+	}
+	uids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("scan program project UIDs: %w", err)
+	}
+	return uids, nil
+}
+
+// listAdministered pages the admin programs list over the programs that scope
+// selects for scopeArg.
+func (r *ProgramRepository) listAdministered(ctx context.Context, span trace.Span, scope string, scopeArg any, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+	from := administeredProgramsFrom(scope)
 	limit := filter.Limit
 	if limit <= 0 || limit > 100 {
 		limit = 20
@@ -256,19 +327,19 @@ func (r *ProgramRepository) ListAdministeredByUser(ctx context.Context, userID s
 		offset = 0
 	}
 
-	args := []any{userID}
+	args := []any{scopeArg}
 	where := ` WHERE 1=1`
 	if filter.Status != "" {
 		args = append(args, string(filter.Status))
 		where += fmt.Sprintf(` AND ap.admin_status = $%d`, len(args))
 	}
 	if filter.Search != "" {
-		args = append(args, "%"+filter.Search+"%")
+		args = append(args, containsPattern(filter.Search))
 		where += fmt.Sprintf(` AND (ap.name ILIKE $%d OR ap.lf_project_name ILIKE $%d)`, len(args), len(args))
 	}
 
 	var total int
-	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*)`+administeredProgramsFrom+where, args...).Scan(&total); err != nil {
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*)`+from+where, args...).Scan(&total); err != nil {
 		span.RecordError(err)
 		return nil, nil, fmt.Errorf("count administered programs: %w", err)
 	}
@@ -278,7 +349,7 @@ func (r *ProgramRepository) ListAdministeredByUser(ctx context.Context, userID s
 			page.status, page.admin_status, page.created_on, page.updated_on,
 			(SELECT COUNT(*) FROM program_members m WHERE m.program_id = page.id AND m.member_type = 'mentor' AND m.status = 'approved'),
 			mentees.accepted, mentees.graduated
-		FROM (SELECT ap.*` + administeredProgramsFrom + where +
+		FROM (SELECT ap.*` + from + where +
 		programListOrder("ap", "admin_status") + fmt.Sprintf(` LIMIT $%d OFFSET $%d`, len(args)-1, len(args)) + `) page
 		LEFT JOIN LATERAL (
 			SELECT COUNT(*) FILTER (WHERE a.status = 'accepted') AS accepted,
@@ -335,7 +406,7 @@ func (r *ProgramRepository) List(ctx context.Context, filter models.ProgramFilte
 		where += ` AND programs.status = 'published'` // public list only shows published programs
 	}
 	if filter.Search != "" {
-		args = append(args, "%"+filter.Search+"%")
+		args = append(args, containsPattern(filter.Search))
 		where += fmt.Sprintf(` AND programs.name ILIKE $%d`, len(args))
 	}
 
@@ -484,7 +555,7 @@ func catalogWhere(filter models.ProgramFilter) (where string, args []any) {
 		where += ` AND programs.status = 'published'`
 	}
 	if filter.Search != "" {
-		args = append(args, "%"+filter.Search+"%")
+		args = append(args, containsPattern(filter.Search))
 		n := len(args)
 		where += fmt.Sprintf(` AND programs.name ILIKE $%d`, n)
 	}

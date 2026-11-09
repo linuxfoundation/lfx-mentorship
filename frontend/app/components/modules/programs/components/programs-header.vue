@@ -23,7 +23,7 @@ SPDX-License-Identifier: MIT
         <h1 class="font-secondary font-light md:text-4xl text-3xl leading-normal text-neutral-900">
           Find a Program
           <p class="text-sm text-neutral-600">
-            {{ PROGRAMS_HEADER_SUBTITLE }}
+            {{ subtitle }}
           </p>
         </h1>
       </div>
@@ -119,8 +119,12 @@ import {
   PROGRAM_SORT_OPTIONS,
   PROGRAMS_HEADER_SUBTITLE,
 } from '../config/programs-header.config';
+import { useLandingSummary } from '~/composables/useLandingSummary';
 import useScroll from '~/utils/scroll';
 import type { ProgramSortBy, ProgramStatusFilter } from '~/types/program.types';
+
+const { data: summary } = useLandingSummary();
+const subtitle = computed(() => PROGRAMS_HEADER_SUBTITLE(summary.value?.foundationCount));
 
 defineProps<{
   searchTerm: string;

@@ -186,7 +186,7 @@ func (r *ApplicationRepository) ListByProgram(ctx context.Context, programID str
 		where += fmt.Sprintf(` AND pt.id = $%d`, len(args))
 	}
 	if filter.Search != "" {
-		args = append(args, "%"+filter.Search+"%")
+		args = append(args, containsPattern(filter.Search))
 		where += fmt.Sprintf(` AND (`+sqlUserDisplayName+` ILIKE $%d OR `+applicantEmail+` ILIKE $%d)`, len(args), len(args))
 	}
 	// Furthest-along applicants first; pending splits on prerequisitesDone as the status filter does.
@@ -459,8 +459,8 @@ func checkPendingMenteeApplicationLimit(ctx context.Context, tx pgx.Tx, userID s
 // acceptances of the same mentee in different terms lock different term rows, so only this lock
 // serializes them.
 func checkMenteeAvailable(ctx context.Context, tx pgx.Tx, userID, excludeID string, refuseGraduated bool) error {
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('mentorship_mentee:' || $1::text, 0))`, userID); err != nil {
-		return fmt.Errorf("lock mentee for enrollment check: %w", err)
+	if err := lockMentee(ctx, tx, userID); err != nil {
+		return err
 	}
 	var status models.ApplicationStatus
 	err := tx.QueryRow(ctx, `
@@ -481,6 +481,15 @@ func checkMenteeAvailable(ctx context.Context, tx pgx.Tx, userID, excludeID stri
 		return fmt.Errorf("%w: the mentee already holds an accepted mentorship", domain.ErrIneligible)
 	}
 	return fmt.Errorf("%w: the mentee has already graduated from a mentorship", domain.ErrIneligible)
+}
+
+// lockMentee takes the per-mentee transaction lock that serializes the enrollment and pending-limit
+// checks of one user's applications across terms.
+func lockMentee(ctx context.Context, tx pgx.Tx, userID string) error {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('mentorship_mentee:' || $1::text, 0))`, userID); err != nil {
+		return fmt.Errorf("lock mentee for enrollment check: %w", err)
+	}
+	return nil
 }
 
 // checkProgramPublished refuses a new application unless the program is published. The caller
@@ -584,6 +593,9 @@ func insertApplicationTasks(ctx context.Context, tx pgx.Tx, application *models.
 	return nil
 }
 
+// errApplicationStatusChanged answers a status change validated against a status the row no longer has.
+var errApplicationStatusChanged = fmt.Errorf("%w: application status changed concurrently", domain.ErrInvalidStateTransition)
+
 // Update patches an application's status fields.
 func (r *ApplicationRepository) Update(ctx context.Context, id string, input models.ApplicationUpdateInput) (*models.Application, error) {
 	ctx, span := applicationTracer.Start(ctx, "db.applications.Update")
@@ -594,31 +606,13 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 		return nil, fmt.Errorf("begin update application transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	// becameAccepted is true only for the write that moves the application into accepted.
-	becameAccepted := false
 	if input.Status != nil && *input.Status == models.ApplicationStatusAccepted {
 		var (
 			termStatus models.ProgramTermStatus
 			role       models.ApplicationRole
 			userID     string
-			previous   models.ApplicationStatus
 		)
-		// Accepting a mentor adds a membership, whose insert key-share-locks the program, so lock
-		// the program before the term and application, the order a program update takes them in;
-		// the other order deadlocks with a prerequisite change. An application's term, program and
-		// role never change, so they are read before any lock is held.
-		var programID string
-		if err := tx.QueryRow(ctx, `SELECT pt.program_id, a.role FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE a.id = $1`, id).Scan(&programID, &role); errors.Is(err, pgx.ErrNoRows) {
-			return nil, domain.ErrApplicationNotFound
-		} else if err != nil {
-			return nil, fmt.Errorf("resolve application program for acceptance: %w", err)
-		}
-		if role == models.ApplicationRoleMentor {
-			if _, err := tx.Exec(ctx, `SELECT 1 FROM programs WHERE id = $1 FOR KEY SHARE`, programID); err != nil {
-				return nil, fmt.Errorf("lock program for mentor acceptance: %w", err)
-			}
-		}
-		if err := tx.QueryRow(ctx, `SELECT pt.status, a.role, a.user_id, a.status FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE a.id = $1 FOR UPDATE OF pt, a`, id).Scan(&termStatus, &role, &userID, &previous); errors.Is(err, pgx.ErrNoRows) {
+		if err := tx.QueryRow(ctx, `SELECT pt.status, a.role, a.user_id FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE a.id = $1 FOR UPDATE OF pt, a`, id).Scan(&termStatus, &role, &userID); errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrApplicationNotFound
 		} else if err != nil {
 			return nil, fmt.Errorf("lock application term for acceptance: %w", err)
@@ -630,7 +624,66 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 				return nil, err
 			}
 		}
-		becameAccepted = previous != models.ApplicationStatusAccepted
+	}
+	// Re-opening a declined or withdrawn application needs an open term and no other active
+	// application of the applicant's in it, and a mentee stays within the pending limit, as when
+	// applying.
+	var reopenProgramID string
+	if input.Status != nil && *input.Status == models.ApplicationStatusPending {
+		if err := tx.QueryRow(ctx, `SELECT pt.program_id FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE a.id = $1`, id).Scan(&reopenProgramID); errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrApplicationNotFound
+		} else if err != nil {
+			return nil, fmt.Errorf("resolve application program for re-open: %w", err)
+		}
+		// The prerequisites added below were decoded from ExpectedTaskTemplates. Share-locking
+		// the program holds off a prerequisite edit, which locks it for update, until this commits,
+		// and the lock comes before the term's and the application's, the order that edit takes them in.
+		if input.AddMissingPrerequisites {
+			var unchanged bool
+			if err := tx.QueryRow(ctx, `SELECT task_templates IS NOT DISTINCT FROM $2::jsonb FROM programs WHERE id = $1 FOR SHARE`,
+				reopenProgramID, nilIfEmpty(input.ExpectedTaskTemplates)).Scan(&unchanged); err != nil {
+				return nil, fmt.Errorf("lock program for re-open: %w", err)
+			} else if !unchanged {
+				return nil, fmt.Errorf("%w: program prerequisites changed concurrently", domain.ErrConflict)
+			}
+		}
+		var (
+			termStatus models.ProgramTermStatus
+			role       models.ApplicationRole
+			userID     string
+			current    models.ApplicationStatus
+		)
+		// A stale request is answered before the checks below, which would count a concurrent
+		// re-open of this application against the applicant.
+		if err := tx.QueryRow(ctx, `SELECT pt.status, a.role, a.user_id, a.status FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id WHERE a.id = $1 FOR UPDATE OF pt, a`, id).Scan(&termStatus, &role, &userID, &current); errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrApplicationNotFound
+		} else if err != nil {
+			return nil, fmt.Errorf("lock application term for re-open: %w", err)
+		} else if input.ExpectedStatus != nil && current != *input.ExpectedStatus {
+			return nil, errApplicationStatusChanged
+		} else if termStatus != models.ProgramTermStatusOpen {
+			return nil, fmt.Errorf("%w: applications are not open for this term", domain.ErrIneligible)
+		}
+		// uq_applications_active would refuse the write anyway; checking first answers 409 even when
+		// that other application already has the mentee at the pending limit.
+		var reapplied bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS (SELECT 1 FROM applications
+				WHERE program_term_id = (SELECT program_term_id FROM applications WHERE id = $1)
+				  AND user_id = $2 AND role = $3 AND id <> $1 AND status <> $4)`,
+			id, userID, role, models.ApplicationStatusWithdrawn).Scan(&reapplied); err != nil {
+			return nil, fmt.Errorf("check other applications in the term for re-open: %w", err)
+		} else if reapplied {
+			return nil, fmt.Errorf("%w: the applicant holds another active application in this term", domain.ErrConflict)
+		}
+		if role == models.ApplicationRoleMentee {
+			if err := lockMentee(ctx, tx, userID); err != nil {
+				return nil, err
+			}
+			if err := checkPendingMenteeApplicationLimit(ctx, tx, userID); err != nil {
+				return nil, err
+			}
+		}
 	}
 	if input.ExpectedStatus != nil {
 		var current models.ApplicationStatus
@@ -639,7 +692,7 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 		} else if err != nil {
 			return nil, fmt.Errorf("lock application for status change: %w", err)
 		} else if current != *input.ExpectedStatus {
-			return nil, fmt.Errorf("%w: application status changed concurrently", domain.ErrInvalidStateTransition)
+			return nil, errApplicationStatusChanged
 		}
 	}
 	if input.Status != nil && slices.Contains(blockingApplicationStatuses, string(*input.Status)) {
@@ -671,10 +724,10 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 		span.RecordError(err)
 		return nil, fmt.Errorf("update application: %w", err)
 	}
-	// Membership follows the acceptance itself. Later edits of the accepted application must not
-	// reverse an admin's removal of the mentor, which is recorded on the member row.
-	if becameAccepted && a.Role == models.ApplicationRoleMentor {
-		if err := ensureAcceptedMentorMembership(ctx, tx, a); err != nil {
+	// Added once the row holds its new status, so the tasks are cloned for a pending application;
+	// the sync below then brings every task's copy of the state in line.
+	if input.AddMissingPrerequisites && reopenProgramID != "" && a.Role == models.ApplicationRoleMentee {
+		if err := addMissingPrerequisiteTasks(ctx, tx, a, input.Prerequisites); err != nil {
 			return nil, err
 		}
 	}
@@ -854,28 +907,6 @@ func syncApplicationsWithTermState(ctx context.Context, tx pgx.Tx, termID string
 	return nil
 }
 
-func ensureAcceptedMentorMembership(ctx context.Context, tx pgx.Tx, application *models.Application) error {
-	var programID string
-	if err := tx.QueryRow(ctx, `SELECT program_id FROM program_terms WHERE id = $1`, application.ProgramTermID).Scan(&programID); err != nil {
-		return fmt.Errorf("resolve accepted mentor program: %w", err)
-	}
-
-	const q = `
-		INSERT INTO program_members (id, program_id, user_id, member_type, status)
-		VALUES (gen_random_uuid(), $1, $2, 'mentor', 'approved')
-		ON CONFLICT (program_id, user_id, member_type)
-		DO UPDATE SET status = 'approved', updated_on = NOW()
-		RETURNING ` + programMemberCols
-	member, err := scanProgramMember(tx.QueryRow(ctx, q, programID, application.UserID))
-	if err != nil {
-		return fmt.Errorf("upsert accepted mentor membership: %w", err)
-	}
-	if err := enqueueMemberMarker(ctx, tx, member, "put"); err != nil {
-		return fmt.Errorf("enqueue accepted mentor membership: %w", err)
-	}
-	return nil
-}
-
 // Delete removes an application.
 func (r *ApplicationRepository) Delete(ctx context.Context, id string) error {
 	ctx, span := applicationTracer.Start(ctx, "db.applications.Delete")
@@ -993,21 +1024,23 @@ func enqueueApplicationMarker(ctx context.Context, tx pgx.Tx, application *model
 	return nil
 }
 
-// blockingApplicationStatuses are the application statuses that keep a program from being hidden.
+// blockingApplicationStatuses are the mentee application statuses that keep a program from being hidden.
 var blockingApplicationStatuses = []string{
 	string(models.ApplicationStatusPending),
 	string(models.ApplicationStatusAccepted),
 	string(models.ApplicationStatusGraduated),
 }
 
-// countBlockingAppsForProgramSQL counts a program's applications in blockingApplicationStatuses ($2).
+// countBlockingAppsForProgramSQL counts a program's mentee applications in blockingApplicationStatuses ($2).
+// A mentor application never blocks: mentors take part through the program's members.
 const countBlockingAppsForProgramSQL = `
 	SELECT COUNT(*) FROM applications a
 	JOIN program_terms pt ON pt.id = a.program_term_id
 	WHERE pt.program_id = $1
+	AND a.role = 'mentee'
 	AND a.status = ANY($2)`
 
-// CountBlockingAppsForProgram returns applications in a non-terminal state across all terms of a program.
+// CountBlockingAppsForProgram returns mentee applications in a non-terminal state across all terms of a program.
 func (r *ApplicationRepository) CountBlockingAppsForProgram(ctx context.Context, programID string) (int, error) {
 	ctx, span := applicationTracer.Start(ctx, "db.applications.CountBlockingAppsForProgram")
 	defer span.End()
@@ -1094,7 +1127,7 @@ func (r *ApplicationRepository) BulkDeclineByTerm(ctx context.Context, termID st
 	// NOTE: status literals must stay in sync with models.ApplicationStatus.
 	const q = `
 		UPDATE applications SET status = 'declined'
-		WHERE program_term_id = $1 AND status = 'pending'
+		WHERE program_term_id = $1 AND role = 'mentee' AND status = 'pending'
 		RETURNING ` + applicationCols
 	rows, err := tx.Query(ctx, q, termID)
 	if err != nil {

@@ -32,6 +32,7 @@ type programService interface {
 	GetCatalog(ctx context.Context, id string) (*models.ProgramCatalogItem, error)
 	ListCatalogMentees(ctx context.Context, programID string) ([]*models.ProgramCatalogMentee, error)
 	ListMine(ctx context.Context, userID string, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error)
+	ListByProject(ctx context.Context, projectUID string, includeSubprojects bool, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error)
 	Create(ctx context.Context, input models.ProgramCreateInput) (*models.Program, error)
 	CreateEnrollment(ctx context.Context, input models.ProgramEnrollmentInput) (*models.Program, error)
 	Update(ctx context.Context, id string, input models.ProgramUpdateInput) (*models.Program, error)
@@ -134,15 +135,18 @@ type programLookup interface {
 
 // resolveVisibleProgram loads the program named by the {programID} path
 // parameter, or {id} on routes without one, which may be a UUID or a slug, and
-// enforces FR-009: a hidden program is a 404 for everyone but its owner. Every
-// public read of a program or of one of its sub-resources must go through
-// this, or a hidden program stays reachable to anyone holding its ID.
+// enforces FR-009: a program that is not published (pending review, hidden,
+// rejected, archived) is a 404 for anonymous callers. A signed-in caller passed
+// Heimdall's viewer check, which is how an approver previews a pending program
+// in Self Serve; off the gateway, only the owner gets through. Every public
+// read of a program or of one of its sub-resources must go through this, or an
+// unpublished program stays reachable to anyone holding its ID.
 func resolveVisibleProgram(w http.ResponseWriter, r *http.Request, svc programLookup) (*models.Program, bool) {
 	program, ok := lookupProgram(w, r, svc)
 	if !ok {
 		return nil, false
 	}
-	if program.Status != models.ProgramStatusPublished && program.Status != models.ProgramStatusPending {
+	if program.Status != models.ProgramStatusPublished {
 		principal := auth.PrincipalFromContext(r.Context())
 		if auth.IsGatewayPrincipal(r.Context()) && principal != nil && principal.UserID != "_anonymous" {
 			return program, true
@@ -270,12 +274,7 @@ func (h *ProgramHandler) ListMine(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	programs, meta, err := h.svc.ListMine(r.Context(), principal.UserID, models.AdministeredProgramFilter{
-		Limit:  limit,
-		Offset: offset,
-		Search: r.URL.Query().Get("search"),
-		Status: models.AdministeredProgramStatus(r.URL.Query().Get("status")),
-	})
+	programs, meta, err := h.svc.ListMine(r.Context(), principal.UserID, administeredProgramFilter(r, limit, offset))
 	if err != nil {
 		Error(w, err)
 		return
@@ -283,10 +282,50 @@ func (h *ProgramHandler) ListMine(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, map[string]any{"data": programs, "meta": meta})
 }
 
-// GetCatalog handles GET /v1/programs/{id}/catalog.
+// ListByProject handles GET /v1/projects/{project_uid}/programs — every
+// program of the project, and with include_subprojects=true of every project
+// below it, for the people who manage them. Heimdall authorizes the caller on
+// the project.
+func (h *ProgramHandler) ListByProject(w http.ResponseWriter, r *http.Request) {
+	limit, offset, ok := parsePaginationParams(w, r)
+	if !ok {
+		return
+	}
+	var includeSubprojects bool
+	switch r.URL.Query().Get("include_subprojects") {
+	case "", "false":
+	case "true":
+		includeSubprojects = true
+	default:
+		Error(w, fmt.Errorf("%w: include_subprojects must be true or false", domain.ErrInvalidInput))
+		return
+	}
+	programs, meta, err := h.svc.ListByProject(r.Context(), chi.URLParam(r, "project_uid"), includeSubprojects, administeredProgramFilter(r, limit, offset))
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]any{"data": programs, "meta": meta})
+}
+
+func administeredProgramFilter(r *http.Request, limit, offset int) models.AdministeredProgramFilter {
+	return models.AdministeredProgramFilter{
+		Limit:  limit,
+		Offset: offset,
+		Search: r.URL.Query().Get("search"),
+		Status: models.AdministeredProgramStatus(r.URL.Query().Get("status")),
+	}
+}
+
+// GetCatalog handles GET /v1/programs/{id}/catalog. The FR-009 gate keeps a
+// pending program from anonymous callers; the service then serves only
+// published and pending programs.
 func (h *ProgramHandler) GetCatalog(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	item, err := h.svc.GetCatalog(r.Context(), id)
+	program, ok := resolveVisibleProgram(w, r, h.svc)
+	if !ok {
+		return
+	}
+	item, err := h.svc.GetCatalog(r.Context(), program.ID)
 	if err != nil {
 		Error(w, err)
 		return

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -245,5 +246,47 @@ func TestAccessChecker_AsksOnce(t *testing.T) {
 				t.Fatalf("requests = %d; want one %q", len(conn.requests), waitCheck)
 			}
 		})
+	}
+}
+
+func TestAccessChecker_AllowedObjectsAsksOnceForAll(t *testing.T) {
+	const a, b, c = "project:a", "project:b", "project:c"
+	// Out of order, as fga-sync answers cached checks first.
+	conn := checkerStub(answer(c + "#mentorship_program_creator@user:alice\ttrue\n" +
+		a + "#mentorship_program_creator@user:alice\ttrue\n" +
+		b + "#mentorship_program_creator@user:alice\tfalse\n"))
+
+	allowed, err := NewAccessChecker(conn).AllowedObjects(context.Background(), []string{a, b, c}, "mentorship_program_creator", "alice")
+	if err != nil {
+		t.Fatalf("AllowedObjects: %v", err)
+	}
+	if want := []string{a, c}; !slices.Equal(allowed, want) {
+		t.Errorf("allowed = %q; want %q in the given order", allowed, want)
+	}
+	wantBody := a + "#mentorship_program_creator@user:alice\n" + b + "#mentorship_program_creator@user:alice\n" + c + "#mentorship_program_creator@user:alice"
+	if len(conn.requests) != 1 || string(conn.requests[0].Data) != wantBody {
+		t.Fatalf("requests = %d; want one with every check on its own line", len(conn.requests))
+	}
+}
+
+func TestAccessChecker_AllowedObjectsFailsWithoutEveryAnswer(t *testing.T) {
+	for label, r := range map[string]reply{
+		"answer missing":     answer("project:a#writer@user:alice\ttrue"),
+		"fga-sync unreached": fail(nats.ErrNoResponders),
+	} {
+		t.Run(label, func(t *testing.T) {
+			allowed, err := NewAccessChecker(checkerStub(r)).AllowedObjects(context.Background(), []string{"project:a", "project:b"}, "writer", "alice")
+			if err == nil || allowed != nil {
+				t.Fatalf("allowed = %q, err = %v; want an error and no objects", allowed, err)
+			}
+		})
+	}
+}
+
+func TestAccessChecker_AllowedObjectsWithNoObjectsAsksNothing(t *testing.T) {
+	conn := checkerStub(fail(errors.New("must not be asked")))
+	allowed, err := NewAccessChecker(conn).AllowedObjects(context.Background(), nil, "writer", "alice")
+	if err != nil || len(allowed) != 0 || len(conn.requests) != 0 {
+		t.Fatalf("allowed = %q, err = %v, requests = %d; want nothing asked", allowed, err, len(conn.requests))
 	}
 }

@@ -90,12 +90,15 @@ func (r *UserRepository) UpsertByLFID(ctx context.Context, input models.UserCrea
 }
 
 // BootstrapByLFID is UpsertByLFID for the caller's own sign-in, whose email is the verified token
-// claim: another LF account's row still holding that address is stale and gives it up. A legacy
-// row without an LFID keeps it, and the call returns ErrEmailInUse. Without a claim the stored
-// email is kept.
+// claim: any other row still holding that address, another LF account's or an imported row
+// without an LFID, is stale and gives it up. Without a claim the stored email is kept.
 func (r *UserRepository) BootstrapByLFID(ctx context.Context, input models.UserCreateInput, fill models.UserIdentityFill) (*models.User, error) {
 	return r.upsertByLFID(ctx, input, fill, true)
 }
+
+// lockUserLFID serialises upserts of one LFID. Two first sign-ins would otherwise both find no
+// row and both insert, and the second fails on users_email_key before the lfid arbiter applies.
+const lockUserLFID = `SELECT pg_advisory_xact_lock(hashtext('users_lfid'), hashtext($1))`
 
 // upsertByLFID writes input values over stored ones and fill values only where
 // the stored column is still NULL, in one statement, so the two precedences
@@ -106,6 +109,9 @@ func (r *UserRepository) upsertByLFID(ctx context.Context, input models.UserCrea
 		return nil, fmt.Errorf("begin upsert user transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, lockUserLFID, input.LFID); err != nil {
+		return nil, fmt.Errorf("lock user lfid: %w", err)
+	}
 	if bootstrap && input.Email != nil {
 		// Lock the caller's row and the one holding their address in ID order first: two accounts
 		// holding each other's address would otherwise each lock the other's row, then deadlock on
@@ -116,7 +122,7 @@ func (r *UserRepository) upsertByLFID(ctx context.Context, input models.UserCrea
 		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE users SET email = NULL
-			WHERE email = $1 AND lfid IS NOT NULL AND lfid <> $2`, *input.Email, input.LFID); err != nil {
+			WHERE email = $1 AND lfid IS DISTINCT FROM $2`, *input.Email, input.LFID); err != nil {
 			return nil, fmt.Errorf("release stale user email: %w", err)
 		}
 	}
@@ -258,7 +264,7 @@ func (r *UserRepository) SearchCandidates(ctx context.Context, query string, lim
 	ctx, span := userTracer.Start(ctx, "db.users.SearchCandidates")
 	defer span.End()
 
-	pattern := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(query)
+	pattern := likeEscaper.Replace(query)
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, email, lfid, name, given_name, family_name, avatar_url, created_on, updated_on
 		FROM users
@@ -309,7 +315,7 @@ func (r *UserRepository) List(ctx context.Context, filter models.UserFilter) ([]
 	args := []any{}
 	if filter.Search != "" {
 		countQ += ` WHERE name ILIKE $1 OR email ILIKE $1 OR lfid ILIKE $1`
-		args = append(args, "%"+filter.Search+"%")
+		args = append(args, containsPattern(filter.Search))
 	}
 	if err := r.pool.QueryRow(ctx, countQ, args...).Scan(&total); err != nil {
 		span.RecordError(err)

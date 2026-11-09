@@ -39,6 +39,12 @@ const objectDeletionRelayInterval = 10 * time.Second
 // objectDeletionRelayBatch is independent of the FGA and index relays: deletes are cheap and idempotent.
 const objectDeletionRelayBatch = 50
 
+// statementTimeout bounds every API query well inside the request timeout (0.8 × WriteTimeout),
+// so a pathological query is cancelled by Postgres and its pooled connection freed. The object
+// deletion, FGA and index relays share this pool and limit; their statements are single-row or
+// paged reads and writes, so a large program means more statements, not longer ones.
+const statementTimeout = 10 * time.Second
+
 // fileTransferTimeout matches the gateway's upload timeout (chart value uploads.timeout).
 const fileTransferTimeout = 120 * time.Second
 
@@ -73,9 +79,10 @@ type Server struct {
 func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, error) {
 	// Database pool
 	pool, err := db.NewPool(ctx, db.PoolConfig{
-		MaxConns:        cfg.Database.MaxConns,
-		MinConns:        cfg.Database.MinConns,
-		ConnMaxLifetime: cfg.Database.ConnMaxLifetime,
+		MaxConns:         cfg.Database.MaxConns,
+		MinConns:         cfg.Database.MinConns,
+		ConnMaxLifetime:  cfg.Database.ConnMaxLifetime,
+		StatementTimeout: statementTimeout,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("database pool: %w", err)
@@ -144,6 +151,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 
 			AllowedRecipients: cfg.Email.AllowedRecipients,
 			CopyInbox:         cfg.Email.CopyInbox,
+			SendRate:          cfg.Email.SendRate,
 		}, logger)
 		notifier = emailNotifier
 		if len(cfg.Email.AllowedRecipients) > 0 {
@@ -166,6 +174,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 	}
 	if natsConn != nil {
 		programSvc.SetProjectLookup(projects.NewClient(natsConn))
+		programSvc.SetAccessChecker(fga.NewAccessChecker(natsConn))
 	}
 	programTermSvc := service.NewProgramTermService(programTermRepo, applicationRepo, notifier)
 	programMemberSvc := service.NewProgramMemberService(programMemberRepo, programRepo, userRepo, accounts, notifier, cfg.Local.InviteSecret)
@@ -361,6 +370,9 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			r.Delete("/programs/{id}/logo", fileH.DeleteProgramLogo)
 			r.Post("/programs/{id}/skills", programH.AddSkill)
 			r.Delete("/programs/{id}/skills/{skillId}", programH.DeleteSkill)
+
+			// Project programs
+			r.Get("/projects/{project_uid}/programs", programH.ListByProject)
 
 			// Program members
 			r.Get("/programs/{id}/mentor-candidates", programMemberH.SearchCandidates)

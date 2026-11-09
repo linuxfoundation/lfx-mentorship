@@ -224,21 +224,66 @@ func (c *AccessChecker) HasAccess(ctx context.Context, object, relation, usernam
 	return allowed, err
 }
 
-// checkAccess asks fga-sync for one relation. The reply is one line per check,
-// "{check}\t{true|false}", in no guaranteed order.
+// AllowedObjects implements domain.AccessChecker.
+func (c *AccessChecker) AllowedObjects(ctx context.Context, objects []string, relation, username string) ([]string, error) {
+	ctx, span := accessTracer.Start(ctx, "fga.AllowedObjects", trace.WithAttributes(
+		attribute.Int("fga.objects", len(objects)),
+		attribute.String("fga.relation", relation),
+	))
+	defer span.End()
+
+	allowed := make([]string, 0, len(objects))
+	if len(objects) == 0 {
+		return allowed, nil
+	}
+	checks := make([]string, len(objects))
+	for i, object := range objects {
+		checks[i] = object + "#" + relation + "@user:" + username
+	}
+	answers, err := checkAccesses(ctx, c.conn, checks)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
+	for i, object := range objects {
+		if answers[checks[i]] {
+			allowed = append(allowed, object)
+		}
+	}
+	return allowed, nil
+}
+
+// checkAccess asks fga-sync for one relation.
 func checkAccess(ctx context.Context, conn Requester, check string) (bool, error) {
+	answers, err := checkAccesses(ctx, conn, []string{check})
+	if err != nil {
+		return false, err
+	}
+	return answers[check], nil
+}
+
+// checkAccesses asks fga-sync for several relations in one request, one check
+// per line. The reply is one line per check, "{check}\t{true|false}", in no
+// guaranteed order; a check it leaves out is an error, not a denial.
+func checkAccesses(ctx context.Context, conn Requester, checks []string) (map[string]bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, accessRequestTimeout)
 	defer cancel()
 
-	reply, err := conn.RequestMsgWithContext(ctx, &nats.Msg{Subject: accessCheckSubject, Data: []byte(check)})
+	reply, err := conn.RequestMsgWithContext(ctx, &nats.Msg{Subject: accessCheckSubject, Data: []byte(strings.Join(checks, "\n"))})
 	if err != nil {
-		return false, fmt.Errorf("access check: %w", err)
+		return nil, fmt.Errorf("access check: %w", err)
 	}
+	answers := make(map[string]bool, len(checks))
 	for _, line := range strings.Split(strings.TrimSpace(string(reply.Data)), "\n") {
-		request, result, found := strings.Cut(line, "\t")
-		if found && request == check {
-			return strings.TrimSpace(result) == "true", nil
+		if request, result, found := strings.Cut(line, "\t"); found {
+			answers[request] = strings.TrimSpace(result) == "true"
 		}
 	}
-	return false, errors.New("access check: reply has no answer for the requested relation")
+	for _, check := range checks {
+		if _, ok := answers[check]; !ok {
+			return nil, errors.New("access check: reply has no answer for the requested relation")
+		}
+	}
+	return answers, nil
 }

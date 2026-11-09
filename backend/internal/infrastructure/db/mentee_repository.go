@@ -50,7 +50,8 @@ const menteeFeaturedCTE = `
 			p.name AS program_name,
 			p.slug AS program_slug,
 			p.description AS program_description,
-			p.logo_url AS program_logo_url
+			p.logo_url AS program_logo_url,
+			p.lf_project_name AS program_project_name
 		FROM applications a
 		JOIN program_terms pt ON pt.id = a.program_term_id
 		JOIN programs p ON p.id = pt.program_id
@@ -87,6 +88,7 @@ const menteeEnrichedCTE = `
 			f.program_name,
 			f.program_slug,
 			f.program_logo_url,
+			f.program_project_name,
 			` + sqlUserDisplayName + ` AS name,
 			COALESCE(NULLIF(up.logo_url, ''), u.avatar_url) AS avatar_url,
 			up.introduction,
@@ -131,7 +133,8 @@ const menteeProfileCTE = menteeFeaturedCTE + `,
 			f.program_id,
 			f.program_name,
 			f.program_slug,
-			f.program_logo_url
+			f.program_logo_url,
+			f.program_project_name
 		FROM (
 			SELECT a.user_id, MIN(a.created_on) AS first_applied_on
 			FROM applications a
@@ -153,6 +156,7 @@ func scanMenteeItem(row pgx.Row) (*models.MenteeItem, error) {
 		joinedAt                 *time.Time
 		programID, programName   *string
 		programSlug, programLogo *string
+		programProjectName       *string
 		skills                   []string
 	)
 	err := row.Scan(
@@ -163,6 +167,7 @@ func scanMenteeItem(row pgx.Row) (*models.MenteeItem, error) {
 		&programName,
 		&programSlug,
 		&programLogo,
+		&programProjectName,
 		&item.Name,
 		&item.AvatarURL,
 		&item.Introduction,
@@ -179,10 +184,11 @@ func scanMenteeItem(row pgx.Row) (*models.MenteeItem, error) {
 	}
 	if programID != nil && programName != nil && programSlug != nil {
 		item.Program = &models.MenteeProgramRef{
-			ID:      *programID,
-			Name:    *programName,
-			Slug:    *programSlug,
-			LogoURL: programLogo,
+			ID:          *programID,
+			Name:        *programName,
+			Slug:        *programSlug,
+			LogoURL:     programLogo,
+			ProjectName: programProjectName,
 		}
 	}
 	if skills == nil {
@@ -209,7 +215,7 @@ func menteeListWhere(filter models.MenteeFilter, args []any) (string, []any) {
 		)`, len(args))
 	}
 	if filter.Search != "" {
-		args = append(args, "%"+filter.Search+"%")
+		args = append(args, containsPattern(filter.Search))
 		where += fmt.Sprintf(` AND COALESCE(name, '') ILIKE $%d`, len(args))
 	}
 	return where, args
@@ -244,7 +250,7 @@ func (r *MenteeRepository) List(ctx context.Context, filter models.MenteeFilter)
 	rows, err := r.pool.Query(ctx, `
 		WITH `+menteeEligibleCTE+`
 		SELECT user_id, application_status, joined_at, program_id, program_name, program_slug,
-		       program_logo_url, name, avatar_url, introduction, skills
+		       program_logo_url, program_project_name, name, avatar_url, introduction, skills
 		FROM enriched`+where+`
 		ORDER BY LOWER(`+menteeDisplayNameSQL+`), `+menteeDisplayNameSQL+`, user_id
 		LIMIT $`+fmt.Sprintf("%d", len(args)-1)+` OFFSET $`+fmt.Sprintf("%d", len(args)), args...)
@@ -307,7 +313,7 @@ func (r *MenteeRepository) GetByUserID(ctx context.Context, userID string) (*mod
 	item, err := scanMenteeItem(r.pool.QueryRow(ctx, `
 		WITH `+menteeProfileCTE+`
 		SELECT user_id, application_status, joined_at, program_id, program_name, program_slug,
-		       program_logo_url, name, avatar_url, introduction, skills
+		       program_logo_url, program_project_name, name, avatar_url, introduction, skills
 		FROM enriched
 		WHERE user_id = $1`, userID))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -388,7 +394,7 @@ func (r *MenteeRepository) attachFeaturedMentors(ctx context.Context, items []*m
 func (r *MenteeRepository) loadMenteePrograms(ctx context.Context, userID string) ([]models.MenteeProgram, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT
-			p.id, p.name, p.slug, p.description, p.logo_url,
+			p.id, p.name, p.slug, p.description, p.logo_url, p.lf_project_name,
 			pt.id, pt.name, pt.start_date_time, pt.end_date_time, a.status
 		FROM applications a
 		JOIN program_terms pt ON pt.id = a.program_term_id
@@ -412,7 +418,7 @@ func (r *MenteeRepository) loadMenteePrograms(ctx context.Context, userID string
 			term    models.MenteeProgramTerm
 		)
 		if err := rows.Scan(
-			&program.ID, &program.Name, &program.Slug, &program.Description, &program.LogoURL,
+			&program.ID, &program.Name, &program.Slug, &program.Description, &program.LogoURL, &program.ProjectName,
 			&term.ID, &term.Name, &term.StartDateTime, &term.EndDateTime, &term.ApplicationStatus,
 		); err != nil {
 			return nil, fmt.Errorf("scan mentee program: %w", err)

@@ -4,9 +4,10 @@
 import { mountSuspended, registerEndpoint } from '@nuxt/test-utils/runtime';
 import { flushPromises } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import ProgramDetailHeader from '../components/program-detail-header.vue';
 import SignInToApplyModal from '../components/sign-in-to-apply-modal.vue';
 import ProgramDetailView from './program-detail.vue';
-import type { Program } from '~/types/program.types';
+import type { Program, ProgramTerm } from '~/types/program.types';
 
 const day = 24 * 60 * 60 * 1000;
 const iso = (offsetDays: number) => new Date(Date.now() + offsetDays * day).toISOString();
@@ -215,6 +216,69 @@ describe('ProgramDetailView', () => {
     await tab(wrapper, 'Mentors');
     await wrapper.setProps({ programId: 'second' });
     await vi.waitFor(() => expect(wrapper.text()).toContain('Second program'));
+  });
+});
+
+describe('ProgramDetailHeader', () => {
+  // Terms are passed newest first, as the API lists them, with none accepting.
+  async function sidebar(terms: ProgramTerm[]) {
+    const wrapper = await mountSuspended(ProgramDetailHeader, {
+      props: { program: program('header', { status: 'in-progress', terms, activeTerms: [] }) },
+    });
+    const asides = wrapper.findAll('aside');
+    expect(asides).toHaveLength(1);
+    return asides[0]!.text();
+  }
+
+  const running: ProgramTerm = {
+    id: 'running',
+    name: 'Fall 2026',
+    status: 'open',
+    startsAt: iso(-30),
+    endsAt: iso(30),
+    applicationsStartAt: iso(-60),
+    applicationsCloseAt: iso(-40),
+  };
+  const upcoming: ProgramTerm = {
+    ...running,
+    id: 'upcoming',
+    name: 'Spring 2027',
+    startsAt: iso(60),
+    endsAt: iso(120),
+    applicationsStartAt: iso(10),
+    applicationsCloseAt: iso(20),
+  };
+  const previous: ProgramTerm = {
+    ...running,
+    id: 'previous',
+    name: 'Spring 2026',
+    status: 'closed',
+    startsAt: iso(-200),
+    endsAt: iso(-140),
+  };
+  const older: ProgramTerm = { ...previous, id: 'older', name: 'Fall 2025', startsAt: iso(-400) };
+
+  it('shows the newest term, as current while it is open past its application window', async () => {
+    const text = await sidebar([running, previous]);
+    expect(text).toContain('Current Term');
+    expect(text).toContain('Fall 2026');
+    expect(text).toContain('Applications closed');
+    expect(text).not.toContain('Spring 2026');
+  });
+
+  it('shows the newest closed term as previous', async () => {
+    const text = await sidebar([previous, older]);
+    expect(text).toContain('Previous Term');
+    expect(text).toContain('Spring 2026');
+    expect(text).not.toContain('Fall 2025');
+  });
+
+  it('shows a newer term whose applications have not opened as upcoming', async () => {
+    const text = await sidebar([upcoming, running]);
+    expect(text).toContain('Upcoming Term');
+    expect(text).toContain('Spring 2027');
+    expect(text).toContain('Applications open');
+    expect(text).not.toContain('Applications closed');
   });
 });
 

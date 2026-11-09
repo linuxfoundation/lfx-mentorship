@@ -41,14 +41,15 @@ type enrollmentPrerequisite struct {
 
 // ProgramService orchestrates program reads and writes.
 type ProgramService struct {
-	repo       domain.ProgramRepository
-	termRepo   domain.ProgramTermRepository
-	appRepo    domain.ApplicationRepository
-	memberRepo domain.ProgramMemberRepository
-	notifier   domain.Notifier
-	cfClient   clients.CrowdfundingClient
-	projects   domain.ProjectLookup
-	access     domain.AccessWaiter
+	repo          domain.ProgramRepository
+	termRepo      domain.ProgramTermRepository
+	appRepo       domain.ApplicationRepository
+	memberRepo    domain.ProgramMemberRepository
+	notifier      domain.Notifier
+	cfClient      clients.CrowdfundingClient
+	projects      domain.ProjectLookup
+	access        domain.AccessWaiter
+	accessChecker domain.AccessChecker
 }
 
 // NewProgramService returns a ProgramService.
@@ -73,6 +74,13 @@ func (s *ProgramService) SetProjectLookup(projects domain.ProjectLookup) {
 // write to the new program, or the waiter gives up.
 func (s *ProgramService) SetAccessWaiter(access domain.AccessWaiter) {
 	s.access = access
+}
+
+// SetAccessChecker sets the fga-sync check that limits a project's
+// sub-project programs to the sub-projects the caller may manage. Without it,
+// the list with sub-projects is unavailable.
+func (s *ProgramService) SetAccessChecker(checker domain.AccessChecker) {
+	s.accessChecker = checker
 }
 
 // programTransitions defines the valid next states for each program status.
@@ -117,6 +125,10 @@ func (s *ProgramService) List(ctx context.Context, filter models.ProgramFilter) 
 	ctx, span := programSvcTracer.Start(ctx, "ProgramService.List")
 	defer span.End()
 
+	var err error
+	if filter.Search, err = normalizeSearch(filter.Search); err != nil {
+		return nil, nil, err
+	}
 	programs, meta, err := s.repo.List(ctx, filter)
 	if err != nil {
 		span.RecordError(err)
@@ -185,6 +197,10 @@ func (s *ProgramService) ListCatalog(ctx context.Context, filter models.ProgramF
 	ctx, span := programSvcTracer.Start(ctx, "ProgramService.ListCatalog")
 	defer span.End()
 
+	var err error
+	if filter.Search, err = normalizeSearch(filter.Search); err != nil {
+		return nil, nil, err
+	}
 	filter = normalizeCatalogFilter(filter)
 
 	items, meta, err := s.repo.ListCatalog(ctx, filter)
@@ -197,7 +213,6 @@ func (s *ProgramService) ListCatalog(ctx context.Context, filter models.ProgramF
 }
 
 func normalizeCatalogFilter(filter models.ProgramFilter) models.ProgramFilter {
-	filter.Search = strings.TrimSpace(filter.Search)
 	filter.Skill = strings.TrimSpace(filter.Skill)
 	if strings.EqualFold(filter.Skill, "all") {
 		filter.Skill = ""
@@ -261,10 +276,10 @@ func (s *ProgramService) ListMine(ctx context.Context, userID string, filter mod
 	if userID == "" {
 		return nil, nil, fmt.Errorf("%w: caller identity is required", domain.ErrUnauthorized)
 	}
-	if filter.Status != "" && !filter.Status.IsValid() {
-		return nil, nil, fmt.Errorf("%w: status must be open, pending_review, completed, rejected, or hidden", domain.ErrInvalidInput)
+	filter, err := validateAdministeredProgramFilter(filter)
+	if err != nil {
+		return nil, nil, err
 	}
-	filter.Search = strings.TrimSpace(filter.Search)
 
 	programs, meta, err := s.repo.ListAdministeredByUser(ctx, userID, filter)
 	if err != nil {
@@ -274,6 +289,163 @@ func (s *ProgramService) ListMine(ctx context.Context, userID string, filter mod
 	return programs, meta, nil
 }
 
+// The project relation Heimdall checks on the project programs list: project
+// writer_guard or mentorship_program_admin, the project half of program writer.
+const (
+	projectFGAObjectPrefix  = "project:"
+	projectProgramsRelation = "mentorship_program_creator"
+)
+
+// ListByProject returns every program of the project, in any status, in the
+// admin programs list shape. With includeSubprojects it also returns the
+// programs of each project below it in Project Service's hierarchy, at any
+// depth, whose programs the caller may manage. Heimdall has already checked
+// the caller may manage the project's own programs.
+func (s *ProgramService) ListByProject(ctx context.Context, projectUID string, includeSubprojects bool, filter models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error) {
+	ctx, span := programSvcTracer.Start(ctx, "ProgramService.ListByProject")
+	defer span.End()
+	span.SetAttributes(attribute.String("project.uid", projectUID), attribute.Bool("include_subprojects", includeSubprojects))
+
+	uid, err := uuid.Parse(projectUID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: project_uid must be a UUID", domain.ErrInvalidInput)
+	}
+	if filter, err = validateAdministeredProgramFilter(filter); err != nil {
+		return nil, nil, err
+	}
+
+	projectUIDs := []string{uid.String()}
+	if includeSubprojects {
+		subprojects, err := s.manageableSubprojects(ctx, uid.String())
+		if err != nil {
+			span.RecordError(err)
+			return nil, nil, fmt.Errorf("list project programs: %w", err)
+		}
+		projectUIDs = append(projectUIDs, subprojects...)
+	}
+	programs, meta, err := s.repo.ListAdministeredByProjects(ctx, projectUIDs, filter)
+	if err != nil {
+		span.RecordError(err)
+		return nil, nil, fmt.Errorf("list project programs: %w", err)
+	}
+	return programs, meta, nil
+}
+
+// manageableSubprojects returns the projects below rootUID that have programs
+// and whose programs the caller may manage. Heimdall's check on rootUID does
+// not cover them: project writer passes down to sub-projects, but
+// mentorship_program_admin does not, so each one is checked, all in one
+// fga-sync request.
+func (s *ProgramService) manageableSubprojects(ctx context.Context, rootUID string) ([]string, error) {
+	principal := auth.PrincipalFromContext(ctx)
+	if principal == nil || principal.Username == "" {
+		return nil, domain.ErrUnauthorized
+	}
+	if s.projects == nil || s.accessChecker == nil {
+		return nil, fmt.Errorf("sub-projects need Project Service and fga-sync: %w", domain.ErrUpstreamUnavailable)
+	}
+	subprojects, err := s.subprojectsWithPrograms(ctx, rootUID)
+	if err != nil {
+		return nil, err
+	}
+
+	objects := make([]string, 0, len(subprojects))
+	for _, uid := range subprojects {
+		// The UID is interpolated into fga-sync's "object#relation@user" check
+		// line, so only a UUID may reach it.
+		if _, err := uuid.Parse(uid); err == nil {
+			objects = append(objects, projectFGAObjectPrefix+uid)
+		}
+	}
+	if len(objects) == 0 {
+		return nil, nil
+	}
+	allowed, err := s.accessChecker.AllowedObjects(ctx, objects, projectProgramsRelation, principal.Username)
+	if err != nil {
+		return nil, fmt.Errorf("%w: sub-project access check: %w", domain.ErrUpstreamUnavailable, err)
+	}
+	uids := make([]string, len(allowed))
+	for i, object := range allowed {
+		uids[i] = strings.TrimPrefix(object, projectFGAObjectPrefix)
+	}
+	return uids, nil
+}
+
+// subprojectsWithPrograms returns each project with a program that sits below
+// rootUID in Project Service's hierarchy. Project Service only answers "what
+// is this project's parent", so it starts from the projects that have
+// programs and walks up, one request per level of nesting.
+func (s *ProgramService) subprojectsWithPrograms(ctx context.Context, rootUID string) ([]string, error) {
+	candidates, err := s.repo.ListProjectUIDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// parents maps each project already asked about to its parent: "" at the
+	// top of the hierarchy, or when Project Service does not know the project.
+	// rootUID is never asked about, so the walk stops there.
+	parents := map[string]string{rootUID: ""}
+	for pending := unknownProjects(candidates, parents); len(pending) > 0; {
+		found, err := s.projects.GetParentUIDs(ctx, pending)
+		if err != nil {
+			return nil, fmt.Errorf("resolve project parents: %w", err)
+		}
+		next := make([]string, 0, len(pending))
+		for _, uid := range pending {
+			parents[uid] = found[uid]
+			if found[uid] != "" {
+				next = append(next, found[uid])
+			}
+		}
+		pending = unknownProjects(next, parents)
+	}
+
+	var uids []string
+	for _, uid := range candidates {
+		if uid != rootUID && isBelowProject(uid, rootUID, parents) {
+			uids = append(uids, uid)
+		}
+	}
+	return uids, nil
+}
+
+// unknownProjects returns the distinct UIDs whose parent is not yet in parents.
+func unknownProjects(uids []string, parents map[string]string) []string {
+	queued := make(map[string]bool, len(uids))
+	unknown := make([]string, 0, len(uids))
+	for _, uid := range uids {
+		if _, known := parents[uid]; !known && !queued[uid] {
+			queued[uid] = true
+			unknown = append(unknown, uid)
+		}
+	}
+	return unknown
+}
+
+// isBelowProject reports whether rootUID is an ancestor of uid. It stops at a
+// cycle rather than looping, though Project Service should never hold one.
+func isBelowProject(uid, rootUID string, parents map[string]string) bool {
+	visited := map[string]bool{uid: true}
+	for parent := parents[uid]; parent != "" && !visited[parent]; parent = parents[parent] {
+		if parent == rootUID {
+			return true
+		}
+		visited[parent] = true
+	}
+	return false
+}
+
+// validateAdministeredProgramFilter checks the status and normalizes the
+// search of an admin programs list filter.
+func validateAdministeredProgramFilter(filter models.AdministeredProgramFilter) (models.AdministeredProgramFilter, error) {
+	if filter.Status != "" && !filter.Status.IsValid() {
+		return filter, fmt.Errorf("%w: status must be accepting, in_progress, upcoming, pending_review, completed, rejected, or hidden", domain.ErrInvalidInput)
+	}
+	var err error
+	filter.Search, err = normalizeSearch(filter.Search)
+	return filter, err
+}
+
 // Create validates input and creates a program.
 func (s *ProgramService) Create(ctx context.Context, input models.ProgramCreateInput) (*models.Program, error) {
 	ctx, span := programSvcTracer.Start(ctx, "ProgramService.Create")
@@ -281,6 +453,9 @@ func (s *ProgramService) Create(ctx context.Context, input models.ProgramCreateI
 
 	if strings.TrimSpace(input.Name) == "" {
 		return nil, fmt.Errorf("%w: name is required", domain.ErrInvalidInput)
+	}
+	if err := validateName("name", &input.Name); err != nil {
+		return nil, err
 	}
 	if err := reservedFileField("logo_url", input.LogoURL); err != nil {
 		return nil, err
@@ -381,6 +556,9 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 	}
 	if strings.TrimSpace(input.Program.Name) == "" {
 		return nil, fmt.Errorf("%w: name is required", domain.ErrInvalidInput)
+	}
+	if err := validateName("name", &input.Program.Name); err != nil {
+		return nil, err
 	}
 	available, err := s.repo.NameAvailable(ctx, input.Program.Name, "")
 	if err != nil {
@@ -525,6 +703,9 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 
 	if input.Status != nil && !input.Status.IsValid() {
 		return nil, fmt.Errorf("%w: invalid status %q", domain.ErrInvalidInput, *input.Status)
+	}
+	if err := validateName("name", input.Name); err != nil {
+		return nil, err
 	}
 	if input.ProgramTermStatus != nil && !input.ProgramTermStatus.IsValid() {
 		return nil, fmt.Errorf("%w: invalid program term status %q", domain.ErrInvalidInput, *input.ProgramTermStatus)

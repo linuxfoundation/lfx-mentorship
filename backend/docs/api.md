@@ -2,8 +2,8 @@
 
 ## Status Mapping
 
-Program creation persists the canonical backend status `pending`. The BFF catalog
-mapping shows a `pending` program in its pending-review display state.
+Program creation persists the canonical backend status `pending`. The public site
+shows published programs only; approvers review a `pending` program in Self Serve.
 
 **Base URL**: `https://lfx-api.<environment>/mentorship/v1` through the Heimdall gateway.
 **Content-Type**: `application/json` for all request and response bodies  
@@ -20,6 +20,7 @@ The gateway-authorized API uses canonical resource paths:
 - User application reads use `/me/applications`.
 - Mentor self-service program requests use `/me/program-memberships`.
 - Program admins list their programs with `/me/programs`.
+- Project admins list a project's programs with `/projects/{project_uid}/programs`, and a foundation's with `include_subprojects=true`.
 - Mentors list the programs they mentor with `/me/mentor-programs`.
 - Program-admin collection reads use Query Service
   `/query/resources?v=1&type=mentorship_program&filter_grants=direct`.
@@ -742,7 +743,7 @@ LF project / foundation is not included yet — `programs.lfid` remains the owne
 
 #### `GET /v1/programs/{id}/catalog` 🔓
 
-Same catalog shape as `GET /v1/programs/catalog` for a single program (UUID or slug). Hidden programs follow the same FR-009 404 rule as `GET /v1/programs/{id}`.
+Same catalog shape as `GET /v1/programs/catalog` for a single program (UUID or slug). Serves `published` and `pending` programs only; any other status is `404`. A `pending` program follows the FR-009 rule of `GET /v1/programs/{id}`: `404` to anonymous callers, served to approvers previewing it in Self Serve.
 
 **Response** `200` → `<ProgramCatalogItem>`  
 **Errors** `404`
@@ -809,7 +810,8 @@ The response `status` is the stored application status — `accepted` or `gradua
         "id": "uuid",
         "name": "Kubernetes Contributors",
         "slug": "kubernetes-contributors",
-        "logo_url": "https://..."
+        "logo_url": "https://...",
+        "project_name": "Kubernetes"
       },
       "mentors": [
         {
@@ -826,7 +828,7 @@ The response `status` is the stored application status — `accepted` or `gradua
 }
 ```
 
-`meta.total` is the filtered count. Unfiltered header totals live on `GET /v1/mentees/summary`. Email is not included.
+`meta.total` is the filtered count. Unfiltered header totals live on `GET /v1/mentees/summary`. Email is not included. `program.project_name` is the name of the LF project that owns the program, omitted when the program has none; the mentee and mentor detail `programs` carry it the same way.
 
 ---
 
@@ -860,7 +862,7 @@ Unlike the directory, the profile also resolves for applicants, so Program Admin
   "skills": ["Go"],
   "status": "accepted",
   "joined_at": "2024-01-15T00:00:00Z",
-  "program": { "id": "uuid", "name": "Kubernetes Contributors", "slug": "kubernetes-contributors" },
+  "program": { "id": "uuid", "name": "Kubernetes Contributors", "slug": "kubernetes-contributors", "project_name": "Kubernetes" },
   "mentors": [],
   "github_url": "https://github.com/alex",
   "linkedin_url": "https://linkedin.com/in/alex",
@@ -871,6 +873,7 @@ Unlike the directory, the profile also resolves for applicants, so Program Admin
       "slug": "kubernetes-contributors",
       "description": "...",
       "logo_url": "https://...",
+      "project_name": "Kubernetes",
       "status": "accepted",
       "skills": ["Go", "Kubernetes"],
       "terms": [
@@ -964,6 +967,7 @@ Public mentor profile by **user ID**. Programs, mentees, and profile links are l
       "slug": "kubernetes-contributors",
       "description": "...",
       "logo_url": "https://...",
+      "project_name": "Kubernetes",
       "skills": ["Go", "Kubernetes"],
       "terms": [
         {
@@ -1031,9 +1035,7 @@ Aggregated marketing/landing counts plus a small graduated-mentee preview. All c
 
 Fetch a program by UUID or slug.
 
-> **FR-009**: If the program has `status = "hidden"`, the endpoint returns `404` for all callers whose `principal.Username` does not match `program.lfid` (the owner's LF ID). Unauthenticated callers always receive `404` for hidden programs.
->
-> **Known gap**: the visibility-gated routes are registered without auth middleware, so no principal is ever present on them and the owner exception is currently unreachable — hidden programs return `404` to everyone, owner included. Tracked separately.
+> **FR-009**: Only a `published` program is public. Any other status (`pending`, `hidden`, `rejected`, `archived`) returns `404` to anonymous callers. A signed-in caller has passed Heimdall's `viewer` check on the program — this is how an approver previews a `pending` program in Self Serve — and gets it, as does the owner (`principal.Username` matches `program.lfid`).
 
 **Response** `200` → `<Program>`  
 **Errors** `404`
@@ -1649,28 +1651,38 @@ matches `GET /v1/programs/{id}/header`.
   "project_name": "LF Energy",
   "logo_url":     "https://...",
   "status":       "published",
-  "admin_status": "open",
+  "admin_status": "accepting",
   "stats":        { "mentors": 2, "mentees": 3, "graduated": 6 },
   "created_on":   "2026-01-01T00:00:00Z",
   "updated_on":   "2026-01-01T00:00:00Z"
 }
 ```
 
-`admin_status` groups `status` with the program's terms:
+`admin_status` groups `status` with the program's terms, ignoring deleted
+terms:
 
 | `admin_status` | When |
 |---|---|
 | `pending_review` | `status` is `pending` |
-| `open` | `status` is `published` and the program has an open term, or no terms yet |
-| `completed` | `status` is `published` and every term is closed (deleted terms are ignored) |
+| `completed` | `status` is `published`, the program has a closed term, and no term is open |
+| `accepting` | `status` is `published` and an open term is inside its application window |
+| `in_progress` | `status` is `published`, no open term is taking applications, and an open term is inside its term window |
+| `upcoming` | `status` is `published`, no open term is taking applications or running, and either an open term's application window has not opened yet or the program has no terms |
+| `in_progress` | `status` is `published` and none of the above matches: an open term whose applications have closed but which has not started, which has ended without being closed, or which has no dates. The public catalog labels these terms "In Progress" too |
 | `rejected` | `status` is `rejected` |
 | `hidden` | `status` is `archived` or `hidden` |
+
+The rows for a published program are checked in order, and the first match
+wins. A program with one term taking applications and another already running
+is `accepting`. The application window is compared by UTC calendar day, with
+both days included, as it is for applying. The term window compares
+`start_date_time` and `end_date_time` with the current time.
 
 #### `GET /v1/me/programs` 🔒
 
 Lists the programs the caller is an active `program_admin` of, ordered by
-`admin_status` (`open`, `pending_review`, `completed`, `hidden`, then
-`rejected`), then by name. The user is always the principal. The gateway requires only a signed-in user
+`admin_status` (`accepting`, `in_progress`, `upcoming`, `pending_review`,
+`completed`, `hidden`, then `rejected`), then by name. The user is always the principal. The gateway requires only a signed-in user
 (`oidc`); see the [route matrix](../../docs/rewrite/06-route-matrix.md) for why
 this is not yet a Query Service collection.
 
@@ -1679,7 +1691,7 @@ this is not yet a Query Service collection.
 | Parameter | Values | Description |
 |---|---|---|
 | `search` | — | Case-insensitive match on program or project name |
-| `status` | `open\|pending_review\|completed\|rejected\|hidden` | Filter by `admin_status` |
+| `status` | `accepting\|in_progress\|upcoming\|pending_review\|completed\|rejected\|hidden` | Filter by `admin_status` |
 | `limit` / `offset` | — | Pagination (default 20, max 100) |
 
 **Response** `200`
@@ -1688,6 +1700,41 @@ this is not yet a Query Service collection.
 ```
 
 **Errors** `400` (unknown `status`, non-integer `limit`/`offset`), `401` (no principal, or a machine-to-machine client)
+
+#### `GET /v1/projects/{project_uid}/programs` 🔒
+
+Lists every program of the project, in any status, for the Project lens in
+Self Serve. It takes the same query parameters, returns the same
+`AdministeredProgram` rows, and uses the same order as
+[`GET /v1/me/programs`](#get-v1meprograms-), but it does not depend on who
+administers a program. The gateway checks `mentorship_program_creator` on
+`project:{project_uid}`, which is project `writer_guard` or the project's
+`mentorship_program_admin`: exactly the users who hold `writer` on every
+program of the project through the project.
+
+With `include_subprojects=true` the list also covers the programs of every
+project below `project_uid` in Project Service's hierarchy, at any depth, so a
+foundation lists all its sub-projects' programs. Each row's `project_uid` and
+`project_name` say which project it belongs to. Project Service only answers
+each project's parent, so the API asks it about the projects that have
+programs and walks up, one request per level of nesting.
+
+The gateway checks only `project_uid`, and that check does not cover the
+sub-projects: a foundation writer holds `writer` on every sub-project through
+`writer from parent`, but the foundation's `mentorship_program_admin` does not
+pass down. So the API keeps only the sub-projects on which the caller has
+`mentorship_program_creator`, asking fga-sync about all of them in one
+request before the list is paged. A foundation writer sees every sub-project's
+programs; a foundation program admin sees the foundation's own programs and
+those of the sub-projects they administer.
+
+**Query parameters** as for `GET /v1/me/programs`, plus:
+
+| Parameter | Values | Description |
+|---|---|---|
+| `include_subprojects` | `true\|false` | Also list the programs of every project below `project_uid` (default `false`) |
+
+**Errors** `400` (`project_uid` not a UUID, unknown `status`, `include_subprojects` other than `true` or `false`, non-integer `limit`/`offset`), `401` (no principal, or with `include_subprojects=true` no username to check), `403` at the gateway (no access to the project), `503` (with `include_subprojects=true`, Project Service or fga-sync did not answer)
 
 ---
 
@@ -1705,14 +1752,14 @@ are omitted when absent.
   "name":         "Example Program",
   "project_name": "Example Project",
   "logo_url":     "https://...",
-  "status":       "open",
+  "status":       "accepting",
   "stats":        { "mentees": 3, "applicants": 12, "tasks_to_review": 2 }
 }
 ```
 
-`status` uses the same rule as the `open` and `completed` values of
-[`admin_status`](#administeredprogram-object): `completed` once every term is
-closed (deleted terms are ignored), otherwise `open`.
+`status` is the [`admin_status`](#administeredprogram-object) of a published
+program: `accepting`, `in_progress`, `upcoming`, or `completed`, with the same
+rule.
 
 `stats` counts the program's `open` terms only; closed and deleted terms are
 not counted, so a `completed` program has zero `stats`:
@@ -1724,7 +1771,7 @@ not counted, so a `completed` program has zero `stats`:
 #### `GET /v1/me/mentor-programs` 🔒
 
 Lists the `published` programs the caller is an `approved` mentor of, ordered by
-`status` (`open`, then `completed`), then by name. The user
+`status` (`accepting`, `in_progress`, `upcoming`, then `completed`), then by name. The user
 is always the principal. The gateway requires only a signed-in user (`oidc`);
 see the [route matrix](../../docs/rewrite/06-route-matrix.md) for why this is
 not a Query Service collection. A caller who mentors no programs gets `200`
@@ -2020,7 +2067,7 @@ Admin sets it on acceptance. The application's `start_date_time` and
 
 #### `POST /v1/program-terms/{id}/applications/bulk-decline` 🔒
 
-Decline all `pending` applications for a term in one action.
+Decline all `pending` mentee applications for a term in one action.
 
 **Response** `200`
 ```json
@@ -2377,11 +2424,12 @@ deleted
 
 ```
 pending ──► accepted ──► graduated
-  │            │
+  │            │   ▲          │
+  │            │   └──────────┘ (undo, mentee only)
   │            └──► declined
   │
   └──► declined ──► pending
-  └──► withdrawn
+  └──► withdrawn ──► pending
 ```
 
 `accepted` is the enrolled state for the whole term; there is no intermediate
@@ -2394,7 +2442,18 @@ pending ──► accepted ──► graduated
 | `pending` | `withdrawn` | **Applicant only** | Self-withdrawal |
 | `accepted` | `graduated` | Program Admin | Manual; never automatic |
 | `accepted` | `declined` | Program Admin | |
-| `declined` | `pending` | Program Admin | Re-open a declined application |
+| `declined` | `pending` | Program Admin | Re-open a declined application; no email. See **Re-opening** below |
+| `withdrawn` | `pending` | Program Admin | Re-open a withdrawn application; no email. See **Re-opening** below. `409` while the applicant holds another active (not withdrawn) application in the term, even at the pending limit |
+| `graduated` | `accepted` | Program Admin | Undo a mentee's graduation; no email. Keeps the stored `attendance_type`, even an empty one imported from legacy; one sent with the request is ignored. `422` if the mentee holds another accepted mentorship or the term is no longer open |
+
+**Mentor applications.** Applications are for mentees; mentors join and leave a program through its members (`/v1/programs/{id}/members`). A mentor application imported from legacy keeps its status: a status change, self-withdrawal or `withdraw-for-mentee` on one is `409`. It also takes no part in the term and program checks: bulk decline and closing a term decline only pending mentee applications, and only mentee applications keep a term from closing or a program from being hidden.
+
+**Re-opening** a declined or withdrawn application (`→ pending`) is checked like a new application:
+
+- The term must be open, and the program not hidden (`422`).
+- The applicant must hold no other active (not withdrawn) application in the term (`409`), checked before the pending limit.
+- A mentee application counts toward the three pending applications a mentee may hold in open terms (`422` when they already hold three).
+- A mentee application gets an incomplete task for each of the program's current prerequisites it has no task of, so a prerequisite added while it was declined or withdrawn reaches it; a name stored twice gets one task. Its existing tasks are kept as they are, since they may carry a reviewer's change for that applicant. `409` if the prerequisites change while the re-open is in flight.
 
 ### Task Status
 
@@ -2422,7 +2481,7 @@ incomplete ──► in_progress ──► submitted ──► complete
 | FR-003 | Max 4 open terms per program | `ProgramTermService.Create`, `.Update` |
 | FR-004 | Submission requires all required fields + ≥1 open term | `ProgramService.Update` |
 | FR-008 | Hide blocked while pending/accepted/graduated apps exist | `ProgramService.Update` |
-| FR-009 | Hidden programs return 404 to non-owners | `handler.resolveVisibleProgram`, used by `ProgramHandler.GetByID` and `ProgramMemberHandler.List` |
+| FR-009 | Unpublished programs return 404 to anonymous callers | `handler.resolveVisibleProgram`, used by `ProgramHandler.GetByID`, `ProgramHandler.GetCatalog` and the program sub-resources |
 | FR-013 | Close term blocked while accepted apps exist | `ProgramTermService.Update` |
 | FR-014 | Reopen term only if end_date in the future | `ProgramTermService.Update` |
 | FR-016 | Apply only when term is open AND within window | `ApplicationService.Create` |
@@ -2706,8 +2765,9 @@ class ApiError extends Error {
 | `FGA_NATS_URL` | Yes for relays | — | Shared NATS URL for FGA and index publishing, notification email via lfx-v2-email-service, and project lookups via lfx-v2-project-service |
 | `PUBLIC_SITE_URL` | When `FGA_NATS_URL` is set | — | Public Mentorship site that user-facing email links point at |
 | `SELF_SERVE_URL` | When `FGA_NATS_URL` is set | — | LFX Self Serve base URL for management links in email |
-| `EMAIL_COPY_INBOX` | When `FGA_NATS_URL` is set | — | LF staff inbox sent every mentee acceptance and a copy of every other email, subject prefixed `[Sent to <recipient>]`; must be in `EMAIL_ALLOWED_RECIPIENTS` when that is set |
+| `EMAIL_COPY_INBOX` | When `FGA_NATS_URL` is set | — | LF staff inbox sent every mentee acceptance and a copy of every other email except prerequisite reminders, subject prefixed `[Sent to <recipient>]`; must be in `EMAIL_ALLOWED_RECIPIENTS` when that is set |
 | `EMAIL_REVIEW_INBOX` | When `FGA_NATS_URL` is set | — | Comma-separated LF staff inboxes, each sent every program submitted for review |
+| `EMAIL_SEND_RATE` | No | `1` | Notification emails sent per second **per pod**; the limiter is per process. Keep `EMAIL_SEND_RATE × autoscaling.maxReplicas + prerequisiteReminderCronJob.sendRate` under the SES rate every service shares (50/s in prod), with room for other services. The chart's defaults give 1 × 10 + 4 = 14, which fits an account still at the SES starting rate; raise them per environment. A rollout at the ceiling briefly adds the 25% surge and draining pods; throttled sends are retried with backoff. The reminder job uses `prerequisiteReminderCronJob.sendRate` (default `4`), falling back to this when that is empty |
 | `FGA_RELAY_BATCH_SIZE` | No | `50` | FGA/index claim batch size |
 | `FGA_RELAY_INTERVAL` | No | `1s` | Relay polling interval |
 | `FGA_RELAY_RETRY_DELAY` | No | `1m` | FGA retry delay |
