@@ -190,6 +190,7 @@ func (h *TaskHandler) UpdateReview(w http.ResponseWriter, r *http.Request) {
 		Status:            input.Status,
 		ApplicationStatus: input.ApplicationStatus,
 		ProgramTermStatus: input.ProgramTermStatus,
+		Reason:            input.Reason,
 		ActorID:           input.ActorID,
 	})
 	if err != nil {

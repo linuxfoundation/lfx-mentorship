@@ -1358,6 +1358,62 @@ func TestNotifyMenteeTaskAssigned_TaskWithoutApplicationSendsNothing(t *testing.
 	}
 }
 
+func TestNotifyMenteeTaskChangesRequested(t *testing.T) {
+	appID := "a1"
+	for name, tc := range map[string]struct {
+		due      *string
+		reason   string
+		want     []string
+		wantHTML []string
+		notWant  []string
+	}{
+		"with reason and due date": {
+			due:      strPtr("2026-10-20"),
+			reason:   "Add <tests>.\nThen resubmit.",
+			want:     []string{"Task Name: Ship <it>\nDue Date: October 20, 2026\n", "Reason:\nAdd <tests>.\nThen resubmit.\n"},
+			wantHTML: []string{"Ship &lt;it&gt;", "Add &lt;tests&gt;.\nThen resubmit.", "white-space:pre-line"},
+		},
+		"without reason or due date": {notWant: []string{"Reason", "Due Date"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture()
+			f.tasks.tasks = []*models.Task{{ID: "task-1", ApplicationID: &appID, AssigneeID: "mentee", Name: strPtr("Ship <it>"), DueDate: tc.due}}
+
+			f.n.NotifyMenteeTaskChangesRequested(context.Background(), "task-1", tc.reason)
+
+			sent := f.wait(t)
+			if len(sent) != 1 || sent[0].To != "mentee@linuxfoundation.org" || sent[0].Subject != "Changes requested on your task for Kernel <Dev> mentorship program." {
+				t.Fatalf("sent = %+v", sent)
+			}
+			mustContain(t, "text", sent[0].Text,
+				"Hi Mia!",
+				"Your reviewer requested changes on a task you submitted for the Kernel <Dev> mentorship. The task is back in your To Do list.",
+				"Please update your work and submit the task again.",
+				"Task Name: Ship <it>\n",
+				"View Tasks: "+testSelfServeURL+"/mentorship/mentee/tasks",
+			)
+			mustContain(t, "text", sent[0].Text, tc.want...)
+			mustContain(t, "html", sent[0].HTML, tc.wantHTML...)
+			for _, notWant := range tc.notWant {
+				if strings.Contains(sent[0].Text, notWant) || strings.Contains(sent[0].HTML, notWant) {
+					t.Fatalf("message mentions %q:\n%s", notWant, sent[0].Text)
+				}
+			}
+		})
+	}
+}
+
+func TestNotifyMenteeTaskChangesRequested_TaskWithoutApplicationSendsNothing(t *testing.T) {
+	f := newFixture()
+	f.tasks.tasks = []*models.Task{{ID: "task-1", AssigneeID: "mentee"}}
+	f.n.NotifyMenteeTaskChangesRequested(context.Background(), "task-1", "Add tests.")
+	f.n.NotifyMenteeTaskChangesRequested(context.Background(), "missing", "Add tests.")
+
+	if sent := f.wait(t); len(sent) != 0 {
+		t.Fatalf("sent = %+v", sent)
+	}
+}
+
 // countingProgramRepo records how many notifications resolve their program at once.
 type countingProgramRepo struct {
 	domain.ProgramRepository

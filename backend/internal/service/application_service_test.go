@@ -439,6 +439,7 @@ type stubNotifier struct {
 	menteeWithdrawnCalls      int
 	menteeGraduatedCalls      int
 	taskAssignedCalls         int
+	changesRequestedReasons   []string
 	prerequisiteReminders     []string
 }
 
@@ -484,6 +485,9 @@ func (n *stubNotifier) NotifyMenteeWithdrawn(_ context.Context, _ string)   { n.
 func (n *stubNotifier) NotifyMenteeGraduated(_ context.Context, _ string)   { n.menteeGraduatedCalls++ }
 func (n *stubNotifier) NotifyMenteeTaskAssigned(_ context.Context, _ string) {
 	n.taskAssignedCalls++
+}
+func (n *stubNotifier) NotifyMenteeTaskChangesRequested(_ context.Context, _, reason string) {
+	n.changesRequestedReasons = append(n.changesRequestedReasons, reason)
 }
 func (n *stubNotifier) NotifyMenteePrerequisiteReminder(_ context.Context, applicationID string) {
 	n.prerequisiteReminders = append(n.prerequisiteReminders, applicationID)

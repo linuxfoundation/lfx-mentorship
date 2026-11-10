@@ -80,6 +80,7 @@ const (
 	templateAdminMenteeWithdrawn       = "admin_mentee_withdrawn"
 	templateMenteeGraduated            = "mentee_graduated"
 	templateMenteeTaskAssigned         = "mentee_task_assigned"
+	templateMenteeTaskChangesRequested = "mentee_task_changes_requested"
 	templateMenteePrerequisiteReminder = "mentee_prerequisite_reminder"
 )
 
@@ -115,6 +116,7 @@ type templateData struct {
 	TaskName           string
 	TaskCreatedOn      string
 	TaskDueDate        string
+	Reason             string
 	IssuedDate         string
 	InviteURL          string
 	LFID               string

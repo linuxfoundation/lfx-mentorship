@@ -762,6 +762,37 @@ func (n *Notifier) NotifyMenteeTaskAssigned(ctx context.Context, taskID string) 
 	})
 }
 
+// NotifyMenteeTaskChangesRequested tells the task's assignee a reviewer sent their submitted task
+// back, with the reason when there is one.
+func (n *Notifier) NotifyMenteeTaskChangesRequested(ctx context.Context, taskID, reason string) {
+	n.dispatch(ctx, templateMenteeTaskChangesRequested, func(ctx context.Context) ([]Message, error) {
+		task, err := n.repos.Tasks.GetByID(ctx, taskID)
+		if err != nil {
+			return nil, fmt.Errorf("get task: %w", err)
+		}
+		if task.ApplicationID == nil {
+			return nil, fmt.Errorf("task %s has no application", taskID)
+		}
+		_, _, program, err := n.applicationContext(ctx, *task.ApplicationID)
+		if err != nil {
+			return nil, err
+		}
+		user, to, err := n.recipient(ctx, task.AssigneeID)
+		if err != nil {
+			return nil, err
+		}
+		msg, err := render(templateMenteeTaskChangesRequested, to, "Changes requested on your task for "+program.Name+" mentorship program.", templateData{
+			RecipientName: firstName(user),
+			ProgramName:   program.Name,
+			ManageURL:     n.selfServeLink(selfServeMenteeTasksPath),
+			TaskName:      deref(task.Name),
+			TaskDueDate:   dueDate(task.DueDate),
+			Reason:        reason,
+		})
+		return []Message{msg}, err
+	})
+}
+
 // menteeCountry returns the country of residence on the user's mentee profile, or "" when unknown.
 // HR uses it for stipend verification; a failed lookup must not hold back the notice.
 func (n *Notifier) menteeCountry(ctx context.Context, userID string) string {
