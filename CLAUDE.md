@@ -47,6 +47,8 @@ specs/            feature specs and task lists
 
 **Errors**: services return sentinel errors from `internal/domain` wrapped with `%w`. Not-found is per entity (`ErrUserNotFound`, `ErrProgramNotFound`, `ErrApplicationNotFound`, …); the rest are shared (`ErrInvalidInput`, `ErrIneligible`, `ErrConflict`, `ErrInvalidStateTransition`, `ErrStateLocked`, `ErrForbidden`, `ErrUnauthorized`, `ErrUpstreamUnavailable`). `handler.Error` maps them, plus Postgres SQLSTATEs, to HTTP status codes — `internal/handler/respond.go` is the single place status codes are decided, so add new mappings there rather than writing status codes in handlers.
 
+**User docs** — the guides served at `/docs` on the public site live in `frontend/docs/user/` (one `index.md` per page, with frontmatter), not at the repo root as in lfx-crowdfunding: the frontend image is built from `frontend/`, so the docs must sit inside it to ship. Support syncs this folder into Intercom as the "LFX Mentorship" collection, so keep the path stable.
+
 **Commands** — from `backend/`: `make build`, `make test`, `make lint`, `make license-check`, `make db-migrate`. From `frontend/`: `pnpm dev`, `pnpm build`, `pnpm lint`, `pnpm format:check`. The frontend is pnpm-only and needs **Node 22+** (the toolchain uses `node:sqlite`, which Node 20 does not have).
 
 ## Deployment
