@@ -38,6 +38,7 @@ const (
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	slog.SetDefault(logger)
 	if err := run(logger); err != nil {
 		logger.Error("prerequisite-reminder failed", "error", err)
 		os.Exit(1)
