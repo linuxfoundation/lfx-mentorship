@@ -40,6 +40,7 @@ Key notes
 - Legacy program statuses draft, pending and submitted all import as programs.status
   "pending": the target has no draft state, so an approver triages every one of them.
   A legacy draft is therefore indistinguishable from a submitted program after import.
+  Legacy "hide", the value the legacy Hide button wrote, imports as "hidden".
 - jobspring wrote some member rows with only an email (a program creator's
   maintainer row, some mentor rows) and some with only a userId. Every member
   row is matched to its user by email first: the one user with that email
@@ -519,6 +520,7 @@ def _normalize_program_status(status: str | None) -> str:
         "rejected": "rejected",
         "archived": "archived",
         "hidden": "hidden",
+        "hide": "hidden",
     }
     return m.get(status.lower(), "pending")
 

@@ -112,7 +112,7 @@ def run(cur) -> list:
     return v.verify(cur, SOURCES, 50, random.Random(1)).problems
 
 
-@pytest.mark.parametrize("legacy", ["submitted", "Submitted", "draft", "published", "rejected", None])
+@pytest.mark.parametrize("legacy", ["submitted", "Submitted", "draft", "published", "rejected", "hide", None])
 def test_verifier_program_status_matches_the_importer(legacy):
     assert v._program_status(legacy) == m._normalize_program_status(legacy)
 

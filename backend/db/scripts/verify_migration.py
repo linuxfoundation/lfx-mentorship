@@ -36,7 +36,7 @@ _APP_PRIORITY = {"graduated": 5, "accepted": 4, "pending": 2, "declined": 1, "wi
 # Legacy value -> target value (03 §Migration-specific tasks). Unlisted values fall back as noted.
 _PROGRAM_STATUS = {  # else pending; draft, pending and submitted all become pending
     "draft": "pending", "pending": "pending", "submitted": "pending", "published": "published",
-    "rejected": "rejected", "archived": "archived", "hidden": "hidden",
+    "rejected": "rejected", "archived": "archived", "hidden": "hidden", "hide": "hidden",
 }
 _APPLICATION_STATUS = {  # else pending
     "pending": "pending", "accepted": "accepted", "approved": "accepted", "active": "accepted",
