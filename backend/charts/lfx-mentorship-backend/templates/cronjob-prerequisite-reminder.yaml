@@ -9,6 +9,7 @@ metadata:
   labels:
     {{- include "lfx-v2-mentorship-service.labels" . | nindent 4 }}
     app.kubernetes.io/component: prerequisite-reminder
+    tags.datadoghq.com/service: {{ include "lfx-v2-mentorship-service.name" . }}
 spec:
   schedule: {{ .Values.prerequisiteReminderCronJob.schedule | quote }}
   timeZone: {{ .Values.prerequisiteReminderCronJob.timeZone | quote }}
@@ -19,6 +20,7 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: {{ include "lfx-v2-mentorship-service.name" . }}
+        tags.datadoghq.com/service: {{ include "lfx-v2-mentorship-service.name" . }}
     spec:
       activeDeadlineSeconds: {{ .Values.prerequisiteReminderCronJob.activeDeadlineSeconds }}
       # Never retried: there is no sent marker, so rerunning after a crash part-way through
