@@ -132,6 +132,14 @@ tolerations: []
 affinity: {}
 topologySpreadConstraints: []
 
+# podDisruptionBudget configures a PodDisruptionBudget for the deployment.
+# Only one of minAvailable or maxUnavailable may be set (not both).
+# Off by default; each environment turns it on in lfx-v2-argocd.
+podDisruptionBudget:
+  enabled: false
+  # minAvailable: 1
+  # maxUnavailable: 1
+
 # ── Database migration hook ──────────────────────────────────────────────────
 # Runs `/app/migrate` as a pre-install/pre-upgrade Job so schema changes land
 # before the new application image starts serving traffic.
