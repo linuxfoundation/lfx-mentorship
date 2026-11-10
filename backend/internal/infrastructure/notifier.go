@@ -105,6 +105,12 @@ func (n *LogNotifier) NotifyMenteeTaskAssigned(ctx context.Context, taskID strin
 	n.logger.InfoContext(ctx, "notify: mentee task assigned", "task_id", taskID)
 }
 
+// NotifyMenteeTaskChangesRequested logs a changes-requested event; the reason is user content and
+// stays out of the log.
+func (n *LogNotifier) NotifyMenteeTaskChangesRequested(ctx context.Context, taskID, reason string) {
+	n.logger.InfoContext(ctx, "notify: mentee task changes requested", "task_id", taskID, "has_reason", reason != "")
+}
+
 // NotifyMenteePrerequisiteReminder logs a prerequisite-reminder event.
 func (n *LogNotifier) NotifyMenteePrerequisiteReminder(ctx context.Context, applicationID string) {
 	n.logger.InfoContext(ctx, "notify: mentee prerequisite reminder", "application_id", applicationID)

@@ -6,6 +6,7 @@ package service_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
@@ -915,5 +916,136 @@ func TestTaskService_ListByProgramTermForActor_MembershipLookupFailurePropagates
 	}
 	if !errors.Is(err, opErr) {
 		t.Fatalf("expected wrapped lookup error, got %v", err)
+	}
+}
+
+// reviewFixture wires a task review by an active mentor of the task's program: the task is in
+// from, and its application has appStatus.
+func reviewFixture(from models.TaskStatus, appStatus models.ApplicationStatus) (*service.TaskService, *stubNotifier) {
+	return reviewFixtureWithApps(from, &stubAppRepo{
+		getByID: func(_ context.Context, id string) (*models.Application, error) {
+			return &models.Application{ID: id, ProgramTermID: "term-1", Status: appStatus}, nil
+		},
+	})
+}
+
+// reviewFixtureWithApps is reviewFixture reading the task's application from appRepo.
+func reviewFixtureWithApps(from models.TaskStatus, appRepo *stubAppRepo) (*service.TaskService, *stubNotifier) {
+	appID := "app-1"
+	activeStatus := models.ProgramMemberStatusApproved
+	taskRepo := &stubTaskRepo{
+		getByID: func(_ context.Context, id string) (*models.Task, error) {
+			return &models.Task{ID: id, AssigneeID: "mentee-1", Status: from, ApplicationID: &appID}, nil
+		},
+		update: func(_ context.Context, id string, input models.TaskUpdateInput) (*models.Task, error) {
+			return &models.Task{ID: id, Status: *input.Status, ApplicationID: &appID}, nil
+		},
+	}
+	termRepo := &stubTermRepo{
+		getByID: func(_ context.Context, _ string) (*models.ProgramTerm, error) {
+			return &models.ProgramTerm{ID: "term-1", ProgramID: "prog-1"}, nil
+		},
+	}
+	memberRepo := &stubMemberRepo{
+		findByProgramUser: func(_ context.Context, _, _ string) (*models.ProgramMember, error) {
+			return &models.ProgramMember{MemberType: models.MemberTypeMentor, Status: &activeStatus}, nil
+		},
+	}
+	n := &stubNotifier{}
+	return service.NewTaskService(taskRepo, appRepo, termRepo, memberRepo, n), n
+}
+
+func TestTaskService_Update_ChangesRequested_NotifiesAcceptedMentee(t *testing.T) {
+	reason := "  Please add tests.\n  "
+	for name, tc := range map[string]struct {
+		from      models.TaskStatus
+		appStatus models.ApplicationStatus
+		reason    *string
+		want      []string
+	}{
+		"accepted mentee gets the trimmed reason":    {from: models.TaskStatusSubmitted, appStatus: models.ApplicationStatusAccepted, reason: &reason, want: []string{"Please add tests."}},
+		"accepted mentee without a reason":           {from: models.TaskStatusSubmitted, appStatus: models.ApplicationStatusAccepted, want: []string{""}},
+		"applicant gets nothing":                     {from: models.TaskStatusSubmitted, appStatus: models.ApplicationStatusPending, reason: &reason},
+		"reset of a task not yet submitted is quiet": {from: models.TaskStatusInProgress, appStatus: models.ApplicationStatusAccepted, reason: &reason},
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc, n := reviewFixture(tc.from, tc.appStatus)
+			next := models.TaskStatusIncomplete
+			if _, err := svc.Update(context.Background(), "task-1", models.TaskUpdateInput{Status: &next, Reason: tc.reason, ActorID: "mentor-1"}); err != nil {
+				t.Fatalf("Update: %v", err)
+			}
+			if strings.Join(n.changesRequestedReasons, "|") != strings.Join(tc.want, "|") || len(n.changesRequestedReasons) != len(tc.want) {
+				t.Errorf("changes-requested reasons = %q; want %q", n.changesRequestedReasons, tc.want)
+			}
+		})
+	}
+}
+
+func TestTaskService_Update_ApprovalSendsNoChangesRequested(t *testing.T) {
+	svc, n := reviewFixture(models.TaskStatusSubmitted, models.ApplicationStatusAccepted)
+	next := models.TaskStatusComplete
+	if _, err := svc.Update(context.Background(), "task-1", models.TaskUpdateInput{Status: &next, ActorID: "mentor-1"}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if len(n.changesRequestedReasons) != 0 {
+		t.Errorf("changes-requested reasons = %q; want none", n.changesRequestedReasons)
+	}
+}
+
+func TestTaskService_Update_ChangesRequested_ApplicationLookupFailureKeepsReview(t *testing.T) {
+	// The reviewer check reads the application first; fail only the lookup after the write.
+	calls := 0
+	svc, n := reviewFixtureWithApps(models.TaskStatusSubmitted, &stubAppRepo{
+		getByID: func(_ context.Context, id string) (*models.Application, error) {
+			calls++
+			if calls > 1 {
+				return nil, errors.New("db down")
+			}
+			return &models.Application{ID: id, ProgramTermID: "term-1", Status: models.ApplicationStatusAccepted}, nil
+		},
+	})
+	next := models.TaskStatusIncomplete
+	if _, err := svc.Update(context.Background(), "task-1", models.TaskUpdateInput{Status: &next, ActorID: "mentor-1"}); err != nil {
+		t.Fatalf("Update: %v; a failed email lookup must not fail the review", err)
+	}
+	if calls != 2 || len(n.changesRequestedReasons) != 0 {
+		t.Errorf("application reads = %d, changes-requested reasons = %q; want 2 reads and none", calls, n.changesRequestedReasons)
+	}
+}
+
+func TestTaskService_Update_ReviewReasonValidation(t *testing.T) {
+	long := strings.Repeat("é", 2001)
+	atLimit := "  " + strings.Repeat("é", 2000) + "  "
+	reason := "Add tests"
+	for name, tc := range map[string]struct {
+		status models.TaskStatus
+		reason *string
+		want   error
+	}{
+		"reason with approval":        {status: models.TaskStatusComplete, reason: &reason, want: domain.ErrInvalidInput},
+		"reason over the limit":       {status: models.TaskStatusIncomplete, reason: &long, want: domain.ErrInvalidInput},
+		"reason at the limit, padded": {status: models.TaskStatusIncomplete, reason: &atLimit},
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc, _ := reviewFixture(models.TaskStatusSubmitted, models.ApplicationStatusAccepted)
+			status := tc.status
+			_, err := svc.Update(context.Background(), "task-1", models.TaskUpdateInput{Status: &status, Reason: tc.reason, ActorID: "mentor-1"})
+			if !errors.Is(err, tc.want) {
+				t.Errorf("err = %v; want %v", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestTaskService_Edit_RejectsReason(t *testing.T) {
+	svc, n := reviewFixture(models.TaskStatusSubmitted, models.ApplicationStatusAccepted)
+	next := models.TaskStatusIncomplete
+	reason := "Add tests"
+	_, err := svc.Edit(context.Background(), "task-1", models.TaskUpdateInput{Status: &next, Reason: &reason, ActorID: "mentor-1"})
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Errorf("err = %v; want ErrInvalidInput", err)
+	}
+	if len(n.changesRequestedReasons) != 0 {
+		t.Errorf("changes-requested reasons = %q; want none", n.changesRequestedReasons)
 	}
 }

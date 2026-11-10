@@ -44,6 +44,9 @@ type Notifier interface {
 	NotifyMenteeGraduated(ctx context.Context, applicationID string)
 	// NotifyMenteeTaskAssigned tells the mentee a reviewer assigned them a task.
 	NotifyMenteeTaskAssigned(ctx context.Context, taskID string)
+	// NotifyMenteeTaskChangesRequested tells an accepted mentee a reviewer sent their submitted
+	// task back, with the reviewer's reason when there is one ("" for none).
+	NotifyMenteeTaskChangesRequested(ctx context.Context, taskID, reason string)
 	// NotifyMenteePrerequisiteReminder reminds the mentee of the prerequisite tasks they have not
 	// yet submitted.
 	NotifyMenteePrerequisiteReminder(ctx context.Context, applicationID string)
