@@ -163,16 +163,19 @@ func TestUserService_UpdateRejectsEmailMutation(t *testing.T) {
 	}
 }
 
-// Bootstrap fills from the LF directory only what the token, the body and the
-// stored row all lack, as lfx-crowdfunding's sign-in sync does, and never
-// fails the sign-in on a directory problem (#360). Token and body values go
-// to the write as input (they replace stored values); directory values go as
-// a fill, which the repository applies only to columns still NULL.
-func TestUserService_Bootstrap_FillsMissingIdentityFromDirectory(t *testing.T) {
+// Bootstrap refreshes name and avatar from the LF directory on every sign-in:
+// the directory's values go to the write as input and replace stored ones,
+// falling back to the token's where the directory has none. Only an email the
+// token lacks comes from the directory, as a fill for an empty column. A
+// directory problem never fails the sign-in (#360).
+func TestUserService_Bootstrap_RefreshesProfileFromDirectory(t *testing.T) {
 	str := func(v string) *string { return &v }
 	fullAccount := &models.LFAccount{Username: "alice", Name: str("Alice Liddell"), GivenName: str("Alice"), FamilyName: str("Liddell"), AvatarURL: str("https://img/alice.png")}
 	knownDir := func() *stubDirectory {
 		return &stubDirectory{accounts: map[string]*models.LFAccount{"alice": fullAccount}, emails: map[string]string{"alice": "dir@example.org"}}
+	}
+	dirProfile := func(email *string) models.UserCreateInput {
+		return models.UserCreateInput{LFID: str("alice"), Email: email, Name: str("Alice Liddell"), GivenName: str("Alice"), FamilyName: str("Liddell"), AvatarURL: str("https://img/alice.png")}
 	}
 	for name, tc := range map[string]struct {
 		dir       *stubDirectory
@@ -182,51 +185,47 @@ func TestUserService_Bootstrap_FillsMissingIdentityFromDirectory(t *testing.T) {
 		wantFill  models.UserIdentityFill
 		wantCalls int32
 	}{
-		"token carried everything: no directory call, nothing to fill": {
+		"token carries a stale profile: the directory's replaces it": {
 			dir:       knownDir(),
 			input:     models.UserUpdateInput{Email: str("tok@example.org"), Name: str("Tok Name"), GivenName: str("Tok"), FamilyName: str("Name"), AvatarURL: str("https://img/tok.png")},
-			wantInput: models.UserCreateInput{LFID: str("alice"), Email: str("tok@example.org"), Name: str("Tok Name"), GivenName: str("Tok"), FamilyName: str("Name"), AvatarURL: str("https://img/tok.png")},
+			wantInput: dirProfile(str("tok@example.org")),
+			wantCalls: 1,
 		},
-		"first sign-in, empty token: directory fills name and email": {
+		"first sign-in, empty token: directory supplies profile and email": {
 			dir:       knownDir(),
-			wantInput: models.UserCreateInput{LFID: str("alice")},
-			wantFill:  models.UserIdentityFill{Email: str("dir@example.org"), Name: str("Alice Liddell"), GivenName: str("Alice"), FamilyName: str("Liddell"), AvatarURL: str("https://img/alice.png")},
+			wantInput: dirProfile(nil),
+			wantFill:  models.UserIdentityFill{Email: str("dir@example.org")},
 			wantCalls: 2,
 		},
-		"token email, directory name: email stays an input, name is a fill": {
-			dir:       knownDir(),
-			input:     models.UserUpdateInput{Email: str("tok@example.org")},
-			wantInput: models.UserCreateInput{LFID: str("alice"), Email: str("tok@example.org")},
-			wantFill:  models.UserIdentityFill{Name: str("Alice Liddell"), GivenName: str("Alice"), FamilyName: str("Liddell"), AvatarURL: str("https://img/alice.png")},
-			wantCalls: 1,
-		},
-		"stored row complete: directory not asked, nothing filled": {
+		"stored row edited earlier: refreshed from the directory, stored email kept": {
 			dir:       knownDir(),
 			stored:    &models.User{LFID: str("alice"), Email: str("stored@example.org"), Name: str("Edited Name"), GivenName: str("Edited"), FamilyName: str("Name"), AvatarURL: str("https://img/edited.png")},
-			wantInput: models.UserCreateInput{LFID: str("alice")},
-		},
-		"stored row lacks only the avatar: directory fills just that": {
-			dir:       knownDir(),
-			stored:    &models.User{LFID: str("alice"), Email: str("stored@example.org"), Name: str("Edited Name"), GivenName: str("Edited"), FamilyName: str("Name")},
-			wantInput: models.UserCreateInput{LFID: str("alice")},
-			wantFill:  models.UserIdentityFill{AvatarURL: str("https://img/alice.png")},
+			wantInput: dirProfile(nil),
 			wantCalls: 1,
 		},
-		"directory name over the length cap: left out, the rest still filled": {
+		"directory lacks the avatar: the token's is kept": {
+			dir: &stubDirectory{accounts: map[string]*models.LFAccount{"alice": {
+				Username: "alice", Name: str("Alice Liddell"), GivenName: str("Alice"), FamilyName: str("Liddell"),
+			}}},
+			input:     models.UserUpdateInput{Email: str("tok@example.org"), AvatarURL: str("https://img/tok.png")},
+			wantInput: models.UserCreateInput{LFID: str("alice"), Email: str("tok@example.org"), Name: str("Alice Liddell"), GivenName: str("Alice"), FamilyName: str("Liddell"), AvatarURL: str("https://img/tok.png")},
+			wantCalls: 1,
+		},
+		"directory name over the length cap: left out, the rest refreshed": {
 			dir: &stubDirectory{accounts: map[string]*models.LFAccount{"alice": {
 				Username: "alice", Name: str(longestName + "é"), GivenName: str("Alice"), FamilyName: str(longestName + "é"),
 			}}, emails: map[string]string{"alice": "dir@example.org"}},
-			wantInput: models.UserCreateInput{LFID: str("alice")},
-			wantFill:  models.UserIdentityFill{Email: str("dir@example.org"), GivenName: str("Alice")},
+			wantInput: models.UserCreateInput{LFID: str("alice"), GivenName: str("Alice")},
+			wantFill:  models.UserIdentityFill{Email: str("dir@example.org")},
 			wantCalls: 2,
 		},
 		"directory down: sign-in still succeeds with what the token had": {
 			dir:       &stubDirectory{err: errors.New("nats: no responders")},
-			input:     models.UserUpdateInput{Email: str("tok@example.org")},
-			wantInput: models.UserCreateInput{LFID: str("alice"), Email: str("tok@example.org")},
+			input:     models.UserUpdateInput{Email: str("tok@example.org"), Name: str("Tok Name")},
+			wantInput: models.UserCreateInput{LFID: str("alice"), Email: str("tok@example.org"), Name: str("Tok Name")},
 			wantCalls: 1,
 		},
-		"no LF account (M2M client): nothing filled, no error": {
+		"no LF account (M2M client): nothing refreshed, no error": {
 			dir:       &stubDirectory{},
 			wantInput: models.UserCreateInput{LFID: str("alice")},
 			wantCalls: 2,
@@ -346,5 +345,41 @@ func TestUserService_Bootstrap_WithoutDirectoryStoresTokenOnly(t *testing.T) {
 	lfid := "alice"
 	if want := (models.UserCreateInput{LFID: &lfid, Email: &email}); !reflect.DeepEqual(got, want) || !gotFill.IsZero() {
 		t.Fatalf("stored %+v fill %+v; want lfid and token email only, no fill", got, gotFill)
+	}
+}
+
+// SyncEmail writes the verified token email only when it differs from the
+// stored one, and a failed write never surfaces to the request.
+func TestUserService_SyncEmail(t *testing.T) {
+	str := func(v string) *string { return &v }
+	for name, tc := range map[string]struct {
+		user      *models.User
+		token     string
+		writeErr  error
+		wantWrite *models.UserCreateInput
+	}{
+		"address changed: written":     {user: &models.User{LFID: str("alice"), Email: str("old@example.org")}, token: "new@example.org", wantWrite: &models.UserCreateInput{LFID: str("alice"), Email: str("new@example.org")}},
+		"no stored address: written":   {user: &models.User{LFID: str("alice")}, token: "new@example.org", wantWrite: &models.UserCreateInput{LFID: str("alice"), Email: str("new@example.org")}},
+		"unchanged: no write":          {user: &models.User{LFID: str("alice"), Email: str("same@example.org")}, token: "same@example.org"},
+		"token has no email: no write": {user: &models.User{LFID: str("alice"), Email: str("old@example.org")}},
+		"row has no LFID: no write":    {user: &models.User{Email: str("old@example.org")}, token: "new@example.org"},
+		"write fails: swallowed":       {user: &models.User{LFID: str("alice")}, token: "new@example.org", writeErr: domain.ErrEmailInUse, wantWrite: &models.UserCreateInput{LFID: str("alice"), Email: str("new@example.org")}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var got *models.UserCreateInput
+			svc := service.NewUserService(&stubUserRepository{bootstrap: func(_ context.Context, in models.UserCreateInput, fill models.UserIdentityFill) (*models.User, error) {
+				if !fill.IsZero() {
+					t.Errorf("fill = %s; want none", describeFill(fill))
+				}
+				got = &in
+				return &models.User{}, tc.writeErr
+			}})
+			svc.SyncEmail(context.Background(), tc.user, tc.token)
+			if !reflect.DeepEqual(got, tc.wantWrite) {
+				g, _ := json.Marshal(got)
+				w, _ := json.Marshal(tc.wantWrite)
+				t.Fatalf("write %s; want %s", g, w)
+			}
+		})
 	}
 }

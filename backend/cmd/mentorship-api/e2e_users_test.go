@@ -199,6 +199,27 @@ func TestE2EUsers(t *testing.T) {
 		}
 	})
 
+	t.Run("sign-in refreshes the name from the LF directory", func(t *testing.T) {
+		grace := unprovisioned(t, "grace")
+		grace.call(t, http.MethodPatch, "/me", map[string]any{"name": "Stale Name"}).expect(http.StatusOK)
+		var me struct {
+			Name string `json:"name"`
+		}
+		grace.mustJSON(t, http.MethodPut, "/me", map[string]any{}, http.StatusOK, &me)
+		if me.Name != "Grace Hopper" {
+			t.Fatalf("name after sign-in = %q; want the directory's %q", me.Name, "Grace Hopper")
+		}
+	})
+
+	t.Run("any request stores a changed token email", func(t *testing.T) {
+		ken := signIn(t, "ken")
+		moved := &actor{LFID: "ken", token: mintToken(t, validClaims("ken", "ken@new.example.org", "access:me"))}
+		moved.call(t, http.MethodGet, "/me", nil).expect(http.StatusOK)
+		if n := dbCount(t, "SELECT count(*) FROM users WHERE lfid = 'ken' AND email = 'ken@new.example.org'"); n != 1 {
+			t.Fatalf("stored email was not updated from %q to the token's new address", ken.Email)
+		}
+	})
+
 	t.Run("DELETE /me removes the caller", func(t *testing.T) {
 		ada.call(t, http.MethodDelete, "/me", nil).expect(http.StatusNoContent)
 		ada.call(t, http.MethodGet, "/me", nil).expect(http.StatusUnauthorized)
