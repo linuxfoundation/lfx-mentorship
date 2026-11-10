@@ -211,12 +211,15 @@ func TestE2EUsers(t *testing.T) {
 		}
 	})
 
-	t.Run("any request stores a changed token email", func(t *testing.T) {
+	t.Run("sign-in stores a changed token email", func(t *testing.T) {
 		ken := signIn(t, "ken")
 		moved := &actor{LFID: "ken", token: mintToken(t, validClaims("ken", "ken@new.example.org", "access:me"))}
-		moved.call(t, http.MethodGet, "/me", nil).expect(http.StatusOK)
-		if n := dbCount(t, "SELECT count(*) FROM users WHERE lfid = 'ken' AND email = 'ken@new.example.org'"); n != 1 {
-			t.Fatalf("stored email was not updated from %q to the token's new address", ken.Email)
+		var me struct {
+			Email string `json:"email"`
+		}
+		moved.mustJSON(t, http.MethodPut, "/me", map[string]any{}, http.StatusOK, &me)
+		if me.Email != "ken@new.example.org" {
+			t.Fatalf("email after sign-in = %q; want the token's new address, not %q", me.Email, ken.Email)
 		}
 	})
 

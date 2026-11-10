@@ -453,7 +453,6 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 				handler.JSON(w, http.StatusUnauthorized, map[string]any{"error": "local user has no LFID"})
 				return
 			}
-			userSvc.SyncEmail(req.Context(), user, principal.Email)
 			resolved := *principal
 			resolved.UserID = user.ID
 			resolved.Username = *user.LFID

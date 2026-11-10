@@ -120,19 +120,6 @@ func (s *UserService) directoryEmail(ctx context.Context, lfid string) *string {
 	return nil
 }
 
-// SyncEmail stores the caller's verified token email when it differs from the
-// stored one, so notifications follow an address change without waiting for a
-// sign-in. It is best-effort: a failure is logged and never fails the request.
-func (s *UserService) SyncEmail(ctx context.Context, user *models.User, email string) {
-	if email == "" || user == nil || user.LFID == nil || (user.Email != nil && *user.Email == email) {
-		return
-	}
-	// BootstrapByLFID also releases the address from a stale row that still holds it.
-	if _, err := s.repo.BootstrapByLFID(ctx, models.UserCreateInput{LFID: user.LFID, Email: &email}, models.UserIdentityFill{}); err != nil {
-		slog.WarnContext(ctx, "token email sync failed", "error", err)
-	}
-}
-
 // ResolveIdentity returns input with the identity fields it lacks filled from
 // the LF directory, and writes nothing. Only missing fields are looked up. An
 // account the directory does not know (an M2M client, say) is not an error;

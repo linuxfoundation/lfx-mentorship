@@ -347,39 +347,3 @@ func TestUserService_Bootstrap_WithoutDirectoryStoresTokenOnly(t *testing.T) {
 		t.Fatalf("stored %+v fill %+v; want lfid and token email only, no fill", got, gotFill)
 	}
 }
-
-// SyncEmail writes the verified token email only when it differs from the
-// stored one, and a failed write never surfaces to the request.
-func TestUserService_SyncEmail(t *testing.T) {
-	str := func(v string) *string { return &v }
-	for name, tc := range map[string]struct {
-		user      *models.User
-		token     string
-		writeErr  error
-		wantWrite *models.UserCreateInput
-	}{
-		"address changed: written":     {user: &models.User{LFID: str("alice"), Email: str("old@example.org")}, token: "new@example.org", wantWrite: &models.UserCreateInput{LFID: str("alice"), Email: str("new@example.org")}},
-		"no stored address: written":   {user: &models.User{LFID: str("alice")}, token: "new@example.org", wantWrite: &models.UserCreateInput{LFID: str("alice"), Email: str("new@example.org")}},
-		"unchanged: no write":          {user: &models.User{LFID: str("alice"), Email: str("same@example.org")}, token: "same@example.org"},
-		"token has no email: no write": {user: &models.User{LFID: str("alice"), Email: str("old@example.org")}},
-		"row has no LFID: no write":    {user: &models.User{Email: str("old@example.org")}, token: "new@example.org"},
-		"write fails: swallowed":       {user: &models.User{LFID: str("alice")}, token: "new@example.org", writeErr: domain.ErrEmailInUse, wantWrite: &models.UserCreateInput{LFID: str("alice"), Email: str("new@example.org")}},
-	} {
-		t.Run(name, func(t *testing.T) {
-			var got *models.UserCreateInput
-			svc := service.NewUserService(&stubUserRepository{bootstrap: func(_ context.Context, in models.UserCreateInput, fill models.UserIdentityFill) (*models.User, error) {
-				if !fill.IsZero() {
-					t.Errorf("fill = %s; want none", describeFill(fill))
-				}
-				got = &in
-				return &models.User{}, tc.writeErr
-			}})
-			svc.SyncEmail(context.Background(), tc.user, tc.token)
-			if !reflect.DeepEqual(got, tc.wantWrite) {
-				g, _ := json.Marshal(got)
-				w, _ := json.Marshal(tc.wantWrite)
-				t.Fatalf("write %s; want %s", g, w)
-			}
-		})
-	}
-}
