@@ -12,9 +12,10 @@
 -- unchanged; the OpenSearch status tag refreshes on each program's next write.
 -- The set_updated_on trigger stamps updated_on.
 --
--- The IDs were taken from prod on 2026-11-10. Each UPDATE re-checks the status,
--- and the transaction rolls back unless exactly 5 and 74 rows change, so
--- nothing is written if a listed program was decided or edited since.
+-- The IDs were taken from prod on 2026-11-10. Each UPDATE re-checks the status
+-- and an updated_on cutoff, and the transaction rolls back unless exactly 5 and
+-- 74 rows change, so nothing is written if a listed program was decided or
+-- edited since.
 
 BEGIN;
 SET LOCAL search_path TO mentorship;
@@ -23,9 +24,10 @@ DO $$
 DECLARE hidden_n int; rejected_n int;
 BEGIN
   -- The legacy Hide button stored "hide", which the importer did not map, so
-  -- these programs that admins had hidden arrived as pending.
+  -- these programs that admins had hidden arrived as pending. The latest was
+  -- last updated on 2026-01-19.
   UPDATE programs SET status = 'hidden'
-  WHERE status = 'pending' AND id IN (
+  WHERE status = 'pending' AND updated_on < '2026-01-20' AND id IN (
     '8a8708df-72ee-4799-932e-9e6fe606bfc9',
     'a3b5fea2-4a2c-4a7b-97a0-656c978a01d2',
     'ba333574-1ce7-4fc7-9c56-901337672273',
