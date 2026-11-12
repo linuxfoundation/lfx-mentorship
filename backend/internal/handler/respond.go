@@ -83,30 +83,62 @@ func mapError(err error) (int, string) {
 		return http.StatusUnauthorized, "unauthorized"
 	case errors.Is(err, domain.ErrForbidden):
 		return http.StatusForbidden, "forbidden"
-	case errors.Is(err, domain.ErrConflict):
-		return http.StatusConflict, "conflict"
-	case errors.Is(err, domain.ErrEmailInUse):
-		return http.StatusConflict, err.Error()
-	case errors.Is(err, domain.ErrInvalidStateTransition):
-		return http.StatusConflict, err.Error()
-	case errors.Is(err, domain.ErrStateLocked):
-		return http.StatusConflict, err.Error()
-	case errors.Is(err, domain.ErrIneligible):
-		return http.StatusUnprocessableEntity, err.Error()
-	case errors.Is(err, domain.ErrUpstreamUnavailable):
-		return http.StatusServiceUnavailable, "upstream unavailable"
-	default:
-		return http.StatusInternalServerError, "internal server error"
 	}
+	for _, r := range rejections {
+		if errors.Is(err, r.sentinel) {
+			if r.message == "" {
+				return r.status, err.Error()
+			}
+			return r.status, r.message
+		}
+	}
+	if errors.Is(err, domain.ErrUpstreamUnavailable) {
+		return http.StatusServiceUnavailable, "upstream unavailable"
+	}
+	return http.StatusInternalServerError, "internal server error"
+}
+
+// rejections are the sentinels a 409 or 422 maps from, in match order. An empty message answers
+// the client with the wrapped error's own text.
+var rejections = []struct {
+	sentinel error
+	status   int
+	message  string
+}{
+	{domain.ErrConflict, http.StatusConflict, "conflict"},
+	{domain.ErrEmailInUse, http.StatusConflict, ""},
+	{domain.ErrInvalidStateTransition, http.StatusConflict, ""},
+	{domain.ErrStateLocked, http.StatusConflict, ""},
+	{domain.ErrIneligible, http.StatusUnprocessableEntity, ""},
 }
 
 // Error writes a JSON error response derived from a domain error.
 func Error(w http.ResponseWriter, err error) {
 	status, msg := mapError(err)
-	if status == http.StatusInternalServerError {
+	switch status {
+	case http.StatusInternalServerError:
 		slog.Error("internal error", "error", err)
+	case http.StatusServiceUnavailable:
+		slog.Error("upstream unavailable", "error", err)
+	case http.StatusConflict, http.StatusUnprocessableEntity:
+		slog.Warn("request rejected", "status", status, "reason", rejectionReason(err))
 	}
 	JSON(w, status, errorBody{Error: msg})
+}
+
+// rejectionReason names a rejection by its sentinel or SQLSTATE only: the wrapped message can
+// carry an LFID or an email address, which must not reach the logs.
+func rejectionReason(err error) string {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return "sqlstate " + pgErr.Code
+	}
+	for _, r := range rejections {
+		if errors.Is(err, r.sentinel) {
+			return r.sentinel.Error()
+		}
+	}
+	return "unknown"
 }
 
 // newInvalidInput is a convenience wrapper for creating ErrInvalidInput errors.

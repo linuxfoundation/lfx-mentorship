@@ -2263,7 +2263,8 @@ file. Moving the task to another status in the same request is allowed.
 
 `file` is rejected with `400`: the submission is written by
 `POST /v1/tasks/{id}/file-upload`. `application_status` and `program_term_status`
-are rejected with `400`: they are set through `PATCH /v1/tasks/{id}/review`.
+are rejected with `400`: they are set through `PATCH /v1/tasks/{id}/review`. So is
+`reason`: a reason for sending a task back goes with a review.
 
 **Side effect**: when a new `status` or `category` leaves every `prerequisite` task
 on the application `submitted` or `complete`, the system:
@@ -2302,14 +2303,19 @@ Any other transition returns `409`. `file` is rejected with `400`. The
 
 A reviewer's decision on a submitted task.
 
-**Request body** (at least one field)
+**Request body** (at least one of `status`, `application_status`, `program_term_status`)
 ```json
 {
   "status":              "complete" | "incomplete",
   "application_status":  "accepted",
-  "program_term_status": "open"
+  "program_term_status": "open",
+  "reason":              "Please add tests and resubmit."
 }
 ```
+
+`reason` is optional: why the reviewer sends the task back. It is accepted only with
+`status: "incomplete"`, and at most 2000 characters after trimming; otherwise `400`.
+It is emailed to the mentee and not stored.
 
 The caller must be an active `mentor` or `program_admin` of the task's program, and
 not its assignee, for every field.
@@ -2322,6 +2328,13 @@ not its assignee, for every field.
 Any other `status` value returns `400`: the assignee's own steps go through
 `PATCH /v1/tasks/{id}/submission`, and `PATCH /v1/tasks/{id}` sets any status.
 Completing a task that is not `submitted` returns `409`.
+
+**Side effect**: a reset of a `submitted` task (`submitted → incomplete`) fires
+`NotifyMenteeTaskChangesRequested`, emailing the mentee that the task is back in their
+To Do list, with the `reason` when one is given. Only a mentee whose application is
+`accepted` is emailed; an applicant whose prerequisite task is sent back is not. A
+reset of a task that was not `submitted` sends nothing. The email is best effort: a
+failed lookup skips it and leaves the review saved.
 
 **Response** `200` → `<Task>`  
 **Errors** `400`, `401`, `403`, `404`, `409`

@@ -9,6 +9,7 @@ metadata:
   labels:
     {{- include "lfx-v2-mentorship-service.labels" . | nindent 4 }}
     app.kubernetes.io/component: program-funding-stats-sync
+    tags.datadoghq.com/service: {{ include "lfx-v2-mentorship-service.name" . }}
 spec:
   schedule: {{ .Values.fundingStatsSyncCronJob.schedule | quote }}
   concurrencyPolicy: {{ .Values.fundingStatsSyncCronJob.concurrencyPolicy }}
@@ -18,6 +19,7 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: {{ include "lfx-v2-mentorship-service.name" . }}
+        tags.datadoghq.com/service: {{ include "lfx-v2-mentorship-service.name" . }}
     spec:
       activeDeadlineSeconds: {{ .Values.fundingStatsSyncCronJob.activeDeadlineSeconds }}
       backoffLimit: {{ .Values.fundingStatsSyncCronJob.backoffLimit }}
@@ -26,6 +28,7 @@ spec:
           labels:
             app.kubernetes.io/name: {{ include "lfx-v2-mentorship-service.name" . }}
             app.kubernetes.io/component: program-funding-stats-sync
+            tags.datadoghq.com/service: {{ include "lfx-v2-mentorship-service.name" . }}
         spec:
           restartPolicy: OnFailure
           serviceAccountName: {{ include "lfx-v2-mentorship-service.serviceAccountName" . }}

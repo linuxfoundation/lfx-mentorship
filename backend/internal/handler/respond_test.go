@@ -4,10 +4,14 @@
 package handler_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -115,5 +119,73 @@ func TestError_PgErrorMappings(t *testing.T) {
 		if w.Code != tc.want {
 			t.Errorf("SQLSTATE %s: expected %d, got %d", tc.code, tc.want, w.Code)
 		}
+	}
+}
+
+// Server faults log at error level with the error; rejections a monitor should count log at warn
+// level with only the sentinel or SQLSTATE, since the wrapped message can carry an LFID. The
+// message, status and reason are what the #379 monitors search on, so each is pinned.
+func TestError_LogsServerFaultsAndRejections(t *testing.T) {
+	var buf bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	const secret = "lfid-must-not-be-logged"
+	cases := []struct {
+		err                            error
+		wantLevel, wantMsg, wantReason string
+		wantStatus                     int
+	}{
+		{fmt.Errorf("bootstrap user: %w", domain.ErrEmailInUse), "WARN", "request rejected", domain.ErrEmailInUse.Error(), http.StatusConflict},
+		{fmt.Errorf("%w: lfid %q has no LF account", domain.ErrIneligible, secret), "WARN", "request rejected", domain.ErrIneligible.Error(), http.StatusUnprocessableEntity},
+		{fmt.Errorf("%w: cannot transition", domain.ErrInvalidStateTransition), "WARN", "request rejected", domain.ErrInvalidStateTransition.Error(), http.StatusConflict},
+		{fmt.Errorf("%w: locked", domain.ErrStateLocked), "WARN", "request rejected", domain.ErrStateLocked.Error(), http.StatusConflict},
+		{domain.ErrConflict, "WARN", "request rejected", domain.ErrConflict.Error(), http.StatusConflict},
+		{&pgconn.PgError{Code: "23505", Detail: secret}, "WARN", "request rejected", "sqlstate 23505", http.StatusConflict},
+		{fmt.Errorf("lookup: %w", domain.ErrUpstreamUnavailable), "ERROR", "upstream unavailable", "", 0},
+		{errors.New("boom"), "ERROR", "internal error", "", 0},
+	}
+	for _, tc := range cases {
+		buf.Reset()
+		callError(tc.err)
+		var entry map[string]any
+		if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
+			t.Fatalf("%v: no log line: %v (%q)", tc.err, err, buf.String())
+		}
+		if entry["level"] != tc.wantLevel || entry["msg"] != tc.wantMsg {
+			t.Errorf("%v: level, msg = %v, %v; want %s, %s", tc.err, entry["level"], entry["msg"], tc.wantLevel, tc.wantMsg)
+		}
+		if tc.wantLevel == "ERROR" {
+			if entry["error"] != tc.err.Error() {
+				t.Errorf("%v: error = %v; want the error", tc.err, entry["error"])
+			}
+			continue
+		}
+		if entry["reason"] != tc.wantReason || entry["status"] != float64(tc.wantStatus) {
+			t.Errorf("%v: reason, status = %v, %v; want %q, %d", tc.err, entry["reason"], entry["status"], tc.wantReason, tc.wantStatus)
+		}
+		if _, ok := entry["error"]; ok || strings.Contains(buf.String(), secret) {
+			t.Errorf("%v: log line leaks the wrapped message: %s", tc.err, buf.String())
+		}
+	}
+
+	for _, quiet := range []error{domain.ErrInvalidInput, domain.ErrUnauthorized, domain.ErrForbidden, domain.ErrProgramNotFound} {
+		buf.Reset()
+		callError(quiet)
+		if buf.Len() != 0 {
+			t.Errorf("%v: logged %q; want nothing", quiet, buf.String())
+		}
+	}
+}
+
+// The public text of a bare conflict is fixed; the sentinel's own text is for the logs.
+func TestError_ConflictBody(t *testing.T) {
+	var body errorBody
+	if err := json.NewDecoder(callError(domain.ErrConflict).Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error != "conflict" {
+		t.Errorf("body = %q; want %q", body.Error, "conflict")
 	}
 }
