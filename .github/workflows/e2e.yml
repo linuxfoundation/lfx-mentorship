@@ -1,0 +1,80 @@
+# Copyright The Linux Foundation and each contributor to LFX.
+# SPDX-License-Identifier: MIT
+---
+name: E2E
+
+# Playwright suites against the deployed environments; see frontend/e2e/README.md.
+"on":
+  schedule:
+    # Every 6 hours, off the hour.
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to test
+        type: choice
+        options: [prod, dev]
+        default: prod
+  pull_request:
+    paths:
+      - "frontend/e2e/**"
+      - "frontend/playwright.config.ts"
+      - ".github/workflows/e2e.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Smoke (${{ matrix.environment }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', inputs.environment)) || fromJSON('["prod", "dev"]') }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: "11.1.2"
+          run_install: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Install Chromium
+        working-directory: frontend
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run smoke tests
+        working-directory: frontend
+        env:
+          E2E_ENV: ${{ matrix.environment }}
+        run: pnpm test:e2e:smoke
+
+      - name: Upload report
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: smoke-report-${{ matrix.environment }}
+          path: frontend/playwright-report/
+          retention-days: 14
