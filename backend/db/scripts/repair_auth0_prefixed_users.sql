@@ -20,9 +20,10 @@
 --   * A row with a twin is merged into it: its applications, tasks, program
 --     memberships and profiles move to the twin and the row is deleted. The
 --     twin keeps its own email, name and profiles.
---   * Where both rows hold a pending application for the same term, the newer
---     one, on the twin, is the one the mentee sees and is kept. The older one
---     becomes withdrawn and stays as history.
+--   * Where both rows hold an application for the same term, the twin's is the
+--     newer one and the one the mentee sees, so it is kept as it is, decided
+--     or not. The older one, still pending, becomes withdrawn and stays as
+--     history.
 --   * Every application, task and program whose FGA tuples name an affected
 --     user gets an outbox marker, so the relay republishes its access from the
 --     repaired rows. update_access is a full sync, so fga-sync drops the
@@ -34,6 +35,14 @@
 
 BEGIN;
 SET LOCAL search_path TO mentorship;
+
+-- The API keeps serving while this runs, so the tables are locked first, as in
+-- migration 003: a decision or a new application committed between the
+-- snapshots below and the changes would otherwise be overwritten, or moved
+-- without its marker. Writes and row locks wait until the end; reads continue.
+-- The timeout keeps this from queueing the API behind a long transaction.
+SET LOCAL lock_timeout = '5s';
+LOCK TABLE applications, tasks, program_members, user_profiles, users IN EXCLUSIVE MODE;
 
 \echo 'affected users:'
 CREATE TEMP TABLE repair_users ON COMMIT DROP AS
@@ -237,7 +246,12 @@ ON CONFLICT (object_type, object_uid) DO UPDATE SET
   next_attempt_at = NOW(),
   sent_on = NULL;
 
+-- Only a true value commits: -v apply=0 is a dry run like no apply at all.
 \if :{?apply}
+\else
+  \set apply false
+\endif
+\if :apply
   COMMIT;
   \echo 'Applied.'
 \else
