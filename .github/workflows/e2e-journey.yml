@@ -1,0 +1,69 @@
+# Copyright The Linux Foundation and each contributor to LFX.
+# SPDX-License-Identifier: MIT
+---
+name: E2E journey
+
+# The DEV journey suite; see frontend/e2e/README.md. It signs in as the DEV test accounts and
+# creates data on DEV, so it runs daily and on demand, never on pull requests.
+"on":
+  schedule:
+    - cron: "37 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# The runs share the test accounts, and a cancelled run would skip its cleanup, so runs queue.
+concurrency:
+  group: e2e-journey
+  cancel-in-progress: false
+
+jobs:
+  journey:
+    name: Journey (dev)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: "11.1.2"
+          run_install: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Install Chromium
+        working-directory: frontend
+        run: pnpm exec playwright install --with-deps chromium
+
+      # Skipped, not failed, until DevOps adds the secrets.
+      - name: Run journey
+        working-directory: frontend
+        env:
+          E2E_ENV: dev
+          E2E_ADMIN_A_USERNAME: ${{ secrets.E2E_ADMIN_A_USERNAME }}
+          E2E_ADMIN_A_PASSWORD: ${{ secrets.E2E_ADMIN_A_PASSWORD }}
+          E2E_ADMIN_B_USERNAME: ${{ secrets.E2E_ADMIN_B_USERNAME }}
+          E2E_ADMIN_B_PASSWORD: ${{ secrets.E2E_ADMIN_B_PASSWORD }}
+          E2E_MENTEE_1_USERNAME: ${{ secrets.E2E_MENTEE_1_USERNAME }}
+          E2E_MENTEE_1_PASSWORD: ${{ secrets.E2E_MENTEE_1_PASSWORD }}
+          E2E_MENTEE_2_USERNAME: ${{ secrets.E2E_MENTEE_2_USERNAME }}
+          E2E_MENTEE_2_PASSWORD: ${{ secrets.E2E_MENTEE_2_PASSWORD }}
+        # No report is uploaded: Self Serve pages show the test accounts' profiles. The log names
+        # the failed step and locator; reproduce locally for screenshots and traces.
+        run: pnpm test:e2e:journey
