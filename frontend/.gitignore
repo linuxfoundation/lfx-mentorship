@@ -16,6 +16,10 @@ logs
 # Smoke tests / local scratch
 tmp-*
 
+# Playwright E2E output
+test-results/
+playwright-report/
+
 # Misc
 .DS_Store
 .fleet

@@ -36,6 +36,9 @@ pnpm build
 
 These are the same checks CI runs (`.github/workflows/ci-frontend.yml`).
 
+The Playwright E2E suites run against the deployed environments, not a local
+server — see [`e2e/README.md`](e2e/README.md).
+
 ## Configuration
 
 Runtime configuration is defined in `setup/runtime-config.ts`. The values that
