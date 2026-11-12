@@ -5,6 +5,7 @@ import { expect, test, type APIRequestContext, type Page } from '@playwright/tes
 import { MENTEE_PAGE_SIZE } from '../../app/components/modules/mentees/config/mentees-header.config';
 import { MENTOR_PAGE_SIZE } from '../../app/components/modules/mentors/config/mentors-header.config';
 import { PROGRAM_PAGE_SIZE } from '../../app/components/modules/programs/config/programs-header.config';
+import type { ProgramMentee, ProgramSponsorsResponse } from '../../app/types/program.types';
 import { env } from '../env';
 
 // Signed-out checks of the public site. Case numbers refer to docs/testing/e2e-test-plan.md.
@@ -36,11 +37,20 @@ async function firstEntry(request: APIRequestContext, path: string): Promise<Ent
   return list.data[0]!;
 }
 
-// The public API must never expose contact details; mentees and mentors enter their own names,
-// so the check is on field names rather than on text that looks like an address.
+// The paths of the fields named like "email" anywhere in a parsed response.
+function emailFields(value: unknown, path = '$'): string[] {
+  if (Array.isArray(value)) return value.flatMap((item, i) => emailFields(item, `${path}[${i}]`));
+  if (value === null || typeof value !== 'object') return [];
+  return Object.entries(value).flatMap(([key, child]) => [
+    ...(/email/i.test(key) ? [`${path}.${key}`] : []),
+    ...emailFields(child, `${path}.${key}`),
+  ]);
+}
+
+// The public API must never expose contact details. Mentees and mentors write their own names
+// and introductions, so the check is on field names, never on text that looks like an address.
 function expectNoEmailFields(body: unknown, path: string): void {
-  const keys = JSON.stringify(body).match(/"[^"]*email[^"]*":/gi) ?? [];
-  expect(keys, `${path} exposes email fields`).toEqual([]);
+  expect(emailFields(body), `${path} exposes email fields`).toEqual([]);
 }
 
 // Each card on a directory page links to its detail page, e.g. /programs/{id}.
@@ -97,26 +107,36 @@ test('1.2 programs search shows the empty state', async ({ page }) => {
 
 test('1.3 program detail opens by slug and by ID', async ({ page, request }) => {
   const program = await firstEntry(request, '/api/programs');
-  for (const path of [`/api/programs/${program.id}`, `/api/programs/${program.id}/mentees`]) {
-    expectNoEmailFields(await getJson(request, path), path);
-  }
+  const programPath = `/api/programs/${program.id}`;
+  expectNoEmailFields(await getJson(request, programPath), programPath);
+  const menteesPath = `${programPath}/mentees`;
+  const mentees = await getJson<ProgramMentee[]>(request, menteesPath);
+  expectNoEmailFields(mentees, menteesPath);
   // F1: sponsors failed for programs without a Crowdfunding initiative.
-  await getJson(request, `/api/programs/${program.id}/sponsors`);
+  const { sponsors } = await getJson<ProgramSponsorsResponse>(request, `${programPath}/sponsors`);
 
   for (const key of [program.slug, program.id]) {
     await page.goto(`/programs/${key}`);
     await expect(page.getByRole('heading', { level: 1 })).toHaveText(program.name);
   }
 
-  const sections = page.getByRole('tablist', { name: 'Program sections' }).getByRole('tab');
+  // Mentees and Sponsors load when opened, so each must end up showing what its API returned.
+  // The Mentees tab lists active and graduated mentees only.
+  const listed = mentees.filter(({ status }) => status === 'active' || status === 'graduated');
+  const loadedContent: { [tab: string]: string } = {
+    Mentees: listed[0]?.name ?? 'No mentees listed yet.',
+    Sponsors: sponsors[0]?.name ?? 'No sponsors listed yet.',
+  };
+  const tablist = page.getByRole('tablist', { name: 'Program sections' });
+  const panel = page.locator('section').filter({ has: tablist });
+  const sections = tablist.getByRole('tab');
   await expect(sections).toHaveText(['Overview', 'Terms', 'Mentors', 'Mentees', 'Sponsors']);
   for (const tab of await sections.all()) {
     await tab.click();
     await expect(tab).toHaveAttribute('aria-selected', 'true');
+    const content = loadedContent[(await tab.innerText()).trim()];
+    if (content) await expect(panel.getByText(content, { exact: true }).first()).toBeVisible();
   }
-  // The Sponsors tab is last, so it is open now.
-  await expect(page.getByText('Loading sponsors…')).toHaveCount(0);
-  await expect(page.getByText('Unable to load sponsors')).toHaveCount(0);
 });
 
 for (const directory of [

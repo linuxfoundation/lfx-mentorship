@@ -5,7 +5,7 @@
 
 Playwright suites that run against a deployed environment, never a local server. They check
 what users get from the public site, the backend and Self Serve together. Case numbers in test
-titles (`1.3`, `F16`) refer to the [E2E test plan](../../docs/testing/e2e-test-plan.md).
+titles (`1.3`, `F16`) refer to the E2E test plan, `docs/testing/e2e-test-plan.md` (added in #356).
 
 The Self Serve feature specs, which stub the BFF, live in
 `lfx-self-serve/apps/lfx-one/e2e/mentorship-*`; these suites don't repeat them.
