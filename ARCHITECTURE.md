@@ -132,8 +132,9 @@ Consequences:
 - **LF staff act through the project `writer_guard`** (project writers plus the platform
   `global_writer` team, which project-service grants on every project); that population also grants
   roles to others, and there is no mentorship-specific global admin role.
-- **Program approval is a global team membership check** on the decision route: approvers are one
-  platform-wide population, so the route checks `member` on a team object rather than a relation on
+- **Program approvers are a platform team.** They are one platform-wide population, a `team:` whose
+  membership LFX Product Support administers in the back-office tooling; this service exposes no API
+  for it. Every program grants that team its approver relation, so approval needs no relation on
   `project`.
 - **`project#mentorship_program_admin` is a project-level relation**: someone who manages *all*
   mentorship programs of a project, including creating new ones, without being a full project
@@ -147,8 +148,8 @@ Consequences:
 source of truth for the types, relations, and lifecycle emissions,
 [`06-route-matrix.md`](docs/rewrite/06-route-matrix.md) for the route-by-route mapping the RuleSets
 implement, and [`docs/fga-contract.md`](docs/fga-contract.md) for the messages this service
-publishes.** None of them is restated here. The model — four mentorship-owned types
-(`mentorship_program`, `mentorship_application`, `mentorship_task`, `mentorship_approver_team`) plus
+publishes.** None of them is restated here. The model — three mentorship-owned types
+(`mentorship_program`, `mentorship_application`, `mentorship_task`) plus
 `mentorship_program_admin` and the computed `mentorship_program_creator` on the existing `project`
 type — is in
 [`model.fga`](https://github.com/linuxfoundation/lfx-v2-helm/blob/main/charts/lfx-platform/files/model.fga).
@@ -161,8 +162,9 @@ rather than schema:
   that into a **per-object tuple**, removed when the program leaves `published`. It exists because the public Nuxt site's callers are anonymous, or hold no relation
   on the program yet: drop the wildcard and every discovery request is denied at the edge. Any
   model variant that removes it loses that UI.
-- **Approval is held deliberately outside the program's own relations.** The decision route checks
-  `member` on the static object `mentorship_approver_team:global`. Folding it into `writer` would let
+- **Approval is held deliberately outside the program's management relations.** The decision route
+  checks `approver` on the program, which only the platform approver team holds
+  (`global_mentorship_approver: [team#member]`). Folding it into `writer` would let
   every program admin approve their own program, so `PATCH /programs/{uid}` must reject a `status`
   field rather than silently ignoring it.
 - **Project `writer_guard` reaches everything by inheritance**, three levels down to tasks; this is
@@ -170,7 +172,7 @@ rather than schema:
 - **One service owns all tuples on an FGA object.** `project#mentorship_program_admin` is owned end
   to end by [lfx-v2-project-service](https://github.com/linuxfoundation/lfx-v2-project-service) —
   storage, the management API, and emission in its full-state `update_access`. Mentorship only
-  consumes the inherited `writer`, and emits tuples only on its own four
+  consumes the inherited `writer`, and emits tuples only on its own three
   `mentorship_*` types.
 - **Authorization is decided at the edge; the backend asks fga-sync in two places only.** A
   caller's own programs, applications or tasks are listed through Query Service
@@ -296,7 +298,8 @@ Cross-component notes:
 - **Users are mirrored, not owned.** A `users` row is keyed by a service-generated UUID, which is the
   foreign key throughout the schema and the `user_id` the API exposes; `users.lfid` holds the LFID,
   which is the FGA subject. Auth0/LF SSO remains authoritative for identity; the row caches name,
-  email and avatar for display and notifications.
+  email and avatar for display and notifications, refreshed from the LF directory and the verified
+  token email at every sign-in.
 - **`programs.lf_project_uid` is the project join key**, and the FGA parent tuple
   `mentorship_program#project@project:{uid}` is derived from it — so every inherited permission in
   §3.2 depends on it. Every program has one: creation requires it and validates it against Project
@@ -323,4 +326,3 @@ Listed so that nobody builds against them.
 | Decision | What is open |
 |---|---|
 | **`/me` lists of programs and applications** | `/v1/me/programs`, `/v1/me/mentor-programs` and `/v1/me/applications` are still served by this service (§3.2). The platform pieces that replace them exist: `/my-grants` returns the caller's direct grants with their relation, and Query Service lists the objects and counts them with `group_by`. On our side the program index document must first carry the term dates and the per-program counts these lists show (today it carries only mentor, mentee and graduate totals); then Self Serve moves onto them. Until then the routes stay `allow_all` and `/me`-bound (§3.3) |
-| **Approver-roster administration** | Who administers the approver population and where. The platform pattern is a `team:` object whose membership LFX Product Support manages in the back-office tooling, with no service API; adopting it would replace `mentorship_approver_team:global` and this service's roster routes, which stay off the gateway until this is decided |
