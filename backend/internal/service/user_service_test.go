@@ -348,3 +348,23 @@ func TestUserService_Bootstrap_WithoutDirectoryStoresTokenOnly(t *testing.T) {
 		t.Fatalf("stored %+v fill %+v; want lfid and token email only, no fill", got, gotFill)
 	}
 }
+
+// A token issued before Auth0 attached the LF username carries the identity provider's subject
+// (auth0|<username>) as its principal. A user stored under it splits from the one the next
+// sign-in creates (linuxfoundation/lfx-self-serve-ops#1468).
+func TestUserService_Bootstrap_RejectsIdentityProviderSubject(t *testing.T) {
+	called := false
+	svc := service.NewUserService(&stubUserRepository{
+		bootstrap: func(context.Context, models.UserCreateInput, models.UserIdentityFill) (*models.User, error) {
+			called = true
+			return &models.User{}, nil
+		},
+	})
+	_, err := svc.Bootstrap(context.Background(), "auth0|alice", models.UserUpdateInput{})
+	if !errors.Is(err, domain.ErrIneligible) {
+		t.Errorf("err = %v; want ErrIneligible", err)
+	}
+	if called {
+		t.Error("repository bootstrap should not be called for an identity provider subject")
+	}
+}

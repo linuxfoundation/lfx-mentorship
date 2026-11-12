@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
@@ -17,6 +18,10 @@ import (
 )
 
 var userSvcTracer = otel.Tracer("users-service")
+
+// identityProviderSubjectSeparator appears in an identity provider's subject (auth0|<username>)
+// and never in an LF username.
+const identityProviderSubjectSeparator = "|"
 
 // UserService orchestrates user reads and writes.
 type UserService struct {
@@ -51,6 +56,14 @@ func (s *UserService) SetAccountDirectory(directory domain.AccountDirectory) {
 func (s *UserService) Bootstrap(ctx context.Context, lfid string, input models.UserUpdateInput) (*models.User, error) {
 	if lfid == "" {
 		return nil, fmt.Errorf("%w: principal is required", domain.ErrInvalidInput)
+	}
+	// A token issued before the identity provider attached the LF username carries the provider's
+	// subject as its principal. A user stored under it splits from the one the next sign-in
+	// creates, so nothing is stored (linuxfoundation/lfx-self-serve-ops#1468). The principal is
+	// left out of the log: it contains the username.
+	if strings.Contains(lfid, identityProviderSubjectSeparator) {
+		slog.WarnContext(ctx, "bootstrap rejected: the principal is an identity provider subject, not an LF username")
+		return nil, fmt.Errorf("%w: your sign-in did not include your LF username; sign out and sign in again", domain.ErrIneligible)
 	}
 	if err := validateUserNames(input.Name, input.GivenName, input.FamilyName); err != nil {
 		return nil, err
