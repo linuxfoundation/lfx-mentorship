@@ -86,23 +86,39 @@ func (r *UserRepository) GetByLFID(ctx context.Context, lfid string) (*models.Us
 
 // UpsertByLFID atomically creates or refreshes the local user for a gateway principal.
 func (r *UserRepository) UpsertByLFID(ctx context.Context, input models.UserCreateInput) (*models.User, error) {
-	return r.upsertByLFID(ctx, input, false)
+	return r.upsertByLFID(ctx, input, emailWrite{})
 }
 
 // BootstrapByLFID is UpsertByLFID for the caller's own sign-in, whose email is the verified token
 // claim: any other row still holding that address, another LF account's or an imported row
 // without an LFID, is stale and gives it up. Without a claim the stored email is kept.
 func (r *UserRepository) BootstrapByLFID(ctx context.Context, input models.UserCreateInput) (*models.User, error) {
-	return r.upsertByLFID(ctx, input, true)
+	return r.upsertByLFID(ctx, input, emailWrite{release: true})
+}
+
+// UpsertByLFIDIfEmailUnchanged is UpsertByLFID for an email looked up outside the transaction:
+// it replaces the stored email only while that still equals storedEmail, the value read before
+// the lookup (nil for no row or no email). An email another sign-in stored meanwhile is kept.
+func (r *UserRepository) UpsertByLFIDIfEmailUnchanged(ctx context.Context, input models.UserCreateInput, storedEmail *string) (*models.User, error) {
+	return r.upsertByLFID(ctx, input, emailWrite{guarded: true, unchanged: storedEmail})
 }
 
 // lockUserLFID serialises upserts of one LFID. Two first sign-ins would otherwise both find no
 // row and both insert, and the second fails on users_email_key before the lfid arbiter applies.
 const lockUserLFID = `SELECT pg_advisory_xact_lock(hashtext('users_lfid'), hashtext($1))`
 
+// emailWrite says how upsertByLFID treats input.Email.
+type emailWrite struct {
+	// release takes the address back from any other row first.
+	release bool
+	// guarded replaces the stored email only while it still equals unchanged.
+	guarded   bool
+	unchanged *string
+}
+
 // upsertByLFID writes input values over stored ones, keeping a stored value where
-// input has none. Only a bootstrap releases input.Email from other rows.
-func (r *UserRepository) upsertByLFID(ctx context.Context, input models.UserCreateInput, bootstrap bool) (*models.User, error) {
+// input has none.
+func (r *UserRepository) upsertByLFID(ctx context.Context, input models.UserCreateInput, email emailWrite) (*models.User, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin upsert user transaction: %w", err)
@@ -111,7 +127,7 @@ func (r *UserRepository) upsertByLFID(ctx context.Context, input models.UserCrea
 	if _, err := tx.Exec(ctx, lockUserLFID, input.LFID); err != nil {
 		return nil, fmt.Errorf("lock user lfid: %w", err)
 	}
-	if bootstrap && input.Email != nil {
+	if email.release && input.Email != nil {
 		// Lock the caller's row and the one holding their address in ID order first: two accounts
 		// holding each other's address would otherwise each lock the other's row, then deadlock on
 		// their own.
@@ -130,13 +146,15 @@ func (r *UserRepository) upsertByLFID(ctx context.Context, input models.UserCrea
 		INSERT INTO users (id, email, lfid, name, given_name, family_name, avatar_url)
 		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6)
 		ON CONFLICT (lfid) DO UPDATE SET
-			email = COALESCE($1::text, users.email),
+			email = CASE WHEN $7::bool AND users.email IS DISTINCT FROM $8::text THEN users.email
+				ELSE COALESCE($1::text, users.email) END,
 			name = COALESCE($3::text, users.name),
 			given_name = COALESCE($4::text, users.given_name),
 			family_name = COALESCE($5::text, users.family_name),
 			avatar_url = COALESCE($6::text, users.avatar_url), updated_on = NOW()
 		RETURNING id, email, lfid, name, given_name, family_name, avatar_url, created_on, updated_on`,
 		input.Email, input.LFID, input.Name, input.GivenName, input.FamilyName, input.AvatarURL,
+		email.guarded, email.unchanged,
 	).Scan(&u.ID, &u.Email, &u.LFID, &u.Name, &u.GivenName, &u.FamilyName, &u.AvatarURL, &u.CreatedOn, &u.UpdatedOn)
 	if pgErr := (*pgconn.PgError)(nil); errors.As(err, &pgErr) && pgErr.Code == uniqueViolation && pgErr.ConstraintName == usersEmailKey {
 		return nil, domain.ErrEmailInUse

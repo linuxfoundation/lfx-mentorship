@@ -109,8 +109,10 @@ flowchart LR
    sign-in. A token email is verified at the gateway, so it replaces the stored
    one and reclaims the address from a stale row. Without one, the directory's
    primary email (`user_emails.read`) replaces the stored one; it is not known
-   to be verified, so it is never taken from another row, and on conflict the
-   stored email is kept.
+   to be verified, so it is never taken from another row, and never written
+   over an email another sign-in stored while it was being looked up. In both
+   cases the stored email is kept. The two lookups run together, so a
+   directory that does not answer costs a sign-in one timeout.
 6. The backend validates the JWT against the cluster-internal Heimdall JWKS.
 7. Handlers execute workflow logic without repeating the edge authorization
    decision.

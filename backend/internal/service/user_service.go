@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
@@ -46,8 +47,9 @@ func (s *UserService) SetAccountDirectory(directory domain.AccountDirectory) {
 // reclaims the address from any stale row. Without one, the directory's
 // primary email replaces the stored one instead, so the row follows a changed
 // primary address. The directory does not report whether that address is
-// verified, so it is never taken from another row: on conflict the stored
-// email is kept.
+// verified, so it is never taken from another row, and never written over an
+// email another sign-in stored while it was looked up: in both cases the
+// stored email is kept.
 func (s *UserService) Bootstrap(ctx context.Context, lfid string, input models.UserUpdateInput) (*models.User, error) {
 	if lfid == "" {
 		return nil, fmt.Errorf("%w: principal is required", domain.ErrInvalidInput)
@@ -61,12 +63,12 @@ func (s *UserService) Bootstrap(ctx context.Context, lfid string, input models.U
 	write := models.UserCreateInput{LFID: &lfid, Email: input.Email, Name: input.Name, GivenName: input.GivenName, FamilyName: input.FamilyName, AvatarURL: input.AvatarURL}
 	var user *models.User
 	var err error
-	if s.directory != nil {
-		s.refreshProfile(ctx, lfid, &write)
-	}
 	if write.Email == nil && s.directory != nil {
-		user, err = s.writeWithDirectoryEmail(ctx, lfid, write)
+		user, err = s.bootstrapWithDirectoryEmail(ctx, lfid, write)
 	} else {
+		if s.directory != nil {
+			s.refreshProfile(ctx, lfid, &write)
+		}
 		user, err = s.repo.BootstrapByLFID(ctx, write)
 	}
 	if err != nil {
@@ -92,18 +94,48 @@ func (s *UserService) refreshProfile(ctx context.Context, lfid string, write *mo
 	}
 }
 
-// writeWithDirectoryEmail stores write with the directory's primary email over
-// the stored one. UpsertByLFID, unlike BootstrapByLFID, never releases the
-// address from another row, so a conflict is retried without it.
-func (s *UserService) writeWithDirectoryEmail(ctx context.Context, lfid string, write models.UserCreateInput) (*models.User, error) {
-	write.Email = s.directoryEmail(ctx, lfid)
-	user, err := s.repo.UpsertByLFID(ctx, write)
+// bootstrapWithDirectoryEmail stores write with the directory's profile and
+// primary email. The two lookups run together, so a directory that does not
+// answer costs the sign-in one timeout, not two.
+//
+// The stored email is read before the lookup and the write replaces it only
+// while it is unchanged, so a stale directory answer never overwrites a
+// verified email a concurrent sign-in stored meanwhile. The write never
+// releases the address from another row either, so a conflict is retried
+// without it. If the stored email cannot be read, it is left as it is.
+func (s *UserService) bootstrapWithDirectoryEmail(ctx context.Context, lfid string, write models.UserCreateInput) (*models.User, error) {
+	stored, readable := s.storedEmail(ctx, lfid)
+	var email *string
+	var lookup sync.WaitGroup
+	if readable {
+		lookup.Go(func() { email = s.directoryEmail(ctx, lfid) })
+	}
+	s.refreshProfile(ctx, lfid, &write)
+	lookup.Wait()
+
+	write.Email = email
+	user, err := s.repo.UpsertByLFIDIfEmailUnchanged(ctx, write, stored)
 	if errors.Is(err, domain.ErrEmailInUse) && write.Email != nil {
 		slog.WarnContext(ctx, "directory email already belongs to another user; keeping the stored email")
 		write.Email = nil
-		user, err = s.repo.UpsertByLFID(ctx, write)
+		user, err = s.repo.UpsertByLFIDIfEmailUnchanged(ctx, write, stored)
 	}
 	return user, err
+}
+
+// storedEmail returns the email on the caller's row, nil when there is no row
+// or no email, and whether the row could be read.
+func (s *UserService) storedEmail(ctx context.Context, lfid string) (*string, bool) {
+	existing, err := s.repo.GetByLFID(ctx, lfid)
+	switch {
+	case err == nil:
+		return existing.Email, true
+	case errors.Is(err, domain.ErrUserNotFound):
+		return nil, true
+	default:
+		slog.WarnContext(ctx, "stored user read failed; keeping the stored email", "error", err)
+		return nil, false
+	}
 }
 
 // directoryEmail returns the caller's primary email from the directory, or nil.
