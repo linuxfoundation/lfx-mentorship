@@ -342,6 +342,46 @@ func TestNotifyMentorInvited_UnknownInviterStillInvites(t *testing.T) {
 	}
 }
 
+func TestNotifyMentorInvitedByEmail(t *testing.T) {
+	f := newFixture()
+	f.n.NotifyMentorInvitedByEmail(context.Background(), "p1", " new.mentor@example.org ", "inviter", "tok+en/=")
+
+	sent := f.wait(t)
+	if len(sent) != 1 {
+		t.Fatalf("sent %d messages, want 1", len(sent))
+	}
+	msg := sent[0]
+	if msg.To != "new.mentor@example.org" || msg.Subject != "Ada Admin invited you to mentor Kernel <Dev>" {
+		t.Fatalf("to/subject = %q / %q", msg.To, msg.Subject)
+	}
+	signUpURL := testSelfServeURL + "/login?returnTo=%2Fmentorship%2Fmentor"
+	profileURL := testSelfServeURL + "/mentorship/mentor"
+	inviteURL := testSelfServeURL + "/mentorship/mentor/invites?token=tok%2Ben%2F%3D"
+	mustContain(t, "text", msg.Text,
+		"Hi there!\n\nAda Admin invited you to join the Kernel <Dev> mentorship program on LFX Mentorship as a mentor.",
+		"Step 1: Create your LF account\nSign up with this email address: new.mentor@example.org\n",
+		"Create LF Account: "+signUpURL+"\n",
+		"Step 2: Create your mentor profile\n",
+		"Create Mentor Profile: "+profileURL+"\n",
+		"Step 3: Accept the invitation\n",
+		"Respond to Invitation: "+inviteURL+"\n",
+		"This link does not expire.",
+	)
+	if strings.Contains(msg.Text, "username") {
+		t.Fatalf("an invitee with no LF account has no username to log in with:\n%s", msg.Text)
+	}
+	mustContain(t, "html", msg.HTML, "Kernel &lt;Dev&gt;", `href="`+signUpURL+`"`, ">Create LF Account</a>",
+		`href="`+profileURL+`"`, ">Create Mentor Profile</a>", `href="`+inviteURL+`"`, ">Respond to Invitation</a>")
+}
+
+func TestNotifyMentorInvitedByEmail_BlankAddressSendsNothing(t *testing.T) {
+	f := newFixture()
+	f.n.NotifyMentorInvitedByEmail(context.Background(), "p1", "  ", "inviter", "tok")
+	if sent := f.wait(t); len(sent) != 0 {
+		t.Fatalf("sent = %+v, want nothing", sent)
+	}
+}
+
 func TestNotifyMentorDeclined(t *testing.T) {
 	f := newFixture()
 	f.n.NotifyMentorDeclined(context.Background(), "p1", "mentor")

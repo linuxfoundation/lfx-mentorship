@@ -22,6 +22,9 @@ type Notifier interface {
 	NotifyProfileCreated(ctx context.Context, userID string, profileType models.UserProfileType)
 	// NotifyMentorInvited emails the invited mentor a link to answer, naming inviterID as the inviter.
 	NotifyMentorInvited(ctx context.Context, programID, userID, inviterID, token string)
+	// NotifyMentorInvitedByEmail emails someone with no LF account yet the steps to
+	// sign up and answer an invitation sent to address, naming inviterID as the inviter.
+	NotifyMentorInvitedByEmail(ctx context.Context, programID, address, inviterID, token string)
 	// NotifyMentorDeclined tells the mentor a program admin declined their request.
 	NotifyMentorDeclined(ctx context.Context, programID, userID string)
 	// NotifyAdminMentorDeclined tells program admins the mentor declined their invite.

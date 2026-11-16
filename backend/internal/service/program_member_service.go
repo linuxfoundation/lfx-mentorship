@@ -32,6 +32,10 @@ const (
 
 var lfidPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{1,99}$`)
 
+// errNoLFAccount marks an invite by email that no LF account uses. A mentor
+// invite then becomes an email invitation; any other member is ineligible.
+var errNoLFAccount = errors.New("no LF account uses email")
+
 // autheliaTokenPrefix marks input auth-service's Authelia backend resolves as a bearer token.
 const autheliaTokenPrefix = "authelia"
 
@@ -192,10 +196,20 @@ func (s *ProgramMemberService) Create(ctx context.Context, programID string, inp
 		return nil, fmt.Errorf("%w: invalid member status %q", domain.ErrInvalidInput, *input.Status)
 	}
 
+	invite := input.MemberType == models.MemberTypeMentor && *input.Status == models.ProgramMemberStatusInvited
 	if input.UserID == "" {
 		var user *models.User
 		if inviteeEmail != "" {
 			user, err = s.userByEmail(ctx, inviteeEmail)
+			// Someone with no LF account yet can still be invited to mentor: the invitation
+			// holds their address until they sign up and accept.
+			if invite && errors.Is(err, errNoLFAccount) {
+				m, err := s.inviteByEmail(ctx, programID, inviteeEmail, input.ActorID)
+				if err != nil {
+					span.RecordError(err)
+				}
+				return m, err
+			}
 		} else {
 			user, err = s.userByLFID(ctx, input.LFID)
 		}
@@ -204,9 +218,11 @@ func (s *ProgramMemberService) Create(ctx context.Context, programID string, inp
 			return nil, err
 		}
 		input.UserID = user.ID
+		if invite && inviteeEmail != "" {
+			s.dropEmailInvite(ctx, programID, inviteeEmail)
+		}
 	}
 
-	invite := input.MemberType == models.MemberTypeMentor && *input.Status == models.ProgramMemberStatusInvited
 	if invite {
 		if m, err := s.reinvite(ctx, programID, input.UserID, input.ActorID); m != nil || err != nil {
 			return m, err
@@ -270,13 +286,76 @@ func (s *ProgramMemberService) sendInvite(ctx context.Context, programID, userID
 	s.notifier.NotifyMentorInvited(ctx, programID, userID, inviterID, token)
 }
 
+// inviteByEmail invites address, which no LF account uses yet, to mentor the
+// program. The invitation is a mentor row with no user; inviting the address
+// again resends the email and reopens a declined invitation.
+func (s *ProgramMemberService) inviteByEmail(ctx context.Context, programID, address, inviterID string) (*models.ProgramMember, error) {
+	invited := models.ProgramMemberStatusInvited
+	existing, err := s.repo.FindEmailInvite(ctx, programID, address)
+	switch {
+	case err == nil:
+		m := existing
+		if existing.Status == nil || *existing.Status != models.ProgramMemberStatusInvited {
+			from := []models.ProgramMemberStatus{models.ProgramMemberStatusDeclined}
+			if m, err = s.repo.UpdateIfStatus(ctx, existing.ID, from, models.ProgramMemberUpdateInput{Status: &invited}); err != nil {
+				return nil, fmt.Errorf("re-invite by email: %w", err)
+			}
+		}
+		s.sendEmailInvite(ctx, programID, m.ID, emailOf(m), inviterID)
+		return m, nil
+	case !errors.Is(err, domain.ErrProgramMemberNotFound):
+		return nil, fmt.Errorf("lookup email invitation: %w", err)
+	}
+
+	m, err := s.repo.Create(ctx, programID, models.ProgramMemberCreateInput{
+		ID:         uuid.New().String(),
+		MemberType: models.MemberTypeMentor,
+		Status:     &invited,
+		Email:      &address,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create email invitation: %w", err)
+	}
+	s.sendEmailInvite(ctx, programID, m.ID, address, inviterID)
+	return m, nil
+}
+
+// sendEmailInvite emails an email invitation's link to address; a signing failure is not fatal to the caller.
+func (s *ProgramMemberService) sendEmailInvite(ctx context.Context, programID, memberID, address, inviterID string) {
+	if s.inviteSecret == "" || address == "" {
+		return
+	}
+	token, err := auth.GenerateEmailInviteToken(programID, memberID, s.inviteSecret)
+	if err != nil {
+		trace.SpanFromContext(ctx).RecordError(err)
+		return
+	}
+	s.notifier.NotifyMentorInvitedByEmail(ctx, programID, address, inviterID, token)
+}
+
+// dropEmailInvite deletes the program's email invitation for address once the
+// address belongs to an LF account that is invited by its account instead. A
+// failure only leaves a stale row, so it is recorded and not returned.
+func (s *ProgramMemberService) dropEmailInvite(ctx context.Context, programID, address string) {
+	stale, err := s.repo.FindEmailInvite(ctx, programID, address)
+	if errors.Is(err, domain.ErrProgramMemberNotFound) {
+		return
+	}
+	if err == nil {
+		err = s.repo.Delete(ctx, stale.ID)
+	}
+	if err != nil {
+		trace.SpanFromContext(ctx).RecordError(fmt.Errorf("drop superseded email invitation: %w", err))
+	}
+}
+
 func (s *ProgramMemberService) userByEmail(ctx context.Context, email string) (*models.User, error) {
 	if s.directory == nil {
 		return nil, fmt.Errorf("%w: LF account lookup is not configured", domain.ErrUpstreamUnavailable)
 	}
 	username, err := s.directory.UsernameByEmail(ctx, email)
 	if errors.Is(err, domain.ErrAccountNotFound) {
-		return nil, fmt.Errorf("%w: no LF account uses email %q", domain.ErrIneligible, email)
+		return nil, fmt.Errorf("%w: %w %q", domain.ErrIneligible, errNoLFAccount, email)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("look up LF account by email: %w", err)
@@ -695,6 +774,11 @@ func (s *ProgramMemberService) Update(ctx context.Context, programID, id string,
 	if current.ProgramID != programID {
 		return nil, domain.ErrProgramMemberNotFound
 	}
+	// An email invitation has no user to approve: only its invitee can accept it,
+	// so an admin may only revoke it.
+	if current.UserID == "" && input.Status != nil && *input.Status != models.ProgramMemberStatusDeclined {
+		return nil, fmt.Errorf("%w: an invitation sent by email can only be revoked", domain.ErrInvalidStateTransition)
+	}
 
 	if input.Status == nil {
 		m, err := s.repo.Update(ctx, id, input)
@@ -726,15 +810,25 @@ func (s *ProgramMemberService) Update(ctx context.Context, programID, id string,
 	return m, nil
 }
 
-// AcceptInvite validates a mentor invite token and transitions the member to active.
-func (s *ProgramMemberService) AcceptInvite(ctx context.Context, token, actorID string) (*models.ProgramMember, error) {
+// AcceptInvite validates a mentor invite token and transitions the member to
+// approved. A token for an email invitation makes the caller the mentor, once
+// the invited address is shown to belong to the caller's LF account.
+func (s *ProgramMemberService) AcceptInvite(ctx context.Context, token string, actor models.UserPrincipal) (*models.ProgramMember, error) {
 	ctx, span := programMemberSvcTracer.Start(ctx, "ProgramMemberService.AcceptInvite")
 	defer span.End()
 
-	programID, userID, err := auth.ValidateInviteToken(token, s.inviteSecret)
+	claims, err := auth.ParseInviteToken(token, s.inviteSecret)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", domain.ErrInvalidInput, err.Error())
 	}
+	if claims.MemberID != "" {
+		m, err := s.acceptEmailInvite(ctx, claims, actor)
+		if err != nil {
+			span.RecordError(err)
+		}
+		return m, err
+	}
+	programID, userID, actorID := claims.ProgramID, claims.UserID, actor.UserID
 	if actorID == "" || actorID != userID {
 		return nil, fmt.Errorf("%w: invite belongs to a different user", domain.ErrForbidden)
 	}
@@ -761,15 +855,24 @@ func (s *ProgramMemberService) AcceptInvite(ctx context.Context, token, actorID 
 	return m, nil
 }
 
-// DeclineInvite validates a mentor invite token and transitions the member to declined.
-func (s *ProgramMemberService) DeclineInvite(ctx context.Context, token, actorID string) error {
+// DeclineInvite validates a mentor invite token and transitions the member to
+// declined. An email invitation is declined only by the owner of its address.
+func (s *ProgramMemberService) DeclineInvite(ctx context.Context, token string, actor models.UserPrincipal) error {
 	ctx, span := programMemberSvcTracer.Start(ctx, "ProgramMemberService.DeclineInvite")
 	defer span.End()
 
-	programID, userID, err := auth.ValidateInviteToken(token, s.inviteSecret)
+	claims, err := auth.ParseInviteToken(token, s.inviteSecret)
 	if err != nil {
 		return fmt.Errorf("%w: %s", domain.ErrInvalidInput, err.Error())
 	}
+	if claims.MemberID != "" {
+		if err := s.declineEmailInvite(ctx, claims, actor); err != nil {
+			span.RecordError(err)
+			return err
+		}
+		return nil
+	}
+	programID, userID, actorID := claims.ProgramID, claims.UserID, actor.UserID
 	if actorID == "" || actorID != userID {
 		return fmt.Errorf("%w: invite belongs to a different user", domain.ErrForbidden)
 	}
@@ -791,6 +894,80 @@ func (s *ProgramMemberService) DeclineInvite(ctx context.Context, token, actorID
 		return fmt.Errorf("decline invite: %w", err)
 	}
 	s.notifier.NotifyAdminMentorDeclined(ctx, programID, userID)
+	return nil
+}
+
+// acceptEmailInvite approves the caller as a mentor from an open email invitation.
+func (s *ProgramMemberService) acceptEmailInvite(ctx context.Context, claims *auth.InviteClaims, actor models.UserPrincipal) (*models.ProgramMember, error) {
+	invite, err := s.openEmailInvite(ctx, claims, actor)
+	if err != nil {
+		return nil, err
+	}
+	prog, err := s.programRepo.GetByID(ctx, invite.ProgramID)
+	if err != nil {
+		return nil, fmt.Errorf("get program: %w", err)
+	}
+	if prog.Status != models.ProgramStatusPublished {
+		return nil, fmt.Errorf("%w: program is not published", domain.ErrConflict)
+	}
+	m, err := s.repo.ClaimEmailInvite(ctx, invite.ID, actor.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("accept email invite: %w", err)
+	}
+	s.notifier.NotifyAdminMentorAccepted(ctx, invite.ProgramID, actor.UserID)
+	return m, nil
+}
+
+// declineEmailInvite moves an open email invitation to declined.
+func (s *ProgramMemberService) declineEmailInvite(ctx context.Context, claims *auth.InviteClaims, actor models.UserPrincipal) error {
+	invite, err := s.openEmailInvite(ctx, claims, actor)
+	if err != nil {
+		return err
+	}
+	declined := models.ProgramMemberStatusDeclined
+	if _, err := s.repo.UpdateIfStatus(ctx, invite.ID, []models.ProgramMemberStatus{models.ProgramMemberStatusInvited}, models.ProgramMemberUpdateInput{Status: &declined}); err != nil {
+		return fmt.Errorf("decline email invite: %w", err)
+	}
+	s.notifier.NotifyAdminMentorDeclined(ctx, invite.ProgramID, actor.UserID)
+	return nil
+}
+
+// openEmailInvite returns the open email invitation the token names, once the
+// invited address is shown to belong to the caller. A row that is gone, already
+// answered or no longer the token's is a 400, as for a user invite; an address
+// the caller's LF account does not use is a 403.
+func (s *ProgramMemberService) openEmailInvite(ctx context.Context, claims *auth.InviteClaims, actor models.UserPrincipal) (*models.ProgramMember, error) {
+	if actor.UserID == "" || actor.LFID == "" {
+		return nil, fmt.Errorf("%w: caller identity is required", domain.ErrForbidden)
+	}
+	invite, err := s.repo.GetByID(ctx, claims.MemberID)
+	if err != nil && !errors.Is(err, domain.ErrProgramMemberNotFound) {
+		return nil, fmt.Errorf("lookup email invitation: %w", err)
+	}
+	if invite == nil || invite.ProgramID != claims.ProgramID || invite.UserID != "" ||
+		invite.MemberType != models.MemberTypeMentor || invite.Status == nil ||
+		*invite.Status != models.ProgramMemberStatusInvited || emailOf(invite) == "" {
+		return nil, fmt.Errorf("%w: no pending invite found for this invitation", domain.ErrInvalidInput)
+	}
+	if err := s.assertOwnsEmail(ctx, *invite.Email, actor.LFID); err != nil {
+		return nil, err
+	}
+	return invite, nil
+}
+
+// assertOwnsEmail checks with auth-service that address is a verified email of
+// the LF account lfid; users.email is self-editable, so it cannot say.
+func (s *ProgramMemberService) assertOwnsEmail(ctx context.Context, address, lfid string) error {
+	if s.directory == nil {
+		return fmt.Errorf("%w: LF account lookup is not configured", domain.ErrUpstreamUnavailable)
+	}
+	username, err := s.directory.UsernameByEmail(ctx, address)
+	if errors.Is(err, domain.ErrAccountNotFound) || (err == nil && !strings.EqualFold(username, lfid)) {
+		return fmt.Errorf("%w: the invitation was sent to an email address this LF account does not use", domain.ErrForbidden)
+	}
+	if err != nil {
+		return fmt.Errorf("look up LF account by email: %w", err)
+	}
 	return nil
 }
 
@@ -830,4 +1007,12 @@ func (s *ProgramMemberService) Delete(ctx context.Context, programID, id, actorI
 		return fmt.Errorf("delete program member: %w", err)
 	}
 	return nil
+}
+
+// emailOf is the member row's email, or "" when it has none.
+func emailOf(m *models.ProgramMember) string {
+	if m.Email == nil {
+		return ""
+	}
+	return *m.Email
 }

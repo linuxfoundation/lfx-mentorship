@@ -16,6 +16,9 @@ type ProgramMentorManagementRow struct {
 	CreatedOn      time.Time            `json:"created_on"`
 	UpdatedOn      time.Time            `json:"updated_on"`
 	ProfileCreated bool                 `json:"profile_created"`
+	// PendingAccount marks an invitation sent by email to someone with no LF account yet;
+	// such a row has an empty user_id and shows only its email.
+	PendingAccount bool `json:"pending_account"`
 }
 
 // ProgramMemberStatus enumerates valid values for program_members.status.
@@ -61,8 +64,9 @@ func (t MemberType) IsValid() bool {
 
 // ProgramMember maps to the public.program_members table.
 type ProgramMember struct {
-	ID         string               `json:"id"`
-	ProgramID  string               `json:"program_id"`
+	ID        string `json:"id"`
+	ProgramID string `json:"program_id"`
+	// UserID is empty for an invitation sent by email to someone with no LF account yet.
 	UserID     string               `json:"user_id"`
 	MemberType MemberType           `json:"member_type"`
 	Status     *ProgramMemberStatus `json:"status,omitempty"`

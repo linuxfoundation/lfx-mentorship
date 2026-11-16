@@ -26,21 +26,35 @@ var ErrInvalidInviteToken = errors.New("invalid invite token")
 // is ever relaxed.
 var ErrNoInviteSecret = errors.New("invite secret is not configured")
 
+// InviteClaims are what an invite token names: the program, and either the
+// invited user or, for an invitation sent by email to someone with no LF account
+// yet, the mentor row that holds the address. Exactly one of UserID and MemberID
+// is set.
+//
 // Invite tokens do not expire: accepting or declining needs the invitee signed in
 // and their mentor row still invited, so an old link is harmless.
-type inviteClaims struct {
+type InviteClaims struct {
 	ProgramID string `json:"program_id"`
-	UserID    string `json:"user_id"`
+	UserID    string `json:"user_id,omitempty"`
+	MemberID  string `json:"member_id,omitempty"`
 }
 
 // GenerateInviteToken creates a signed HMAC-SHA256 invite token for the given mentor.
 func GenerateInviteToken(programID, userID, secret string) (string, error) {
+	return generateInviteToken(InviteClaims{ProgramID: programID, UserID: userID}, secret)
+}
+
+// GenerateEmailInviteToken creates a signed invite token for an email-only mentor
+// row, which has no user until the invitee accepts.
+func GenerateEmailInviteToken(programID, memberID, secret string) (string, error) {
+	return generateInviteToken(InviteClaims{ProgramID: programID, MemberID: memberID}, secret)
+}
+
+// generateInviteToken signs claims. A user token's payload omits member_id, so it
+// is byte-for-byte the token earlier releases issued for the same invite.
+func generateInviteToken(claims InviteClaims, secret string) (string, error) {
 	if secret == "" {
 		return "", ErrNoInviteSecret
-	}
-	claims := inviteClaims{
-		ProgramID: programID,
-		UserID:    userID,
 	}
 	payload, err := json.Marshal(claims)
 	if err != nil {
@@ -52,32 +66,49 @@ func GenerateInviteToken(programID, userID, secret string) (string, error) {
 }
 
 // ValidateInviteToken parses and verifies a token produced by GenerateInviteToken.
-// On success it returns the programID and userID embedded in the token.
+// On success it returns the programID and userID embedded in the token; an email
+// invite token is rejected, since it names no user.
 func ValidateInviteToken(token, secret string) (programID, userID string, err error) {
+	claims, err := ParseInviteToken(token, secret)
+	if err != nil {
+		return "", "", err
+	}
+	if claims.UserID == "" {
+		return "", "", ErrInvalidInviteToken
+	}
+	return claims.ProgramID, claims.UserID, nil
+}
+
+// ParseInviteToken verifies a token produced by GenerateInviteToken or
+// GenerateEmailInviteToken and returns its claims.
+func ParseInviteToken(token, secret string) (*InviteClaims, error) {
 	if secret == "" {
-		return "", "", ErrNoInviteSecret
+		return nil, ErrNoInviteSecret
 	}
 	parts := strings.SplitN(token, ".", 2)
 	if len(parts) != 2 {
-		return "", "", ErrInvalidInviteToken
+		return nil, ErrInvalidInviteToken
 	}
 	encoded, givenSig := parts[0], parts[1]
 
 	expectedSig := sign(encoded, secret)
 	if !hmac.Equal([]byte(givenSig), []byte(expectedSig)) {
-		return "", "", ErrInvalidInviteToken
+		return nil, ErrInvalidInviteToken
 	}
 
 	payload, err := base64.RawURLEncoding.DecodeString(encoded)
 	if err != nil {
-		return "", "", ErrInvalidInviteToken
+		return nil, ErrInvalidInviteToken
 	}
 
-	var claims inviteClaims
+	var claims InviteClaims
 	if err := json.Unmarshal(payload, &claims); err != nil {
-		return "", "", ErrInvalidInviteToken
+		return nil, ErrInvalidInviteToken
 	}
-	return claims.ProgramID, claims.UserID, nil
+	if claims.ProgramID == "" || (claims.UserID == "") == (claims.MemberID == "") {
+		return nil, ErrInvalidInviteToken
+	}
+	return &claims, nil
 }
 
 func sign(payload, secret string) string {

@@ -45,6 +45,11 @@ func (n *LogNotifier) NotifyMentorInvited(ctx context.Context, programID, userID
 	n.logger.InfoContext(ctx, "notify: mentor invited", "program_id", programID, "user_id", userID)
 }
 
+// NotifyMentorInvitedByEmail logs a mentor invitation sent to an address with no LF account.
+func (n *LogNotifier) NotifyMentorInvitedByEmail(ctx context.Context, programID, _, _, _ string) {
+	n.logger.InfoContext(ctx, "notify: mentor invited by email", "program_id", programID)
+}
+
 // NotifyMentorDeclined logs a mentor-declined event.
 func (n *LogNotifier) NotifyMentorDeclined(ctx context.Context, programID, userID string) {
 	n.logger.InfoContext(ctx, "notify: mentor declined", "program_id", programID, "user_id", userID)
