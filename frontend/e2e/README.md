@@ -55,8 +55,9 @@ them. It also cleans up after earlier runs that failed.
 
 ### Secrets for CI
 
-Add these repository secrets for
-[`.github/workflows/e2e-journey.yml`](../../.github/workflows/e2e-journey.yml):
+The journey job in [`.github/workflows/e2e-journey.yml`](../../.github/workflows/e2e-journey.yml)
+reads these from the repository's `dev` environment, so no other job can read them
+(set up in #449):
 
 - `E2E_ADMIN_A_USERNAME`, `E2E_ADMIN_A_PASSWORD`
 - `E2E_ADMIN_B_USERNAME`, `E2E_ADMIN_B_PASSWORD`
