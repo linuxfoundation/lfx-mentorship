@@ -9,6 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
@@ -17,6 +20,10 @@ import (
 )
 
 var userSvcTracer = otel.Tracer("users-service")
+
+// identityProviderSubjectSeparator appears in an identity provider's subject (auth0|<username>)
+// and never in an LF username.
+const identityProviderSubjectSeparator = "|"
 
 // UserService orchestrates user reads and writes.
 type UserService struct {
@@ -29,28 +36,37 @@ func NewUserService(repo domain.UserRepository) *UserService {
 	return &UserService{repo: repo}
 }
 
-// SetAccountDirectory makes Bootstrap fill a new user's email and name from
-// the LF directory when the token did not carry them, as lfx-crowdfunding's
-// sign-in sync does.
+// SetAccountDirectory makes Bootstrap refresh the user's name and avatar from
+// the LF directory on every sign-in, and their email when the token has none.
 func (s *UserService) SetAccountDirectory(directory domain.AccountDirectory) {
 	s.directory = directory
 }
 
-// Bootstrap resolves or creates the local user for a Heimdall LFID. Identity
-// comes from the token and the body first; the LF directory fills only what
-// those and the stored row all lack. The directory's values are written as a
-// fill, which the repository applies only to columns still NULL in the same
-// statement, so an edit made through PATCH /me while the lookup was in flight
-// is never replaced. A failed lookup leaves those fields empty and is logged;
-// it never fails the sign-in, and a later sign-in completes the row.
+// Bootstrap resolves or creates the local user for a Heimdall LFID. The LF
+// directory is the source of truth for name and avatar, so on every sign-in
+// its current values replace the stored ones; the token and the body supply
+// only what the directory does not have. A failed lookup is logged and never
+// fails the sign-in: the token's values are stored and the next sign-in
+// refreshes the rest.
 //
-// A token email is verified at the gateway, so it reclaims the address from
-// any stale row. The directory does not report whether the primary email is
-// verified, so an address from there is stored only while no other row holds
-// it: on conflict it is left unset rather than taken.
+// A token email is verified at the gateway, so it replaces the stored one and
+// reclaims the address from any stale row. Without one, the directory's
+// primary email replaces the stored one instead, so the row follows a changed
+// primary address. The directory does not report whether that address is
+// verified, so it is never taken from another row, and never written over an
+// email another sign-in stored while it was looked up: in both cases the
+// stored email is kept.
 func (s *UserService) Bootstrap(ctx context.Context, lfid string, input models.UserUpdateInput) (*models.User, error) {
 	if lfid == "" {
 		return nil, fmt.Errorf("%w: principal is required", domain.ErrInvalidInput)
+	}
+	// A token issued before the identity provider attached the LF username carries the provider's
+	// subject as its principal. A user stored under it splits from the one the next sign-in
+	// creates, so nothing is stored (linuxfoundation/lfx-self-serve-ops#1468). The principal is
+	// left out of the log: it contains the username.
+	if strings.Contains(lfid, identityProviderSubjectSeparator) {
+		slog.WarnContext(ctx, "bootstrap rejected: the principal is an identity provider subject, not an LF username")
+		return nil, fmt.Errorf("%w: your sign-in did not include your LF username; sign out and sign in again", domain.ErrIneligible)
 	}
 	if err := validateUserNames(input.Name, input.GivenName, input.FamilyName); err != nil {
 		return nil, err
@@ -59,28 +75,15 @@ func (s *UserService) Bootstrap(ctx context.Context, lfid string, input models.U
 	defer span.End()
 
 	write := models.UserCreateInput{LFID: &lfid, Email: input.Email, Name: input.Name, GivenName: input.GivenName, FamilyName: input.FamilyName, AvatarURL: input.AvatarURL}
-	var fill models.UserIdentityFill
-	if s.directory != nil {
-		known := s.knownIdentity(ctx, lfid, input)
-		resolved, err := s.ResolveIdentity(ctx, lfid, known)
-		if err != nil {
-			slog.WarnContext(ctx, "directory lookup failed; bootstrapping with the token's identity only", "error", err)
+	var user *models.User
+	var err error
+	if write.Email == nil && s.directory != nil {
+		user, err = s.bootstrapWithDirectoryEmail(ctx, lfid, write)
+	} else {
+		if s.directory != nil {
+			s.refreshProfile(ctx, lfid, &write)
 		}
-		fill = models.UserIdentityFill{
-			Email:      newlyFilled(known.Email, resolved.Email),
-			Name:       newlyFilled(known.Name, resolved.Name),
-			GivenName:  newlyFilled(known.GivenName, resolved.GivenName),
-			FamilyName: newlyFilled(known.FamilyName, resolved.FamilyName),
-			AvatarURL:  newlyFilled(known.AvatarURL, resolved.AvatarURL),
-		}
-	}
-
-	user, err := s.repo.BootstrapByLFID(ctx, write, fill)
-	if errors.Is(err, domain.ErrEmailInUse) && fill.Email != nil {
-		// Only a fill email can collide: the token's was released first.
-		slog.WarnContext(ctx, "directory email already belongs to another user; bootstrapping without email")
-		fill.Email = nil
-		user, err = s.repo.BootstrapByLFID(ctx, write, fill)
+		user, err = s.repo.BootstrapByLFID(ctx, write)
 	}
 	if err != nil {
 		span.RecordError(err)
@@ -89,24 +92,77 @@ func (s *UserService) Bootstrap(ctx context.Context, lfid string, input models.U
 	return user, nil
 }
 
-// knownIdentity merges the sign-in input with the stored row, so the directory
-// is asked only for fields neither has. It saves lookups; correctness against
-// a concurrent edit comes from the repository's fill semantics, not from this
-// read. A missing row (first sign-in) or a failed read leaves the input as is.
-func (s *UserService) knownIdentity(ctx context.Context, lfid string, input models.UserUpdateInput) models.UserUpdateInput {
-	existing, err := s.repo.GetByLFID(ctx, lfid)
-	if err != nil {
-		if !errors.Is(err, domain.ErrUserNotFound) {
-			slog.WarnContext(ctx, "stored user read failed before directory lookup", "error", err)
-		}
-		return input
+// refreshProfile replaces write's name and avatar fields with the directory's
+// values wherever the directory has one.
+func (s *UserService) refreshProfile(ctx context.Context, lfid string, write *models.UserCreateInput) {
+	account, err := s.directory.Account(ctx, lfid)
+	switch {
+	case err == nil:
+		preferValue(&write.Name, boundedName(account.Name))
+		preferValue(&write.GivenName, boundedName(account.GivenName))
+		preferValue(&write.FamilyName, boundedName(account.FamilyName))
+		preferValue(&write.AvatarURL, account.AvatarURL)
+	case errors.Is(err, domain.ErrAccountNotFound):
+	default:
+		slog.WarnContext(ctx, "directory profile lookup failed; keeping the token's profile", "error", err)
 	}
-	fillMissing(&input.Email, existing.Email)
-	fillMissing(&input.Name, existing.Name)
-	fillMissing(&input.GivenName, existing.GivenName)
-	fillMissing(&input.FamilyName, existing.FamilyName)
-	fillMissing(&input.AvatarURL, existing.AvatarURL)
-	return input
+}
+
+// bootstrapWithDirectoryEmail stores write with the directory's profile and
+// primary email. The two lookups run together, so a directory that does not
+// answer costs the sign-in one timeout, not two.
+//
+// The caller's row is read before the lookup and the write replaces its email
+// only while the row has not been written since, so a stale directory answer
+// never overwrites a verified email a concurrent sign-in stored meanwhile,
+// even the same address again. The write never releases the address from
+// another row either, so a conflict is retried without it. If the row cannot
+// be read, its email is left as it is.
+func (s *UserService) bootstrapWithDirectoryEmail(ctx context.Context, lfid string, write models.UserCreateInput) (*models.User, error) {
+	updatedOn, readable := s.storedUpdatedOn(ctx, lfid)
+	var email *string
+	var lookup sync.WaitGroup
+	if readable {
+		lookup.Go(func() { email = s.directoryEmail(ctx, lfid) })
+	}
+	s.refreshProfile(ctx, lfid, &write)
+	lookup.Wait()
+
+	write.Email = email
+	user, err := s.repo.UpsertByLFIDIfUnchanged(ctx, write, updatedOn)
+	if errors.Is(err, domain.ErrEmailInUse) && write.Email != nil {
+		slog.WarnContext(ctx, "directory email already belongs to another user; keeping the stored email")
+		write.Email = nil
+		user, err = s.repo.UpsertByLFIDIfUnchanged(ctx, write, updatedOn)
+	}
+	return user, err
+}
+
+// storedUpdatedOn returns when the caller's row was last written, nil when
+// there is no row, and whether the row could be read.
+func (s *UserService) storedUpdatedOn(ctx context.Context, lfid string) (*time.Time, bool) {
+	existing, err := s.repo.GetByLFID(ctx, lfid)
+	switch {
+	case err == nil:
+		return &existing.UpdatedOn, true
+	case errors.Is(err, domain.ErrUserNotFound):
+		return nil, true
+	default:
+		slog.WarnContext(ctx, "stored user read failed; keeping the stored email", "error", err)
+		return nil, false
+	}
+}
+
+// directoryEmail returns the caller's primary email from the directory, or nil.
+func (s *UserService) directoryEmail(ctx context.Context, lfid string) *string {
+	email, err := s.directory.PrimaryEmail(ctx, lfid)
+	switch {
+	case err == nil && email != "":
+		return &email
+	case err != nil && !errors.Is(err, domain.ErrAccountNotFound):
+		slog.WarnContext(ctx, "directory email lookup failed", "error", err)
+	}
+	return nil
 }
 
 // ResolveIdentity returns input with the identity fields it lacks filled from
@@ -152,13 +208,11 @@ func fillMissing(field **string, value *string) {
 	}
 }
 
-// newlyFilled returns after when before was empty and after is not: the value
-// a resolution step added.
-func newlyFilled(before, after *string) *string {
-	if before == nil && after != nil && *after != "" {
-		return after
+// preferValue sets field to value when the value is not empty.
+func preferValue(field **string, value *string) {
+	if value != nil && *value != "" {
+		*field = value
 	}
-	return nil
 }
 
 // GetByID returns the user with the given ID.

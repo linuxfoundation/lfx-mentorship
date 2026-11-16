@@ -1,7 +1,7 @@
 // Copyright The Linux Foundation and each contributor to LFX.
 // SPDX-License-Identifier: MIT
-import DOMPurify from 'isomorphic-dompurify';
 import { RICH_TEXT_SANITIZE_CONFIG } from '~/utils/rich-text';
+import { sanitizeHtml } from '~/utils/sanitize-html';
 
 /**
  * Whether `raw` contains a `<` + letter with a `>` somewhere after it — what
@@ -15,7 +15,7 @@ export const hasHtmlTags = (raw: string): boolean => {
 };
 
 export const useSanitize = () => {
-  const sanitize = (dirty: string) => DOMPurify.sanitize(dirty);
+  const sanitize = (dirty: string) => sanitizeHtml(dirty);
 
   const escapeHtml = (text: string): string =>
     text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -28,7 +28,7 @@ export const useSanitize = () => {
    */
   const renderDescription = (raw: string): string => {
     if (hasHtmlTags(raw)) {
-      return DOMPurify.sanitize(raw, RICH_TEXT_SANITIZE_CONFIG);
+      return sanitizeHtml(raw, RICH_TEXT_SANITIZE_CONFIG);
     }
     // Plain text: normalize line endings (CRLF/CR → LF), split blank lines into
     // paragraphs, single newlines become <br>. Escape HTML-sensitive characters
@@ -39,7 +39,7 @@ export const useSanitize = () => {
       .filter((p) => p.trim())
       .map((p) => `<p>${escapeHtml(p).replace(/\n/g, '<br>')}</p>`)
       .join('');
-    return DOMPurify.sanitize(html || raw, RICH_TEXT_SANITIZE_CONFIG);
+    return sanitizeHtml(html || raw, RICH_TEXT_SANITIZE_CONFIG);
   };
 
   return { sanitize, renderDescription };

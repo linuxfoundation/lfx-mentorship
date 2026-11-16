@@ -342,6 +342,46 @@ func TestNotifyMentorInvited_UnknownInviterStillInvites(t *testing.T) {
 	}
 }
 
+func TestNotifyMentorInvitedByEmail(t *testing.T) {
+	f := newFixture()
+	f.n.NotifyMentorInvitedByEmail(context.Background(), "p1", " new.mentor@example.org ", "inviter", "tok+en/=")
+
+	sent := f.wait(t)
+	if len(sent) != 1 {
+		t.Fatalf("sent %d messages, want 1", len(sent))
+	}
+	msg := sent[0]
+	if msg.To != "new.mentor@example.org" || msg.Subject != "Ada Admin invited you to mentor Kernel <Dev>" {
+		t.Fatalf("to/subject = %q / %q", msg.To, msg.Subject)
+	}
+	signUpURL := testSelfServeURL + "/login?returnTo=%2Fmentorship%2Fmentor"
+	profileURL := testSelfServeURL + "/mentorship/mentor"
+	inviteURL := testSelfServeURL + "/mentorship/mentor/invites?token=tok%2Ben%2F%3D"
+	mustContain(t, "text", msg.Text,
+		"Hi there!\n\nAda Admin invited you to join the Kernel <Dev> mentorship program on LFX Mentorship as a mentor.",
+		"Step 1: Create your LF account\nSign up with this email address: new.mentor@example.org\n",
+		"Create LF Account: "+signUpURL+"\n",
+		"Step 2: Create your mentor profile\n",
+		"Create Mentor Profile: "+profileURL+"\n",
+		"Step 3: Accept the invitation\n",
+		"Respond to Invitation: "+inviteURL+"\n",
+		"This link does not expire.",
+	)
+	if strings.Contains(msg.Text, "username") {
+		t.Fatalf("an invitee with no LF account has no username to log in with:\n%s", msg.Text)
+	}
+	mustContain(t, "html", msg.HTML, "Kernel &lt;Dev&gt;", `href="`+signUpURL+`"`, ">Create LF Account</a>",
+		`href="`+profileURL+`"`, ">Create Mentor Profile</a>", `href="`+inviteURL+`"`, ">Respond to Invitation</a>")
+}
+
+func TestNotifyMentorInvitedByEmail_BlankAddressSendsNothing(t *testing.T) {
+	f := newFixture()
+	f.n.NotifyMentorInvitedByEmail(context.Background(), "p1", "  ", "inviter", "tok")
+	if sent := f.wait(t); len(sent) != 0 {
+		t.Fatalf("sent = %+v, want nothing", sent)
+	}
+}
+
 func TestNotifyMentorDeclined(t *testing.T) {
 	f := newFixture()
 	f.n.NotifyMentorDeclined(context.Background(), "p1", "mentor")
@@ -1352,6 +1392,62 @@ func TestNotifyMenteeTaskAssigned_TaskWithoutApplicationSendsNothing(t *testing.
 	f.tasks.tasks = []*models.Task{{ID: "task-1", AssigneeID: "mentee"}}
 	f.n.NotifyMenteeTaskAssigned(context.Background(), "task-1")
 	f.n.NotifyMenteeTaskAssigned(context.Background(), "missing")
+
+	if sent := f.wait(t); len(sent) != 0 {
+		t.Fatalf("sent = %+v", sent)
+	}
+}
+
+func TestNotifyMenteeTaskChangesRequested(t *testing.T) {
+	appID := "a1"
+	for name, tc := range map[string]struct {
+		due      *string
+		reason   string
+		want     []string
+		wantHTML []string
+		notWant  []string
+	}{
+		"with reason and due date": {
+			due:      strPtr("2026-10-20"),
+			reason:   "Add <tests>.\nThen resubmit.",
+			want:     []string{"Task Name: Ship <it>\nDue Date: October 20, 2026\n", "Reason:\nAdd <tests>.\nThen resubmit.\n"},
+			wantHTML: []string{"Ship &lt;it&gt;", "Add &lt;tests&gt;.\nThen resubmit.", "white-space:pre-line"},
+		},
+		"without reason or due date": {notWant: []string{"Reason", "Due Date"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture()
+			f.tasks.tasks = []*models.Task{{ID: "task-1", ApplicationID: &appID, AssigneeID: "mentee", Name: strPtr("Ship <it>"), DueDate: tc.due}}
+
+			f.n.NotifyMenteeTaskChangesRequested(context.Background(), "task-1", tc.reason)
+
+			sent := f.wait(t)
+			if len(sent) != 1 || sent[0].To != "mentee@linuxfoundation.org" || sent[0].Subject != "Changes requested on your task for Kernel <Dev> mentorship program." {
+				t.Fatalf("sent = %+v", sent)
+			}
+			mustContain(t, "text", sent[0].Text,
+				"Hi Mia!",
+				"Your reviewer requested changes on a task you submitted for the Kernel <Dev> mentorship. The task is back in your To Do list.",
+				"Please update your work and submit the task again.",
+				"Task Name: Ship <it>\n",
+				"View Tasks: "+testSelfServeURL+"/mentorship/mentee/tasks",
+			)
+			mustContain(t, "text", sent[0].Text, tc.want...)
+			mustContain(t, "html", sent[0].HTML, tc.wantHTML...)
+			for _, notWant := range tc.notWant {
+				if strings.Contains(sent[0].Text, notWant) || strings.Contains(sent[0].HTML, notWant) {
+					t.Fatalf("message mentions %q:\n%s", notWant, sent[0].Text)
+				}
+			}
+		})
+	}
+}
+
+func TestNotifyMenteeTaskChangesRequested_TaskWithoutApplicationSendsNothing(t *testing.T) {
+	f := newFixture()
+	f.tasks.tasks = []*models.Task{{ID: "task-1", AssigneeID: "mentee"}}
+	f.n.NotifyMenteeTaskChangesRequested(context.Background(), "task-1", "Add tests.")
+	f.n.NotifyMenteeTaskChangesRequested(context.Background(), "missing", "Add tests.")
 
 	if sent := f.wait(t); len(sent) != 0 {
 		t.Fatalf("sent = %+v", sent)

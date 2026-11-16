@@ -18,9 +18,13 @@ type UserRepository interface {
 	Create(ctx context.Context, input models.UserCreateInput) (*models.User, error)
 	UpsertByLFID(ctx context.Context, input models.UserCreateInput) (*models.User, error)
 	// BootstrapByLFID upserts the caller's own row from their verified identity, taking the email
-	// back from any other row that still holds it. fill sets only columns still NULL at write
-	// time and never takes an email from another row (ErrEmailInUse instead).
-	BootstrapByLFID(ctx context.Context, input models.UserCreateInput, fill models.UserIdentityFill) (*models.User, error)
+	// back from any other row that still holds it. UpsertByLFID never takes an email from another
+	// row; it returns ErrEmailInUse instead.
+	BootstrapByLFID(ctx context.Context, input models.UserCreateInput) (*models.User, error)
+	// UpsertByLFIDIfUnchanged is UpsertByLFID that replaces the stored email only while the row
+	// has not been written since it was read, before input.Email was looked up. updatedOn is the
+	// row's UpdatedOn then, nil when there was no row.
+	UpsertByLFIDIfUnchanged(ctx context.Context, input models.UserCreateInput, updatedOn *time.Time) (*models.User, error)
 	// SearchCandidates matches part of a name or an LFID prefix, never an email.
 	SearchCandidates(ctx context.Context, query string, limit int) ([]*models.User, error)
 	Update(ctx context.Context, id string, input models.UserUpdateInput) (*models.User, error)
@@ -157,6 +161,15 @@ type ProgramMemberRepository interface {
 	// write are atomic, so a status validated by the caller cannot go stale.
 	UpdateIfStatus(ctx context.Context, id string, from []models.ProgramMemberStatus, input models.ProgramMemberUpdateInput) (*models.ProgramMember, error)
 	Delete(ctx context.Context, id string) error
+	// FindEmailInvite returns the program's email invitation (a mentor row with no
+	// user) for an address, compared without case, or ErrProgramMemberNotFound.
+	FindEmailInvite(ctx context.Context, programID, address string) (*models.ProgramMember, error)
+	// DeleteEmailInvite deletes id only while it is still an email invitation (no
+	// user), returning ErrProgramMemberNotFound when it is gone or was claimed.
+	DeleteEmailInvite(ctx context.Context, id string) error
+	// ClaimEmailInvite approves userID as a mentor from an open email invitation,
+	// reusing userID's own reinvitable mentor row on the program when there is one.
+	ClaimEmailInvite(ctx context.Context, id, userID string) (*models.ProgramMember, error)
 }
 
 // ApplicationRepository defines persistence operations for applications.

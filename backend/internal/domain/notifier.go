@@ -22,6 +22,9 @@ type Notifier interface {
 	NotifyProfileCreated(ctx context.Context, userID string, profileType models.UserProfileType)
 	// NotifyMentorInvited emails the invited mentor a link to answer, naming inviterID as the inviter.
 	NotifyMentorInvited(ctx context.Context, programID, userID, inviterID, token string)
+	// NotifyMentorInvitedByEmail emails someone with no LF account yet the steps to
+	// sign up and answer an invitation sent to address, naming inviterID as the inviter.
+	NotifyMentorInvitedByEmail(ctx context.Context, programID, address, inviterID, token string)
 	// NotifyMentorDeclined tells the mentor a program admin declined their request.
 	NotifyMentorDeclined(ctx context.Context, programID, userID string)
 	// NotifyAdminMentorDeclined tells program admins the mentor declined their invite.
@@ -44,6 +47,9 @@ type Notifier interface {
 	NotifyMenteeGraduated(ctx context.Context, applicationID string)
 	// NotifyMenteeTaskAssigned tells the mentee a reviewer assigned them a task.
 	NotifyMenteeTaskAssigned(ctx context.Context, taskID string)
+	// NotifyMenteeTaskChangesRequested tells an accepted mentee a reviewer sent their submitted
+	// task back, with the reviewer's reason when there is one ("" for none).
+	NotifyMenteeTaskChangesRequested(ctx context.Context, taskID, reason string)
 	// NotifyMenteePrerequisiteReminder reminds the mentee of the prerequisite tasks they have not
 	// yet submitted.
 	NotifyMenteePrerequisiteReminder(ctx context.Context, applicationID string)

@@ -16,6 +16,11 @@ logs
 # Smoke tests / local scratch
 tmp-*
 
+# Playwright E2E output, and the signed-in sessions of the test users
+test-results/
+playwright-report/
+e2e/.auth/
+
 # Misc
 .DS_Store
 .fleet

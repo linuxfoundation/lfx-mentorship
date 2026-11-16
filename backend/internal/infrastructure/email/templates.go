@@ -66,6 +66,7 @@ const (
 	templateMentorProfileCreated       = "mentor_profile_created"
 	templateMenteeProfileCreated       = "mentee_profile_created"
 	templateMentorInvited              = "mentor_invited"
+	templateMentorInvitedNoAccount     = "mentor_invited_no_account"
 	templateMentorDeclined             = "mentor_declined"
 	templateAdminMentorDeclined        = "admin_mentor_declined"
 	templateAdminMentorAccepted        = "admin_mentor_accepted"
@@ -80,6 +81,7 @@ const (
 	templateAdminMenteeWithdrawn       = "admin_mentee_withdrawn"
 	templateMenteeGraduated            = "mentee_graduated"
 	templateMenteeTaskAssigned         = "mentee_task_assigned"
+	templateMenteeTaskChangesRequested = "mentee_task_changes_requested"
 	templateMenteePrerequisiteReminder = "mentee_prerequisite_reminder"
 )
 
@@ -115,10 +117,15 @@ type templateData struct {
 	TaskName           string
 	TaskCreatedOn      string
 	TaskDueDate        string
+	Reason             string
 	IssuedDate         string
 	InviteURL          string
-	LFID               string
-	Year               int
+	// InviteeEmail is the address an email invitation went to, which the invitee must sign up with.
+	InviteeEmail string
+	// SignUpURL opens the LF login page, whose sign-up link creates an LF account.
+	SignUpURL string
+	LFID      string
+	Year      int
 }
 
 // render builds a Message from the named template pair.

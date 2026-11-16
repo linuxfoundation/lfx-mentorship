@@ -167,6 +167,9 @@ type TaskUpdateInput struct {
 	SubmitFile        *string            `json:"submit_file,omitempty"`
 	File              *string            `json:"file,omitempty"`
 	DueDate           *string            `json:"due_date,omitempty"`
+	// Reason is why a review sends a submitted task back; the mentee is emailed it. Only a
+	// review that sets status to incomplete takes one. Not persisted.
+	Reason *string `json:"reason,omitempty"`
 	// ActorID is the caller's user ID used for permission checks; not persisted.
 	ActorID string `json:"-"`
 	// FromStatus, when set, is the status the change was authorized from: the write fails with

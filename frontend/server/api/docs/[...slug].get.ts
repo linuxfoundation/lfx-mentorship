@@ -4,7 +4,6 @@
 import { readFile } from 'node:fs/promises';
 import { resolve, join, sep } from 'node:path';
 import { marked, Renderer } from 'marked';
-import DOMPurify from 'isomorphic-dompurify';
 import {
   getDocsDir,
   parseFrontmatter,
@@ -14,6 +13,7 @@ import {
   toTitleCase,
 } from '../../utils/doc-utils';
 import type { DocArticle } from '../../../app/types/documentation.types';
+import { sanitizeHtml } from '../../../app/utils/sanitize-html';
 
 // marked is pinned to v4 in this repo (the Quill markdown-paste helper depends on it),
 // so the renderer hooks take POSITIONAL arguments — `link(href, title, text)` — not the
@@ -93,7 +93,7 @@ export default defineEventHandler(async (event): Promise<DocArticle> => {
   // DOMPurify drops `target` by default, which would silently undo the renderer's
   // target="_blank" on external links. It is allowed back explicitly; the same hook
   // always pairs it with rel="noopener noreferrer", so the opener stays severed.
-  const bodyHtml = DOMPurify.sanitize(renderedHtml, { ADD_ATTR: ['target'] });
+  const bodyHtml = sanitizeHtml(renderedHtml, { ADD_ATTR: ['target'] });
 
   return {
     slug: normalised,

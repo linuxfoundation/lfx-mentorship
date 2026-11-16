@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
@@ -41,7 +42,7 @@ func TestUserRepository_BootstrapByLFID_ReleasesEmailFromImportedRow(t *testing.
 		t.Fatal(err)
 	}
 	lfid, email := "imported_owner", "imported.release@example.org"
-	u, err := NewUserRepository(pool).BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email}, models.UserIdentityFill{})
+	u, err := NewUserRepository(pool).BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +75,7 @@ func TestUserRepository_BootstrapByLFID_ConcurrentFirstSignIns(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				_, err := repo.BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email}, models.UserIdentityFill{})
+				_, err := repo.BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email})
 				errs <- err
 			}()
 		}
@@ -107,7 +108,7 @@ func TestUserRepository_BootstrapByLFID_ReleasesEmailFromAnotherAccount(t *testi
 		_, _ = pool.Exec(context.Background(), `DELETE FROM users WHERE lfid IN ('squatter_lfid', 'owner_lfid')`)
 	})
 	lfid, email := "owner_lfid", "owner.release@example.org"
-	u, err := NewUserRepository(pool).BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email}, models.UserIdentityFill{})
+	u, err := NewUserRepository(pool).BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,10 +134,8 @@ func TestUserRepository_BootstrapByLFID_KeepsEmailWithoutClaim(t *testing.T) {
 	})
 	repo := NewUserRepository(pool)
 	for lfid, upsert := range map[string]func(context.Context, models.UserCreateInput) (*models.User, error){
-		"noclaim_upsert": repo.UpsertByLFID,
-		"noclaim_bootstrap": func(ctx context.Context, in models.UserCreateInput) (*models.User, error) {
-			return repo.BootstrapByLFID(ctx, in, models.UserIdentityFill{})
-		},
+		"noclaim_upsert":    repo.UpsertByLFID,
+		"noclaim_bootstrap": repo.BootstrapByLFID,
 	} {
 		stored := lfid + ".stored@example.org"
 		if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, lfid) VALUES (gen_random_uuid(), $1, $2)`, stored, lfid); err != nil {
@@ -255,7 +254,7 @@ func TestUserRepository_BootstrapByLFID_SwappedAddressesConcurrently(t *testing.
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				_, err := repo.BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email}, models.UserIdentityFill{})
+				_, err := repo.BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email})
 				errs <- err
 			}()
 		}
@@ -275,5 +274,149 @@ func TestUserRepository_BootstrapByLFID_SwappedAddressesConcurrently(t *testing.
 				t.Fatalf("iteration %d: %s email = %v; want %q", i, lfid, got, email)
 			}
 		}
+	}
+}
+
+// UpsertByLFIDIfUnchanged writes an email that was looked up before the transaction only while
+// the row has not been written since it was read, so a stale directory answer never replaces a
+// verified email a concurrent sign-in stored meanwhile. It never takes the address from another row.
+func TestUserRepository_UpsertByLFIDIfUnchanged(t *testing.T) {
+	pool := integrationPool(t)
+	ctx := context.Background()
+	repo := NewUserRepository(pool)
+	str := func(v string) *string { return &v }
+	// seed inserts a row and returns its updated_on as a sign-in reads it before the lookup.
+	seed := func(t *testing.T, lfid, email string) *time.Time {
+		t.Helper()
+		if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, lfid) VALUES (gen_random_uuid(), $1, $2)`, email, lfid); err != nil {
+			t.Fatal(err)
+		}
+		u, err := repo.GetByLFID(ctx, lfid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &u.UpdatedOn
+	}
+	emailOf := func(t *testing.T, lfid string) string {
+		t.Helper()
+		var email *string
+		if err := pool.QueryRow(ctx, `SELECT email FROM users WHERE lfid = $1`, lfid).Scan(&email); err != nil {
+			t.Fatal(err)
+		}
+		if email == nil {
+			return "NULL"
+		}
+		return *email
+	}
+	// write is the guarded write of a directory address, and asserts what the row holds after it.
+	write := func(t *testing.T, lfid string, updatedOn *time.Time, want string) {
+		t.Helper()
+		if _, err := repo.UpsertByLFIDIfUnchanged(ctx, models.UserCreateInput{LFID: &lfid, Email: str(lfid + ".dir@example.org")}, updatedOn); err != nil {
+			t.Fatal(err)
+		}
+		if got := emailOf(t, lfid); got != want {
+			t.Fatalf("stored email = %s; want %s", got, want)
+		}
+	}
+
+	t.Run("row not written since the read: email replaced", func(t *testing.T) {
+		updatedOn := seed(t, "guard_same", "guard_same.old@example.org")
+		write(t, "guard_same", updatedOn, "guard_same.dir@example.org")
+	})
+
+	// The token sign-in that lands during the lookup stores a new address, or confirms the one
+	// already stored: either way the row was written, and the directory's answer is not.
+	for lfid, verified := range map[string]string{
+		"guard_newer":     "guard_newer.verified@example.org",
+		"guard_confirmed": "guard_confirmed.old@example.org",
+	} {
+		t.Run(lfid+": email a token sign-in stored since the read is kept", func(t *testing.T) {
+			updatedOn := seed(t, lfid, lfid+".old@example.org")
+			if _, err := repo.BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &verified}); err != nil {
+				t.Fatal(err)
+			}
+			write(t, lfid, updatedOn, verified)
+		})
+	}
+
+	t.Run("row created since the read: its email is kept", func(t *testing.T) {
+		seed(t, "guard_created", "guard_created.verified@example.org")
+		write(t, "guard_created", nil, "guard_created.verified@example.org")
+	})
+
+	t.Run("no row: created with the email", func(t *testing.T) {
+		write(t, "guard_new", nil, "guard_new.dir@example.org")
+	})
+
+	t.Run("an address another row holds is refused and both rows keep their email", func(t *testing.T) {
+		seed(t, "guard_holder", "guard_holder@example.org")
+		updatedOn := seed(t, "guard_caller", "guard_caller@example.org")
+		lfid := "guard_caller"
+		_, err := repo.UpsertByLFIDIfUnchanged(ctx, models.UserCreateInput{LFID: &lfid, Email: str("guard_holder@example.org")}, updatedOn)
+		if !errors.Is(err, domain.ErrEmailInUse) {
+			t.Fatalf("err = %v; want ErrEmailInUse", err)
+		}
+		if holder, caller := emailOf(t, "guard_holder"), emailOf(t, lfid); holder != "guard_holder@example.org" || caller != "guard_caller@example.org" {
+			t.Fatalf("holder email = %s, caller email = %s; want both unchanged", holder, caller)
+		}
+	})
+}
+
+// A write that stores an address for the first time leaves no row for a later claim to lock.
+// A verified sign-in for the same address waits for that write to finish and then takes the
+// address back, instead of finding no holder to release and failing on the unique email.
+func TestUserRepository_BootstrapByLFID_WaitsForAnUncommittedClaim(t *testing.T) {
+	pool := integrationPool(t)
+	ctx := context.Background()
+	email := "claim.race@example.org"
+
+	// Another account's directory write of the address, stopped before it commits.
+	claim, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = claim.Rollback(ctx) }()
+	if _, err := claim.Exec(ctx, lockUserEmail, email); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := claim.Exec(ctx, `INSERT INTO users (id, email, lfid) VALUES (gen_random_uuid(), $1, 'claim_directory')`, email); err != nil {
+		t.Fatal(err)
+	}
+
+	lfid := "claim_verified"
+	signIn := make(chan error, 1)
+	go func() {
+		_, err := NewUserRepository(pool).BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email})
+		signIn <- err
+	}()
+
+	// Commit the claim only once the sign-in is waiting on it.
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		var waiting int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_locks WHERE NOT granted`).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the verified sign-in never waited on the uncommitted claim")
+		}
+	}
+	if err := claim.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-signIn; err != nil {
+		t.Fatalf("verified sign-in: %v", err)
+	}
+
+	var verified, directory *string
+	if err := pool.QueryRow(ctx, `SELECT
+		(SELECT email FROM users WHERE lfid = 'claim_verified'),
+		(SELECT email FROM users WHERE lfid = 'claim_directory')`).Scan(&verified, &directory); err != nil {
+		t.Fatal(err)
+	}
+	if verified == nil || *verified != email || directory != nil {
+		t.Fatalf("verified email = %v, directory claimant email = %v; want the address moved to the verified account", verified, directory)
 	}
 }

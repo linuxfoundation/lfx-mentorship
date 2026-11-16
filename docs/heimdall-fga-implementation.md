@@ -102,15 +102,17 @@ flowchart LR
    are stored with no email or name ([#360](https://github.com/linuxfoundation/lfx-mentorship/issues/360)).
    The backend also reads `name`, `given_name`, `family_name` and `picture`
    claims ([lfx-v2-helm#190](https://github.com/linuxfoundation/lfx-v2-helm/pull/190)
-   adds them to the finalizer). Whatever the token, the request body and the
-   stored row all lack, `UserService.Bootstrap` fills from lfx-v2-auth-service
-   over NATS (`user_metadata.read`, `user_emails.read`), the same sign-in sync
-   lfx-crowdfunding does. Directory values are written as a fill the
-   repository applies only to columns still `NULL`, in the same statement as
-   the sign-in's own values, so an edit made while the lookup was in flight is
-   never replaced; a failed lookup is logged and never fails the sign-in. A token email is
-   verified at the gateway and reclaims the address from a stale row; a
-   directory email is not, so it is stored only while no other row holds it.
+   adds them to the finalizer). On every sign-in `UserService.Bootstrap`
+   refreshes name and avatar from lfx-v2-auth-service over NATS
+   (`user_metadata.read`), falling back to the request body and the token
+   where the directory has none; a failed lookup is logged and never fails the
+   sign-in. A token email is verified at the gateway, so it replaces the stored
+   one and reclaims the address from a stale row. Without one, the directory's
+   primary email (`user_emails.read`) replaces the stored one; it is not known
+   to be verified, so it is never taken from another row, and never written
+   over an email another sign-in stored while it was being looked up. In both
+   cases the stored email is kept. The two lookups run together, so a
+   directory that does not answer costs a sign-in one timeout.
 6. The backend validates the JWT against the cluster-internal Heimdall JWKS.
 7. Handlers execute workflow logic without repeating the edge authorization
    decision.

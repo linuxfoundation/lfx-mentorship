@@ -7,7 +7,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
@@ -27,6 +29,24 @@ func validateDueDate(value *string) error {
 	}
 	if _, err := time.Parse(time.DateOnly, *value); err != nil {
 		return fmt.Errorf("%w: due date must be a YYYY-MM-DD date", domain.ErrInvalidInput)
+	}
+	return nil
+}
+
+// maxReviewReasonLength caps a review's reason for sending a task back, in characters.
+const maxReviewReasonLength = 2000
+
+// validateReviewReason rejects a reason longer than maxReviewReasonLength, or one sent with
+// anything but a reset to incomplete.
+func validateReviewReason(input models.TaskUpdateInput) error {
+	if input.Reason == nil {
+		return nil
+	}
+	if input.Status == nil || *input.Status != models.TaskStatusIncomplete {
+		return fmt.Errorf("%w: a reason goes only with status %q", domain.ErrInvalidInput, models.TaskStatusIncomplete)
+	}
+	if utf8.RuneCountInString(strings.TrimSpace(*input.Reason)) > maxReviewReasonLength {
+		return fmt.Errorf("%w: reason must be at most %d characters", domain.ErrInvalidInput, maxReviewReasonLength)
 	}
 	return nil
 }
@@ -219,12 +239,17 @@ func validateTaskUpdate(input models.TaskUpdateInput) error {
 //     incomplete, or set its denormalised application and program term statuses.
 //   - When every prerequisite task is submitted or complete, the application is flagged
 //     tasks_submitted and program admins are notified the first time only.
+//   - A review that sends a submitted task back to incomplete emails the mentee, with the
+//     review's reason when it gives one.
 func (s *TaskService) Update(ctx context.Context, id string, input models.TaskUpdateInput) (*models.Task, error) {
 	ctx, span := taskSvcTracer.Start(ctx, "TaskService.Update")
 	defer span.End()
 	span.SetAttributes(attribute.String("task.id", id))
 
 	if err := validateTaskUpdate(input); err != nil {
+		return nil, err
+	}
+	if err := validateReviewReason(input); err != nil {
 		return nil, err
 	}
 	if err := validateDueDate(input.DueDate); err != nil {
@@ -251,7 +276,36 @@ func (s *TaskService) Update(ctx context.Context, id string, input models.TaskUp
 		s.markTasksSubmitted(ctx, *t.ApplicationID)
 	}
 
+	if changesRequested(input) && t.ApplicationID != nil {
+		s.notifyChangesRequested(ctx, t.ID, *t.ApplicationID, input.Reason)
+	}
+
 	return t, nil
+}
+
+// changesRequested reports whether an authorized update sent a submitted task back to incomplete.
+func changesRequested(input models.TaskUpdateInput) bool {
+	return input.Status != nil && *input.Status == models.TaskStatusIncomplete &&
+		input.FromStatus != nil && *input.FromStatus == models.TaskStatusSubmitted
+}
+
+// notifyChangesRequested emails the mentee that their task was sent back, with the reason. Only
+// an accepted mentee is emailed: an applicant whose prerequisite is sent back is not, to keep the
+// volume down. The task is already saved, so a failed lookup skips the email rather than the review.
+func (s *TaskService) notifyChangesRequested(ctx context.Context, taskID, applicationID string, reason *string) {
+	app, err := s.appRepo.GetByID(ctx, applicationID)
+	if err != nil {
+		trace.SpanFromContext(ctx).RecordError(err)
+		return
+	}
+	if app.Status != models.ApplicationStatusAccepted {
+		return
+	}
+	text := ""
+	if reason != nil {
+		text = strings.TrimSpace(*reason)
+	}
+	s.notifier.NotifyMenteeTaskChangesRequested(ctx, taskID, text)
 }
 
 // authorizeUpdate enforces FR-033 for Update: the status transition guard and who may make it.
@@ -321,6 +375,9 @@ func (s *TaskService) Edit(ctx context.Context, id string, input models.TaskUpda
 
 	if err := validateTaskUpdate(input); err != nil {
 		return nil, err
+	}
+	if input.Reason != nil {
+		return nil, fmt.Errorf("%w: a reason goes with a review, through PATCH /v1/tasks/{id}/review", domain.ErrInvalidInput)
 	}
 	if input.DueDate != nil && *input.DueDate != "" {
 		if err := validateDueDate(input.DueDate); err != nil {

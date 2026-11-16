@@ -23,6 +23,7 @@ metadata:
   labels:
     {{- include "lfx-v2-mentorship-service.labels" . | nindent 4 }}
     app.kubernetes.io/component: approver-sync
+    tags.datadoghq.com/service: {{ include "lfx-v2-mentorship-service.name" . }}
   annotations:
     helm.sh/hook: post-install,post-upgrade
     helm.sh/hook-weight: "0"
@@ -35,6 +36,7 @@ spec:
       labels:
         app.kubernetes.io/name: {{ include "lfx-v2-mentorship-service.name" . }}
         app.kubernetes.io/component: approver-sync
+        tags.datadoghq.com/service: {{ include "lfx-v2-mentorship-service.name" . }}
     spec:
       restartPolicy: Never
       serviceAccountName: {{ include "lfx-v2-mentorship-service.serviceAccountName" . }}

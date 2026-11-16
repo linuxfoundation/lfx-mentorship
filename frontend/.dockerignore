@@ -28,3 +28,8 @@ charts/
 
 # Test / coverage
 coverage/
+# E2E suites run from CI against deployed environments, never from the image
+e2e/
+playwright.config.ts
+test-results/
+playwright-report/

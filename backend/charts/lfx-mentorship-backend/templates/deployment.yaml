@@ -34,6 +34,7 @@ spec:
       labels:
         {{- include "lfx-v2-mentorship-service.selectorLabels" . | nindent 8 }}
         app: {{ include "lfx-v2-mentorship-service.name" . }}
+        tags.datadoghq.com/service: {{ include "lfx-v2-mentorship-service.name" . }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:

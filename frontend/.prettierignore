@@ -9,3 +9,5 @@ charts/**/templates/
 pnpm-lock.yaml
 .output/
 .nuxt/
+test-results/
+playwright-report/

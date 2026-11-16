@@ -120,6 +120,24 @@ func TestTaskHandler_UpdateReview_AcceptsOnlyCompleteOrIncomplete(t *testing.T) 
 	}
 }
 
+func TestTaskHandler_UpdateReview_ForwardsReason(t *testing.T) {
+	var got models.TaskUpdateInput
+	svc := &stubTaskSvc{update: func(_ context.Context, id string, in models.TaskUpdateInput) (*models.Task, error) {
+		got = in
+		return &models.Task{ID: id, Status: *in.Status}, nil
+	}}
+	r := httptest.NewRequest(http.MethodPatch, "/v1/tasks/task-1/review", strings.NewReader(`{"status":"incomplete","reason":"Add tests."}`))
+	r = requestWithPrincipal(requestWithChiParam(r, "id", "task-1"), "reviewer-1")
+	w := httptest.NewRecorder()
+	handler.NewTaskHandler(svc).UpdateReview(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, body %s; want 200", w.Code, w.Body)
+	}
+	if got.Reason == nil || *got.Reason != "Add tests." || got.ActorID != "reviewer-1" {
+		t.Errorf("service got input %+v; want the reason and the caller", got)
+	}
+}
+
 func TestTaskHandler_Create_BindsCreatorAndOwnerToPrincipal(t *testing.T) {
 	for _, tc := range []struct {
 		name      string

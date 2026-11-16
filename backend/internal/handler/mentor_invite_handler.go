@@ -14,8 +14,8 @@ import (
 )
 
 type mentorInviteService interface {
-	AcceptInvite(ctx context.Context, token, actorID string) (*models.ProgramMember, error)
-	DeclineInvite(ctx context.Context, token, actorID string) error
+	AcceptInvite(ctx context.Context, token string, actor models.UserPrincipal) (*models.ProgramMember, error)
+	DeclineInvite(ctx context.Context, token string, actor models.UserPrincipal) error
 }
 
 // MentorInviteHandler holds Chi handlers for mentor invite accept/decline.
@@ -40,7 +40,7 @@ func (h *MentorInviteHandler) AcceptInvite(w http.ResponseWriter, r *http.Reques
 		Error(w, newInvalidInput("token is required"))
 		return
 	}
-	member, err := h.svc.AcceptInvite(r.Context(), token, principal.UserID)
+	member, err := h.svc.AcceptInvite(r.Context(), token, invitee(principal))
 	if err != nil {
 		Error(w, err)
 		return
@@ -60,9 +60,15 @@ func (h *MentorInviteHandler) DeclineInvite(w http.ResponseWriter, r *http.Reque
 		Error(w, newInvalidInput("token is required"))
 		return
 	}
-	if err := h.svc.DeclineInvite(r.Context(), token, principal.UserID); err != nil {
+	if err := h.svc.DeclineInvite(r.Context(), token, invitee(principal)); err != nil {
 		Error(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// invitee is the caller answering an invite: their user ID and their LFID, which
+// an email invitation's address must belong to.
+func invitee(principal *models.Principal) models.UserPrincipal {
+	return models.UserPrincipal{UserID: principal.UserID, LFID: principal.Username}
 }

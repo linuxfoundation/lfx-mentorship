@@ -216,7 +216,7 @@ PATCH /v1/tasks/{id}/review
 Authorization: Bearer {token}
 Content-Type: application/json
 
-{ "status": "complete" | "incomplete" }
+{ "status": "complete" | "incomplete", "reason": "optional, with incomplete only" }
 ```
 
 `PATCH /v1/tasks/{id}` is a reviewer's full edit of a task, with no transition guard; it rejects
@@ -235,6 +235,10 @@ the task's assignee.
 **Side effect when `submitted` or `complete`**: if all `prerequisite` tasks on the same
 `application_id` are now `submitted` or `complete`, the service sets
 `applications.tasks_submitted = true` and fires the admin notification hook.
+
+**Side effect of a review's `submitted → incomplete`**: the mentee is emailed that the task was
+sent back, with the review's `reason` (at most 2000 characters, not stored) when it gives one.
+Only a mentee whose application is `accepted` is emailed.
 
 **Responses**: `200 OK` | `403 Forbidden` | `409 Conflict` | `422 Unprocessable Entity`
 

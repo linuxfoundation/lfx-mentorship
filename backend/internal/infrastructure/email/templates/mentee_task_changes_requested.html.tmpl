@@ -1,0 +1,6 @@
+{{- /* Copyright The Linux Foundation and each contributor to LFX. */ -}}
+{{- /* SPDX-License-Identifier: MIT */ -}}
+{{template "header" .}}{{template "greeting" (printf "Hi %s!" .RecipientName)}}<p>Your reviewer requested changes on a task you submitted for the <strong>{{.ProgramName}}</strong> mentorship. The task is back in your To Do list.</p>
+<p>Please update your work and submit the task again.</p>
+{{template "details_start"}}{{template "detail" (detail "Task Name" .TaskName)}}{{with .TaskDueDate}}{{template "detail" (detail "Due Date" .)}}{{end}}{{with .Reason}}<span style="color:#6b7280;">Reason:</span><br><span style="color:#111827;white-space:pre-line;">{{.}}</span><br>
+{{end}}{{template "details_end"}}{{template "button" .ManageURL}}View Tasks{{template "button_end"}}{{template "footer" .}}

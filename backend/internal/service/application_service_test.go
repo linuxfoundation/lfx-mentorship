@@ -427,6 +427,7 @@ type stubNotifier struct {
 	profilesCreated           []models.UserProfileType
 	mentorInvitedCalls        int
 	mentorInviters            []string
+	emailInvites              []string
 	mentorDeclinedCalls       int
 	adminMentorDeclinedCalls  int
 	adminMentorAcceptedCalls  int
@@ -439,6 +440,7 @@ type stubNotifier struct {
 	menteeWithdrawnCalls      int
 	menteeGraduatedCalls      int
 	taskAssignedCalls         int
+	changesRequestedReasons   []string
 	prerequisiteReminders     []string
 }
 
@@ -458,6 +460,9 @@ func (n *stubNotifier) NotifyProfileCreated(_ context.Context, _ string, profile
 func (n *stubNotifier) NotifyMentorInvited(_ context.Context, _, _, inviterID, _ string) {
 	n.mentorInvitedCalls++
 	n.mentorInviters = append(n.mentorInviters, inviterID)
+}
+func (n *stubNotifier) NotifyMentorInvitedByEmail(_ context.Context, _, address, _, _ string) {
+	n.emailInvites = append(n.emailInvites, address)
 }
 func (n *stubNotifier) NotifyMentorDeclined(_ context.Context, _, _ string) { n.mentorDeclinedCalls++ }
 func (n *stubNotifier) NotifyAdminMentorDeclined(_ context.Context, _, _ string) {
@@ -484,6 +489,9 @@ func (n *stubNotifier) NotifyMenteeWithdrawn(_ context.Context, _ string)   { n.
 func (n *stubNotifier) NotifyMenteeGraduated(_ context.Context, _ string)   { n.menteeGraduatedCalls++ }
 func (n *stubNotifier) NotifyMenteeTaskAssigned(_ context.Context, _ string) {
 	n.taskAssignedCalls++
+}
+func (n *stubNotifier) NotifyMenteeTaskChangesRequested(_ context.Context, _, reason string) {
+	n.changesRequestedReasons = append(n.changesRequestedReasons, reason)
 }
 func (n *stubNotifier) NotifyMenteePrerequisiteReminder(_ context.Context, applicationID string) {
 	n.prerequisiteReminders = append(n.prerequisiteReminders, applicationID)

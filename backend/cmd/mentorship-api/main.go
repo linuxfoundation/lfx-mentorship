@@ -19,6 +19,8 @@ import (
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	// Package-level slog calls, such as handler.Error's, would otherwise log plain text.
+	slog.SetDefault(logger)
 
 	// The default propagator is a no-op; without this, otelhttp extracts no incoming trace and outgoing NATS requests carry none.
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
