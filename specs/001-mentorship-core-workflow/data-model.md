@@ -89,14 +89,14 @@ open │ closed ──soft-delete──► deleted
 |--------|------|-------------|-------|
 | `id` | UUID | PK | |
 | `program_id` | UUID | FK → programs | CASCADE delete |
-| `user_id` | UUID | FK → users | |
+| `user_id` | UUID | FK → users, nullable | NULL only for a mentor invited by an email no LF account uses yet; such a row is `invited` or `declined` (migration 006) |
 | `member_type` | VARCHAR(20) | NOT NULL | `program_admin \| mentor` |
 | `status` | VARCHAR(20) | nullable | see lifecycle below |
 | `email` | TEXT | nullable | invitation address |
 | `created_on` | TIMESTAMPTZ | DEFAULT NOW() | |
 | `updated_on` | TIMESTAMPTZ | DEFAULT NOW() | |
 
-**Unique**: `(program_id, user_id, member_type)`
+**Unique**: `(program_id, user_id, member_type)`; for rows with no user, `(program_id, lower(email), member_type)`
 
 ### Status Lifecycle
 

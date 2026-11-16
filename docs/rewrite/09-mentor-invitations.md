@@ -7,13 +7,14 @@ Status: Draft — under discussion (see Decision log)
 Related: [04-authorization-model.md](./04-authorization-model.md) (decision 4, AQ-7), [06-route-matrix.md](./06-route-matrix.md) (invite routes), [07-email-delivery.md](./07-email-delivery.md) (email rail, `Notifier`), [01-current-system.md](./01-current-system.md) (legacy platform)
 Decision ticket: [linuxfoundation/lfx-self-serve#2187](https://github.com/linuxfoundation/lfx-self-serve/issues/2187)
 
-A Program Admin picks anyone with an LF account and invites them to mentor a published program; the mentor accepts or declines from the email. This doc is the design and its decision record; the ticket stays the tracker.
+A Program Admin picks anyone with an LF account and invites them to mentor a published program, or invites an email address that has no LF account yet; the mentor accepts or declines from the email. This doc is the design and its decision record; the ticket stays the tracker.
 
 In short:
 
 - The flow `main` has with [linuxfoundation/lfx-mentorship#255](https://github.com/linuxfoundation/lfx-mentorship/pull/255), [linuxfoundation/lfx-mentorship#262](https://github.com/linuxfoundation/lfx-mentorship/pull/262) and [linuxfoundation/lfx-mentorship#291](https://github.com/linuxfoundation/lfx-mentorship/pull/291) stays: a `program_members` mentor row in `invited`, for anyone with an LF account by `lfid`, `email` or `user_id`, published programs only, a signed link that does not expire, inviting again to resend or reopen, and `DELETE` to remove.
 - `main` changes in three places: only the invitee can make an invited user a mentor, accept needs a published program, and the email gets Accept, Decline and View links.
-- [lfx-v2-invite-service](https://github.com/linuxfoundation/lfx-v2-invite-service) is not used: it exists for people without an LF account, and every invitee here has one.
+- [lfx-v2-invite-service](https://github.com/linuxfoundation/lfx-v2-invite-service) is not used. Invitees without an LF account (see [Email invitations](#email-invitations), added 2026-11-16) get Mentorship's own email and sign up through the LF login page.
+- Someone with no LF account can be invited by email: the invitation is a mentor row with no user, and the person who accepts it must own the invited address.
 
 ## Requirement
 
@@ -46,6 +47,17 @@ So parity means: the Program Admin picks an **existing account** from a search; 
 
 - Auto-approving anyone who already had a mentor profile. It contradicts the requirement.
 - The email without accept and decline links. The consent flow was built at both ends and never wired; the rewrite wires it.
+
+## Email invitations
+
+Added 2026-11-16. Program Admins asked to invite mentors who have no LF account yet, which answer #3 below had refused.
+
+- **Admin side.** The picker stays. When a whole email finds no candidate, Self Serve offers "Invite by email", which sends `POST /v1/programs/{uid}/members` with only `{email, member_type: mentor}`. With no LF account behind the address, the API creates a mentor row in `invited` with **no `user_id`** and the address in `email`. It does not return 422.
+- **Data.** Migration 006 makes `program_members.user_id` nullable. A check allows a row with no user only when it is a mentor in `invited` or `declined` with an email, so it never needs an FGA tuple or an index entry. A partial unique index on `(program_id, lower(email), member_type) WHERE user_id IS NULL` keeps one invitation per address and program. Inviting the address again resends the email and reopens a declined invitation. Once the address belongs to an LF account, inviting it invites the account and deletes the email invitation.
+- **Link.** The token signs `{program_id, member_id}` instead of `{program_id, user_id}`. A user token's payload is unchanged, so links already sent keep working.
+- **Email.** `mentor_invited_no_account` goes to the row's address and lists three steps: create an LF account with this address (a Self Serve `/login?returnTo=/mentorship/mentor` link, whose LF login page has a sign-up link), create a mentor profile, then answer through `/mentorship/mentor/invites?token=`.
+- **Accept and decline.** These use the same routes and page as a user invite. The caller must own the invited address: auth-service's `email_to_username` must resolve it to the caller's LFID. It resolves only verified addresses, primary first and then linked ones, and the primary lookup is not eventually consistent, so a just-created account matches at once. Otherwise the answer is 403. Accept needs a published program, sets `user_id` to the caller and approves the row. If the caller already has a reinvitable mentor row on the program, that row is approved instead and the invitation deleted. An `approved`, `requested` or `pending` row is 409.
+- **Admin edits.** `PATCH` can only revoke an email invitation (`invited → declined`), since only the invitee can accept it.
 
 ## Why not lfx-v2-invite-service
 
@@ -191,7 +203,7 @@ Not migrated and not re-sent. The legacy email had no accept or decline link, so
 | --- | --- | --- |
 | 1 | Pending-invite representation | A `program_members` mentor row in `invited`, with no FGA tuple or indexer emission (04 decision 4), listed in Self Serve's mentors tab, not in Pending Actions. See Data. |
 | 2 | Accept authorization | `allow_all` at Heimdall; the service checks that the signed token names the caller and that the caller's mentor row on the program is `invited` (AQ-7 as written). See API. |
-| 3 | Account-less invitees | Anyone with an LF account can be invited, including someone who has never used LFX Mentorship: the API creates their `users` row from lfx-v2-auth-service ([linuxfoundation/lfx-mentorship#262](https://github.com/linuxfoundation/lfx-mentorship/pull/262)). Someone with no LF account cannot be invited (422), as in legacy, whose picker only offered existing LF accounts. |
+| 3 | Account-less invitees | Anyone with an LF account can be invited, including someone who has never used LFX Mentorship: the API creates their `users` row from lfx-v2-auth-service ([linuxfoundation/lfx-mentorship#262](https://github.com/linuxfoundation/lfx-mentorship/pull/262)). Since 2026-11-16, someone with no LF account can be invited by email as well (see [Email invitations](#email-invitations)). |
 
 ## Follow-up changes once approved
 
@@ -228,3 +240,4 @@ Not migrated and not re-sent. The legacy email had no accept or decline link, so
 | 2026-10-06 | Aligned with [linuxfoundation/lfx-mentorship#255](https://github.com/linuxfoundation/lfx-mentorship/pull/255) after reviewing it. Taken from #255: the signed token with its 7-day expiry and `MENTOR_INVITE_SECRET`; resend as its own route rather than a repeat `POST`; invitation by `lfid` from Self Serve's existing LF user search, with 422 for an `lfid` that has no Mentorship account, so `invitable-users` is dropped; `DELETE` removes a row in any status, which is also how a declined or withdrawn mentor is invited again; an unknown invitation stays 400. Still changes to `main`: only the invitee moves `invited` to `active`, accept needs a `published` program, and the three-link email. |
 | 2026-10-09 | Aligned with [linuxfoundation/lfx-mentorship#262](https://github.com/linuxfoundation/lfx-mentorship/pull/262), agreed in [Slack](https://linuxfoundation.slack.com/archives/C0BK7NQ3Q6Q/p1791311026046579): anyone with an LF account can be invited by `lfid`, `email` or `user_id`, and the API creates a missing `users` row from lfx-v2-auth-service over NATS, not user-service, which may be retired. The picker uses `GET /v1/programs/{uid}/mentor-candidates`; Self Serve's `/api/search/users` is not an LF directory search. Dropped: the 422 for someone who never used Mentorship, and the matching divergence from legacy. Review fixes on [linuxfoundation/lfx-mentorship#177](https://github.com/linuxfoundation/lfx-mentorship/pull/177): the lfx-v2-invite-service summary matches its section; Email says where the address comes from and that a blank one on a `user_id` invite is not sent; Link covers old links after a `DELETE` and a new invite. |
 | 2026-10-12 | Aligned with [linuxfoundation/lfx-mentorship#291](https://github.com/linuxfoundation/lfx-mentorship/pull/291), agreed in [Slack](https://linuxfoundation.slack.com/archives/C0BK7NQ3Q6Q/p1791586137768409): invite links no longer expire, and repeating the `POST` resends an open invitation and reopens a `declined` or `withdrawn` mentor row, so the resend route and delete-then-invite are dropped. Self Serve's picker calls `mentor-candidates` ([linuxfoundation/lfx-self-serve#3396](https://github.com/linuxfoundation/lfx-self-serve/pull/3396)). Spec 001's expired-token question was answered in #291, so it leaves the follow-ups. Renumbered from 08 to 09, since 08 is the prod migration runbook. Still changes to `main`: only the invitee moves `invited` to `active`, accept needs a `published` program, and the three-link email. |
+| 2026-11-16 | Email invitations added at Program Admins' request, reversing answer #3 and the 2026-10-05 drop of inviting by email. Kept from that decision: the `program_members` row, not a separate table; the signed, non-expiring token; the Self Serve invite page. New: a mentor row with no `user_id` holds the address; the token can name that row; accept and decline check with auth-service that the caller's LF account owns the address, rather than reading the Heimdall `email` claim; a three-step email for people with no account. The picker stays and offers email only when a whole address matches no account. |
