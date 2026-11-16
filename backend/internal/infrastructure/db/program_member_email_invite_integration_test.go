@@ -119,25 +119,63 @@ func TestEmailInvite_ClaimSetsTheUser(t *testing.T) {
 	}
 }
 
+// The caller's own mentor row that is not approved, including a request they
+// raised while creating their mentor profile, is approved in place of the
+// invitation.
 func TestEmailInvite_ClaimReusesTheCallersRow(t *testing.T) {
+	for _, status := range []string{"invited", "requested", "pending", "declined", "withdrawn"} {
+		t.Run(status, func(t *testing.T) {
+			pool := integrationPool(t)
+			ctx := context.Background()
+			s := newMentoredSeed(t, pool)
+			repo := NewProgramMemberRepository(pool)
+			program := s.program("p", "Kernel", "published")
+			user := s.user("new-mentor")
+			s.member("p", "new-mentor", "mentor", status)
+			invite := createEmailInvite(t, repo, s, program, "invite", "new.mentor@example.org")
+
+			m, err := repo.ClaimEmailInvite(ctx, invite.ID, user)
+			if err != nil {
+				t.Fatalf("ClaimEmailInvite: %v", err)
+			}
+			if m.ID != s.id("p/new-mentor/mentor") || m.Status == nil || *m.Status != models.ProgramMemberStatusApproved {
+				t.Errorf("claimed %+v; want the caller's own row approved", m)
+			}
+			if _, err := repo.GetByID(ctx, invite.ID); !errors.Is(err, domain.ErrProgramMemberNotFound) {
+				t.Errorf("email invitation err = %v; want it deleted", err)
+			}
+		})
+	}
+}
+
+// A cleanup that looked the invitation up before it was claimed must not delete
+// the accepted membership.
+func TestEmailInvite_DeleteSparesAClaimedRow(t *testing.T) {
 	pool := integrationPool(t)
 	ctx := context.Background()
 	s := newMentoredSeed(t, pool)
 	repo := NewProgramMemberRepository(pool)
 	program := s.program("p", "Kernel", "published")
 	user := s.user("new-mentor")
-	s.member("p", "new-mentor", "mentor", "declined")
 	invite := createEmailInvite(t, repo, s, program, "invite", "new.mentor@example.org")
-
-	m, err := repo.ClaimEmailInvite(ctx, invite.ID, user)
-	if err != nil {
+	if _, err := repo.ClaimEmailInvite(ctx, invite.ID, user); err != nil {
 		t.Fatalf("ClaimEmailInvite: %v", err)
 	}
-	if m.ID != s.id("p/new-mentor/mentor") || m.Status == nil || *m.Status != models.ProgramMemberStatusApproved {
-		t.Errorf("claimed %+v; want the caller's own row approved", m)
+
+	if err := repo.DeleteEmailInvite(ctx, invite.ID); !errors.Is(err, domain.ErrProgramMemberNotFound) {
+		t.Fatalf("DeleteEmailInvite err = %v; want ErrProgramMemberNotFound", err)
 	}
-	if _, err := repo.GetByID(ctx, invite.ID); !errors.Is(err, domain.ErrProgramMemberNotFound) {
-		t.Errorf("email invitation err = %v; want it deleted", err)
+	m, err := repo.GetByID(ctx, invite.ID)
+	if err != nil || m.UserID != user || m.Status == nil || *m.Status != models.ProgramMemberStatusApproved {
+		t.Errorf("member = %+v, %v; want the claimed membership kept", m, err)
+	}
+
+	open := createEmailInvite(t, repo, s, program, "other", "other.mentor@example.org")
+	if err := repo.DeleteEmailInvite(ctx, open.ID); err != nil {
+		t.Fatalf("DeleteEmailInvite open invitation: %v", err)
+	}
+	if _, err := repo.GetByID(ctx, open.ID); !errors.Is(err, domain.ErrProgramMemberNotFound) {
+		t.Errorf("open invitation err = %v; want it deleted", err)
 	}
 }
 

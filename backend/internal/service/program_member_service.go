@@ -342,9 +342,11 @@ func (s *ProgramMemberService) dropEmailInvite(ctx context.Context, programID, a
 		return
 	}
 	if err == nil {
-		err = s.repo.Delete(ctx, stale.ID)
+		// Deletes only while the row still has no user: the invitee may have
+		// claimed it since the lookup, and that membership must stay.
+		err = s.repo.DeleteEmailInvite(ctx, stale.ID)
 	}
-	if err != nil {
+	if err != nil && !errors.Is(err, domain.ErrProgramMemberNotFound) {
 		trace.SpanFromContext(ctx).RecordError(fmt.Errorf("drop superseded email invitation: %w", err))
 	}
 }
@@ -775,9 +777,16 @@ func (s *ProgramMemberService) Update(ctx context.Context, programID, id string,
 		return nil, domain.ErrProgramMemberNotFound
 	}
 	// An email invitation has no user to approve: only its invitee can accept it,
-	// so an admin may only revoke it.
-	if current.UserID == "" && input.Status != nil && *input.Status != models.ProgramMemberStatusDeclined {
-		return nil, fmt.Errorf("%w: an invitation sent by email can only be revoked", domain.ErrInvalidStateTransition)
+	// so an admin may only revoke it. Its address is what the signed link was sent
+	// to and what accept checks ownership of, so it cannot be changed either: to
+	// invite another address, revoke this invitation and invite that one.
+	if current.UserID == "" {
+		if input.Email != nil {
+			return nil, fmt.Errorf("%w: the address of an invitation sent by email cannot be changed; revoke it and invite the new address", domain.ErrInvalidStateTransition)
+		}
+		if input.Status != nil && *input.Status != models.ProgramMemberStatusDeclined {
+			return nil, fmt.Errorf("%w: an invitation sent by email can only be revoked", domain.ErrInvalidStateTransition)
+		}
 	}
 
 	if input.Status == nil {

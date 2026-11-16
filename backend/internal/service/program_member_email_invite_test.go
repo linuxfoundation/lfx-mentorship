@@ -125,7 +125,11 @@ func TestProgramMemberService_Create_AccountInviteDropsStaleEmailInvite(t *testi
 	memberRepo.findEmailInvite = func(context.Context, string, string) (*models.ProgramMember, error) {
 		return emailInviteRow(models.ProgramMemberStatusInvited), nil
 	}
-	memberRepo.delete = func(_ context.Context, id string) error {
+	memberRepo.delete = func(context.Context, string) error {
+		t.Fatal("Delete called; a stale email invitation must go through DeleteEmailInvite, which spares a claimed row")
+		return nil
+	}
+	memberRepo.deleteEmailInvite = func(_ context.Context, id string) error {
 		deleted = id
 		return nil
 	}
@@ -136,6 +140,22 @@ func TestProgramMemberService_Create_AccountInviteDropsStaleEmailInvite(t *testi
 	}
 	if deleted != "invite-1" {
 		t.Errorf("deleted %q; want the superseded email invitation", deleted)
+	}
+}
+
+// The invitee can claim the email invitation between the lookup and the delete;
+// the delete then finds no unclaimed row, and the account invite still succeeds.
+func TestProgramMemberService_Create_AccountInviteIgnoresEmailInviteClaimedMeanwhile(t *testing.T) {
+	var captured models.ProgramMemberCreateInput
+	memberRepo := capturingMemberRepo(&captured)
+	memberRepo.findEmailInvite = func(context.Context, string, string) (*models.ProgramMember, error) {
+		return emailInviteRow(models.ProgramMemberStatusInvited), nil
+	}
+	memberRepo.deleteEmailInvite = func(context.Context, string) error { return domain.ErrProgramMemberNotFound }
+	_, err := newInviteSvc(&stubInviteeUsers{}, newDirectory(), memberRepo, &stubNotifier{}).Create(context.Background(), "prog-1",
+		models.ProgramMemberCreateInput{Email: ptr("mentor@example.org"), MemberType: models.MemberTypeMentor})
+	if err != nil || captured.UserID != "mentor-1" {
+		t.Fatalf("err = %v, user_id = %q; want the account invited", err, captured.UserID)
 	}
 }
 
@@ -155,6 +175,32 @@ func TestProgramMemberService_Update_EmailInviteCanOnlyBeRevoked(t *testing.T) {
 		}
 		if !errors.Is(err, domain.ErrInvalidStateTransition) {
 			t.Errorf("%s: err = %v; want ErrInvalidStateTransition", to, err)
+		}
+	}
+}
+
+func TestProgramMemberService_Update_EmailInviteAddressCannotChange(t *testing.T) {
+	declined := models.ProgramMemberStatusDeclined
+	for name, in := range map[string]models.ProgramMemberUpdateInput{
+		"email only":     {Email: ptr("other@example.org")},
+		"email + revoke": {Email: ptr("other@example.org"), Status: &declined},
+	} {
+		memberRepo := approvedProgramAdmin()
+		memberRepo.getByID = func(context.Context, string) (*models.ProgramMember, error) {
+			return emailInviteRow(models.ProgramMemberStatusInvited), nil
+		}
+		memberRepo.update = func(context.Context, string, models.ProgramMemberUpdateInput) (*models.ProgramMember, error) {
+			t.Fatalf("%s: Update called; the address must not change", name)
+			return nil, nil
+		}
+		memberRepo.updateIfStatus = func(context.Context, string, []models.ProgramMemberStatus, models.ProgramMemberUpdateInput) (*models.ProgramMember, error) {
+			t.Fatalf("%s: UpdateIfStatus called; the address must not change", name)
+			return nil, nil
+		}
+		svc := service.NewProgramMemberService(memberRepo, publishedProgRepo(), &stubInviteeUsers{}, nil, &stubNotifier{}, "test-secret")
+		_, err := svc.Update(context.Background(), "prog-1", "invite-1", in, "admin-1")
+		if !errors.Is(err, domain.ErrInvalidStateTransition) {
+			t.Errorf("%s: err = %v; want ErrInvalidStateTransition", name, err)
 		}
 	}
 }

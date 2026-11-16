@@ -85,7 +85,10 @@ works only for an LF account that has the address as a verified email; anyone
 else gets a `403`. Inviting the same address again resends the email.
 
 In the Mentors tab list such a row has `"pending_account": true` and shows only
-its email. It can be revoked (`PATCH` to `declined`) or deleted, but not approved.
+its email. It can be revoked (`PATCH` to `declined`) or deleted, but not approved,
+and its email cannot be changed: revoke it and invite the new address instead.
+If the invitee asks to join the program while creating their mentor profile,
+accepting the invitation approves that request.
 
 ## 4. Handle errors
 

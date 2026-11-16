@@ -353,19 +353,43 @@ func (r *ProgramMemberRepository) FindEmailInvite(ctx context.Context, programID
 	return m, nil
 }
 
+// DeleteEmailInvite deletes id only while it still has no user. A row claimed
+// since the caller looked it up is left alone (ErrProgramMemberNotFound), so a
+// cleanup racing an acceptance never removes the accepted membership. An email
+// invitation has no FGA tuple, so there is no marker to enqueue.
+func (r *ProgramMemberRepository) DeleteEmailInvite(ctx context.Context, id string) error {
+	ctx, span := programMemberTracer.Start(ctx, "db.program_members.DeleteEmailInvite")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.member_id", id))
+	cmd, err := r.pool.Exec(ctx, `DELETE FROM program_members WHERE id = $1 AND user_id IS NULL`, id)
+	if err != nil {
+		span.RecordError(err)
+		return fmt.Errorf("delete email invitation: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return domain.ErrProgramMemberNotFound
+	}
+	return nil
+}
+
 // claimReusableStatuses are the statuses of a caller's own mentor row that
-// accepting an email invitation approves in place of the invitation row.
+// accepting an email invitation approves in place of the invitation row. They
+// include the caller's own open request (requested or pending): an invitee who
+// asks to join the program while creating their mentor profile must still be
+// able to accept the invitation, which approves that request.
 var claimReusableStatuses = []models.ProgramMemberStatus{
 	models.ProgramMemberStatusInvited,
+	models.ProgramMemberStatusRequested,
+	models.ProgramMemberStatusPending,
 	models.ProgramMemberStatusDeclined,
 	models.ProgramMemberStatusWithdrawn,
 }
 
 // ClaimEmailInvite makes userID an approved mentor from the invited email
-// invitation id. When userID already has a mentor row on the program that an
-// admin could invite again (invited, declined or withdrawn), that row is approved
-// and the email invitation deleted, since the table holds one mentor row per
-// user; any other existing row is ErrConflict. An invitation that is gone, has a
+// invitation id. When userID already has a mentor row on the program that is
+// not approved (claimReusableStatuses), that row is approved and the email
+// invitation deleted, since the table holds one mentor row per user; an
+// approved row is ErrConflict. An invitation that is gone, has a
 // user or is no longer invited is ErrInvalidStateTransition.
 func (r *ProgramMemberRepository) ClaimEmailInvite(ctx context.Context, id, userID string) (*models.ProgramMember, error) {
 	ctx, span := programMemberTracer.Start(ctx, "db.program_members.ClaimEmailInvite")
@@ -406,7 +430,7 @@ func (r *ProgramMemberRepository) ClaimEmailInvite(ctx context.Context, id, user
 		}
 	} else {
 		if existing.Status == nil || !slices.Contains(claimReusableStatuses, *existing.Status) {
-			return nil, fmt.Errorf("%w: caller is already a mentor or has asked to join this program", domain.ErrConflict)
+			return nil, fmt.Errorf("%w: caller is already a mentor of this program", domain.ErrConflict)
 		}
 		if _, err := tx.Exec(ctx, `DELETE FROM program_members WHERE id = $1`, id); err != nil {
 			return nil, fmt.Errorf("delete claimed email invitation: %w", err)

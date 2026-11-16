@@ -160,6 +160,9 @@ type ProgramMemberRepository interface {
 	// FindEmailInvite returns the program's email invitation (a mentor row with no
 	// user) for an address, compared without case, or ErrProgramMemberNotFound.
 	FindEmailInvite(ctx context.Context, programID, address string) (*models.ProgramMember, error)
+	// DeleteEmailInvite deletes id only while it is still an email invitation (no
+	// user), returning ErrProgramMemberNotFound when it is gone or was claimed.
+	DeleteEmailInvite(ctx context.Context, id string) error
 	// ClaimEmailInvite approves userID as a mentor from an open email invitation,
 	// reusing userID's own reinvitable mentor row on the program when there is one.
 	ClaimEmailInvite(ctx context.Context, id, userID string) (*models.ProgramMember, error)

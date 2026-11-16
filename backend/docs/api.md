@@ -1636,6 +1636,9 @@ This endpoint therefore refuses `requested`/`pending` → `withdrawn` and
 
 An email invitation (a mentor row with no `user_id`) can only be revoked
 (`invited → declined`); only its invitee can accept it, so any other status is `409`.
+Its `email` cannot be changed either (`409`), alone or with `status`: the signed
+link was sent to that address and accept checks ownership of it. To invite
+another address, revoke the invitation and invite the new one.
 
 **Response** `200` → `<ProgramMember>`  
 **Errors** `400`, `403`, `404`, `409` (transition not allowed)
@@ -1948,11 +1951,13 @@ Accept a mentor invitation. No request body.
 
 For an email invitation the program must still be published. The invitation row
 gets the caller's `user_id` and is approved. If the caller already has a mentor
-row on the program that is `invited`, `declined` or `withdrawn`, that row is
-approved instead and the invitation row is deleted.
+row on the program that is not `approved` (`invited`, `requested`, `pending`,
+`declined` or `withdrawn`), that row is approved instead and the invitation row
+is deleted. This covers an invitee who asked to join the program while creating
+their mentor profile.
 
 **Response** `200` → `<ProgramMember>`  
-**Errors** `400` (invalid token, or no pending invite — including one already answered), `401` (no JWT), `403` (the token belongs to another user, or the invited address is not a verified email of the caller's LF account), `409` (the row changed concurrently; for an email invitation, also the program is no longer published or the caller is already an `approved`, `requested` or `pending` mentor on it), `503` (auth-service is unreachable for an email invitation)
+**Errors** `400` (invalid token, or no pending invite — including one already answered), `401` (no JWT), `403` (the token belongs to another user, or the invited address is not a verified email of the caller's LF account), `409` (the row changed concurrently; for an email invitation, also the program is no longer published or the caller is already an `approved` mentor on it), `503` (auth-service is unreachable for an email invitation)
 
 ---
 

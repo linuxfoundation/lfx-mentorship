@@ -28,6 +28,7 @@ type stubMemberRepo struct {
 	updateIfStatus     func(context.Context, string, []models.ProgramMemberStatus, models.ProgramMemberUpdateInput) (*models.ProgramMember, error)
 	delete             func(context.Context, string) error
 	findEmailInvite    func(context.Context, string, string) (*models.ProgramMember, error)
+	deleteEmailInvite  func(context.Context, string) error
 	claimEmailInvite   func(context.Context, string, string) (*models.ProgramMember, error)
 }
 
@@ -126,6 +127,12 @@ func (m *stubMemberRepo) FindEmailInvite(ctx context.Context, programID, address
 		return m.findEmailInvite(ctx, programID, address)
 	}
 	return nil, domain.ErrProgramMemberNotFound
+}
+func (m *stubMemberRepo) DeleteEmailInvite(ctx context.Context, id string) error {
+	if m.deleteEmailInvite != nil {
+		return m.deleteEmailInvite(ctx, id)
+	}
+	return nil
 }
 func (m *stubMemberRepo) ClaimEmailInvite(ctx context.Context, id, userID string) (*models.ProgramMember, error) {
 	if m.claimEmailInvite != nil {
