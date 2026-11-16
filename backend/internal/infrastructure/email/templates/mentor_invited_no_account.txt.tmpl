@@ -1,0 +1,18 @@
+{{- /* Copyright The Linux Foundation and each contributor to LFX. */ -}}
+{{- /* SPDX-License-Identifier: MIT */ -}}
+{{template "header" .}}{{template "greeting" (printf "Hi %s!" .RecipientName)}}{{.InviterName}} invited you to join the {{.ProgramName}} mentorship program on LFX Mentorship as a mentor. LFX Mentorship is a free platform that enables open source projects to run mentorships and get matched with mentees.
+
+To accept, follow these three steps in order.
+
+Step 1: Create your LF account
+Sign up with this email address: {{.InviteeEmail}}
+The invitation only works for an LF account that uses this address.
+{{template "action" (action .SignUpURL "Create LF Account" "secondary")}}
+Step 2: Create your mentor profile
+Sign in with your new account and fill in your mentor profile. It only takes a few minutes.
+{{template "action" (action .ProfileURL "Create Mentor Profile" "secondary")}}
+Step 3: Accept the invitation
+Sign in with the same account, then choose Accept or Decline. This link does not expire.
+{{template "action" (action .InviteURL "Respond to Invitation" "primary")}}
+View the program: {{.ProgramURL}}
+{{template "footer" .}}

@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -125,5 +126,47 @@ func TestGenerateInviteToken_SameInviteSameToken(t *testing.T) {
 	second, _ := auth.GenerateInviteToken("prog-1", "user-1", testSecret)
 	if first != second {
 		t.Error("re-inviting the same person must not invalidate the link they already have")
+	}
+}
+
+func TestEmailInviteToken_RoundTrip(t *testing.T) {
+	token, err := auth.GenerateEmailInviteToken("prog-1", "member-1", testSecret)
+	if err != nil {
+		t.Fatalf("GenerateEmailInviteToken: %v", err)
+	}
+	claims, err := auth.ParseInviteToken(token, testSecret)
+	if err != nil {
+		t.Fatalf("ParseInviteToken: %v", err)
+	}
+	if claims.ProgramID != "prog-1" || claims.MemberID != "member-1" || claims.UserID != "" {
+		t.Errorf("claims = %+v; want prog-1 and member-1 with no user", claims)
+	}
+}
+
+func TestValidateInviteToken_RejectsEmailInviteToken(t *testing.T) {
+	token, err := auth.GenerateEmailInviteToken("prog-1", "member-1", testSecret)
+	if err != nil {
+		t.Fatalf("GenerateEmailInviteToken: %v", err)
+	}
+	if _, _, err := auth.ValidateInviteToken(token, testSecret); !errors.Is(err, auth.ErrInvalidInviteToken) {
+		t.Errorf("err = %v; want ErrInvalidInviteToken for a token that names no user", err)
+	}
+}
+
+func TestParseInviteToken_UserTokenUnchanged(t *testing.T) {
+	token, err := auth.GenerateInviteToken("prog-1", "user-1", testSecret)
+	if err != nil {
+		t.Fatalf("GenerateInviteToken: %v", err)
+	}
+	claims, err := auth.ParseInviteToken(token, testSecret)
+	if err != nil {
+		t.Fatalf("ParseInviteToken: %v", err)
+	}
+	if claims.UserID != "user-1" || claims.MemberID != "" {
+		t.Errorf("claims = %+v; want user-1 with no member", claims)
+	}
+	payload, _, _ := strings.Cut(token, ".")
+	if decoded, _ := base64.RawURLEncoding.DecodeString(payload); strings.Contains(string(decoded), "member_id") {
+		t.Errorf("a user token payload must not change: %s", decoded)
 	}
 }

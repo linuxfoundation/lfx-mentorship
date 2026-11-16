@@ -1545,6 +1545,21 @@ Add a member to a program.
   email is sent again; no new row is created. This is how an invite is resent,
   and how a declined or revoked mentor is invited again.
 
+**Email invitation flow** (`member_type = "mentor"`, only `email` set, no LF account uses it):
+- Record is created with `status = "invited"`, the trimmed `email` and **no
+  `user_id`** (`""` in responses). The email goes to that address through
+  `NotifyMentorInvitedByEmail` (`mentor_invited_no_account`): create an LF
+  account with this address, create a mentor profile, then answer the invitation.
+- Its token names the member row instead of a user (see
+  [Mentor Invite Tokens](#11-mentor-invite-tokens)); accepting it after signing
+  up sets `user_id` to the caller.
+- Inviting the same address again (compared without case) resends the email and
+  reopens a `declined` invitation; no new row is created.
+- Once the address belongs to an LF account, inviting it invites that account as
+  above and deletes the program's email invitation for the address.
+- Such a row is only ever `invited` or `declined` (a database check enforces it),
+  so it has no OpenFGA relation and is not indexed.
+
 **Self-request flow** (`member_type = "mentor"`, `status = "requested"` explicitly supplied):
 - Record is created with `status = "requested"`.
 - No invite email is sent: `NotifyMentorInvited` fires only for `invited` rows.
@@ -1565,8 +1580,9 @@ Add a member to a program.
 ```
 
 Anyone with an LF account can be invited, whether or not they have used
-Mentorship. An `email` is resolved to its LF account through auth-service,
-matching the account's primary or linked emails. An `lfid` must match the LF
+Mentorship, and a mentor can also be invited by an email no LF account uses yet
+(above). An `email` is resolved to its LF account through auth-service,
+matching the account's primary or linked verified emails. An `lfid` must match the LF
 username exactly, including case. A person who already has a Mentorship user is
 invited as that user and the invite email goes to their stored email, without
 calling auth-service; only a user with no stored email, or a blank one, gets the account's
@@ -1575,7 +1591,7 @@ auth-service (LFID, name, avatar and primary email), the invite email goes to
 that primary email, and their first sign-in updates that same row.
 
 **Response** `201` → `<ProgramMember>` (the existing row when a mentor is invited again)  
-**Errors** `400`, `404` (program not found), `409` (the user already has a row of this `member_type` on the program that cannot be invited again: any program admin row, or a mentor row that is `approved`, `requested` or `pending`), `422` (no LF account has that `lfid` or `email`, or another Mentorship user already holds the account's primary email), `503` (auth-service is unreachable when it is needed)
+**Errors** `400`, `404` (program not found), `409` (the user already has a row of this `member_type` on the program that cannot be invited again: any program admin row, or a mentor row that is `approved`, `requested` or `pending`), `422` (no LF account has that `lfid`, or that `email` for a `program_admin`, or another Mentorship user already holds the account's primary email), `503` (auth-service is unreachable when it is needed)
 
 ---
 
@@ -1617,6 +1633,12 @@ it, through the [mentor self-service](#mentor-self-service) routes. A program
 admin approves a request (`approved`), declines it (`declined`), or deletes it.
 This endpoint therefore refuses `requested`/`pending` → `withdrawn` and
 `withdrawn` → `requested` with `409`.
+
+An email invitation (a mentor row with no `user_id`) can only be revoked
+(`invited → declined`); only its invitee can accept it, so any other status is `409`.
+Its `email` cannot be changed either (`409`), alone or with `status`: the signed
+link was sent to that address and accept checks ownership of it. To invite
+another address, revoke the invitation and invite the new one.
 
 **Response** `200` → `<ProgramMember>`  
 **Errors** `400`, `403`, `404`, `409` (transition not allowed)
@@ -1913,11 +1935,11 @@ from `invited` to `declined`, and emails the program's active Program Admins
 
 ## 11. Mentor Invite Tokens
 
-These endpoints are called by the LFX Self Serve page that the invite email links to (`/mentorship/mentor/invites?token=…`). Both need the signed token **and** the invited user's JWT: the token says which program and user it was issued for, and the caller must be that user.
+These endpoints are called by the LFX Self Serve page that the invite email links to (`/mentorship/mentor/invites?token=…`). Both need the signed token **and** the invitee's JWT. A user token says which program and user it was issued for, and the caller must be that user. An email invitation's token names its member row instead, and the invited address must be a verified email of the caller's LF account: auth-service's `email_to_username` must resolve it to the caller's LFID (compared without case).
 
 ### Token Format
 
-`base64url(JSON {program_id, user_id}) + "." + base64url(HMAC-SHA256 signature)`. The signing secret is set via the `MENTOR_INVITE_SECRET` environment variable. Tokens do not expire and are not stored: one works until its member row leaves `invited`, and a row invited again makes the same link work again. Only the invited user, signed in, can use it. Rotating the secret invalidates every outstanding link. Links issued while tokens carried an `exp` claim still verify; the claim is ignored.
+`base64url(JSON {program_id, user_id}) + "." + base64url(HMAC-SHA256 signature)`, or `{program_id, member_id}` for an email invitation; exactly one of `user_id` and `member_id` is set. The signing secret is set via the `MENTOR_INVITE_SECRET` environment variable. Tokens do not expire and are not stored: one works until its member row leaves `invited`, and a row invited again makes the same link work again. Only the invited user, signed in, can use it. Rotating the secret invalidates every outstanding link. Links issued while tokens carried an `exp` claim still verify; the claim is ignored.
 
 ---
 
@@ -1927,8 +1949,15 @@ Accept a mentor invitation. No request body.
 
 **Effect**: Sets the matching `program_members` record's `status` from `invited` to `approved`, and emails the program's active Program Admins (`NotifyAdminMentorAccepted`).
 
+For an email invitation the program must still be published. The invitation row
+gets the caller's `user_id` and is approved. If the caller already has a mentor
+row on the program that is not `approved` (`invited`, `requested`, `pending`,
+`declined` or `withdrawn`), that row is approved instead and the invitation row
+is deleted. This covers an invitee who asked to join the program while creating
+their mentor profile.
+
 **Response** `200` → `<ProgramMember>`  
-**Errors** `400` (invalid token, or no pending invite — including one already answered), `401` (no JWT), `403` (the token belongs to another user), `409` (the row changed concurrently)
+**Errors** `400` (invalid token, or no pending invite — including one already answered), `401` (no JWT), `403` (the token belongs to another user, or the invited address is not a verified email of the caller's LF account), `409` (the row changed concurrently; for an email invitation, also the program is no longer published or the caller is already an `approved` mentor on it), `503` (auth-service is unreachable for an email invitation)
 
 ---
 
@@ -1936,7 +1965,7 @@ Accept a mentor invitation. No request body.
 
 Decline a mentor invitation. No request body.
 
-**Effect**: Sets `status` from `invited` to `declined`, and emails the program's active Program Admins (`NotifyAdminMentorDeclined`).
+**Effect**: Sets `status` from `invited` to `declined`, and emails the program's active Program Admins (`NotifyAdminMentorDeclined`). An email invitation is declined only by the owner of the invited address, as for accept; its row keeps no `user_id`.
 
 **Response** `204`  
 **Errors** as for accept

@@ -83,6 +83,9 @@ const (
 	selfServeMentorInvitesPath = selfServeMentorshipPath + "/mentor/invites"
 	// selfServeMentorProfilePath is the mentor profile form; a mentor who already has a profile is sent on to their programs.
 	selfServeMentorProfilePath = selfServeMentorshipPath + "/mentor"
+	// selfServeLoginPath signs in, or signs up through the LF login page's sign-up link, then
+	// opens the page in its returnTo parameter.
+	selfServeLoginPath = "/login"
 	// selfServeMentorOwnProfilePath is where a mentor views and edits their own profile.
 	selfServeMentorOwnProfilePath = selfServeMentorshipPath + "/mentor/profile"
 	// selfServeMenteeOverviewPath is the mentee's home page in Self Serve.
@@ -236,6 +239,34 @@ func (n *Notifier) NotifyMentorInvited(ctx context.Context, programID, userID, i
 			InviteURL:     n.selfServeLink(selfServeMentorInvitesPath + "?token=" + url.QueryEscape(token)),
 			ProfileURL:    n.selfServeLink(selfServeMentorProfilePath),
 			LFID:          deref(user.LFID),
+		})
+		return []Message{msg}, err
+	})
+}
+
+// NotifyMentorInvitedByEmail emails an invitation to address, which no LF account uses yet. It lists
+// the three steps in order: create an LF account with this address, create a mentor profile, then
+// answer the invitation. The link only works for an account that uses the address.
+func (n *Notifier) NotifyMentorInvitedByEmail(ctx context.Context, programID, address, inviterID, token string) {
+	n.dispatch(ctx, templateMentorInvitedNoAccount, func(ctx context.Context) ([]Message, error) {
+		program, err := n.repos.Programs.GetByID(ctx, programID)
+		if err != nil {
+			return nil, fmt.Errorf("get program: %w", err)
+		}
+		to := strings.TrimSpace(address)
+		if to == "" {
+			return nil, errors.New("email invitation has no address")
+		}
+		inviter := n.inviterName(ctx, inviterID)
+		msg, err := render(templateMentorInvitedNoAccount, to, inviter+" invited you to mentor "+program.Name, templateData{
+			RecipientName: greetingFallback,
+			ProgramName:   program.Name,
+			ProgramURL:    n.programURL(program),
+			InviterName:   inviter,
+			InviteeEmail:  to,
+			SignUpURL:     n.selfServeLink(selfServeLoginPath + "?returnTo=" + url.QueryEscape(selfServeMentorProfilePath)),
+			ProfileURL:    n.selfServeLink(selfServeMentorProfilePath),
+			InviteURL:     n.selfServeLink(selfServeMentorInvitesPath + "?token=" + url.QueryEscape(token)),
 		})
 		return []Message{msg}, err
 	})

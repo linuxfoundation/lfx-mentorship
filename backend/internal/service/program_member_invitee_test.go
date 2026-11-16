@@ -228,7 +228,6 @@ func TestProgramMemberService_Create_InviteeErrors(t *testing.T) {
 		noDir     bool
 		want      error
 	}{
-		"unknown email":            {input: models.ProgramMemberCreateInput{Email: ptr("nobody@example.org")}, directory: newDirectory(), want: domain.ErrIneligible},
 		"unknown lfid":             {input: models.ProgramMemberCreateInput{LFID: "nobody"}, directory: newDirectory(), want: domain.ErrIneligible},
 		"lfid in another casing":   {input: models.ProgramMemberCreateInput{LFID: "Ada"}, directory: newDirectory(), want: domain.ErrIneligible},
 		"invalid email":            {input: models.ProgramMemberCreateInput{Email: ptr("not an email")}, directory: newDirectory(), want: domain.ErrInvalidInput},

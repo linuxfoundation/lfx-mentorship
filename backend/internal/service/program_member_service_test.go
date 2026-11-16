@@ -442,7 +442,7 @@ func TestProgramMemberService_Update_Decline_NotifiesMentor(t *testing.T) {
 
 func TestProgramMemberService_AcceptInvite_InvalidToken(t *testing.T) {
 	svc := newMemberSvc(&stubMemberRepo{}, &stubProgRepo{}, &stubNotifier{})
-	_, err := svc.AcceptInvite(context.Background(), "not-a-valid-token", "user-1")
+	_, err := svc.AcceptInvite(context.Background(), "not-a-valid-token", models.UserPrincipal{UserID: "user-1"})
 	if !errors.Is(err, domain.ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for bad token, got %v", err)
 	}
@@ -450,7 +450,7 @@ func TestProgramMemberService_AcceptInvite_InvalidToken(t *testing.T) {
 
 func TestProgramMemberService_DeclineInvite_InvalidToken(t *testing.T) {
 	svc := newMemberSvc(&stubMemberRepo{}, &stubProgRepo{}, &stubNotifier{})
-	err := svc.DeclineInvite(context.Background(), "not-a-valid-token", "user-1")
+	err := svc.DeclineInvite(context.Background(), "not-a-valid-token", models.UserPrincipal{UserID: "user-1"})
 	if !errors.Is(err, domain.ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for bad token, got %v", err)
 	}
@@ -476,7 +476,7 @@ func TestProgramMemberService_AcceptInvite_NotifiesAdminsOnlyAfterWrite(t *testi
 				},
 			}
 			n := &stubNotifier{}
-			_, err := newMemberSvc(memberRepo, &stubProgRepo{}, n).AcceptInvite(context.Background(), token, "mentor-1")
+			_, err := newMemberSvc(memberRepo, &stubProgRepo{}, n).AcceptInvite(context.Background(), token, models.UserPrincipal{UserID: "mentor-1"})
 			want := 1
 			if writeErr != nil {
 				want = 0
@@ -500,10 +500,10 @@ func TestProgramMemberService_InviteRejectsMismatchedPrincipal(t *testing.T) {
 	}
 	svc := newMemberSvc(&stubMemberRepo{}, &stubProgRepo{}, &stubNotifier{})
 
-	if _, err := svc.AcceptInvite(context.Background(), token, "different-user"); !errors.Is(err, domain.ErrForbidden) {
+	if _, err := svc.AcceptInvite(context.Background(), token, models.UserPrincipal{UserID: "different-user"}); !errors.Is(err, domain.ErrForbidden) {
 		t.Errorf("accept should reject mismatched principal with ErrForbidden, got %v", err)
 	}
-	if err := svc.DeclineInvite(context.Background(), token, "different-user"); !errors.Is(err, domain.ErrForbidden) {
+	if err := svc.DeclineInvite(context.Background(), token, models.UserPrincipal{UserID: "different-user"}); !errors.Is(err, domain.ErrForbidden) {
 		t.Errorf("decline should reject mismatched principal with ErrForbidden, got %v", err)
 	}
 }
@@ -522,7 +522,7 @@ func TestProgramMemberService_DeclineInvite_NotifiesAdmins(t *testing.T) {
 	n := &stubNotifier{}
 	svc := newMemberSvc(memberRepo, &stubProgRepo{}, n)
 
-	if err := svc.DeclineInvite(context.Background(), token, "mentor-1"); err != nil {
+	if err := svc.DeclineInvite(context.Background(), token, models.UserPrincipal{UserID: "mentor-1"}); err != nil {
 		t.Fatalf("DeclineInvite: %v", err)
 	}
 	if n.adminMentorDeclinedCalls != 1 || n.mentorDeclinedCalls != 0 {
@@ -1226,7 +1226,7 @@ func TestProgramMemberService_InviteResponse_WritesOnlyFromInvited(t *testing.T)
 	t.Run("accept", func(t *testing.T) {
 		var gotFrom []models.ProgramMemberStatus
 		svc := newMemberSvc(newRepo(&gotFrom, nil), &stubProgRepo{}, &stubNotifier{})
-		if _, err := svc.AcceptInvite(context.Background(), token, "mentor-1"); err != nil {
+		if _, err := svc.AcceptInvite(context.Background(), token, models.UserPrincipal{UserID: "mentor-1"}); err != nil {
 			t.Fatalf("AcceptInvite: %v", err)
 		}
 		if !slices.Equal(gotFrom, invitedOnly) {
@@ -1236,7 +1236,7 @@ func TestProgramMemberService_InviteResponse_WritesOnlyFromInvited(t *testing.T)
 	t.Run("decline", func(t *testing.T) {
 		var gotFrom []models.ProgramMemberStatus
 		svc := newMemberSvc(newRepo(&gotFrom, nil), &stubProgRepo{}, &stubNotifier{})
-		if err := svc.DeclineInvite(context.Background(), token, "mentor-1"); err != nil {
+		if err := svc.DeclineInvite(context.Background(), token, models.UserPrincipal{UserID: "mentor-1"}); err != nil {
 			t.Fatalf("DeclineInvite: %v", err)
 		}
 		if !slices.Equal(gotFrom, invitedOnly) {
@@ -1247,7 +1247,7 @@ func TestProgramMemberService_InviteResponse_WritesOnlyFromInvited(t *testing.T)
 		var gotFrom []models.ProgramMemberStatus
 		n := &stubNotifier{}
 		svc := newMemberSvc(newRepo(&gotFrom, domain.ErrInvalidStateTransition), &stubProgRepo{}, n)
-		if err := svc.DeclineInvite(context.Background(), token, "mentor-1"); !errors.Is(err, domain.ErrInvalidStateTransition) {
+		if err := svc.DeclineInvite(context.Background(), token, models.UserPrincipal{UserID: "mentor-1"}); !errors.Is(err, domain.ErrInvalidStateTransition) {
 			t.Errorf("expected ErrInvalidStateTransition, got %v", err)
 		}
 		if n.mentorDeclinedCalls != 0 {

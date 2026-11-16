@@ -29,7 +29,8 @@ func NewProgramMemberRepository(pool *pgxpool.Pool) *ProgramMemberRepository {
 	return &ProgramMemberRepository{pool: pool}
 }
 
-const programMemberCols = `id, program_id, user_id, member_type, status, email, created_on, updated_on`
+// programMemberCols reads user_id as "" for an email invitation, which has no user yet.
+const programMemberCols = `id, program_id, COALESCE(user_id::text, '') AS user_id, member_type, status, email, created_on, updated_on`
 
 func scanProgramMember(row pgx.Row) (*models.ProgramMember, error) {
 	var m models.ProgramMember
@@ -206,8 +207,9 @@ func (r *ProgramMemberRepository) ListMentorManagement(ctx context.Context, prog
 		args = append(args, containsPattern(filter.Search))
 		where += fmt.Sprintf(` AND (`+sqlUserDisplayName+` ILIKE $%d OR `+mentorEmail+` ILIKE $%d OR u.lfid ILIKE $%d)`, len(args), len(args), len(args))
 	}
-	// The mentor's latest profile backs the name, email and avatar the account lacks.
-	const from = ` FROM program_members pm JOIN users u ON u.id = pm.user_id
+	// The mentor's latest profile backs the name, email and avatar the account lacks. An email
+	// invitation has no user, so users is left-joined and the row shows only its address.
+	const from = ` FROM program_members pm LEFT JOIN users u ON u.id = pm.user_id
 		LEFT JOIN LATERAL (SELECT id, first_name, last_name, email, logo_url FROM user_profiles
 			WHERE user_id = pm.user_id AND profile_type = 'mentor' ORDER BY updated_on DESC LIMIT 1) up ON true`
 	var total int
@@ -215,7 +217,7 @@ func (r *ProgramMemberRepository) ListMentorManagement(ctx context.Context, prog
 		return nil, nil, fmt.Errorf("count mentor management: %w", err)
 	}
 	args = append(args, limit, offset)
-	q := `SELECT pm.id, pm.user_id, ` + sqlUserDisplayName + `, ` + mentorEmail + `, u.lfid, COALESCE(NULLIF(up.logo_url, ''), u.avatar_url), pm.status, pm.created_on, pm.updated_on, up.id IS NOT NULL` + from + where + fmt.Sprintf(` ORDER BY pm.created_on DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
+	q := `SELECT pm.id, COALESCE(pm.user_id::text, ''), ` + sqlUserDisplayName + `, ` + mentorEmail + `, u.lfid, COALESCE(NULLIF(up.logo_url, ''), u.avatar_url), pm.status, pm.created_on, pm.updated_on, up.id IS NOT NULL, pm.user_id IS NULL` + from + where + fmt.Sprintf(` ORDER BY pm.created_on DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
 	rows, err := r.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("list mentor management: %w", err)
@@ -224,7 +226,7 @@ func (r *ProgramMemberRepository) ListMentorManagement(ctx context.Context, prog
 	result := make([]*models.ProgramMentorManagementRow, 0)
 	for rows.Next() {
 		var row models.ProgramMentorManagementRow
-		if err := rows.Scan(&row.ID, &row.UserID, &row.Name, &row.Email, &row.Username, &row.AvatarURL, &row.Status, &row.CreatedOn, &row.UpdatedOn, &row.ProfileCreated); err != nil {
+		if err := rows.Scan(&row.ID, &row.UserID, &row.Name, &row.Email, &row.Username, &row.AvatarURL, &row.Status, &row.CreatedOn, &row.UpdatedOn, &row.ProfileCreated, &row.PendingAccount); err != nil {
 			return nil, nil, fmt.Errorf("scan mentor management: %w", err)
 		}
 		result = append(result, &row)
@@ -304,7 +306,7 @@ func (r *ProgramMemberRepository) Create(ctx context.Context, programID string, 
 
 	const q = `
 		INSERT INTO program_members (id, program_id, user_id, member_type, status, email)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		VALUES ($1, $2, NULLIF($3, '')::uuid, $4, $5, $6)
 		RETURNING ` + programMemberCols
 
 	m, err := scanProgramMember(tx.QueryRow(ctx, q,
@@ -326,6 +328,128 @@ func (r *ProgramMemberRepository) Create(ctx context.Context, programID string, 
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create program member transaction: %w", err)
+	}
+	return m, nil
+}
+
+// FindEmailInvite returns the program's email invitation for address, compared
+// without case, or ErrProgramMemberNotFound. Only a row with no user is an email
+// invitation.
+func (r *ProgramMemberRepository) FindEmailInvite(ctx context.Context, programID, address string) (*models.ProgramMember, error) {
+	ctx, span := programMemberTracer.Start(ctx, "db.program_members.FindEmailInvite")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.program_id", programID))
+
+	q := `SELECT ` + programMemberCols + ` FROM program_members
+		WHERE program_id = $1 AND user_id IS NULL AND member_type = 'mentor' AND lower(email) = lower($2)`
+	m, err := scanProgramMember(r.pool.QueryRow(ctx, q, programID, address))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrProgramMemberNotFound
+	}
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("find email invitation: %w", err)
+	}
+	return m, nil
+}
+
+// DeleteEmailInvite deletes id only while it still has no user. A row claimed
+// since the caller looked it up is left alone (ErrProgramMemberNotFound), so a
+// cleanup racing an acceptance never removes the accepted membership. An email
+// invitation has no FGA tuple, so there is no marker to enqueue.
+func (r *ProgramMemberRepository) DeleteEmailInvite(ctx context.Context, id string) error {
+	ctx, span := programMemberTracer.Start(ctx, "db.program_members.DeleteEmailInvite")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.member_id", id))
+	cmd, err := r.pool.Exec(ctx, `DELETE FROM program_members WHERE id = $1 AND user_id IS NULL`, id)
+	if err != nil {
+		span.RecordError(err)
+		return fmt.Errorf("delete email invitation: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return domain.ErrProgramMemberNotFound
+	}
+	return nil
+}
+
+// claimReusableStatuses are the statuses of a caller's own mentor row that
+// accepting an email invitation approves in place of the invitation row. They
+// include the caller's own open request (requested or pending): an invitee who
+// asks to join the program while creating their mentor profile must still be
+// able to accept the invitation, which approves that request.
+var claimReusableStatuses = []models.ProgramMemberStatus{
+	models.ProgramMemberStatusInvited,
+	models.ProgramMemberStatusRequested,
+	models.ProgramMemberStatusPending,
+	models.ProgramMemberStatusDeclined,
+	models.ProgramMemberStatusWithdrawn,
+}
+
+// ClaimEmailInvite makes userID an approved mentor from the invited email
+// invitation id. When userID already has a mentor row on the program that is
+// not approved (claimReusableStatuses), that row is approved and the email
+// invitation deleted, since the table holds one mentor row per user; an
+// approved row is ErrConflict. An invitation that is gone, has a
+// user or is no longer invited is ErrInvalidStateTransition.
+func (r *ProgramMemberRepository) ClaimEmailInvite(ctx context.Context, id, userID string) (*models.ProgramMember, error) {
+	ctx, span := programMemberTracer.Start(ctx, "db.program_members.ClaimEmailInvite")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.member_id", id), attribute.String("db.user_id", userID))
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin claim email invitation transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	invite, err := scanProgramMember(tx.QueryRow(ctx, `SELECT `+programMemberCols+` FROM program_members WHERE id = $1 FOR UPDATE`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("%w: email invitation no longer exists", domain.ErrInvalidStateTransition)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load email invitation: %w", err)
+	}
+	if invite.UserID != "" || invite.Status == nil || *invite.Status != models.ProgramMemberStatusInvited {
+		return nil, fmt.Errorf("%w: email invitation is no longer open", domain.ErrInvalidStateTransition)
+	}
+
+	existing, err := scanProgramMember(tx.QueryRow(ctx, `SELECT `+programMemberCols+` FROM program_members
+		WHERE program_id = $1 AND user_id = $2 AND member_type = 'mentor' FOR UPDATE`, invite.ProgramID, userID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		existing = nil
+	} else if err != nil {
+		return nil, fmt.Errorf("load caller mentor row: %w", err)
+	}
+
+	var m *models.ProgramMember
+	if existing == nil {
+		m, err = scanProgramMember(tx.QueryRow(ctx, `UPDATE program_members SET user_id = $2, status = 'approved'
+			WHERE id = $1 RETURNING `+programMemberCols, id, userID))
+		if err != nil {
+			return nil, fmt.Errorf("claim email invitation: %w", err)
+		}
+	} else {
+		if existing.Status == nil || !slices.Contains(claimReusableStatuses, *existing.Status) {
+			return nil, fmt.Errorf("%w: caller is already a mentor of this program", domain.ErrConflict)
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM program_members WHERE id = $1`, id); err != nil {
+			return nil, fmt.Errorf("delete claimed email invitation: %w", err)
+		}
+		m, err = scanProgramMember(tx.QueryRow(ctx, `UPDATE program_members SET status = 'approved', email = COALESCE(email, $2)
+			WHERE id = $1 RETURNING `+programMemberCols, existing.ID, invite.Email))
+		if err != nil {
+			return nil, fmt.Errorf("approve caller mentor row: %w", err)
+		}
+	}
+
+	if err := enqueueMemberMarker(ctx, tx, m, "put"); err != nil {
+		return nil, err
+	}
+	if err := enqueueProgramIndexByID(ctx, tx, m.ProgramID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit claim email invitation transaction: %w", err)
 	}
 	return m, nil
 }

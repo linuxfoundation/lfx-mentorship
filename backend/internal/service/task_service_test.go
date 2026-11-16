@@ -27,6 +27,9 @@ type stubMemberRepo struct {
 	update             func(context.Context, string, models.ProgramMemberUpdateInput) (*models.ProgramMember, error)
 	updateIfStatus     func(context.Context, string, []models.ProgramMemberStatus, models.ProgramMemberUpdateInput) (*models.ProgramMember, error)
 	delete             func(context.Context, string) error
+	findEmailInvite    func(context.Context, string, string) (*models.ProgramMember, error)
+	deleteEmailInvite  func(context.Context, string) error
+	claimEmailInvite   func(context.Context, string, string) (*models.ProgramMember, error)
 }
 
 func (m *stubMemberRepo) ListMentorManagement(context.Context, string, models.ProgramMemberFilter) ([]*models.ProgramMentorManagementRow, *models.PaginationMeta, error) {
@@ -118,6 +121,25 @@ func (m *stubMemberRepo) Delete(ctx context.Context, id string) error {
 		return m.delete(ctx, id)
 	}
 	return nil
+}
+func (m *stubMemberRepo) FindEmailInvite(ctx context.Context, programID, address string) (*models.ProgramMember, error) {
+	if m.findEmailInvite != nil {
+		return m.findEmailInvite(ctx, programID, address)
+	}
+	return nil, domain.ErrProgramMemberNotFound
+}
+func (m *stubMemberRepo) DeleteEmailInvite(ctx context.Context, id string) error {
+	if m.deleteEmailInvite != nil {
+		return m.deleteEmailInvite(ctx, id)
+	}
+	return nil
+}
+func (m *stubMemberRepo) ClaimEmailInvite(ctx context.Context, id, userID string) (*models.ProgramMember, error) {
+	if m.claimEmailInvite != nil {
+		return m.claimEmailInvite(ctx, id, userID)
+	}
+	approved := models.ProgramMemberStatusApproved
+	return &models.ProgramMember{ID: id, UserID: userID, Status: &approved}, nil
 }
 
 // newTaskSvc builds a TaskService wired to the provided stubs.
