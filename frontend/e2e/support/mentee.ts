@@ -12,6 +12,8 @@ interface MenteeTask {
   id: string;
   name: string;
   status: string;
+  /** `required` when the task needs a file before it can be submitted. */
+  submitFile: 'required' | null;
 }
 
 export interface MenteeApplication {
@@ -118,6 +120,8 @@ async function openTaskRow(page: Page, taskId: string): Promise<void> {
 /** Uploads a PDF to a task, which also marks it submitted. */
 export async function uploadTaskFile(page: Page, taskId: string): Promise<void> {
   await openTaskRow(page, taskId);
+  // The file input is hidden; a mentee can upload only when the task offers its Upload button.
+  await expect(page.getByTestId(`mentee-tasks-upload-${taskId}`)).toBeVisible();
   await page
     .getByTestId(`mentee-tasks-file-input-${taskId}`)
     .setInputFiles(taskPdf(`e2e-${taskId}.pdf`));
@@ -133,7 +137,14 @@ export async function setTaskStatus(
 ): Promise<void> {
   await openTaskRow(page, taskId);
   const status = page.locator(`[data-test="mentee-tasks-status-dropdown-${taskId}"]`);
+  // The dropdown shows the new label before the save, so wait for the save itself.
+  const saved = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'PATCH' &&
+      new URL(response.url()).pathname === `/api/mentorship/mentee/tasks/${taskId}`,
+  );
   await status.click();
   await page.getByRole('option', { name: label, exact: true }).click();
+  expect((await saved).status(), `set task ${taskId} to ${label}`).toBeLessThan(300);
   await expect(status).toContainText(label);
 }

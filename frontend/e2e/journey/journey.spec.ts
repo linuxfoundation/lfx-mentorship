@@ -131,11 +131,19 @@ test('program journey: enroll to graduation', async ({ asUser }) => {
     await apply(menteeOne, programA, termA, PROGRAM_A);
   });
 
-  await test.step('5.4 MENTEE_1 uploads every prerequisite', async () => {
+  await test.step('5.4 MENTEE_1 submits every prerequisite', async () => {
     const application = await menteeApplication(menteeOne, programA);
     menteeOneApp = application.id;
     expect(application.tasks.length, 'prerequisite tasks').toBeGreaterThan(0);
-    for (const task of application.tasks) await uploadTaskFile(menteeOne, task.id);
+    // A task that needs a file is submitted by uploading one; any other by its status.
+    for (const task of application.tasks) {
+      if (task.submitFile === 'required') {
+        await uploadTaskFile(menteeOne, task.id);
+      } else {
+        await setTaskStatus(menteeOne, task.id, 'In Progress');
+        await setTaskStatus(menteeOne, task.id, 'Submitted');
+      }
+    }
   });
 
   await test.step('6.7 ADMIN_A declines MENTEE_2', async () => {

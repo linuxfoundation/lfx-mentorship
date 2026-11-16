@@ -188,13 +188,16 @@ export async function enrollProgram(page: Page, name: string, term: EnrollTerm):
   const isPost = (pattern: RegExp) => (response: { request(): Request; url(): string }) =>
     response.request().method() === 'POST' && pattern.test(new URL(response.url()).pathname);
   const created = page.waitForResponse(isPost(/\/api\/mentorship\/admin\/programs$/));
-  const logo = page.waitForResponse(isPost(/\/api\/mentorship\/admin\/programs\/[^/]+\/logo/));
+  // Self Serve retries the logo while the new program's permissions propagate, so wait for the
+  // attempt that succeeds rather than the first one.
+  const isLogoPost = isPost(/\/api\/mentorship\/admin\/programs\/[^/]+\/logo/);
+  const logo = page.waitForResponse((response) => isLogoPost(response) && response.ok());
   await page.getByTestId('mentorship-enroll-next').click();
 
   const createResponse = await created;
   expect(createResponse.status(), 'create program').toBeLessThan(300);
   const { id } = (await createResponse.json()) as { id: string };
-  expect((await logo).status(), 'logo upload').toBeLessThan(300);
+  await logo;
   await expect(page.getByText('Program submitted for review.')).toBeVisible();
   return id;
 }

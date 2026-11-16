@@ -61,6 +61,8 @@ export async function createTask(
   await dialog
     .locator('#mentorship-task-description')
     .fill(`${name}: created by the E2E journey suite.`);
+  // New tasks need no file by default; the journey's mentee submits one.
+  await dialog.locator('#mentorship-task-requires-file').check();
   await page.getByTestId('mentorship-task-form-submit').click();
   await expect(page.getByText('Task created')).toBeVisible();
 }

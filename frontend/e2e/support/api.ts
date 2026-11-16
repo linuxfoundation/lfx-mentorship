@@ -23,18 +23,32 @@ export interface AdminProgram {
   createdOn: string;
 }
 
-/** The user's admin programs whose name starts with `prefix`, newest first. */
+const PAGE_SIZE = 50;
+
+/**
+ * The user's admin programs whose name starts with `prefix`, newest first. Reads every page: each
+ * run leaves hidden journey programs behind, so the teardown's lookups outgrow one page.
+ */
 export async function findAdminPrograms(
   request: APIRequestContext,
   prefix: string,
   status?: ProgramListStatus,
 ): Promise<AdminProgram[]> {
-  const params = new URLSearchParams({ limit: '50', search: prefix });
-  if (status) params.set('status', status);
-  const response = await request.get(`/api/mentorship/admin/programs?${params}`);
-  expect(response.status(), `GET admin/programs?${params}`).toBe(200);
-  const { data } = (await response.json()) as { data: AdminProgram[] };
-  return data
+  const programs: AdminProgram[] = [];
+  for (let offset = 0; ; offset += PAGE_SIZE) {
+    const params = new URLSearchParams({
+      limit: String(PAGE_SIZE),
+      offset: String(offset),
+      search: prefix,
+    });
+    if (status) params.set('status', status);
+    const response = await request.get(`/api/mentorship/admin/programs?${params}`);
+    expect(response.status(), `GET admin/programs?${params}`).toBe(200);
+    const { data, total } = (await response.json()) as { data: AdminProgram[]; total: number };
+    programs.push(...data);
+    if (data.length < PAGE_SIZE || offset + PAGE_SIZE >= total) break;
+  }
+  return programs
     .filter((program) => program.name.startsWith(prefix))
     .sort((a, b) => b.createdOn.localeCompare(a.createdOn));
 }
