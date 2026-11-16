@@ -31,12 +31,12 @@ E2E_ENV=dev pnpm test:e2e:journey       # DEV; needs the test accounts below
 [`journey/journey.spec.ts`](journey/journey.spec.ts) drives the real Self Serve UI as four DEV
 accounts, each in its own browser context:
 
-| Account    | Role in the journey                                                             |
-| ---------- | ------------------------------------------------------------------------------- |
-| `ADMIN_A`  | Enrolls program A and is its Program Admin; approves program B, then mentors it |
-| `ADMIN_B`  | Approves program A, then mentors it; enrolls program B and is its Program Admin |
-| `MENTEE_1` | Applies to A, uploads the prerequisites, is accepted, works a task, graduates   |
-| `MENTEE_2` | Opens A's Apply link, registering first if it has no mentee profile; declined   |
+| Account    | Role in the journey                                                                                                           |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `ADMIN_A`  | Enrolls program A and is its Program Admin; approves program B, then mentors it                                               |
+| `ADMIN_B`  | Approves program A, then mentors it; enrolls program B and is its Program Admin                                               |
+| `MENTEE_1` | Applies to A, submits the prerequisites (uploads a file where required, else by status), is accepted, works a task, graduates |
+| `MENTEE_2` | Opens A's Apply link, registering first if it has no mentee profile; declined                                                 |
 
 Both admin accounts must be on the DEV approver team. The setup project signs each account in
 through the LFX sign-in page and saves the session to `e2e/.auth/` (gitignored). It signs in on
