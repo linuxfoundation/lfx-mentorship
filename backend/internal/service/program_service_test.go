@@ -155,13 +155,63 @@ func TestProgramService_CreateEnrollment_RejectsNonISOPrerequisiteDueDate(t *tes
 	}
 }
 
-func TestProgramService_CreateEnrollment_RejectsUnsafeURL(t *testing.T) {
-	projectUID := "00000000-0000-0000-0000-000000000001"
-	unsafe := "javascript:alert(1)"
-	svc := newProgramSvc(&stubProgRepo{}, &stubTermRepo{}, &stubAppRepo{})
-	_, err := svc.CreateEnrollment(context.Background(), models.ProgramEnrollmentInput{Program: models.ProgramCreateInput{ProjectUID: &projectUID, Name: "Program", Slug: "program", WebsiteURL: &unsafe}, Skills: []string{"Go"}, Terms: []models.ProgramTermCreateInput{{Name: "Term"}}})
-	if !errors.Is(err, domain.ErrInvalidInput) {
-		t.Fatalf("expected invalid URL input, got %v", err)
+// A link that is not an absolute http(s) URL is refused with an error naming its field as the request names it, on a
+// create and on an update, so the person filling in the form can tell which value to fix (#456).
+func TestProgramService_RejectsInvalidLinksNamingTheField(t *testing.T) {
+	type links struct{ repo, website, codeOfConduct *string }
+	for _, tc := range []struct {
+		createField, updateField string
+		set                      func(*links, *string)
+	}{
+		{"repositoryUrl", "repo_link", func(l *links, v *string) { l.repo = v }},
+		{"websiteUrl", "website_url", func(l *links, v *string) { l.website = v }},
+		{"codeOfConductUrl", "code_of_conduct", func(l *links, v *string) { l.codeOfConduct = v }},
+	} {
+		for _, value := range []string{"github.com/org/repo", "javascript:alert(1)", "https://"} {
+			var l links
+			tc.set(&l, &value)
+
+			t.Run("create "+tc.createField+" "+value, func(t *testing.T) {
+				svc := newProgramSvc(&stubProgRepo{createEnrollment: func(context.Context, models.ProgramEnrollmentInput) (*models.Program, error) {
+					t.Fatal("repository must not be called")
+					return nil, nil
+				}}, &stubTermRepo{}, &stubAppRepo{})
+				input := validEnrollment()
+				input.Program.RepoLink, input.Program.WebsiteURL, input.Program.CodeOfConduct = l.repo, l.website, l.codeOfConduct
+				_, err := svc.CreateEnrollment(context.Background(), input)
+				if want := tc.createField + " must be an absolute http(s) URL"; !errors.Is(err, domain.ErrInvalidInput) || !strings.Contains(err.Error(), want) {
+					t.Fatalf("err = %v; want ErrInvalidInput containing %q", err, want)
+				}
+			})
+
+			t.Run("update "+tc.updateField+" "+value, func(t *testing.T) {
+				svc := newProgramSvc(&stubProgRepo{update: func(context.Context, string, models.ProgramUpdateInput) (*models.Program, error) {
+					t.Fatal("repository must not be called")
+					return nil, nil
+				}}, &stubTermRepo{}, &stubAppRepo{})
+				_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{RepoLink: l.repo, WebsiteURL: l.website, CodeOfConduct: l.codeOfConduct})
+				if want := tc.updateField + " must be an absolute http(s) URL"; !errors.Is(err, domain.ErrInvalidInput) || !strings.Contains(err.Error(), want) {
+					t.Fatalf("err = %v; want ErrInvalidInput containing %q", err, want)
+				}
+			})
+		}
+	}
+}
+
+// An update keeps accepting an absolute http(s) link, and a blank one, which clears the field.
+func TestProgramService_Update_AcceptsValidAndBlankLinks(t *testing.T) {
+	repo, website, blank := "https://github.com/org/repo", "http://example.org/path?q=1", ""
+	var got models.ProgramUpdateInput
+	svc := newProgramSvc(&stubProgRepo{update: func(_ context.Context, _ string, in models.ProgramUpdateInput) (*models.Program, error) {
+		got = in
+		return &models.Program{}, nil
+	}}, &stubTermRepo{}, &stubAppRepo{})
+
+	if _, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{RepoLink: &repo, WebsiteURL: &website, CodeOfConduct: &blank}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if got.RepoLink == nil || *got.RepoLink != repo || got.CodeOfConduct == nil || *got.CodeOfConduct != "" {
+		t.Fatalf("stored repo_link=%v code_of_conduct=%v; want the link kept and the blank passed through to clear", got.RepoLink, got.CodeOfConduct)
 	}
 }
 
