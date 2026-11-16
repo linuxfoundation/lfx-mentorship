@@ -194,6 +194,103 @@ func TestProgramMemberService_Create_AccountInviteIgnoresEmailInviteClaimedMeanw
 	}
 }
 
+// An account invite that reopens the user's own declined or withdrawn mentor row
+// supersedes their email invitation just as a newly created row does.
+func TestProgramMemberService_Create_ReinviteDropsStaleEmailInvite(t *testing.T) {
+	for _, status := range []models.ProgramMemberStatus{models.ProgramMemberStatusDeclined, models.ProgramMemberStatusWithdrawn} {
+		var deleted string
+		n := &stubNotifier{}
+		memberRepo := &stubMemberRepo{
+			findByUserAndType: func(_ context.Context, _, userID string, _ models.MemberType) (*models.ProgramMember, error) {
+				return &models.ProgramMember{ID: "mentor-row", UserID: userID, Status: &status}, nil
+			},
+			findEmailInvite: func(context.Context, string, string) (*models.ProgramMember, error) {
+				return emailInviteRow(models.ProgramMemberStatusInvited), nil
+			},
+			deleteEmailInvite: func(_ context.Context, id string) error {
+				deleted = id
+				return nil
+			},
+			create: func(context.Context, string, models.ProgramMemberCreateInput) (*models.ProgramMember, error) {
+				t.Errorf("%s: Create called; want the existing mentor row reused", status)
+				return &models.ProgramMember{}, nil
+			},
+		}
+		m, err := newInviteSvc(&stubInviteeUsers{}, newDirectory(), memberRepo, n).Create(context.Background(), "prog-1",
+			models.ProgramMemberCreateInput{Email: ptr("mentor@example.org"), MemberType: models.MemberTypeMentor})
+		if err != nil || m.ID != "mentor-row" || m.Status == nil || *m.Status != models.ProgramMemberStatusInvited {
+			t.Fatalf("%s: member = %+v, err = %v; want the mentor row invited again", status, m, err)
+		}
+		if deleted != "invite-1" {
+			t.Errorf("%s: deleted %q; want the superseded email invitation", status, deleted)
+		}
+		if n.mentorInvitedCalls != 1 || len(n.emailInvites) != 0 {
+			t.Errorf("%s: account invites = %d, email invites = %v; want one account invite", status, n.mentorInvitedCalls, n.emailInvites)
+		}
+	}
+}
+
+// With no invite secret configured no link can be signed: the invitation is
+// still recorded, but no email is sent.
+func TestProgramMemberService_Create_EmailInviteWithoutSecretSendsNothing(t *testing.T) {
+	var captured models.ProgramMemberCreateInput
+	n := &stubNotifier{}
+	svc := service.NewProgramMemberService(capturingMemberRepo(&captured), publishedProgRepo(), &stubInviteeUsers{}, newDirectory(), n, "")
+	if _, err := svc.Create(context.Background(), "prog-1",
+		models.ProgramMemberCreateInput{Email: ptr(emailInviteAddress), MemberType: models.MemberTypeMentor}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if captured.Email == nil || *captured.Email != emailInviteAddress {
+		t.Errorf("created %+v; want the email invitation recorded", captured)
+	}
+	if len(n.emailInvites) != 0 {
+		t.Errorf("email invites = %v; want none without a secret", n.emailInvites)
+	}
+}
+
+func TestProgramMemberService_Create_EmailInviteWriteErrors(t *testing.T) {
+	dbDown := errors.New("db down")
+	for name, tc := range map[string]struct {
+		setup func(*stubMemberRepo)
+		want  error
+	}{
+		"lookup fails": {
+			setup: func(r *stubMemberRepo) {
+				r.findEmailInvite = func(context.Context, string, string) (*models.ProgramMember, error) { return nil, dbDown }
+			},
+			want: dbDown,
+		},
+		"create fails": {
+			setup: func(r *stubMemberRepo) {
+				r.create = func(context.Context, string, models.ProgramMemberCreateInput) (*models.ProgramMember, error) {
+					return nil, dbDown
+				}
+			},
+			want: dbDown,
+		},
+		"declined invitation changed before it could be reopened": {
+			setup: func(r *stubMemberRepo) {
+				r.findEmailInvite = func(context.Context, string, string) (*models.ProgramMember, error) {
+					return emailInviteRow(models.ProgramMemberStatusDeclined), nil
+				}
+				r.updateIfStatus = func(context.Context, string, []models.ProgramMemberStatus, models.ProgramMemberUpdateInput) (*models.ProgramMember, error) {
+					return nil, domain.ErrInvalidStateTransition
+				}
+			},
+			want: domain.ErrInvalidStateTransition,
+		},
+	} {
+		memberRepo := &stubMemberRepo{}
+		tc.setup(memberRepo)
+		n := &stubNotifier{}
+		_, err := newInviteSvc(&stubInviteeUsers{}, newDirectory(), memberRepo, n).Create(context.Background(), "prog-1",
+			models.ProgramMemberCreateInput{Email: ptr(emailInviteAddress), MemberType: models.MemberTypeMentor})
+		if !errors.Is(err, tc.want) || len(n.emailInvites) != 0 {
+			t.Errorf("%s: err = %v, email invites = %v; want %v and no email", name, err, n.emailInvites, tc.want)
+		}
+	}
+}
+
 func TestProgramMemberService_Update_EmailInviteCanOnlyBeRevoked(t *testing.T) {
 	for _, to := range []models.ProgramMemberStatus{models.ProgramMemberStatusApproved, models.ProgramMemberStatusPending, models.ProgramMemberStatusDeclined} {
 		memberRepo := approvedProgramAdmin()

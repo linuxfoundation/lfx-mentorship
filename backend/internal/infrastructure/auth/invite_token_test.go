@@ -83,10 +83,15 @@ func signToken(t *testing.T, secret, programID, userID string, expires time.Time
 	if err != nil {
 		return "", err
 	}
-	encoded := base64.RawURLEncoding.EncodeToString(payload)
+	return signEncoded(secret, base64.RawURLEncoding.EncodeToString(payload)), nil
+}
+
+// signEncoded appends a valid signature to an already encoded payload, so a
+// test can reach the checks that run after the signature is verified.
+func signEncoded(secret, encoded string) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte(encoded))
-	return encoded + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
+	return encoded + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
 func TestValidateInviteToken_WrongSecret(t *testing.T) {
@@ -150,6 +155,36 @@ func TestValidateInviteToken_RejectsEmailInviteToken(t *testing.T) {
 	}
 	if _, _, err := auth.ValidateInviteToken(token, testSecret); !errors.Is(err, auth.ErrInvalidInviteToken) {
 		t.Errorf("err = %v; want ErrInvalidInviteToken for a token that names no user", err)
+	}
+}
+
+// A correctly signed token must still name a program and exactly one of a user
+// or an email invitation's member row.
+func TestParseInviteToken_RejectsIncompleteClaims(t *testing.T) {
+	for name, claims := range map[string]map[string]string{
+		"no program":              {"user_id": "user-1"},
+		"neither user nor member": {"program_id": "prog-1"},
+		"both user and member":    {"program_id": "prog-1", "user_id": "user-1", "member_id": "member-1"},
+	} {
+		payload, err := json.Marshal(claims)
+		if err != nil {
+			t.Fatalf("%s: marshal: %v", name, err)
+		}
+		token := signEncoded(testSecret, base64.RawURLEncoding.EncodeToString(payload))
+		if _, err := auth.ParseInviteToken(token, testSecret); !errors.Is(err, auth.ErrInvalidInviteToken) {
+			t.Errorf("%s: err = %v; want ErrInvalidInviteToken", name, err)
+		}
+	}
+}
+
+func TestParseInviteToken_RejectsUndecodablePayload(t *testing.T) {
+	for name, encoded := range map[string]string{
+		"not base64": "not*base64",
+		"not JSON":   base64.RawURLEncoding.EncodeToString([]byte("not json")),
+	} {
+		if _, err := auth.ParseInviteToken(signEncoded(testSecret, encoded), testSecret); !errors.Is(err, auth.ErrInvalidInviteToken) {
+			t.Errorf("%s: err = %v; want ErrInvalidInviteToken", name, err)
+		}
 	}
 }
 
