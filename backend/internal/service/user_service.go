@@ -30,7 +30,7 @@ func NewUserService(repo domain.UserRepository) *UserService {
 }
 
 // SetAccountDirectory makes Bootstrap refresh the user's name and avatar from
-// the LF directory on every sign-in, and fill a missing email from it.
+// the LF directory on every sign-in, and their email when the token has none.
 func (s *UserService) SetAccountDirectory(directory domain.AccountDirectory) {
 	s.directory = directory
 }
@@ -42,10 +42,12 @@ func (s *UserService) SetAccountDirectory(directory domain.AccountDirectory) {
 // fails the sign-in: the token's values are stored and the next sign-in
 // refreshes the rest.
 //
-// A token email is verified at the gateway, so it reclaims the address from
-// any stale row. The directory does not report whether the primary email is
-// verified, so an address from there fills an empty column only, and only
-// while no other row holds it: on conflict it is left unset rather than taken.
+// A token email is verified at the gateway, so it replaces the stored one and
+// reclaims the address from any stale row. Without one, the directory's
+// primary email replaces the stored one instead, so the row follows a changed
+// primary address. The directory does not report whether that address is
+// verified, so it is never taken from another row: on conflict the stored
+// email is kept.
 func (s *UserService) Bootstrap(ctx context.Context, lfid string, input models.UserUpdateInput) (*models.User, error) {
 	if lfid == "" {
 		return nil, fmt.Errorf("%w: principal is required", domain.ErrInvalidInput)
@@ -57,20 +59,15 @@ func (s *UserService) Bootstrap(ctx context.Context, lfid string, input models.U
 	defer span.End()
 
 	write := models.UserCreateInput{LFID: &lfid, Email: input.Email, Name: input.Name, GivenName: input.GivenName, FamilyName: input.FamilyName, AvatarURL: input.AvatarURL}
-	var fill models.UserIdentityFill
+	var user *models.User
+	var err error
 	if s.directory != nil {
 		s.refreshProfile(ctx, lfid, &write)
-		if write.Email == nil && !s.hasStoredEmail(ctx, lfid) {
-			fill.Email = s.directoryEmail(ctx, lfid)
-		}
 	}
-
-	user, err := s.repo.BootstrapByLFID(ctx, write, fill)
-	if errors.Is(err, domain.ErrEmailInUse) && fill.Email != nil {
-		// Only a fill email can collide: the token's was released first.
-		slog.WarnContext(ctx, "directory email already belongs to another user; bootstrapping without email")
-		fill.Email = nil
-		user, err = s.repo.BootstrapByLFID(ctx, write, fill)
+	if write.Email == nil && s.directory != nil {
+		user, err = s.writeWithDirectoryEmail(ctx, lfid, write)
+	} else {
+		user, err = s.repo.BootstrapByLFID(ctx, write)
 	}
 	if err != nil {
 		span.RecordError(err)
@@ -95,17 +92,18 @@ func (s *UserService) refreshProfile(ctx context.Context, lfid string, write *mo
 	}
 }
 
-// hasStoredEmail reports whether the caller's row already has an email. A
-// missing row or a failed read counts as none, which costs a directory lookup.
-func (s *UserService) hasStoredEmail(ctx context.Context, lfid string) bool {
-	existing, err := s.repo.GetByLFID(ctx, lfid)
-	if err != nil {
-		if !errors.Is(err, domain.ErrUserNotFound) {
-			slog.WarnContext(ctx, "stored user read failed before directory lookup", "error", err)
-		}
-		return false
+// writeWithDirectoryEmail stores write with the directory's primary email over
+// the stored one. UpsertByLFID, unlike BootstrapByLFID, never releases the
+// address from another row, so a conflict is retried without it.
+func (s *UserService) writeWithDirectoryEmail(ctx context.Context, lfid string, write models.UserCreateInput) (*models.User, error) {
+	write.Email = s.directoryEmail(ctx, lfid)
+	user, err := s.repo.UpsertByLFID(ctx, write)
+	if errors.Is(err, domain.ErrEmailInUse) && write.Email != nil {
+		slog.WarnContext(ctx, "directory email already belongs to another user; keeping the stored email")
+		write.Email = nil
+		user, err = s.repo.UpsertByLFID(ctx, write)
 	}
-	return existing.Email != nil && *existing.Email != ""
+	return user, err
 }
 
 // directoryEmail returns the caller's primary email from the directory, or nil.

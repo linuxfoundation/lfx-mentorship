@@ -41,7 +41,7 @@ func TestUserRepository_BootstrapByLFID_ReleasesEmailFromImportedRow(t *testing.
 		t.Fatal(err)
 	}
 	lfid, email := "imported_owner", "imported.release@example.org"
-	u, err := NewUserRepository(pool).BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email}, models.UserIdentityFill{})
+	u, err := NewUserRepository(pool).BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestUserRepository_BootstrapByLFID_ConcurrentFirstSignIns(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				_, err := repo.BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email}, models.UserIdentityFill{})
+				_, err := repo.BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email})
 				errs <- err
 			}()
 		}
@@ -107,7 +107,7 @@ func TestUserRepository_BootstrapByLFID_ReleasesEmailFromAnotherAccount(t *testi
 		_, _ = pool.Exec(context.Background(), `DELETE FROM users WHERE lfid IN ('squatter_lfid', 'owner_lfid')`)
 	})
 	lfid, email := "owner_lfid", "owner.release@example.org"
-	u, err := NewUserRepository(pool).BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email}, models.UserIdentityFill{})
+	u, err := NewUserRepository(pool).BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestUserRepository_BootstrapByLFID_KeepsEmailWithoutClaim(t *testing.T) {
 	for lfid, upsert := range map[string]func(context.Context, models.UserCreateInput) (*models.User, error){
 		"noclaim_upsert": repo.UpsertByLFID,
 		"noclaim_bootstrap": func(ctx context.Context, in models.UserCreateInput) (*models.User, error) {
-			return repo.BootstrapByLFID(ctx, in, models.UserIdentityFill{})
+			return repo.BootstrapByLFID(ctx, in)
 		},
 	} {
 		stored := lfid + ".stored@example.org"
@@ -255,7 +255,7 @@ func TestUserRepository_BootstrapByLFID_SwappedAddressesConcurrently(t *testing.
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				_, err := repo.BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email}, models.UserIdentityFill{})
+				_, err := repo.BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email})
 				errs <- err
 			}()
 		}

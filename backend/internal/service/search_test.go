@@ -170,7 +170,7 @@ func TestUserService_Update_NameLength(t *testing.T) {
 func TestUserService_Bootstrap_RejectsLongName(t *testing.T) {
 	called := false
 	svc := service.NewUserService(&stubUserRepository{
-		bootstrap: func(context.Context, models.UserCreateInput, models.UserIdentityFill) (*models.User, error) {
+		bootstrap: func(context.Context, models.UserCreateInput) (*models.User, error) {
 			called = true
 			return &models.User{}, nil
 		},
