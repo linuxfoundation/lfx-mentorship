@@ -186,6 +186,37 @@ func TestEmailInvite_DeleteSparesAClaimedRow(t *testing.T) {
 	}
 }
 
+// A revoked or declined email invitation, or one that no longer exists, cannot
+// be claimed, and the attempt leaves no membership behind.
+func TestEmailInvite_ClaimRefusesAnInvitationThatIsNotOpen(t *testing.T) {
+	pool := integrationPool(t)
+	ctx := context.Background()
+	s := newMentoredSeed(t, pool)
+	repo := NewProgramMemberRepository(pool)
+	program := s.program("p", "Kernel", "published")
+	user := s.user("new-mentor")
+	invite := createEmailInvite(t, repo, s, program, "invite", "new.mentor@example.org")
+	declined := models.ProgramMemberStatusDeclined
+	if _, err := repo.UpdateIfStatus(ctx, invite.ID, []models.ProgramMemberStatus{models.ProgramMemberStatusInvited}, models.ProgramMemberUpdateInput{Status: &declined}); err != nil {
+		t.Fatalf("revoke email invitation: %v", err)
+	}
+
+	if _, err := repo.ClaimEmailInvite(ctx, invite.ID, user); !errors.Is(err, domain.ErrInvalidStateTransition) {
+		t.Errorf("claim declined invitation err = %v; want ErrInvalidStateTransition", err)
+	}
+	still, err := repo.GetByID(ctx, invite.ID)
+	if err != nil || still.UserID != "" || still.Status == nil || *still.Status != models.ProgramMemberStatusDeclined {
+		t.Errorf("invitation = %+v, %v; want it left declined with no user", still, err)
+	}
+	if _, err := repo.FindByProgramUserAndType(ctx, program, user, models.MemberTypeMentor); !errors.Is(err, domain.ErrProgramMemberNotFound) {
+		t.Errorf("caller mentor row err = %v; want none created", err)
+	}
+
+	if _, err := repo.ClaimEmailInvite(ctx, s.id("missing"), user); !errors.Is(err, domain.ErrInvalidStateTransition) {
+		t.Errorf("claim missing invitation err = %v; want ErrInvalidStateTransition", err)
+	}
+}
+
 func TestEmailInvite_ClaimByAnExistingMentorConflicts(t *testing.T) {
 	pool := integrationPool(t)
 	ctx := context.Background()
