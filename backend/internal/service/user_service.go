@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
@@ -98,13 +99,14 @@ func (s *UserService) refreshProfile(ctx context.Context, lfid string, write *mo
 // primary email. The two lookups run together, so a directory that does not
 // answer costs the sign-in one timeout, not two.
 //
-// The stored email is read before the lookup and the write replaces it only
-// while it is unchanged, so a stale directory answer never overwrites a
-// verified email a concurrent sign-in stored meanwhile. The write never
-// releases the address from another row either, so a conflict is retried
-// without it. If the stored email cannot be read, it is left as it is.
+// The caller's row is read before the lookup and the write replaces its email
+// only while the row has not been written since, so a stale directory answer
+// never overwrites a verified email a concurrent sign-in stored meanwhile,
+// even the same address again. The write never releases the address from
+// another row either, so a conflict is retried without it. If the row cannot
+// be read, its email is left as it is.
 func (s *UserService) bootstrapWithDirectoryEmail(ctx context.Context, lfid string, write models.UserCreateInput) (*models.User, error) {
-	stored, readable := s.storedEmail(ctx, lfid)
+	updatedOn, readable := s.storedUpdatedOn(ctx, lfid)
 	var email *string
 	var lookup sync.WaitGroup
 	if readable {
@@ -114,22 +116,22 @@ func (s *UserService) bootstrapWithDirectoryEmail(ctx context.Context, lfid stri
 	lookup.Wait()
 
 	write.Email = email
-	user, err := s.repo.UpsertByLFIDIfEmailUnchanged(ctx, write, stored)
+	user, err := s.repo.UpsertByLFIDIfUnchanged(ctx, write, updatedOn)
 	if errors.Is(err, domain.ErrEmailInUse) && write.Email != nil {
 		slog.WarnContext(ctx, "directory email already belongs to another user; keeping the stored email")
 		write.Email = nil
-		user, err = s.repo.UpsertByLFIDIfEmailUnchanged(ctx, write, stored)
+		user, err = s.repo.UpsertByLFIDIfUnchanged(ctx, write, updatedOn)
 	}
 	return user, err
 }
 
-// storedEmail returns the email on the caller's row, nil when there is no row
-// or no email, and whether the row could be read.
-func (s *UserService) storedEmail(ctx context.Context, lfid string) (*string, bool) {
+// storedUpdatedOn returns when the caller's row was last written, nil when
+// there is no row, and whether the row could be read.
+func (s *UserService) storedUpdatedOn(ctx context.Context, lfid string) (*time.Time, bool) {
 	existing, err := s.repo.GetByLFID(ctx, lfid)
 	switch {
 	case err == nil:
-		return existing.Email, true
+		return &existing.UpdatedOn, true
 	case errors.Is(err, domain.ErrUserNotFound):
 		return nil, true
 	default:

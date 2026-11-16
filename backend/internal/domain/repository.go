@@ -21,9 +21,10 @@ type UserRepository interface {
 	// back from any other row that still holds it. UpsertByLFID never takes an email from another
 	// row; it returns ErrEmailInUse instead.
 	BootstrapByLFID(ctx context.Context, input models.UserCreateInput) (*models.User, error)
-	// UpsertByLFIDIfEmailUnchanged is UpsertByLFID that replaces the stored email only while it
-	// still equals storedEmail, the value read before input.Email was looked up.
-	UpsertByLFIDIfEmailUnchanged(ctx context.Context, input models.UserCreateInput, storedEmail *string) (*models.User, error)
+	// UpsertByLFIDIfUnchanged is UpsertByLFID that replaces the stored email only while the row
+	// has not been written since it was read, before input.Email was looked up. updatedOn is the
+	// row's UpdatedOn then, nil when there was no row.
+	UpsertByLFIDIfUnchanged(ctx context.Context, input models.UserCreateInput, updatedOn *time.Time) (*models.User, error)
 	// SearchCandidates matches part of a name or an LFID prefix, never an email.
 	SearchCandidates(ctx context.Context, query string, limit int) ([]*models.User, error)
 	Update(ctx context.Context, id string, input models.UserUpdateInput) (*models.User, error)

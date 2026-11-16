@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/domain/models"
@@ -276,71 +277,86 @@ func TestUserRepository_BootstrapByLFID_SwappedAddressesConcurrently(t *testing.
 	}
 }
 
-// UpsertByLFIDIfEmailUnchanged writes an email that was looked up before the transaction only
-// while the stored one is still what it was then, so a stale directory answer never replaces a
+// UpsertByLFIDIfUnchanged writes an email that was looked up before the transaction only while
+// the row has not been written since it was read, so a stale directory answer never replaces a
 // verified email a concurrent sign-in stored meanwhile. It never takes the address from another row.
-func TestUserRepository_UpsertByLFIDIfEmailUnchanged(t *testing.T) {
+func TestUserRepository_UpsertByLFIDIfUnchanged(t *testing.T) {
 	pool := integrationPool(t)
 	ctx := context.Background()
 	repo := NewUserRepository(pool)
 	str := func(v string) *string { return &v }
-	emailOf := func(t *testing.T, lfid string) *string {
+	// seed inserts a row and returns its updated_on as a sign-in reads it before the lookup.
+	seed := func(t *testing.T, lfid, email string) *time.Time {
+		t.Helper()
+		if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, lfid) VALUES (gen_random_uuid(), $1, $2)`, email, lfid); err != nil {
+			t.Fatal(err)
+		}
+		u, err := repo.GetByLFID(ctx, lfid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &u.UpdatedOn
+	}
+	emailOf := func(t *testing.T, lfid string) string {
 		t.Helper()
 		var email *string
 		if err := pool.QueryRow(ctx, `SELECT email FROM users WHERE lfid = $1`, lfid).Scan(&email); err != nil {
 			t.Fatal(err)
 		}
-		return email
-	}
-	show := func(v *string) string {
-		if v == nil {
+		if email == nil {
 			return "NULL"
 		}
-		return *v
+		return *email
+	}
+	// write is the guarded write of a directory address, and asserts what the row holds after it.
+	write := func(t *testing.T, lfid string, updatedOn *time.Time, want string) {
+		t.Helper()
+		if _, err := repo.UpsertByLFIDIfUnchanged(ctx, models.UserCreateInput{LFID: &lfid, Email: str(lfid + ".dir@example.org")}, updatedOn); err != nil {
+			t.Fatal(err)
+		}
+		if got := emailOf(t, lfid); got != want {
+			t.Fatalf("stored email = %s; want %s", got, want)
+		}
 	}
 
-	for lfid, tc := range map[string]struct {
-		name      string
-		row       bool    // the caller has a row when the write lands
-		rowEmail  *string // its email then
-		unchanged *string // the email read before the lookup
-		want      string
-	}{
-		"guard_same":    {name: "stored email unchanged since the read: replaced", row: true, rowEmail: str("guard_same.old@example.org"), unchanged: str("guard_same.old@example.org"), want: "guard_same.dir@example.org"},
-		"guard_newer":   {name: "verified email stored since the read: kept", row: true, rowEmail: str("guard_newer.verified@example.org"), unchanged: str("guard_newer.old@example.org"), want: "guard_newer.verified@example.org"},
-		"guard_created": {name: "row created with an email since the read: kept", row: true, rowEmail: str("guard_created.verified@example.org"), want: "guard_created.verified@example.org"},
-		"guard_empty":   {name: "row without an email: filled", row: true, want: "guard_empty.dir@example.org"},
-		"guard_new":     {name: "no row: created with the email", want: "guard_new.dir@example.org"},
+	t.Run("row not written since the read: email replaced", func(t *testing.T) {
+		updatedOn := seed(t, "guard_same", "guard_same.old@example.org")
+		write(t, "guard_same", updatedOn, "guard_same.dir@example.org")
+	})
+
+	// The token sign-in that lands during the lookup stores a new address, or confirms the one
+	// already stored: either way the row was written, and the directory's answer is not.
+	for lfid, verified := range map[string]string{
+		"guard_newer":     "guard_newer.verified@example.org",
+		"guard_confirmed": "guard_confirmed.old@example.org",
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if tc.row {
-				if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, lfid) VALUES (gen_random_uuid(), $1, $2)`, tc.rowEmail, lfid); err != nil {
-					t.Fatal(err)
-				}
-			}
-			directory := lfid + ".dir@example.org"
-			u, err := repo.UpsertByLFIDIfEmailUnchanged(ctx, models.UserCreateInput{LFID: &lfid, Email: &directory}, tc.unchanged)
-			if err != nil {
+		t.Run(lfid+": email a token sign-in stored since the read is kept", func(t *testing.T) {
+			updatedOn := seed(t, lfid, lfid+".old@example.org")
+			if _, err := repo.BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &verified}); err != nil {
 				t.Fatal(err)
 			}
-			if got := emailOf(t, lfid); show(got) != tc.want || show(u.Email) != tc.want {
-				t.Fatalf("stored email = %s, returned %s; want %s", show(got), show(u.Email), tc.want)
-			}
+			write(t, lfid, updatedOn, verified)
 		})
 	}
 
+	t.Run("row created since the read: its email is kept", func(t *testing.T) {
+		seed(t, "guard_created", "guard_created.verified@example.org")
+		write(t, "guard_created", nil, "guard_created.verified@example.org")
+	})
+
+	t.Run("no row: created with the email", func(t *testing.T) {
+		write(t, "guard_new", nil, "guard_new.dir@example.org")
+	})
+
 	t.Run("an address another row holds is refused and both rows keep their email", func(t *testing.T) {
-		if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, lfid) VALUES
-			(gen_random_uuid(), 'guard_holder@example.org', 'guard_holder'),
-			(gen_random_uuid(), 'guard_caller@example.org', 'guard_caller')`); err != nil {
-			t.Fatal(err)
-		}
+		seed(t, "guard_holder", "guard_holder@example.org")
+		updatedOn := seed(t, "guard_caller", "guard_caller@example.org")
 		lfid := "guard_caller"
-		_, err := repo.UpsertByLFIDIfEmailUnchanged(ctx, models.UserCreateInput{LFID: &lfid, Email: str("guard_holder@example.org")}, str("guard_caller@example.org"))
+		_, err := repo.UpsertByLFIDIfUnchanged(ctx, models.UserCreateInput{LFID: &lfid, Email: str("guard_holder@example.org")}, updatedOn)
 		if !errors.Is(err, domain.ErrEmailInUse) {
 			t.Fatalf("err = %v; want ErrEmailInUse", err)
 		}
-		if holder, caller := show(emailOf(t, "guard_holder")), show(emailOf(t, lfid)); holder != "guard_holder@example.org" || caller != "guard_caller@example.org" {
+		if holder, caller := emailOf(t, "guard_holder"), emailOf(t, lfid); holder != "guard_holder@example.org" || caller != "guard_caller@example.org" {
 			t.Fatalf("holder email = %s, caller email = %s; want both unchanged", holder, caller)
 		}
 	})

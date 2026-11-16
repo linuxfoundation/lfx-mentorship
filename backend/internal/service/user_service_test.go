@@ -20,7 +20,7 @@ type stubUserRepository struct {
 	delete    func(context.Context, string) error
 	update    func(context.Context, string, models.UserUpdateInput) (*models.User, error)
 	bootstrap func(context.Context, models.UserCreateInput) (*models.User, error)
-	guarded   func(context.Context, models.UserCreateInput, *string) (*models.User, error)
+	guarded   func(context.Context, models.UserCreateInput, *time.Time) (*models.User, error)
 	getByLFID func(context.Context, string) (*models.User, error)
 }
 
@@ -47,9 +47,9 @@ func (s *stubUserRepository) UpsertByLFID(context.Context, models.UserCreateInpu
 	return &models.User{}, nil
 }
 
-func (s *stubUserRepository) UpsertByLFIDIfEmailUnchanged(ctx context.Context, input models.UserCreateInput, storedEmail *string) (*models.User, error) {
+func (s *stubUserRepository) UpsertByLFIDIfUnchanged(ctx context.Context, input models.UserCreateInput, updatedOn *time.Time) (*models.User, error) {
 	if s.guarded != nil {
-		return s.guarded(ctx, input, storedEmail)
+		return s.guarded(ctx, input, updatedOn)
 	}
 	return &models.User{}, nil
 }
@@ -176,9 +176,9 @@ func TestUserService_UpdateRejectsEmailMutation(t *testing.T) {
 // the directory's values replace stored ones, falling back to the token's
 // where the directory has none. A token email is written through
 // BootstrapByLFID, which may reclaim it; without one the directory's primary
-// email goes through UpsertByLFIDIfEmailUnchanged with the email stored before
-// the lookup, which never takes it from another row or writes it over a newer
-// one. A directory problem never fails the sign-in (#360).
+// email goes through UpsertByLFIDIfUnchanged with the row's UpdatedOn from
+// before the lookup, which never takes it from another row or writes it to a
+// row written since. A directory problem never fails the sign-in (#360).
 func TestUserService_Bootstrap_RefreshesProfileFromDirectory(t *testing.T) {
 	str := func(v string) *string { return &v }
 	fullAccount := &models.LFAccount{Username: "alice", Name: str("Alice Liddell"), GivenName: str("Alice"), FamilyName: str("Liddell"), AvatarURL: str("https://img/alice.png")}
@@ -188,11 +188,12 @@ func TestUserService_Bootstrap_RefreshesProfileFromDirectory(t *testing.T) {
 	dirProfile := func(email *string) models.UserCreateInput {
 		return models.UserCreateInput{LFID: str("alice"), Email: email, Name: str("Alice Liddell"), GivenName: str("Alice"), FamilyName: str("Liddell"), AvatarURL: str("https://img/alice.png")}
 	}
-	const viaBootstrap, viaGuarded = "BootstrapByLFID", "UpsertByLFIDIfEmailUnchanged"
+	const viaBootstrap, viaGuarded = "BootstrapByLFID", "UpsertByLFIDIfUnchanged"
+	writtenAt := time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)
 	for name, tc := range map[string]struct {
 		dir       *stubDirectory
-		stored    *string // the email on the caller's row; nil: no row
-		readErr   error   // fails the read of the caller's row
+		stored    *time.Time // UpdatedOn of the caller's row; nil: no row
+		readErr   error      // fails the read of the caller's row
 		input     models.UserUpdateInput
 		wantInput models.UserCreateInput
 		wantVia   string
@@ -211,9 +212,9 @@ func TestUserService_Bootstrap_RefreshesProfileFromDirectory(t *testing.T) {
 			wantVia:   viaGuarded,
 			wantCalls: 2,
 		},
-		"no token email, stored email: the directory's replaces it while it is unchanged": {
+		"no token email, existing row: the write is conditional on the row as it was read": {
 			dir:       knownDir(),
-			stored:    str("stored@example.org"),
+			stored:    &writtenAt,
 			wantInput: dirProfile(str("dir@example.org")),
 			wantVia:   viaGuarded,
 			wantCalls: 2,
@@ -264,14 +265,14 @@ func TestUserService_Bootstrap_RefreshesProfileFromDirectory(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			var gotInput models.UserCreateInput
-			var gotStored *string
+			var gotStored *time.Time
 			var gotVia []string
 			svc := service.NewUserService(&stubUserRepository{
 				bootstrap: func(_ context.Context, in models.UserCreateInput) (*models.User, error) {
 					gotInput, gotVia = in, append(gotVia, viaBootstrap)
 					return &models.User{LFID: in.LFID}, nil
 				},
-				guarded: func(_ context.Context, in models.UserCreateInput, stored *string) (*models.User, error) {
+				guarded: func(_ context.Context, in models.UserCreateInput, stored *time.Time) (*models.User, error) {
 					gotInput, gotStored, gotVia = in, stored, append(gotVia, viaGuarded)
 					return &models.User{LFID: in.LFID}, nil
 				},
@@ -282,7 +283,7 @@ func TestUserService_Bootstrap_RefreshesProfileFromDirectory(t *testing.T) {
 					case tc.stored == nil:
 						return nil, domain.ErrUserNotFound
 					}
-					return &models.User{LFID: str("alice"), Email: tc.stored}, nil
+					return &models.User{LFID: str("alice"), UpdatedOn: *tc.stored}, nil
 				},
 			})
 			svc.SetAccountDirectory(tc.dir)
@@ -299,7 +300,7 @@ func TestUserService_Bootstrap_RefreshesProfileFromDirectory(t *testing.T) {
 				t.Errorf("writes = %v; want %v", gotVia, want)
 			}
 			if !reflect.DeepEqual(gotStored, tc.stored) {
-				t.Errorf("email the write is conditional on = %v; want %v", gotStored, tc.stored)
+				t.Errorf("row revision the write is conditional on = %v; want %v", gotStored, tc.stored)
 			}
 			if calls := tc.dir.calls.Load(); calls != tc.wantCalls {
 				t.Errorf("directory calls = %d; want %d", calls, tc.wantCalls)
@@ -312,7 +313,7 @@ func TestUserService_Bootstrap_RefreshesProfileFromDirectory(t *testing.T) {
 // cannot vouch that the address is verified, so the stored email is kept.
 func TestUserService_Bootstrap_DirectoryEmailYieldsOnConflict(t *testing.T) {
 	var emails []*string
-	repo := &stubUserRepository{guarded: func(_ context.Context, in models.UserCreateInput, _ *string) (*models.User, error) {
+	repo := &stubUserRepository{guarded: func(_ context.Context, in models.UserCreateInput, _ *time.Time) (*models.User, error) {
 		emails = append(emails, in.Email)
 		if in.Email != nil {
 			return nil, domain.ErrEmailInUse
@@ -367,7 +368,7 @@ func TestUserService_Bootstrap_LooksUpProfileAndEmailTogether(t *testing.T) {
 		emailAsked:    make(chan struct{}),
 	}
 	var got models.UserCreateInput
-	svc := service.NewUserService(&stubUserRepository{guarded: func(_ context.Context, in models.UserCreateInput, _ *string) (*models.User, error) {
+	svc := service.NewUserService(&stubUserRepository{guarded: func(_ context.Context, in models.UserCreateInput, _ *time.Time) (*models.User, error) {
 		got = in
 		return &models.User{LFID: in.LFID}, nil
 	}})
