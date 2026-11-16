@@ -108,6 +108,11 @@ func (r *UserRepository) UpsertByLFIDIfUnchanged(ctx context.Context, input mode
 // row and both insert, and the second fails on users_email_key before the lfid arbiter applies.
 const lockUserLFID = `SELECT pg_advisory_xact_lock(hashtext('users_lfid'), hashtext($1))`
 
+// lockUserEmail serialises writes of one address. The row locks cover only a row that already
+// holds it: a write storing the address for the first time could otherwise commit between a
+// verified sign-in's release and its upsert, which then fails on users_email_key.
+const lockUserEmail = `SELECT pg_advisory_xact_lock(hashtext('users_email'), hashtext($1))`
+
 // emailWrite says how upsertByLFID treats input.Email.
 type emailWrite struct {
 	// release takes the address back from any other row first.
@@ -129,6 +134,9 @@ func (r *UserRepository) upsertByLFID(ctx context.Context, input models.UserCrea
 		return nil, fmt.Errorf("lock user lfid: %w", err)
 	}
 	if input.Email != nil {
+		if _, err := tx.Exec(ctx, lockUserEmail, *input.Email); err != nil {
+			return nil, fmt.Errorf("lock user email: %w", err)
+		}
 		// Lock the caller's row and the one holding the address in ID order first, whether or not
 		// the address is released: two accounts writing each other's address would otherwise each
 		// lock their own row, then deadlock on the other's.

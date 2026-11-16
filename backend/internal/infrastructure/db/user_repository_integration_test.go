@@ -361,3 +361,62 @@ func TestUserRepository_UpsertByLFIDIfUnchanged(t *testing.T) {
 		}
 	})
 }
+
+// A write that stores an address for the first time leaves no row for a later claim to lock.
+// A verified sign-in for the same address waits for that write to finish and then takes the
+// address back, instead of finding no holder to release and failing on the unique email.
+func TestUserRepository_BootstrapByLFID_WaitsForAnUncommittedClaim(t *testing.T) {
+	pool := integrationPool(t)
+	ctx := context.Background()
+	email := "claim.race@example.org"
+
+	// Another account's directory write of the address, stopped before it commits.
+	claim, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = claim.Rollback(ctx) }()
+	if _, err := claim.Exec(ctx, lockUserEmail, email); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := claim.Exec(ctx, `INSERT INTO users (id, email, lfid) VALUES (gen_random_uuid(), $1, 'claim_directory')`, email); err != nil {
+		t.Fatal(err)
+	}
+
+	lfid := "claim_verified"
+	signIn := make(chan error, 1)
+	go func() {
+		_, err := NewUserRepository(pool).BootstrapByLFID(ctx, models.UserCreateInput{LFID: &lfid, Email: &email})
+		signIn <- err
+	}()
+
+	// Commit the claim only once the sign-in is waiting on it.
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		var waiting int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_locks WHERE NOT granted`).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the verified sign-in never waited on the uncommitted claim")
+		}
+	}
+	if err := claim.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-signIn; err != nil {
+		t.Fatalf("verified sign-in: %v", err)
+	}
+
+	var verified, directory *string
+	if err := pool.QueryRow(ctx, `SELECT
+		(SELECT email FROM users WHERE lfid = 'claim_verified'),
+		(SELECT email FROM users WHERE lfid = 'claim_directory')`).Scan(&verified, &directory); err != nil {
+		t.Fatal(err)
+	}
+	if verified == nil || *verified != email || directory != nil {
+		t.Fatalf("verified email = %v, directory claimant email = %v; want the address moved to the verified account", verified, directory)
+	}
+}
