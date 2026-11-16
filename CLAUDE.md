@@ -49,7 +49,7 @@ specs/            feature specs and task lists
 
 **User docs** — the guides served at `/docs` on the public site live in `frontend/docs/user/` (one `index.md` per page, with frontmatter), not at the repo root as in lfx-crowdfunding: the frontend image is built from `frontend/`, so the docs must sit inside it to ship. Support syncs this folder into Intercom as the "LFX Mentorship" collection, so keep the path stable.
 
-**Commands** — from `backend/`: `make build`, `make test`, `make lint`, `make license-check`, `make db-migrate`. From `frontend/`: `pnpm dev`, `pnpm build`, `pnpm lint`, `pnpm format:check`, and `pnpm test:e2e:smoke` (Playwright against a deployed environment — see `frontend/e2e/README.md`). The frontend is pnpm-only and needs **Node 22+** (the toolchain uses `node:sqlite`, which Node 20 does not have).
+**Commands** — from `backend/`: `make build`, `make test`, `make lint`, `make license-check`, `make db-migrate`. From `frontend/`: `pnpm dev`, `pnpm build`, `pnpm lint`, `pnpm format:check`, `pnpm test:e2e:smoke` and `pnpm test:e2e:journey` (Playwright against a deployed environment — see `frontend/e2e/README.md`). The frontend is pnpm-only and needs **Node 22+** (the toolchain uses `node:sqlite`, which Node 20 does not have).
 
 ## Deployment
 

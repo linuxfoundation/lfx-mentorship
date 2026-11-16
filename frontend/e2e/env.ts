@@ -29,4 +29,4 @@ if (!selected) {
   throw new Error(`E2E_ENV must be one of ${Object.keys(ENVIRONMENTS).join(', ')}; got "${name}"`);
 }
 
-export const env = selected;
+export const env = { name, ...selected };

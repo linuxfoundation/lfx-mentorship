@@ -18,7 +18,8 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "test:e2e:smoke": "playwright test --project=smoke"
+    "test:e2e:smoke": "playwright test --project=smoke",
+    "test:e2e:journey": "playwright test --project=journey"
   },
   "dependencies": {
     "@linuxfoundation/lfx-ui-core": "0.0.20",
