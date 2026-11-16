@@ -199,6 +199,42 @@ func TestE2EUsers(t *testing.T) {
 		}
 	})
 
+	t.Run("sign-in without an email takes a changed address from the LF directory", func(t *testing.T) {
+		e2e.fakes.addAccount(fakeAccount{Username: "dennis", Email: "dennis@new.example.org", Name: "Dennis Ritchie"})
+		dennis := unprovisioned(t, "dennis")
+		dennis.call(t, http.MethodPut, "/me", map[string]any{}).expect(http.StatusOK)
+		noClaim := &actor{LFID: "dennis", token: mintToken(t, validClaims("dennis", "", "access:me"))}
+		var me struct {
+			Email string `json:"email"`
+		}
+		noClaim.mustJSON(t, http.MethodPut, "/me", map[string]any{}, http.StatusOK, &me)
+		if me.Email != "dennis@new.example.org" {
+			t.Fatalf("email after a sign-in without a claim = %q; want the directory's, not the stored %q", me.Email, dennis.Email)
+		}
+		if n := dbCount(t, "SELECT count(*) FROM users WHERE lfid = 'dennis' AND email = 'dennis@new.example.org'"); n != 1 {
+			t.Fatalf("the directory's address was not stored on dennis's row")
+		}
+	})
+
+	t.Run("sign-in without an email never takes an address another user holds", func(t *testing.T) {
+		bjarne := unprovisioned(t, "bjarne")
+		bjarne.call(t, http.MethodPut, "/me", map[string]any{}).expect(http.StatusOK)
+		e2e.fakes.addAccount(fakeAccount{Username: "rob", Email: bjarne.Email, Name: "Rob Pike"})
+		rob := unprovisioned(t, "rob")
+		rob.call(t, http.MethodPut, "/me", map[string]any{}).expect(http.StatusOK)
+		noClaim := &actor{LFID: "rob", token: mintToken(t, validClaims("rob", "", "access:me"))}
+		var me struct {
+			Email string `json:"email"`
+		}
+		noClaim.mustJSON(t, http.MethodPut, "/me", map[string]any{}, http.StatusOK, &me)
+		if me.Email != rob.Email {
+			t.Fatalf("email after a sign-in without a claim = %q; want the stored %q", me.Email, rob.Email)
+		}
+		if n := dbCount(t, "SELECT count(*) FROM users WHERE (lfid = 'bjarne' AND email = $1) OR (lfid = 'rob' AND email = $2)", bjarne.Email, rob.Email); n != 2 {
+			t.Fatalf("bjarne and rob should each keep their own address; %d of 2 rows do", n)
+		}
+	})
+
 	t.Run("sign-in refreshes the name from the LF directory", func(t *testing.T) {
 		grace := unprovisioned(t, "grace")
 		grace.call(t, http.MethodPatch, "/me", map[string]any{"name": "Stale Name"}).expect(http.StatusOK)
