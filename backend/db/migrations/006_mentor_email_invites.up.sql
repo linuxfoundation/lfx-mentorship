@@ -9,13 +9,15 @@ SET LOCAL search_path TO mentorship, public;
 -- account. Such an invitation is a mentor row with no user: it holds only the
 -- address, and accepting it after signing in sets user_id to the caller.
 -- Until then the row may only be invited or declined, so it never needs the
--- FGA tuple or index entry an approved member gets.
+-- FGA tuple or index entry an approved member gets. status is nullable, and a
+-- NULL would make status IN (...) unknown, which a CHECK accepts, so it is
+-- required explicitly.
 ALTER TABLE program_members ALTER COLUMN user_id DROP NOT NULL;
 
 ALTER TABLE program_members ADD CONSTRAINT program_members_email_invite_check
   CHECK (user_id IS NOT NULL OR (
     member_type = 'mentor'
-    AND status IN ('invited', 'declined')
+    AND status IS NOT NULL AND status IN ('invited', 'declined')
     AND email IS NOT NULL AND email <> ''
   ));
 

@@ -143,6 +143,41 @@ func TestProgramMemberService_Create_AccountInviteDropsStaleEmailInvite(t *testi
 	}
 }
 
+// A repeat invite by email for someone who has since signed up and asked to join
+// conflicts; it must not delete the email invitation, whose link can still
+// approve their request. The same holds when the write fails.
+func TestProgramMemberService_Create_AccountInviteFailureKeepsEmailInvite(t *testing.T) {
+	requested := models.ProgramMemberStatusRequested
+	for name, setup := range map[string]func(*stubMemberRepo){
+		"existing request": func(r *stubMemberRepo) {
+			r.findByUserAndType = func(context.Context, string, string, models.MemberType) (*models.ProgramMember, error) {
+				return &models.ProgramMember{ID: "req-1", UserID: "mentor-1", Status: &requested}, nil
+			}
+		},
+		"write failure": func(r *stubMemberRepo) {
+			r.create = func(context.Context, string, models.ProgramMemberCreateInput) (*models.ProgramMember, error) {
+				return nil, errors.New("db down")
+			}
+		},
+	} {
+		var captured models.ProgramMemberCreateInput
+		memberRepo := capturingMemberRepo(&captured)
+		memberRepo.findEmailInvite = func(context.Context, string, string) (*models.ProgramMember, error) {
+			return emailInviteRow(models.ProgramMemberStatusInvited), nil
+		}
+		memberRepo.deleteEmailInvite = func(context.Context, string) error {
+			t.Errorf("%s: email invitation deleted; want it kept", name)
+			return nil
+		}
+		setup(memberRepo)
+		_, err := newInviteSvc(&stubInviteeUsers{}, newDirectory(), memberRepo, &stubNotifier{}).Create(context.Background(), "prog-1",
+			models.ProgramMemberCreateInput{Email: ptr("mentor@example.org"), MemberType: models.MemberTypeMentor})
+		if err == nil {
+			t.Errorf("%s: err = nil; want the account invitation to fail", name)
+		}
+	}
+}
+
 // The invitee can claim the email invitation between the lookup and the delete;
 // the delete then finds no unclaimed row, and the account invite still succeeds.
 func TestProgramMemberService_Create_AccountInviteIgnoresEmailInviteClaimedMeanwhile(t *testing.T) {

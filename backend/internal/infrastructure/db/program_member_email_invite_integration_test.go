@@ -91,6 +91,13 @@ func TestEmailInvite_CannotBeApprovedWithoutAUser(t *testing.T) {
 	if _, err := repo.UpdateIfStatus(context.Background(), m.ID, []models.ProgramMemberStatus{models.ProgramMemberStatusInvited}, models.ProgramMemberUpdateInput{Status: &declined}); err != nil {
 		t.Errorf("revoking an email invitation: %v", err)
 	}
+
+	// A NULL status would make the CHECK's IN unknown, which a CHECK accepts.
+	_, err = pool.Exec(context.Background(), `INSERT INTO program_members (id, program_id, member_type, status, email)
+		VALUES ($1, $2, 'mentor', NULL, 'no.status@example.org')`, s.id("no-status"), program)
+	if pgErrorCode(err) != "23514" {
+		t.Errorf("email invitation with no status err = %v; want a check violation", err)
+	}
 }
 
 func TestEmailInvite_ClaimSetsTheUser(t *testing.T) {

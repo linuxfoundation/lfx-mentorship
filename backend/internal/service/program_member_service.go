@@ -218,14 +218,22 @@ func (s *ProgramMemberService) Create(ctx context.Context, programID string, inp
 			return nil, err
 		}
 		input.UserID = user.ID
-		if invite && inviteeEmail != "" {
-			s.dropEmailInvite(ctx, programID, inviteeEmail)
-		}
 	}
+	// An email invitation for an address that now has an LF account is superseded
+	// by the account invitation, but only once that invitation is written: a
+	// conflict or a write failure must leave the email invitation and its link.
+	supersedes := invite && inviteeEmail != ""
 
 	if invite {
-		if m, err := s.reinvite(ctx, programID, input.UserID, input.ActorID); m != nil || err != nil {
-			return m, err
+		m, err := s.reinvite(ctx, programID, input.UserID, input.ActorID)
+		if err != nil {
+			return nil, err
+		}
+		if m != nil {
+			if supersedes {
+				s.dropEmailInvite(ctx, programID, inviteeEmail)
+			}
+			return m, nil
 		}
 	}
 
@@ -239,6 +247,9 @@ func (s *ProgramMemberService) Create(ctx context.Context, programID string, inp
 	// A mentor created as requested asked to join and must not be invited back.
 	if invite {
 		s.sendInvite(ctx, programID, input.UserID, input.ActorID)
+	}
+	if supersedes {
+		s.dropEmailInvite(ctx, programID, inviteeEmail)
 	}
 
 	return m, nil

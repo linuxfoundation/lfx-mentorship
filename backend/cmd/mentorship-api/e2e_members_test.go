@@ -52,10 +52,26 @@ func awaitEmail(t *testing.T, address, subject string, n int) emailapi.SendEmail
 // inviteSubject identifies mentor invitation emails.
 const inviteSubject = "invited to become a mentor"
 
+// emailInviteSubject identifies invitation emails sent to an address no LF account uses.
+const emailInviteSubject = "invited you to mentor"
+
 // inviteToken returns the token from the nth invite email sent to address.
 func inviteToken(t *testing.T, address string, n int) string {
 	t.Helper()
-	msg := awaitEmail(t, address, inviteSubject, n)
+	return inviteTokenFrom(t, awaitEmail(t, address, inviteSubject, n))
+}
+
+// emailInviteToken returns the token from the nth email invitation sent to an
+// address that has no LF account.
+func emailInviteToken(t *testing.T, address string, n int) string {
+	t.Helper()
+	return inviteTokenFrom(t, awaitEmail(t, address, emailInviteSubject, n))
+}
+
+// inviteTokenFrom returns the invite token linked from msg, which must appear in
+// both the text and the HTML body.
+func inviteTokenFrom(t *testing.T, msg emailapi.SendEmailRequest) string {
+	t.Helper()
 	m := inviteLink.FindStringSubmatch(msg.Text)
 	if m == nil {
 		t.Fatalf("no invite link in email: %s", msg.Text)
@@ -211,6 +227,40 @@ func TestE2EMentorInvites(t *testing.T) {
 		inviteToken(t, "by-email@lf.example.org", 1)
 	})
 
+	t.Run("invite someone with no LF account, by email", func(t *testing.T) {
+		const address = "late-signup@lf.example.org"
+		var invited member
+		admin.mustJSON(t, http.MethodPost, members, map[string]any{"email": address, "member_type": "mentor"}, http.StatusCreated, &invited)
+		if invited.UserID != "" || invited.Status != "invited" || invited.Email == nil || *invited.Email != address {
+			t.Fatalf("email invitation: %+v", invited)
+		}
+		token := emailInviteToken(t, address, 1)
+
+		// Inviting the address again resends the email for the same invitation.
+		var again member
+		admin.mustJSON(t, http.MethodPost, members, map[string]any{"email": address, "member_type": "mentor"}, http.StatusCreated, &again)
+		if again.ID != invited.ID {
+			t.Fatalf("re-invite by email: %+v", again)
+		}
+		emailInviteToken(t, address, 2)
+
+		// Only the LF account that owns the address can answer.
+		signIn(t, "not-the-invitee").call(t, http.MethodPost, "/mentor-invites/"+url.PathEscape(token)+"/accept", nil).expect(http.StatusForbidden)
+
+		// The invitee creates an LF account with the address and, while creating
+		// their mentor profile, asks to join; accepting approves that request.
+		e2e.fakes.addAccount(fakeAccount{Username: "late-signup", Email: address, Name: "Late Signup"})
+		invitee := signIn(t, "late-signup")
+		var req member
+		invitee.mustJSON(t, http.MethodPost, "/me/program-memberships", map[string]any{"program_id": p.ID}, http.StatusCreated, &req)
+		var accepted member
+		invitee.mustJSON(t, http.MethodPost, "/mentor-invites/"+url.PathEscape(token)+"/accept", nil, http.StatusOK, &accepted)
+		if accepted.ID != req.ID || accepted.UserID != invitee.ID || accepted.Status != "approved" {
+			t.Fatalf("accepted: %+v; want their request approved", accepted)
+		}
+		invitee.call(t, http.MethodPost, "/mentor-invites/"+url.PathEscape(token)+"/accept", nil).expect(http.StatusBadRequest)
+	})
+
 	t.Run("invite validation", func(t *testing.T) {
 		pending := createProgram(t, admin, "Unpublished Invite Program")
 		e2e.fakes.addAccount(fakeAccount{Username: "dup-email", Email: admin.Email})
@@ -227,7 +277,7 @@ func TestE2EMentorInvites(t *testing.T) {
 			{"bad status", members, map[string]any{"lfid": "admin", "member_type": "mentor", "status": "bogus"}, http.StatusBadRequest},
 			{"unpublished program", "/programs/" + pending.ID + "/members", map[string]any{"lfid": "admin", "member_type": "mentor"}, http.StatusBadRequest},
 			{"unknown program", "/programs/00000000-0000-4000-8000-000000000000/members", map[string]any{"lfid": "admin", "member_type": "mentor"}, http.StatusNotFound},
-			{"email with no LF account", members, map[string]any{"email": "nobody@nowhere.example.org", "member_type": "mentor"}, http.StatusUnprocessableEntity},
+			{"email with no LF account, for a program admin", members, map[string]any{"email": "nobody@nowhere.example.org", "member_type": "program_admin"}, http.StatusUnprocessableEntity},
 			{"LFID with no LF account", members, map[string]any{"lfid": "ghost", "member_type": "mentor"}, http.StatusUnprocessableEntity},
 			{"LFID that is not a username", members, map[string]any{"lfid": "x", "member_type": "mentor"}, http.StatusBadRequest},
 			{"primary email held by another user", members, map[string]any{"lfid": "dup-email", "member_type": "mentor"}, http.StatusUnprocessableEntity},
