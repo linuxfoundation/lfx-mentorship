@@ -1042,6 +1042,20 @@ Fetch a program by UUID or slug.
 
 ---
 
+#### `GET /v1/programs/{id}/submitter` 🔒
+
+The user who submitted the program (`programs.lfid`), with their name, email and avatar from `users`. The gateway requires program `auditor`, which the program's Program Admins and the approver team hold, so a reviewer can contact the submitter. Users granted `auditor` on the program directly and the project's auditors (project `auditor`, `global_writer` and `global_auditor`) also hold it, so they can read the email too. Mentors do not. `{id}` must be the program UUID. The public program reads never carry the email.
+
+`name` falls back to the given and family names when `users.name` is blank. A submitter with no `users` row returns `lfid` alone; `name`, `email` and `avatar_url` are left out when they have no value.
+
+**Response** `200`
+```json
+{ "lfid": "janedoe", "name": "Jane Doe", "email": "jane.doe@example.org", "avatar_url": "https://…" }
+```
+**Errors** `401`, `403`, `404` (program not found, or the program has no submitter LFID)
+
+---
+
 #### `GET /v1/programs/resolve/{id}` 🔓
 
 Resolve a program UUID or slug to the canonical program UUID.

@@ -25,6 +25,7 @@ type stubProgramSvc struct {
 	getByID                    func(context.Context, string) (*models.Program, error)
 	getBySlug                  func(context.Context, string) (*models.Program, error)
 	getManagementSummary       func(context.Context, string) (*models.ProgramManagementSummary, error)
+	getSubmitter               func(context.Context, string) (*models.ProgramSubmitter, error)
 	nameAvailable              func(context.Context, string, string) (bool, error)
 	listMentees                func(context.Context, string) ([]*models.ProgramCatalogMentee, error)
 	listMine                   func(context.Context, string, models.AdministeredProgramFilter) ([]*models.AdministeredProgram, *models.PaginationMeta, error)
@@ -65,6 +66,12 @@ func (s *stubProgramSvc) GetManagementSummary(ctx context.Context, id string) (*
 }
 func (s *stubProgramSvc) GetHeaderProjection(ctx context.Context, id string) (*models.ProgramHeaderProjection, error) {
 	return &models.ProgramHeaderProjection{Program: &models.Program{ID: id}}, nil
+}
+func (s *stubProgramSvc) GetSubmitter(ctx context.Context, id string) (*models.ProgramSubmitter, error) {
+	if s.getSubmitter != nil {
+		return s.getSubmitter(ctx, id)
+	}
+	return &models.ProgramSubmitter{}, nil
 }
 func (s *stubProgramSvc) NameAvailable(ctx context.Context, name, excludeProgramID string) (bool, error) {
 	if s.nameAvailable != nil {
@@ -1134,5 +1141,97 @@ func TestProgramHandler_HideUnhide(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestProgramHandler_GetSubmitter(t *testing.T) {
+	name, email := "Jane Doe", "jane.doe@example.org"
+	var gotID string
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		getSubmitter: func(_ context.Context, id string) (*models.ProgramSubmitter, error) {
+			gotID = id
+			return &models.ProgramSubmitter{LFID: "janedoe", Name: &name, Email: &email}, nil
+		},
+	})
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/3f2b8c1e-7a44-4d0e-9b55-0c1d2e3f4a5b/submitter", nil)
+	r = requestWithPrincipal(r, "reviewer-1")
+	r = requestWithChiParam(r, "id", "3f2b8c1e-7a44-4d0e-9b55-0c1d2e3f4a5b")
+	w := httptest.NewRecorder()
+	h.GetSubmitter(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d; want 200: %s", w.Code, w.Body.String())
+	}
+	if gotID != "3f2b8c1e-7a44-4d0e-9b55-0c1d2e3f4a5b" {
+		t.Fatalf("service got program %q; want 3f2b8c1e-7a44-4d0e-9b55-0c1d2e3f4a5b", gotID)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["lfid"] != "janedoe" || body["name"] != name || body["email"] != email {
+		t.Fatalf("body = %v", body)
+	}
+	if _, ok := body["avatar_url"]; ok {
+		t.Fatalf("avatar_url must be omitted when absent: %v", body)
+	}
+}
+
+func TestProgramHandler_GetSubmitter_RequiresPrincipal(t *testing.T) {
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		getSubmitter: func(context.Context, string) (*models.ProgramSubmitter, error) {
+			t.Fatal("submitter must not be read without a principal")
+			return nil, nil
+		},
+	})
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/3f2b8c1e-7a44-4d0e-9b55-0c1d2e3f4a5b/submitter", nil)
+	r = requestWithChiParam(r, "id", "3f2b8c1e-7a44-4d0e-9b55-0c1d2e3f4a5b")
+	w := httptest.NewRecorder()
+	h.GetSubmitter(w, r)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("got %d; want 401", w.Code)
+	}
+}
+
+func TestProgramHandler_GetSubmitter_NotFound(t *testing.T) {
+	for name, err := range map[string]error{
+		"unknown program": domain.ErrProgramNotFound,
+		"no submitter":    domain.ErrUserNotFound,
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := handler.NewProgramHandler(&stubProgramSvc{
+				getSubmitter: func(context.Context, string) (*models.ProgramSubmitter, error) {
+					return nil, fmt.Errorf("get program submitter: %w", err)
+				},
+			})
+			r := httptest.NewRequest(http.MethodGet, "/v1/programs/3f2b8c1e-7a44-4d0e-9b55-0c1d2e3f4a5b/submitter", nil)
+			r = requestWithPrincipal(r, "reviewer-1")
+			r = requestWithChiParam(r, "id", "3f2b8c1e-7a44-4d0e-9b55-0c1d2e3f4a5b")
+			w := httptest.NewRecorder()
+			h.GetSubmitter(w, r)
+
+			if w.Code != http.StatusNotFound {
+				t.Fatalf("got %d; want 404", w.Code)
+			}
+		})
+	}
+}
+
+func TestProgramHandler_GetSubmitter_RejectsNonUUID(t *testing.T) {
+	h := handler.NewProgramHandler(&stubProgramSvc{
+		getSubmitter: func(context.Context, string) (*models.ProgramSubmitter, error) {
+			t.Fatal("submitter must not be read for a non-UUID id")
+			return nil, nil
+		},
+	})
+	r := httptest.NewRequest(http.MethodGet, "/v1/programs/some-slug/submitter", nil)
+	r = requestWithPrincipal(r, "reviewer-1")
+	r = requestWithChiParam(r, "id", "some-slug")
+	w := httptest.NewRecorder()
+	h.GetSubmitter(w, r)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("got %d; want 404", w.Code)
 	}
 }

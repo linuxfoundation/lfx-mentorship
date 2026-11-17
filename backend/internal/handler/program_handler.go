@@ -27,6 +27,7 @@ type programService interface {
 	GetEnrollmentTemplate(ctx context.Context, programID string) (*models.ProgramEnrollmentTemplate, error)
 	GetManagementSummary(ctx context.Context, programID string) (*models.ProgramManagementSummary, error)
 	GetHeaderProjection(ctx context.Context, programID string) (*models.ProgramHeaderProjection, error)
+	GetSubmitter(ctx context.Context, programID string) (*models.ProgramSubmitter, error)
 	NameAvailable(ctx context.Context, name, excludeProgramID string) (bool, error)
 	ListCatalog(ctx context.Context, filter models.ProgramFilter) ([]*models.ProgramCatalogItem, *models.PaginationMeta, error)
 	GetCatalog(ctx context.Context, id string) (*models.ProgramCatalogItem, error)
@@ -368,6 +369,26 @@ func (h *ProgramHandler) GetManagementSummary(w http.ResponseWriter, r *http.Req
 		return
 	}
 	JSON(w, http.StatusOK, summary)
+}
+
+// GetSubmitter handles GET /v1/programs/{id}/submitter.
+func (h *ProgramHandler) GetSubmitter(w http.ResponseWriter, r *http.Request) {
+	if auth.PrincipalFromContext(r.Context()) == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	// The route takes the program UUID only; anything else would reach Postgres as an invalid uuid.
+	id := chi.URLParam(r, "id")
+	if uuid.Validate(id) != nil {
+		Error(w, domain.ErrProgramNotFound)
+		return
+	}
+	submitter, err := h.svc.GetSubmitter(r.Context(), id)
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, submitter)
 }
 
 func (h *ProgramHandler) GetHeaderProjection(w http.ResponseWriter, r *http.Request) {

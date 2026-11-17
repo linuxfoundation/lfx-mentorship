@@ -328,6 +328,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 
 			// Program management views
 			r.Get("/programs/{id}/management-summary", programH.GetManagementSummary)
+			r.Get("/programs/{id}/submitter", programH.GetSubmitter)
 			r.Get("/programs/{id}/term-management", programTermH.ListManagementByProgram)
 			r.Get("/programs/{id}/member-management", programMemberH.ListMentorManagement)
 
