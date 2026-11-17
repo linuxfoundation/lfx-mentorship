@@ -1071,9 +1071,9 @@ The backend reads the project's slug, name, and logo from Project Service by `pr
   "projectLogoUrl":   "https://...",                          // optional; http(s)
   "name":             "CNCF Mentorship 2026",                 // required; must be unique
   "description":      "...",                                  // at most 18,000 characters
-  "repositoryUrl":    "https://github.com/cncf/mentorship",
-  "websiteUrl":       "https://...",
-  "codeOfConductUrl": "https://...",
+  "repositoryUrl":    "https://github.com/cncf/mentorship",   // absolute http(s) URL
+  "websiteUrl":       "https://...",                          // optional; absolute http(s) URL
+  "codeOfConductUrl": "https://...",                          // optional; absolute http(s) URL
   "industry":         "Cloud Native",                         // optional
   "ciiProjectId":     "12345",
   "skills":           ["Go"],                                 // required; at least one
@@ -1089,7 +1089,7 @@ The backend reads the project's slug, name, and logo from Project Service by `pr
 ```
 
 **Response** `201` → `<Program>`  
-**Errors** `400` (including a `projectId` with no Project Service project, or two required prerequisites with the same name ignoring case), `409` (duplicate name or slug), `503` (Project Service unavailable)
+**Errors** `400` (including a `projectId` with no Project Service project, two required prerequisites with the same name ignoring case, or a link that is not an absolute `http(s)` URL, such as `github.com/org/repo` without `https://`; the message names the field, for example `repositoryUrl must be an absolute http(s) URL`), `409` (duplicate name or slug), `503` (Project Service unavailable)
 
 ---
 
@@ -1182,7 +1182,9 @@ applications keep their tasks.
 **Response** `200` → `<Program>`  
 **Errors** `400` (including an `id` that is not an open term of the program, a
 `project_uid` with no Project Service project, two `task_templates` with the same name
-ignoring case, or an `lfid` other than the one already set), `404`, `409` (removing an
+ignoring case, an `lfid` other than the one already set, or a `repo_link`, `website_url`
+or `code_of_conduct` that is not blank and not an absolute `http(s)` URL; the message
+names the field), `404`, `409` (removing an
 open term that has applications, or `task_templates` changed by another save after this
 request read them), `503` (Project Service unavailable)
 

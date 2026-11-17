@@ -567,12 +567,15 @@ func (s *ProgramService) CreateEnrollment(ctx context.Context, input models.Prog
 	if !available {
 		return nil, fmt.Errorf("%w: program name is already in use", domain.ErrConflict)
 	}
-	urls := []*string{input.Program.RepoLink, input.Program.WebsiteURL, input.Program.CodeOfConduct}
-	if s.projects == nil { // otherwise Project Service's logo replaces the caller's
-		urls = append(urls, input.Program.ProjectLogoURL)
+	if err := validateProgramLinks(
+		programLink{"repositoryUrl", input.Program.RepoLink},
+		programLink{"websiteUrl", input.Program.WebsiteURL},
+		programLink{"codeOfConductUrl", input.Program.CodeOfConduct},
+	); err != nil {
+		return nil, err
 	}
-	for _, value := range urls {
-		if err := validateHTTPURL(value); err != nil {
+	if s.projects == nil { // otherwise Project Service's logo replaces the caller's
+		if err := validateHTTPURL("projectLogoUrl", input.Program.ProjectLogoURL); err != nil {
 			return nil, err
 		}
 	}
@@ -644,18 +647,35 @@ func normalizeProjectMetadata(slug, name, logoURL *string) (*string, *string, *s
 	return slug, name, logoURL, nil
 }
 
-// validateHTTPURL accepts an absent or blank value, or an absolute http(s) URL.
-func validateHTTPURL(value *string) error {
+// programLink is a link field of a program request, under the name that request gives it.
+type programLink struct {
+	field string
+	value *string
+}
+
+// validateProgramLinks checks each link with validateHTTPURL.
+func validateProgramLinks(links ...programLink) error {
+	for _, link := range links {
+		if err := validateHTTPURL(link.field, link.value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateHTTPURL accepts an absent or blank value, or an absolute http(s) URL. The error names field, so the caller can
+// tell which value to fix.
+func validateHTTPURL(field string, value *string) error {
 	if value == nil || strings.TrimSpace(*value) == "" {
 		return nil
 	}
 	parsed, err := url.ParseRequestURI(*value)
-	if err != nil || parsed.Host == "" {
-		return fmt.Errorf("%w: invalid URL", domain.ErrInvalidInput)
+	scheme := ""
+	if err == nil {
+		scheme = strings.ToLower(parsed.Scheme)
 	}
-	scheme := strings.ToLower(parsed.Scheme)
-	if scheme != "http" && scheme != "https" {
-		return fmt.Errorf("%w: invalid URL", domain.ErrInvalidInput)
+	if err != nil || parsed.Host == "" || (scheme != "http" && scheme != "https") {
+		return fmt.Errorf("%w: %s must be an absolute http(s) URL, such as https://example.org", domain.ErrInvalidInput, field)
 	}
 	return nil
 }
@@ -716,6 +736,13 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 	if err := validateRichText("description", input.Description); err != nil {
 		return nil, err
 	}
+	if err := validateProgramLinks(
+		programLink{"repo_link", input.RepoLink},
+		programLink{"website_url", input.WebsiteURL},
+		programLink{"code_of_conduct", input.CodeOfConduct},
+	); err != nil {
+		return nil, err
+	}
 	if input.Skills != nil {
 		input.Skills = normalizeSkills(input.Skills)
 		if len(input.Skills) == 0 {
@@ -766,7 +793,7 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 			return nil, err
 		}
 		if s.projects == nil { // otherwise the logo is Project Service's, not the caller's
-			if err := validateHTTPURL(input.ProjectLogoURL); err != nil {
+			if err := validateHTTPURL("project_logo_url", input.ProjectLogoURL); err != nil {
 				return nil, err
 			}
 		}
