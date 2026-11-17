@@ -422,8 +422,10 @@ spec:
             values:
               aud: {{ .Values.app.audience | quote }}
 
-    # The submitter's email is for the program's admins and the approver team,
-    # who both hold auditor; the public program reads never carry it.
+    # The submitter's email is for program auditors: the program's admins, the
+    # approver team, users granted auditor directly, and the project's auditors
+    # (project auditor, global writer and global auditor). The public program
+    # reads never carry it.
     - id: rule:lfx:lfx-mentorship-backend:program-submitter
       allow_encoded_slashes: "off"
       match:
