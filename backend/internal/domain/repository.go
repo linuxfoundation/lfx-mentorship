@@ -89,6 +89,9 @@ type ProgramRepository interface {
 	GetEnrollmentTemplate(ctx context.Context, programID string) (*models.ProgramEnrollmentTemplate, error)
 	GetManagementSummary(ctx context.Context, programID string) (*models.ProgramManagementSummary, error)
 	GetHeaderProjection(ctx context.Context, programID string) (*models.ProgramHeaderProjection, error)
+	// GetSubmitter returns the program's submitter, ErrProgramNotFound for an
+	// unknown program, or ErrUserNotFound when the program has no submitter LFID.
+	GetSubmitter(ctx context.Context, programID string) (*models.ProgramSubmitter, error)
 	NameAvailable(ctx context.Context, name, excludeProgramID string) (bool, error)
 	ListCatalog(ctx context.Context, filter models.ProgramFilter) ([]*models.ProgramCatalogItem, *models.PaginationMeta, error)
 	GetCatalog(ctx context.Context, id string) (*models.ProgramCatalogItem, error)

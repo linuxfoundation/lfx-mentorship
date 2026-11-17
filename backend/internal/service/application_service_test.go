@@ -229,6 +229,7 @@ type stubProgRepo struct {
 	getBySlug         func(context.Context, string) (*models.Program, error)
 	list              func(context.Context, models.ProgramFilter) ([]*models.Program, *models.PaginationMeta, error)
 	managementSummary func(context.Context, string) (*models.ProgramManagementSummary, error)
+	getSubmitter      func(context.Context, string) (*models.ProgramSubmitter, error)
 	nameAvailable     func(context.Context, string, string) (bool, error)
 	listCatalog       func(context.Context, models.ProgramFilter) ([]*models.ProgramCatalogItem, *models.PaginationMeta, error)
 	getCatalog        func(context.Context, string) (*models.ProgramCatalogItem, error)
@@ -277,6 +278,12 @@ func (m *stubProgRepo) GetManagementSummary(ctx context.Context, id string) (*mo
 }
 func (m *stubProgRepo) GetHeaderProjection(ctx context.Context, id string) (*models.ProgramHeaderProjection, error) {
 	return &models.ProgramHeaderProjection{Program: &models.Program{ID: id}}, nil
+}
+func (m *stubProgRepo) GetSubmitter(ctx context.Context, id string) (*models.ProgramSubmitter, error) {
+	if m.getSubmitter != nil {
+		return m.getSubmitter(ctx, id)
+	}
+	return &models.ProgramSubmitter{}, nil
 }
 func (m *stubProgRepo) NameAvailable(ctx context.Context, name, excludeProgramID string) (bool, error) {
 	if m.nameAvailable != nil {

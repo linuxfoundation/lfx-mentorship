@@ -422,6 +422,26 @@ spec:
             values:
               aud: {{ .Values.app.audience | quote }}
 
+    # The submitter's email is for the program's admins and the approver team,
+    # who both hold auditor; the public program reads never carry it.
+    - id: rule:lfx:lfx-mentorship-backend:program-submitter
+      allow_encoded_slashes: "off"
+      match:
+        methods: [GET]
+        routes:
+          - path: /mentorship/v1/programs/:id/submitter
+      execute:
+        - authenticator: oidc
+        - authorizer: openfga_check
+          config:
+            values:
+              object: 'mentorship_program:{{ "{{- .Request.URL.Captures.id -}}" }}'
+              relation: auditor
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
     - id: rule:lfx:lfx-mentorship-backend:program-management-summary
       allow_encoded_slashes: "off"
       match:

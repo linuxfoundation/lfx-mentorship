@@ -167,6 +167,17 @@ func (s *ProgramService) GetHeaderProjection(ctx context.Context, programID stri
 	return s.repo.GetHeaderProjection(ctx, programID)
 }
 
+// GetSubmitter returns the user who submitted the program. The gateway admits
+// only the program's auditors (its Program Admins and the approver team), since
+// the response carries the submitter's email.
+func (s *ProgramService) GetSubmitter(ctx context.Context, programID string) (*models.ProgramSubmitter, error) {
+	submitter, err := s.repo.GetSubmitter(ctx, programID)
+	if err != nil {
+		return nil, fmt.Errorf("get program submitter: %w", err)
+	}
+	return submitter, nil
+}
+
 func (s *ProgramService) NameAvailable(ctx context.Context, name, excludeProgramID string) (bool, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {

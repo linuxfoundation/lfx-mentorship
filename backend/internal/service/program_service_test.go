@@ -2348,3 +2348,36 @@ func TestProgramService_DescriptionLengthCapped(t *testing.T) {
 		t.Errorf("repository writes = %d; want only the three at the cap", writes)
 	}
 }
+
+func TestProgramService_GetSubmitter(t *testing.T) {
+	email := "jane.doe@example.org"
+	want := &models.ProgramSubmitter{LFID: "janedoe", Email: &email}
+	svc := newProgramSvc(&stubProgRepo{
+		getSubmitter: func(_ context.Context, id string) (*models.ProgramSubmitter, error) {
+			if id != "p1" {
+				t.Fatalf("repo got program %q; want p1", id)
+			}
+			return want, nil
+		},
+	}, &stubTermRepo{}, &stubAppRepo{})
+
+	got, err := svc.GetSubmitter(context.Background(), "p1")
+	if err != nil {
+		t.Fatalf("GetSubmitter: %v", err)
+	}
+	if got != want {
+		t.Fatalf("got %+v; want %+v", got, want)
+	}
+}
+
+func TestProgramService_GetSubmitter_WrapsNotFound(t *testing.T) {
+	svc := newProgramSvc(&stubProgRepo{
+		getSubmitter: func(context.Context, string) (*models.ProgramSubmitter, error) {
+			return nil, domain.ErrUserNotFound
+		},
+	}, &stubTermRepo{}, &stubAppRepo{})
+
+	if _, err := svc.GetSubmitter(context.Background(), "p1"); !errors.Is(err, domain.ErrUserNotFound) {
+		t.Fatalf("err = %v; want ErrUserNotFound", err)
+	}
+}

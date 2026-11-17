@@ -498,6 +498,39 @@ func (r *ProgramRepository) GetManagementSummary(ctx context.Context, programID 
 	return &summary, nil
 }
 
+// GetSubmitter returns the user whose LFID the program stores as its submitter.
+// The name falls back to the given and family names when `users.name` is blank.
+// A submitter with no users row comes back with the LFID alone.
+func (r *ProgramRepository) GetSubmitter(ctx context.Context, programID string) (*models.ProgramSubmitter, error) {
+	ctx, span := programTracer.Start(ctx, "db.programs.GetSubmitter")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.program_id", programID))
+	const q = `
+		SELECT
+			NULLIF(TRIM(p.lfid), ''),
+			COALESCE(NULLIF(TRIM(u.name), ''), NULLIF(TRIM(CONCAT_WS(' ', u.given_name, u.family_name)), '')),
+			NULLIF(TRIM(u.email), ''),
+			NULLIF(TRIM(u.avatar_url), '')
+		FROM programs p
+		LEFT JOIN users u ON u.lfid = p.lfid
+		WHERE p.id = $1`
+	var lfid *string
+	var submitter models.ProgramSubmitter
+	err := r.pool.QueryRow(ctx, q, programID).Scan(&lfid, &submitter.Name, &submitter.Email, &submitter.AvatarURL)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrProgramNotFound
+	}
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("get program submitter: %w", err)
+	}
+	if lfid == nil {
+		return nil, domain.ErrUserNotFound
+	}
+	submitter.LFID = *lfid
+	return &submitter, nil
+}
+
 func (r *ProgramRepository) NameAvailable(ctx context.Context, name, excludeProgramID string) (bool, error) {
 	var exists bool
 	if err := r.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM programs WHERE LOWER(name) = LOWER($1) AND ($2 = '' OR id::text <> $2))`, name, excludeProgramID).Scan(&exists); err != nil {
