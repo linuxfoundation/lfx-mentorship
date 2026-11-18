@@ -27,7 +27,7 @@ This repo hosts the LFX Mentorship platform — a Kubernetes-native rewrite of t
 Monorepo: Go backend + Nuxt frontend, following the lfx-crowdfunding layout.
 
 ```
-backend/          Go 1.25 · Chi v5 · pgx v5 (Postgres) · OpenTelemetry
+backend/          Go 1.26 · Chi v5 · pgx v5 (Postgres) · OpenTelemetry
   cmd/            entrypoint
   internal/
     domain/       models + repository interfaces + sentinel errors
