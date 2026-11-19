@@ -1,0 +1,78 @@
+# Copyright The Linux Foundation and each contributor to LFX.
+# SPDX-License-Identifier: MIT
+{{- if .Values.projectSyncCronJob.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "lfx-v2-mentorship-service.fullname" . }}-project-sync
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lfx-v2-mentorship-service.labels" . | nindent 4 }}
+    app.kubernetes.io/component: program-project-sync
+    tags.datadoghq.com/service: {{ include "lfx-v2-mentorship-service.name" . }}
+spec:
+  schedule: {{ .Values.projectSyncCronJob.schedule | quote }}
+  timeZone: {{ .Values.projectSyncCronJob.timeZone | quote }}
+  concurrencyPolicy: {{ .Values.projectSyncCronJob.concurrencyPolicy }}
+  successfulJobsHistoryLimit: {{ .Values.projectSyncCronJob.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.projectSyncCronJob.failedJobsHistoryLimit }}
+  jobTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "lfx-v2-mentorship-service.name" . }}
+        tags.datadoghq.com/service: {{ include "lfx-v2-mentorship-service.name" . }}
+    spec:
+      activeDeadlineSeconds: {{ .Values.projectSyncCronJob.activeDeadlineSeconds }}
+      # Safe to retry: a rerun writes only the programs still out of date.
+      backoffLimit: {{ .Values.projectSyncCronJob.backoffLimit }}
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: {{ include "lfx-v2-mentorship-service.name" . }}
+            app.kubernetes.io/component: program-project-sync
+            tags.datadoghq.com/service: {{ include "lfx-v2-mentorship-service.name" . }}
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "lfx-v2-mentorship-service.serviceAccountName" . }}
+          automountServiceAccountToken: false
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: program-project-sync
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+              image: "{{ .Values.projectSyncCronJob.image.repository | default .Values.image.repository }}:{{ .Values.projectSyncCronJob.image.tag | default (required "image.tag is required" .Values.image.tag) }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command: ["/app/program-project-sync"]
+              {{- with .Values.env }}
+              env:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
+              envFrom:
+                - configMapRef:
+                    name: {{ include "lfx-v2-mentorship-service.fullname" . }}-config
+                - secretRef:
+                    name: {{ .Values.secretName }}
+              resources:
+                {{- toYaml .Values.projectSyncCronJob.resources | nindent 16 }}
+          {{- with .Values.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.topologySpreadConstraints }}
+          topologySpreadConstraints:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

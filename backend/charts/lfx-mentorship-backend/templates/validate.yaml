@@ -153,6 +153,25 @@ requires SELF_SERVE_URL, which its button links to. */ -}}
 {{- end }}
 {{- end }}
 
+{{- /* The project sync reads LF projects from lfx-v2-project-service over NATS. */ -}}
+{{- if .Values.projectSyncCronJob.enabled }}
+{{- if not (or (get $email "FGA_NATS_URL") (hasKey $emailFromRef "FGA_NATS_URL")) }}
+{{- fail "values.yaml: FGA_NATS_URL is required (in config: or env:) when projectSyncCronJob.enabled=true — LF projects are read from lfx-v2-project-service over NATS." }}
+{{- end }}
+{{- if not .Values.projectSyncCronJob.schedule }}
+{{- fail "values.yaml: projectSyncCronJob.schedule is required when projectSyncCronJob.enabled=true." }}
+{{- end }}
+{{- if le (int .Values.projectSyncCronJob.activeDeadlineSeconds) 0 }}
+{{- fail "values.yaml: projectSyncCronJob.activeDeadlineSeconds must be greater than 0 when projectSyncCronJob.enabled=true." }}
+{{- end }}
+{{- if lt (int .Values.projectSyncCronJob.backoffLimit) 0 }}
+{{- fail "values.yaml: projectSyncCronJob.backoffLimit must be 0 or greater when projectSyncCronJob.enabled=true." }}
+{{- end }}
+{{- if not .Values.secretName }}
+{{- fail "values.yaml: secretName is required when projectSyncCronJob.enabled=true (must include the RDS connection components)." }}
+{{- end }}
+{{- end }}
+
 {{- /* Object storage: the binary refuses to start with a bucket but no region, or a logos
 bucket without a CDN prefix, since stored logo columns hold the full CDN URL. */ -}}
 {{- if or .Values.config.LOGOS_S3_BUCKET .Values.config.ATTACHMENTS_S3_BUCKET }}
