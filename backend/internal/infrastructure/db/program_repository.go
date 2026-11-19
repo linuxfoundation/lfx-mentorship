@@ -1532,3 +1532,90 @@ func (r *ProgramRepository) BulkUpsertFundingStats(ctx context.Context, rows []m
 
 	return len(rows), nil
 }
+
+// ProgramProjectMetadata is a program's stored copy of its LF project's slug, name and logo.
+type ProgramProjectMetadata struct {
+	ProgramID  string
+	ProjectUID string
+	Slug       *string
+	Name       *string
+	LogoURL    *string
+}
+
+// ListProgramProjectMetadata returns every program that has an LF project, with the project
+// slug, name and logo it stores, ordered by project UID. It serves the program-project-sync
+// command and is not part of the domain repository interface.
+func (r *ProgramRepository) ListProgramProjectMetadata(ctx context.Context) ([]ProgramProjectMetadata, error) {
+	ctx, span := programTracer.Start(ctx, "db.programs.ListProgramProjectMetadata")
+	defer span.End()
+
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, lf_project_uid, lf_project_slug, lf_project_name, lf_project_logo_url
+		FROM programs
+		WHERE lf_project_uid IS NOT NULL AND lf_project_uid <> ''
+		ORDER BY lf_project_uid, id`)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("list program project metadata: %w", err)
+	}
+	defer rows.Close()
+
+	var programs []ProgramProjectMetadata
+	for rows.Next() {
+		var p ProgramProjectMetadata
+		if err := rows.Scan(&p.ProgramID, &p.ProjectUID, &p.Slug, &p.Name, &p.LogoURL); err != nil {
+			span.RecordError(err)
+			return nil, fmt.Errorf("scan program project metadata: %w", err)
+		}
+		programs = append(programs, p)
+	}
+	if err := rows.Err(); err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("iterate program project metadata: %w", err)
+	}
+	return programs, nil
+}
+
+// SyncProjectMetadata stores project's slug, name and logo on every program of the LF project
+// whose stored values differ, and queues those programs for re-indexing in the same transaction.
+// It returns the IDs of the programs it changed. The difference is checked by the UPDATE itself,
+// so a program moved to another project since it was read is left alone. It serves the
+// program-project-sync command and is not part of the domain repository interface.
+func (r *ProgramRepository) SyncProjectMetadata(ctx context.Context, projectUID string, project models.ProjectMetadata) ([]string, error) {
+	ctx, span := programTracer.Start(ctx, "db.programs.SyncProjectMetadata")
+	defer span.End()
+	span.SetAttributes(attribute.String("db.project_uid", projectUID))
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("begin sync project metadata transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	rows, err := tx.Query(ctx, `
+		UPDATE programs SET lf_project_slug = $2, lf_project_name = $3, lf_project_logo_url = $4
+		WHERE lf_project_uid = $1
+			AND (lf_project_slug, lf_project_name, lf_project_logo_url) IS DISTINCT FROM ($2::text, $3::text, $4::text)
+		RETURNING id`, projectUID, project.Slug, project.Name, project.LogoURL)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("update program project metadata: %w", err)
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("update program project metadata: %w", err)
+	}
+	for _, id := range ids {
+		if err := enqueueProgramIndexByID(ctx, tx, id); err != nil {
+			span.RecordError(err)
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("commit sync project metadata transaction: %w", err)
+	}
+	return ids, nil
+}

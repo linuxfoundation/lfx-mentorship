@@ -34,7 +34,10 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     -o /build/user-backfill ./cmd/user-backfill \
  && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -trimpath -ldflags "-s -w" \
-    -o /build/term-status ./cmd/term-status
+    -o /build/term-status ./cmd/term-status \
+ && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags "-s -w" \
+    -o /build/program-project-sync ./cmd/program-project-sync
 
 # Runtime stage
 # Distroless static image minimizes runtime attack surface while retaining CA certs.
@@ -49,6 +52,7 @@ COPY --from=builder /build/prerequisite-reminder ./prerequisite-reminder
 COPY --from=builder /build/approver-admin ./approver-admin
 COPY --from=builder /build/user-backfill ./user-backfill
 COPY --from=builder /build/term-status ./term-status
+COPY --from=builder /build/program-project-sync ./program-project-sync
 
 EXPOSE 8080
 
