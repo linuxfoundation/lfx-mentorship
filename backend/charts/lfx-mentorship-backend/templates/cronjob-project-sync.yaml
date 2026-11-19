@@ -48,10 +48,20 @@ spec:
               image: "{{ .Values.projectSyncCronJob.image.repository | default .Values.image.repository }}:{{ .Values.projectSyncCronJob.image.tag | default (required "image.tag is required" .Values.image.tag) }}"
               imagePullPolicy: {{ .Values.image.pullPolicy }}
               command: ["/app/program-project-sync"]
-              {{- with .Values.env }}
-              env:
-                {{- toYaml . | nindent 16 }}
+              {{- $env := list }}
+              {{- range .Values.env }}
+              {{- if ne .name "DRY_RUN" }}
+              {{- $env = append $env . }}
               {{- end }}
+              {{- end }}
+              env:
+                {{- with $env }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+                # Set here, not from env: or the ConfigMap, which other jobs share:
+                # program-funding-stats-sync reads DRY_RUN too.
+                - name: DRY_RUN
+                  value: {{ .Values.projectSyncCronJob.dryRun | quote }}
               envFrom:
                 - configMapRef:
                     name: {{ include "lfx-v2-mentorship-service.fullname" . }}-config

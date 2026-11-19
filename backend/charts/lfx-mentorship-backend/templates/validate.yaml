@@ -167,6 +167,9 @@ requires SELF_SERVE_URL, which its button links to. */ -}}
 {{- if lt (int .Values.projectSyncCronJob.backoffLimit) 0 }}
 {{- fail "values.yaml: projectSyncCronJob.backoffLimit must be 0 or greater when projectSyncCronJob.enabled=true." }}
 {{- end }}
+{{- if not (kindIs "bool" .Values.projectSyncCronJob.dryRun) }}
+{{- fail "values.yaml: projectSyncCronJob.dryRun must be true or false." }}
+{{- end }}
 {{- if not .Values.secretName }}
 {{- fail "values.yaml: secretName is required when projectSyncCronJob.enabled=true (must include the RDS connection components)." }}
 {{- end }}
