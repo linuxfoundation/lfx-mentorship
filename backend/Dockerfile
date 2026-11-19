@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 # Build stage
-FROM cgr.dev/chainguard/go:latest-dev@sha256:21e9c8e3133f0aad37910aa30f437e31958ed15cd4494957e04e5d5e4bab9f69 AS builder
+FROM cgr.dev/chainguard/go:latest-dev@sha256:12b02b9f84197e22786e72eb18a584c3f5f4603710cec5b7b951e351504e1d4f AS builder
 
 WORKDIR /build
 
