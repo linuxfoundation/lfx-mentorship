@@ -1642,7 +1642,7 @@ Update a member's status or email.
 }
 ```
 
-When this endpoint moves a mentor's request to `declined` (`requested → declined`), `NotifyMentorDeclined` is triggered. Revoking an invite (`invited → declined`) sends no email.
+When this endpoint moves a mentor's request to `approved` (`requested`/`pending → approved`), `NotifyMentorApproved` is triggered. When it moves a mentor's request to `declined` (`requested → declined`), `NotifyMentorDeclined` is triggered. Revoking an invite (`invited → declined`) or moving an invited mentor to `approved` sends no email.
 
 A mentor's request belongs to the mentor: only they can create it or withdraw
 it, through the [mentor self-service](#mentor-self-service) routes. A program

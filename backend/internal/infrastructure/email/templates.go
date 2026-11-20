@@ -68,6 +68,7 @@ const (
 	templateMentorInvited              = "mentor_invited"
 	templateMentorInvitedNoAccount     = "mentor_invited_no_account"
 	templateMentorDeclined             = "mentor_declined"
+	templateMentorApproved             = "mentor_approved"
 	templateAdminMentorDeclined        = "admin_mentor_declined"
 	templateAdminMentorAccepted        = "admin_mentor_accepted"
 	templateAdminMentorRequested       = "admin_mentor_requested"

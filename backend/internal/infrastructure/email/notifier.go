@@ -306,6 +306,28 @@ func (n *Notifier) NotifyMentorDeclined(ctx context.Context, programID, userID s
 	})
 }
 
+// NotifyMentorApproved tells the mentor a program admin approved their request.
+func (n *Notifier) NotifyMentorApproved(ctx context.Context, programID, userID string) {
+	n.dispatch(ctx, templateMentorApproved, func(ctx context.Context) ([]Message, error) {
+		program, err := n.repos.Programs.GetByID(ctx, programID)
+		if err != nil {
+			return nil, fmt.Errorf("get program: %w", err)
+		}
+		user, to, err := n.recipient(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		link := n.selfServeLink(selfServeMentorProfilePath)
+		msg, err := render(templateMentorApproved, to, "Your mentor request for "+program.Name+" was approved", templateData{
+			RecipientName: firstName(user),
+			ProgramName:   program.Name,
+			ProgramURL:    link,
+			ManageURL:     link,
+		})
+		return []Message{msg}, err
+	})
+}
+
 // NotifyAdminMentorAccepted tells every active program admin that an invited mentor accepted.
 func (n *Notifier) NotifyAdminMentorAccepted(ctx context.Context, programID, userID string) {
 	n.notifyAdminsOfMentor(ctx, templateAdminMentorAccepted, programID, userID, func(mentor, program string) string {

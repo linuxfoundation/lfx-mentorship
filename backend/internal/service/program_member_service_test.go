@@ -434,6 +434,46 @@ func TestProgramMemberService_Update_Decline_NotifiesMentor(t *testing.T) {
 			if n.mentorDeclinedCalls != tt.wantCalls {
 				t.Errorf("NotifyMentorDeclined called %d times; want %d", n.mentorDeclinedCalls, tt.wantCalls)
 			}
+			if n.mentorApprovedCalls != 0 {
+				t.Errorf("NotifyMentorApproved called %d times; want 0", n.mentorApprovedCalls)
+			}
+		})
+	}
+}
+
+func TestProgramMemberService_Update_Approve_NotifiesMentor(t *testing.T) {
+	tests := []struct {
+		name       string
+		memberType models.MemberType
+		from       models.ProgramMemberStatus
+		wantCalls  int
+	}{
+		{name: "mentor requested to approved", memberType: models.MemberTypeMentor, from: models.ProgramMemberStatusRequested, wantCalls: 1},
+		{name: "mentor pending to approved", memberType: models.MemberTypeMentor, from: models.ProgramMemberStatusPending, wantCalls: 1},
+		{name: "mentor invited to approved sends zero emails", memberType: models.MemberTypeMentor, from: models.ProgramMemberStatusInvited, wantCalls: 0},
+		{name: "non-mentor pending to approved sends zero emails", memberType: models.MemberTypeProgramAdmin, from: models.ProgramMemberStatusPending, wantCalls: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			from := tt.from
+			memberType := tt.memberType
+			n := &stubNotifier{}
+			memberRepo := &stubMemberRepo{
+				getByID: func(_ context.Context, id string) (*models.ProgramMember, error) {
+					return &models.ProgramMember{ID: id, ProgramID: "prog-1", UserID: "mentor-1", MemberType: memberType, Status: &from}, nil
+				},
+			}
+			svc := newMemberSvc(memberRepo, &stubProgRepo{}, n)
+			next := models.ProgramMemberStatusApproved
+			if _, err := svc.Update(context.Background(), "prog-1", "member-1", models.ProgramMemberUpdateInput{Status: &next}, "admin-1"); err != nil {
+				t.Fatalf("%s→approved should be valid: %v", from, err)
+			}
+			if n.mentorApprovedCalls != tt.wantCalls {
+				t.Errorf("NotifyMentorApproved called %d times; want %d", n.mentorApprovedCalls, tt.wantCalls)
+			}
+			if n.mentorDeclinedCalls != 0 {
+				t.Errorf("NotifyMentorDeclined called %d times; want 0", n.mentorDeclinedCalls)
+			}
 		})
 	}
 }
@@ -974,6 +1014,9 @@ func TestProgramMemberService_AnswerMineInvite_FromInvited(t *testing.T) {
 			if got := tc.notified(n); got != 1 {
 				t.Errorf("admin notified %d times; want 1", got)
 			}
+			if n.mentorApprovedCalls != 0 {
+				t.Errorf("NotifyMentorApproved called %d times; want 0 on mentor self-acceptance", n.mentorApprovedCalls)
+			}
 		})
 	}
 }
@@ -1194,6 +1237,26 @@ func TestProgramMemberService_Update_LostRaceSendsNoDeclinedEmail(t *testing.T) 
 	}
 }
 
+func TestProgramMemberService_Update_LostRaceSendsNoApprovedEmail(t *testing.T) {
+	memberRepo := &stubMemberRepo{
+		getByID: func(_ context.Context, id string) (*models.ProgramMember, error) {
+			return &models.ProgramMember{ID: id, ProgramID: "prog-1", UserID: "u1", MemberType: models.MemberTypeMentor, Status: memberStatus(models.ProgramMemberStatusRequested)}, nil
+		},
+		updateIfStatus: func(context.Context, string, []models.ProgramMemberStatus, models.ProgramMemberUpdateInput) (*models.ProgramMember, error) {
+			return nil, domain.ErrInvalidStateTransition
+		},
+	}
+	n := &stubNotifier{}
+	svc := newMemberSvc(memberRepo, &stubProgRepo{}, n)
+	_, err := svc.Update(context.Background(), "prog-1", "member-1", models.ProgramMemberUpdateInput{Status: memberStatus(models.ProgramMemberStatusApproved)}, "admin-1")
+	if !errors.Is(err, domain.ErrInvalidStateTransition) {
+		t.Errorf("expected ErrInvalidStateTransition, got %v", err)
+	}
+	if n.mentorApprovedCalls != 0 {
+		t.Errorf("NotifyMentorApproved called %d times; want 0 when the write lost the race", n.mentorApprovedCalls)
+	}
+}
+
 // Accepting or declining an invite writes only while the row is still invited.
 func TestProgramMemberService_InviteResponse_WritesOnlyFromInvited(t *testing.T) {
 	token, err := auth.GenerateInviteToken("prog-1", "mentor-1", "test-secret")
@@ -1225,12 +1288,16 @@ func TestProgramMemberService_InviteResponse_WritesOnlyFromInvited(t *testing.T)
 
 	t.Run("accept", func(t *testing.T) {
 		var gotFrom []models.ProgramMemberStatus
-		svc := newMemberSvc(newRepo(&gotFrom, nil), &stubProgRepo{}, &stubNotifier{})
+		n := &stubNotifier{}
+		svc := newMemberSvc(newRepo(&gotFrom, nil), &stubProgRepo{}, n)
 		if _, err := svc.AcceptInvite(context.Background(), token, models.UserPrincipal{UserID: "mentor-1"}); err != nil {
 			t.Fatalf("AcceptInvite: %v", err)
 		}
 		if !slices.Equal(gotFrom, invitedOnly) {
 			t.Errorf("from = %v; want [invited]", gotFrom)
+		}
+		if n.mentorApprovedCalls != 0 {
+			t.Errorf("NotifyMentorApproved called %d times; want 0 on mentor self-acceptance", n.mentorApprovedCalls)
 		}
 	})
 	t.Run("decline", func(t *testing.T) {

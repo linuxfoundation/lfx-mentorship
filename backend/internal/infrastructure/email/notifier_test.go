@@ -395,6 +395,32 @@ func TestNotifyMentorDeclined(t *testing.T) {
 	}
 }
 
+func TestNotifyMentorApproved(t *testing.T) {
+	f := newFixture()
+	f.n.NotifyMentorApproved(context.Background(), "p1", "mentor")
+
+	sent := f.wait(t)
+	if len(sent) != 1 || sent[0].To != "mentor@linuxfoundation.org" || sent[0].Subject != "Your mentor request for Kernel <Dev> was approved" {
+		t.Fatalf("sent = %+v", sent)
+	}
+	wantURL := testSelfServeURL + "/mentorship/mentor"
+	if !strings.Contains(sent[0].HTML, `href="`+wantURL+`"`) {
+		t.Fatalf("html missing Self Serve mentor link %s:\n%s", wantURL, sent[0].HTML)
+	}
+	if !strings.Contains(sent[0].HTML, "Hi Mo Mentor!") {
+		t.Fatalf("html missing greeting:\n%s", sent[0].HTML)
+	}
+	if !strings.Contains(sent[0].HTML, "Your request to participate as a mentor for the <strong>Kernel &lt;Dev&gt;</strong> mentorship program has been approved by the program administrator.") {
+		t.Fatalf("html missing body text:\n%s", sent[0].HTML)
+	}
+	if !strings.Contains(sent[0].Text, "View Program: "+wantURL) {
+		t.Fatalf("text missing Self Serve mentor link %s:\n%s", wantURL, sent[0].Text)
+	}
+	if !strings.Contains(sent[0].Text, "Your request to participate as a mentor for the Kernel <Dev> mentorship program has been approved by the program administrator.") {
+		t.Fatalf("text missing body text:\n%s", sent[0].Text)
+	}
+}
+
 func TestNotifyAdminMentorDeclined(t *testing.T) {
 	f := newFixture()
 	f.members.members = []*models.ProgramMember{{UserID: "admin1"}}
@@ -614,6 +640,8 @@ func TestNotify_LookupFailureSendsNothing(t *testing.T) {
 	f := newFixture()
 	f.n.NotifyMentorInvited(context.Background(), "missing", "mentor", "inviter", "tok")
 	f.n.NotifyMentorDeclined(context.Background(), "p1", "noaddr")
+	f.n.NotifyMentorApproved(context.Background(), "missing", "mentor")
+	f.n.NotifyMentorApproved(context.Background(), "p1", "noaddr")
 
 	if sent := f.wait(t); len(sent) != 0 {
 		t.Fatalf("sent = %+v", sent)

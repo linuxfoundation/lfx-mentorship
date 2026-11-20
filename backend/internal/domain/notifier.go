@@ -27,6 +27,8 @@ type Notifier interface {
 	NotifyMentorInvitedByEmail(ctx context.Context, programID, address, inviterID, token string)
 	// NotifyMentorDeclined tells the mentor a program admin declined their request.
 	NotifyMentorDeclined(ctx context.Context, programID, userID string)
+	// NotifyMentorApproved tells the mentor a program admin approved their request.
+	NotifyMentorApproved(ctx context.Context, programID, userID string)
 	// NotifyAdminMentorDeclined tells program admins the mentor declined their invite.
 	NotifyAdminMentorDeclined(ctx context.Context, programID, userID string)
 	// NotifyAdminMentorAccepted tells program admins the mentor accepted their invite.
