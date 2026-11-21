@@ -1,0 +1,8 @@
+{{- /* Copyright The Linux Foundation and each contributor to LFX. */ -}}
+{{- /* SPDX-License-Identifier: MIT */ -}}
+{{template "header" .}}{{template "greeting" (printf "Hi %s!" .RecipientName)}}Congratulations!
+
+Your request to participate as a mentor for the {{.ProgramName}} mentorship program has been approved by the program administrator.
+
+View Program: {{.ProgramURL}}
+{{template "footer" .}}

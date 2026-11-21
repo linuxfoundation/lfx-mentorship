@@ -436,6 +436,7 @@ type stubNotifier struct {
 	mentorInviters            []string
 	emailInvites              []string
 	mentorDeclinedCalls       int
+	mentorApprovedCalls       int
 	adminMentorDeclinedCalls  int
 	adminMentorAcceptedCalls  int
 	adminMentorRequestedCalls int
@@ -472,6 +473,7 @@ func (n *stubNotifier) NotifyMentorInvitedByEmail(_ context.Context, _, address,
 	n.emailInvites = append(n.emailInvites, address)
 }
 func (n *stubNotifier) NotifyMentorDeclined(_ context.Context, _, _ string) { n.mentorDeclinedCalls++ }
+func (n *stubNotifier) NotifyMentorApproved(_ context.Context, _, _ string) { n.mentorApprovedCalls++ }
 func (n *stubNotifier) NotifyAdminMentorDeclined(_ context.Context, _, _ string) {
 	n.adminMentorDeclinedCalls++
 }
