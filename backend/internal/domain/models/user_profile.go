@@ -32,7 +32,6 @@ type UserProfile struct {
 	LogoURL            *string         `json:"logo_url,omitempty"`
 	Introduction       *string         `json:"introduction,omitempty"`
 	TermsAndConditions bool            `json:"terms_and_conditions"`
-	NumberOfProjects   int             `json:"number_of_projects"`
 	Address            json.RawMessage `json:"address,omitempty"`
 	Demographics       json.RawMessage `json:"demographics,omitempty"`
 	Socioeconomics     json.RawMessage `json:"socioeconomics,omitempty"`
@@ -57,7 +56,6 @@ type UserProfileCreateInput struct {
 	LogoURL            *string         `json:"logo_url,omitempty"`
 	Introduction       *string         `json:"introduction,omitempty"`
 	TermsAndConditions bool            `json:"terms_and_conditions"`
-	NumberOfProjects   int             `json:"number_of_projects"`
 	Address            json.RawMessage `json:"address,omitempty"`
 	Demographics       json.RawMessage `json:"demographics,omitempty"`
 	Socioeconomics     json.RawMessage `json:"socioeconomics,omitempty"`
@@ -75,7 +73,6 @@ type UserProfileUpdateInput struct {
 	LogoURL            *string         `json:"logo_url,omitempty"`
 	Introduction       *string         `json:"introduction,omitempty"`
 	TermsAndConditions *bool           `json:"terms_and_conditions,omitempty"`
-	NumberOfProjects   *int            `json:"number_of_projects,omitempty"`
 	Address            json.RawMessage `json:"address,omitempty"`
 	Demographics       json.RawMessage `json:"demographics,omitempty"`
 	Socioeconomics     json.RawMessage `json:"socioeconomics,omitempty"`

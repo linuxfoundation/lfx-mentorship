@@ -503,20 +503,6 @@ func TestTaskService_Update_InvalidStatus_Rejected(t *testing.T) {
 	}
 }
 
-func TestTaskService_Update_InvalidDenormalisedStatuses_Rejected(t *testing.T) {
-	svc := newTaskSvc(&stubTaskRepo{}, &stubAppRepo{}, &stubTermRepo{}, &stubMemberRepo{})
-
-	badApp := models.ApplicationStatus("teleported") // not a member of the enum
-	if _, err := svc.Update(context.Background(), "task-1", models.TaskUpdateInput{ApplicationStatus: &badApp}); !errors.Is(err, domain.ErrInvalidInput) {
-		t.Errorf("expected ErrInvalidInput for unknown application_status, got %v", err)
-	}
-
-	badTerm := models.ProgramTermStatus("ajar") // not a member of the enum
-	if _, err := svc.Update(context.Background(), "task-1", models.TaskUpdateInput{ProgramTermStatus: &badTerm}); !errors.Is(err, domain.ErrInvalidInput) {
-		t.Errorf("expected ErrInvalidInput for unknown program_term_status, got %v", err)
-	}
-}
-
 func TestTaskService_DueDateMustBeISODate(t *testing.T) {
 	created := false
 	taskRepo := &stubTaskRepo{create: func(_ context.Context, _ string, in models.TaskCreateInput) (*models.Task, error) {

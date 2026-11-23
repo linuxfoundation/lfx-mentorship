@@ -84,17 +84,28 @@ func TestTaskHandler_Update_ForwardsFullEditToService(t *testing.T) {
 	}
 }
 
-func TestTaskHandler_Update_RejectsReviewAndFileFields(t *testing.T) {
+func TestTaskHandler_Update_RejectsFileField(t *testing.T) {
 	svc := &stubTaskSvc{edit: func(context.Context, string, models.TaskUpdateInput) (*models.Task, error) {
 		t.Fatal("rejected body must not reach the service")
 		return nil, nil
 	}}
-	for _, body := range []string{
-		`{"application_status":"accepted"}`,
-		`{"program_term_status":"open"}`,
-		`{"file":"key"}`,
-	} {
-		if w := patchTask(t, svc, body, true); w.Code != http.StatusBadRequest {
+	if w := patchTask(t, svc, `{"file":"key"}`, true); w.Code != http.StatusBadRequest {
+		t.Errorf("code = %d; want 400", w.Code)
+	}
+}
+
+// application_status is no longer a task field, so a review that carries only it sets nothing.
+func TestTaskHandler_UpdateReview_RequiresStatus(t *testing.T) {
+	svc := &stubTaskSvc{update: func(context.Context, string, models.TaskUpdateInput) (*models.Task, error) {
+		t.Fatal("a review without status must not reach the service")
+		return nil, nil
+	}}
+	for _, body := range []string{`{}`, `{"application_status":"accepted"}`} {
+		r := httptest.NewRequest(http.MethodPatch, "/v1/tasks/task-1/review", strings.NewReader(body))
+		r = requestWithPrincipal(requestWithChiParam(r, "id", "task-1"), "reviewer-1")
+		w := httptest.NewRecorder()
+		handler.NewTaskHandler(svc).UpdateReview(w, r)
+		if w.Code != http.StatusBadRequest {
 			t.Errorf("%s: code = %d; want 400", body, w.Code)
 		}
 	}

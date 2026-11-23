@@ -15,34 +15,28 @@ import (
 )
 
 type ApplicationIndexDocument struct {
-	ID                string                    `json:"id"`
-	ProgramTermID     string                    `json:"program_term_id"`
-	UserID            string                    `json:"user_id"`
-	Role              models.ApplicationRole    `json:"role"`
-	Status            models.ApplicationStatus  `json:"status"`
-	ProgramTermStatus *models.ProgramTermStatus `json:"program_term_status,omitempty"`
-	StartDateTime     *time.Time                `json:"start_date_time,omitempty"`
-	EndDateTime       *time.Time                `json:"end_date_time,omitempty"`
-	AttendanceType    *models.AttendanceType    `json:"attendance_type,omitempty"`
-	TasksSubmitted    bool                      `json:"tasks_submitted"`
-	CreatedOn         time.Time                 `json:"created_on"`
-	UpdatedOn         time.Time                 `json:"updated_on"`
+	ID             string                   `json:"id"`
+	ProgramTermID  string                   `json:"program_term_id"`
+	UserID         string                   `json:"user_id"`
+	Role           models.ApplicationRole   `json:"role"`
+	Status         models.ApplicationStatus `json:"status"`
+	AttendanceType *models.AttendanceType   `json:"attendance_type,omitempty"`
+	TasksSubmitted bool                     `json:"tasks_submitted"`
+	CreatedOn      time.Time                `json:"created_on"`
+	UpdatedOn      time.Time                `json:"updated_on"`
 }
 
 func NewApplicationIndexDocument(application *models.Application) ApplicationIndexDocument {
 	return ApplicationIndexDocument{
-		ID:                application.ID,
-		ProgramTermID:     application.ProgramTermID,
-		UserID:            application.UserID,
-		Role:              application.Role,
-		Status:            application.Status,
-		ProgramTermStatus: application.ProgramTermStatus,
-		StartDateTime:     application.StartDateTime,
-		EndDateTime:       application.EndDateTime,
-		AttendanceType:    application.AttendanceType,
-		TasksSubmitted:    application.TasksSubmitted,
-		CreatedOn:         application.CreatedOn,
-		UpdatedOn:         application.UpdatedOn,
+		ID:             application.ID,
+		ProgramTermID:  application.ProgramTermID,
+		UserID:         application.UserID,
+		Role:           application.Role,
+		Status:         application.Status,
+		AttendanceType: application.AttendanceType,
+		TasksSubmitted: application.TasksSubmitted,
+		CreatedOn:      application.CreatedOn,
+		UpdatedOn:      application.UpdatedOn,
 	}
 }
 
@@ -62,18 +56,16 @@ func NewApplicationIndexConfig(applicationID, programID, userID, role, status st
 }
 
 type TaskIndexDocument struct {
-	ID                string                    `json:"id"`
-	ApplicationID     *string                   `json:"application_id,omitempty"`
-	AssigneeID        string                    `json:"assignee_id"`
-	Name              *string                   `json:"name,omitempty"`
-	Description       *string                   `json:"description,omitempty"`
-	Category          *models.TaskCategory      `json:"category,omitempty"`
-	Prerequisite      bool                      `json:"prerequisite"`
-	Status            models.TaskStatus         `json:"status"`
-	ApplicationStatus *models.ApplicationStatus `json:"application_status,omitempty"`
-	ProgramTermStatus *models.ProgramTermStatus `json:"program_term_status,omitempty"`
-	Custom            bool                      `json:"custom"`
-	SubmitFile        *string                   `json:"submit_file,omitempty"`
+	ID            string               `json:"id"`
+	ApplicationID *string              `json:"application_id,omitempty"`
+	AssigneeID    string               `json:"assignee_id"`
+	Name          *string              `json:"name,omitempty"`
+	Description   *string              `json:"description,omitempty"`
+	Category      *models.TaskCategory `json:"category,omitempty"`
+	Prerequisite  bool                 `json:"prerequisite"`
+	Status        models.TaskStatus    `json:"status"`
+	Custom        bool                 `json:"custom"`
+	SubmitFile    *string              `json:"submit_file,omitempty"`
 	// HasFile stands in for tasks.file, a private object key that must never be indexed.
 	HasFile   bool      `json:"has_file"`
 	DueDate   *string   `json:"due_date,omitempty"`
@@ -83,22 +75,20 @@ type TaskIndexDocument struct {
 
 func NewTaskIndexDocument(task *models.Task) TaskIndexDocument {
 	return TaskIndexDocument{
-		ID:                task.ID,
-		ApplicationID:     task.ApplicationID,
-		AssigneeID:        task.AssigneeID,
-		Name:              task.Name,
-		Description:       task.Description,
-		Category:          task.Category,
-		Prerequisite:      task.Category != nil && *task.Category == models.TaskCategoryPrerequisite,
-		Status:            task.Status,
-		ApplicationStatus: task.ApplicationStatus,
-		ProgramTermStatus: task.ProgramTermStatus,
-		Custom:            task.Custom,
-		SubmitFile:        task.SubmitFile,
-		HasFile:           task.File != nil && *task.File != "",
-		DueDate:           task.DueDate,
-		CreatedOn:         task.CreatedOn,
-		UpdatedOn:         task.UpdatedOn,
+		ID:            task.ID,
+		ApplicationID: task.ApplicationID,
+		AssigneeID:    task.AssigneeID,
+		Name:          task.Name,
+		Description:   task.Description,
+		Category:      task.Category,
+		Prerequisite:  task.Category != nil && *task.Category == models.TaskCategoryPrerequisite,
+		Status:        task.Status,
+		Custom:        task.Custom,
+		SubmitFile:    task.SubmitFile,
+		HasFile:       task.File != nil && *task.File != "",
+		DueDate:       task.DueDate,
+		CreatedOn:     task.CreatedOn,
+		UpdatedOn:     task.UpdatedOn,
 	}
 }
 

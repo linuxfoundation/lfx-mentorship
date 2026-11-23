@@ -418,7 +418,6 @@ User profiles represent a participant's mentorship identity. `profile_type = men
   "logo_url":            "https://...",
   "introduction":        "I am a software engineer...",
   "terms_and_conditions": true,
-  "number_of_projects":  0,
   "address": {
     "country": "US",
     "city": "San Francisco",
@@ -559,10 +558,8 @@ Programs are the top-level entity for a mentorship offering.
   "cii_project_id":      "12345",
   "accept_applications": true,
   "terms_and_conditions": true,
-  "program_term_status": "open",
   "discover_sort_rank":  1,
   "amount_raised":       50000.00,
-  "mentee_needs":        { ... },
   "task_templates": [
     {
       "name": "Contribution PR",
@@ -1380,7 +1377,6 @@ A term is a time-bounded run of a program. Programs may have at most **4 open te
   "program_id":            "uuid",
   "name":                  "Spring 2026",
   "status":                "open",
-  "active_users":          3,
   "start_date_time":       "2026-03-01T00:00:00Z",
   "end_date_time":         "2026-06-30T23:59:59Z",
   "application_start_date": "2026-01-15T00:00:00Z",
@@ -2001,12 +1997,8 @@ An application represents a mentee's (or mentor's) request to join a specific pr
   "user_id":           "uuid",
   "role":              "mentee",
   "status":            "pending",
-  "program_term_status": "open",
-  "start_date_time":   "2026-03-01T00:00:00Z",
-  "end_date_time":     "2026-06-30T23:59:59Z",
   "attendance_type":   null,
   "tasks_submitted":   false,
-  "admin_notified":    false,
   "created_on":        "2026-01-15T00:00:00Z",
   "updated_on":        "2026-01-15T00:00:00Z"
 }
@@ -2093,8 +2085,7 @@ term, but at most one that is not withdrawn.
 ```
 
 The applicant is always the caller. `attendance_type` is ignored; a Program
-Admin sets it on acceptance. The application's `start_date_time` and
-`end_date_time` are copied from the term.
+Admin sets it on acceptance.
 
 **Response** `201` → `<Application>`  
 **Errors** `400` (role other than `mentee`), `401`, `409` (duplicate / blocked reapplication), `422` (window closed or unset, term not open, no mentee profile, program not published, reapplication limit reached, already holds an accepted mentorship or has graduated)
@@ -2173,8 +2164,6 @@ Tasks represent units of work assigned to a mentee. They are either:
   "description":         "Open a PR in the project repo fixing a good-first-issue",
   "category":            "prerequisite",
   "status":              "incomplete",
-  "application_status":  "pending",
-  "program_term_status": "open",
   "custom":              false,
   "submit_file":         null,
   "file":                "/mentorship/v1/tasks/{id}/file-download",
@@ -2307,9 +2296,8 @@ while it requires a file and has none: setting `status: "submitted"`, or turning
 file. Moving the task to another status in the same request is allowed.
 
 `file` is rejected with `400`: the submission is written by
-`POST /v1/tasks/{id}/file-upload`. `application_status` and `program_term_status`
-are rejected with `400`: they are set through `PATCH /v1/tasks/{id}/review`. So is
-`reason`: a reason for sending a task back goes with a review.
+`POST /v1/tasks/{id}/file-upload`. So is `reason`: a reason for sending a task back
+goes with a review, through `PATCH /v1/tasks/{id}/review`.
 
 **Side effect**: when a new `status` or `category` leaves every `prerequisite` task
 on the application `submitted` or `complete`, the system:
@@ -2348,12 +2336,10 @@ Any other transition returns `409`. `file` is rejected with `400`. The
 
 A reviewer's decision on a submitted task.
 
-**Request body** (at least one of `status`, `application_status`, `program_term_status`)
+**Request body** (`status` is required)
 ```json
 {
   "status":              "complete" | "incomplete",
-  "application_status":  "accepted",
-  "program_term_status": "open",
   "reason":              "Please add tests and resubmit."
 }
 ```
@@ -2363,7 +2349,7 @@ A reviewer's decision on a submitted task.
 It is emailed to the mentee and not stored.
 
 The caller must be an active `mentor` or `program_admin` of the task's program, and
-not its assignee, for every field.
+not its assignee.
 
 | Transition | Required actor |
 |---|---|

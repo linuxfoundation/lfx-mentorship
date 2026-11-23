@@ -405,7 +405,6 @@ func TestE2EProgramUpdate(t *testing.T) {
 	t.Run("reserved and lifecycle fields are refused", func(t *testing.T) {
 		admin.call(t, http.MethodPatch, path, map[string]any{"status": "published"}).expect(http.StatusBadRequest)
 		admin.call(t, http.MethodPatch, path, map[string]any{"logo_url": "https://evil.example.org/x.png"}).expect(http.StatusBadRequest)
-		admin.call(t, http.MethodPatch, path, map[string]any{"program_term_status": "bogus"}).expect(http.StatusBadRequest)
 	})
 
 	t.Run("unknown program", func(t *testing.T) {

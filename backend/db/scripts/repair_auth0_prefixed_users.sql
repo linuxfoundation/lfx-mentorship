@@ -99,8 +99,6 @@ END $$;
 -- The older duplicate becomes history, as a withdrawal through the API leaves it.
 \echo 'duplicate applications withdrawn:'
 UPDATE applications SET status = 'withdrawn' WHERE id IN (SELECT id FROM repair_duplicates);
-\echo 'their tasks:'
-UPDATE tasks SET application_status = 'withdrawn' WHERE application_id IN (SELECT id FROM repair_duplicates);
 
 -- Merge: everything on a row with a twin moves to the twin.
 \echo 'applications moved to the twin:'
@@ -167,9 +165,6 @@ SELECT
     'user_id', a.user_id,
     'role', a.role,
     'status', a.status,
-    'program_term_status', a.program_term_status,
-    'start_date_time', a.start_date_time,
-    'end_date_time', a.end_date_time,
     'attendance_type', a.attendance_type,
     'tasks_submitted', a.tasks_submitted,
     'created_on', a.created_on,
@@ -205,8 +200,6 @@ SELECT
     'category', t.category,
     'prerequisite', COALESCE(t.category = 'prerequisite', false),
     'status', t.status,
-    'application_status', t.application_status,
-    'program_term_status', t.program_term_status,
     'custom', t.custom,
     'submit_file', t.submit_file,
     'has_file', COALESCE(t.file, '') <> '',

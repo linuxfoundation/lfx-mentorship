@@ -1145,15 +1145,6 @@ func TestApplicationService_Update_ReopenAddsMissingPrerequisites(t *testing.T) 
 	}
 }
 
-func TestApplicationService_Update_InvalidProgramTermStatus_Rejected(t *testing.T) {
-	svc := newApplicationSvc(&stubAppRepo{}, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{})
-	bad := models.ProgramTermStatus("ajar") // not a member of the enum
-	_, err := svc.Update(context.Background(), "app-1", models.ApplicationUpdateInput{ProgramTermStatus: &bad})
-	if !errors.Is(err, domain.ErrInvalidInput) {
-		t.Errorf("expected ErrInvalidInput for unknown program_term_status, got %v", err)
-	}
-}
-
 func TestApplicationService_Create_InvalidAttendanceType_Rejected(t *testing.T) {
 	svc := newApplicationSvc(&stubAppRepo{}, &stubTaskRepo{}, &stubTermRepo{}, &stubProgRepo{})
 	bad := models.AttendanceType("weekends") // not a member of the enum

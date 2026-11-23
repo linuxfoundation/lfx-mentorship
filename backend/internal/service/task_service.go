@@ -219,12 +219,6 @@ func validateTaskUpdate(input models.TaskUpdateInput) error {
 	if input.Status != nil && !input.Status.IsValid() {
 		return fmt.Errorf("%w: invalid status %q", domain.ErrInvalidInput, *input.Status)
 	}
-	if input.ApplicationStatus != nil && !input.ApplicationStatus.IsValid() {
-		return fmt.Errorf("%w: invalid application status %q", domain.ErrInvalidInput, *input.ApplicationStatus)
-	}
-	if input.ProgramTermStatus != nil && !input.ProgramTermStatus.IsValid() {
-		return fmt.Errorf("%w: invalid program term status %q", domain.ErrInvalidInput, *input.ProgramTermStatus)
-	}
 	if input.Category != nil && !input.Category.IsValid() {
 		return fmt.Errorf("%w: invalid category %q", domain.ErrInvalidInput, *input.Category)
 	}
@@ -235,8 +229,8 @@ func validateTaskUpdate(input models.TaskUpdateInput) error {
 // Permission rules:
 //   - Only the task's assignee may mark it in_progress/submitted, moving forward one step or
 //     taking a submitted task back to in_progress.
-//   - Only an active reviewer who is not the assignee may mark it complete, reset it to
-//     incomplete, or set its denormalised application and program term statuses.
+//   - Only an active reviewer who is not the assignee may mark it complete or reset it to
+//     incomplete.
 //   - When every prerequisite task is submitted or complete, the application is flagged
 //     tasks_submitted and program admins are notified the first time only.
 //   - A review that sends a submitted task back to incomplete emails the mentee, with the
@@ -316,15 +310,11 @@ func (s *TaskService) authorizeUpdate(ctx context.Context, id string, input mode
 	if err != nil {
 		return nil, fmt.Errorf("get task for permission check: %w", err)
 	}
-	// The denormalised application and program term statuses are reviewer-owned whatever status
-	// the request carries, and a review that leaves status alone can only be setting them.
-	reviewerOnly := input.Status == nil || input.ApplicationStatus != nil || input.ProgramTermStatus != nil
-	if reviewerOnly {
+	// An update that leaves status alone is not one of the assignee's own steps.
+	if input.Status == nil {
 		if err := s.assertNonAssigneeReviewer(ctx, current, input.ActorID); err != nil {
 			return nil, err
 		}
-	}
-	if input.Status == nil {
 		return nil, nil
 	}
 	next := *input.Status
@@ -356,10 +346,8 @@ func (s *TaskService) authorizeUpdate(ctx context.Context, id string, input mode
 			return nil, fmt.Errorf("%w: only the task assignee may mark it %s", domain.ErrForbidden, next)
 		}
 	case models.TaskStatusComplete, models.TaskStatusIncomplete:
-		if !reviewerOnly {
-			if err := s.assertNonAssigneeReviewer(ctx, current, input.ActorID); err != nil {
-				return nil, err
-			}
+		if err := s.assertNonAssigneeReviewer(ctx, current, input.ActorID); err != nil {
+			return nil, err
 		}
 	}
 	return &current.Status, nil

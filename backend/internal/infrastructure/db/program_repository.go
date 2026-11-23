@@ -36,15 +36,16 @@ const programSelectCols = `
 	programs.description, programs.logo_url, programs.website_url, programs.repo_link,
 	programs.code_of_conduct, programs.industry, programs.color, programs.lfid,
 	programs.cii_project_id, programs.accept_applications,
-	programs.terms_and_conditions, programs.program_term_status, programs.discover_sort_rank,
-	COALESCE(pfs.amount_raised, programs.amount_raised) AS amount_raised,
-	programs.mentee_needs, programs.task_templates, programs.created_on, programs.updated_on`
+	programs.terms_and_conditions, programs.discover_sort_rank,
+	COALESCE(pfs.amount_raised, 0) AS amount_raised,
+	programs.task_templates, programs.created_on, programs.updated_on`
 
+// programReturningCols are the programSelectCols of a row just inserted, which has no funding yet.
 const programReturningCols = `
 	id, lf_project_uid AS project_uid, lf_project_slug AS project_slug, lf_project_name AS project_name, lf_project_logo_url AS project_logo_url, name, slug, status, is_paid, description, logo_url, website_url, repo_link,
 	code_of_conduct, industry, color, lfid, cii_project_id, accept_applications,
-	terms_and_conditions, program_term_status, discover_sort_rank, amount_raised,
-	mentee_needs, task_templates, created_on, updated_on`
+	terms_and_conditions, discover_sort_rank, 0::numeric AS amount_raised,
+	task_templates, created_on, updated_on`
 
 const programsWithFundingFrom = `
 	FROM programs
@@ -55,8 +56,8 @@ func scanProgram(row pgx.Row) (*models.Program, error) {
 	err := row.Scan(
 		&p.ID, &p.ProjectUID, &p.ProjectSlug, &p.ProjectName, &p.ProjectLogoURL, &p.Name, &p.Slug, &p.Status, &p.IsPaid, &p.Description, &p.LogoURL,
 		&p.WebsiteURL, &p.RepoLink, &p.CodeOfConduct, &p.Industry, &p.Color, &p.LFID,
-		&p.CIIProjectID, &p.AcceptApplications, &p.TermsAndConditions, &p.ProgramTermStatus,
-		&p.DiscoverSortRank, &p.AmountRaised, &p.MenteeNeeds, &p.TaskTemplates,
+		&p.CIIProjectID, &p.AcceptApplications, &p.TermsAndConditions,
+		&p.DiscoverSortRank, &p.AmountRaised, &p.TaskTemplates,
 		&p.CreatedOn, &p.UpdatedOn,
 	)
 	if err != nil {
@@ -904,8 +905,8 @@ func (r *ProgramRepository) createInTx(ctx context.Context, tx pgx.Tx, input mod
 		INSERT INTO programs (
 			id, lf_project_uid, lf_project_slug, lf_project_name, lf_project_logo_url, name, slug, status, is_paid,
 			description, logo_url, website_url, repo_link, code_of_conduct, industry, color, lfid, cii_project_id,
-			accept_applications, terms_and_conditions, mentee_needs, task_templates
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+			accept_applications, terms_and_conditions, task_templates
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
 		RETURNING` + programReturningCols
 
 	p, err := scanProgram(tx.QueryRow(ctx, q,
@@ -914,7 +915,7 @@ func (r *ProgramRepository) createInTx(ctx context.Context, tx pgx.Tx, input mod
 		input.Description, input.LogoURL, input.WebsiteURL, input.RepoLink,
 		input.CodeOfConduct, input.Industry, input.Color, input.LFID, input.CIIProjectID,
 		input.AcceptApplications, input.TermsAndConditions,
-		nilIfEmpty(input.MenteeNeeds), nilIfEmpty(input.TaskTemplates),
+		nilIfEmpty(input.TaskTemplates),
 	))
 	if err != nil {
 		return nil, fmt.Errorf("create program: %w", err)
@@ -974,7 +975,7 @@ func (r *ProgramRepository) CreateEnrollment(ctx context.Context, input models.P
 		if term.Status == "" {
 			term.Status = models.ProgramTermStatusOpen
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO program_terms (id, program_id, name, status, active_users, start_date_time, end_date_time, application_start_date, application_end_date) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, term.ID, program.ID, term.Name, term.Status, term.ActiveUsers, term.StartDateTime, term.EndDateTime, term.ApplicationStartDate, term.ApplicationEndDate); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO program_terms (id, program_id, name, status, start_date_time, end_date_time, application_start_date, application_end_date) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, term.ID, program.ID, term.Name, term.Status, term.StartDateTime, term.EndDateTime, term.ApplicationStartDate, term.ApplicationEndDate); err != nil {
 			return nil, fmt.Errorf("create enrollment term: %w", err)
 		}
 	}
@@ -1075,10 +1076,8 @@ func (r *ProgramRepository) update(ctx context.Context, id string, input models.
 			cii_project_id      = COALESCE($14, cii_project_id),
 			accept_applications = COALESCE($15, accept_applications),
 			terms_and_conditions= COALESCE($16, terms_and_conditions),
-			program_term_status = COALESCE($17, program_term_status),
-			discover_sort_rank  = COALESCE($18, discover_sort_rank),
-			mentee_needs        = COALESCE($19, mentee_needs),
-			task_templates      = COALESCE($20, task_templates)
+			discover_sort_rank  = COALESCE($17, discover_sort_rank),
+			task_templates      = COALESCE($18, task_templates)
 		WHERE id = $1
 		RETURNING id`
 
@@ -1093,8 +1092,8 @@ func (r *ProgramRepository) update(ctx context.Context, id string, input models.
 		id, input.Name, input.Slug, statusVal, input.IsPaid,
 		input.Description, input.LogoURL, input.WebsiteURL, input.RepoLink,
 		input.CodeOfConduct, input.Industry, input.Color, input.LFID, input.CIIProjectID,
-		input.AcceptApplications, input.TermsAndConditions, input.ProgramTermStatus, input.DiscoverSortRank,
-		nilIfEmpty(input.MenteeNeeds), nilIfEmpty(input.TaskTemplates),
+		input.AcceptApplications, input.TermsAndConditions, input.DiscoverSortRank,
+		nilIfEmpty(input.TaskTemplates),
 	).Scan(&updatedID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil, domain.ErrProgramNotFound

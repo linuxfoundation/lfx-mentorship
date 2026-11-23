@@ -52,7 +52,7 @@ SOURCES = {
         {"id": "ffffffff-ffff-4fff-8fff-ffffffffffff", "projectId": PROGRAM, "memberType": "mentor", "status": "active", "email": " Lin@Example.org"},
     ],
     "program-term-mentees": [
-        {"id": APPLICATION, "programTermId": TERM, "userId": MENTEE, "status": "approved", "tasksSubmitted": True, "startDateTime": "1767225600"},
+        {"id": APPLICATION, "programTermId": TERM, "userId": MENTEE, "status": "approved", "tasksSubmitted": True},
         {"id": UNKNOWN_TERM_APPLICATION, "programTermId": "dddddddd-dddd-4ddd-8ddd-dddddddddddd", "userId": ADMIN},
     ],
     "tasks": [
@@ -162,8 +162,8 @@ def test_quarantined_task_is_expected_in_quarantine(imported):
 
 
 def test_broken_invariant_is_reported(imported):
-    imported.execute("UPDATE applications SET program_term_status = 'closed' WHERE id = %s", (APPLICATION,))
-    assert "integrity: 1 application term status differs from its open or closed term" in run(imported)
+    imported.execute("UPDATE tasks SET assignee_id = %s WHERE id = %s", (ADMIN, TASK))
+    assert "integrity: 1 task assignee differs from its applicant" in run(imported)
 
 
 @pytest.mark.parametrize(

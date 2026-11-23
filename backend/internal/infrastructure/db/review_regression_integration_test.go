@@ -117,36 +117,6 @@ func TestFGAOutboxIntegration_StaleNewerGenerationIsReclaimedAtLimit(t *testing.
 	}
 }
 
-func TestProgramTermIntegration_CloseReopenSynchronizesProjections(t *testing.T) {
-	pool := integrationPool(t)
-	fixture := seedIntegrationFixture(t, pool)
-	ctx := context.Background()
-	applicationID := "00000000-0000-0000-0000-000000000401"
-	taskID := "00000000-0000-0000-0000-000000000402"
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO applications (id, program_term_id, user_id, role, status, program_term_status)
-		VALUES ($1, $2, $3, 'mentee', 'pending', 'open')`, applicationID, fixture.OpenTerm, fixture.UserID); err != nil {
-		t.Fatalf("insert application: %v", err)
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO tasks (id, application_id, program_term_id, assignee_id, status, application_status, program_term_status)
-		VALUES ($1, $2, $3, $4, 'incomplete', 'pending', 'open')`, taskID, applicationID, fixture.OpenTerm, fixture.UserID); err != nil {
-		t.Fatalf("insert task: %v", err)
-	}
-
-	repo := NewProgramTermRepository(pool)
-	if _, declined, err := repo.CloseWithBulkDecline(ctx, fixture.OpenTerm); err != nil || len(declined) != 1 || declined[0].ID != applicationID {
-		t.Fatalf("close term declined=%+v, err=%v", declined, err)
-	}
-	assertTermProjectionStatus(t, pool, fixture.OpenTerm, "closed")
-
-	open := models.ProgramTermStatusOpen
-	if _, err := repo.Update(ctx, fixture.OpenTerm, models.ProgramTermUpdateInput{Status: &open}); err != nil {
-		t.Fatalf("reopen term: %v", err)
-	}
-	assertTermProjectionStatus(t, pool, fixture.OpenTerm, "open")
-}
-
 func TestProgramIntegration_EnrollmentTemplateReadsFundingStats(t *testing.T) {
 	pool := integrationPool(t)
 	fixture := seedIntegrationFixture(t, pool)
@@ -240,10 +210,10 @@ func TestApplicationRepositoryIntegration_MarkTasksSubmittedFlipsOnceWhenPrerequ
 
 	mark("no prerequisites", false)
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO tasks (id, application_id, program_term_id, assignee_id, status, category, application_status, program_term_status) VALUES
-		('00000000-0000-0000-0000-000000000073', $1, $2, $3, 'submitted', 'prerequisite', 'pending', 'open'),
-		('00000000-0000-0000-0000-000000000074', $1, $2, $3, 'incomplete', 'prerequisite', 'pending', 'open'),
-		('00000000-0000-0000-0000-000000000075', $1, $2, $3, 'incomplete', 'non_prerequisite', 'pending', 'open')`,
+		INSERT INTO tasks (id, application_id, program_term_id, assignee_id, status, category) VALUES
+		('00000000-0000-0000-0000-000000000073', $1, $2, $3, 'submitted', 'prerequisite'),
+		('00000000-0000-0000-0000-000000000074', $1, $2, $3, 'incomplete', 'prerequisite'),
+		('00000000-0000-0000-0000-000000000075', $1, $2, $3, 'incomplete', 'non_prerequisite')`,
 		applicationID, fixture.OpenTerm, fixture.UserID); err != nil {
 		t.Fatalf("insert tasks: %v", err)
 	}
@@ -469,7 +439,7 @@ func TestApplicationRepositoryIntegration_ReapplyKeepsWithdrawnApplication(t *te
 	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ('00000000-0000-0000-0000-000000000079', $1, $2, 'mentor', 'pending')`, fixture.OpenTerm, fixture.UserID); err != nil {
 		t.Fatalf("insert mentor application: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO tasks (id, application_id, program_term_id, assignee_id, status, category, application_status, program_term_status) VALUES ($1, $2, $3, $4, 'incomplete', 'non_prerequisite', 'withdrawn', 'open')`, oldTaskID, oldID, fixture.OpenTerm, fixture.UserID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO tasks (id, application_id, program_term_id, assignee_id, status, category) VALUES ($1, $2, $3, $4, 'incomplete', 'non_prerequisite')`, oldTaskID, oldID, fixture.OpenTerm, fixture.UserID); err != nil {
 		t.Fatalf("insert task: %v", err)
 	}
 	repo := NewApplicationRepository(pool)
@@ -667,7 +637,7 @@ func TestTaskRepositoryIntegration_UpdateRejectsStaleSourceStatus(t *testing.T) 
 }
 
 // A withdrawn application is kept as history when its applicant reapplies, so its tasks and their
-// files cannot change. The check reads the application itself, not the task's denormalised status.
+// files cannot change.
 func TestTaskRepositoryIntegration_WithdrawnApplicationTasksAreLocked(t *testing.T) {
 	pool := integrationPool(t)
 	fixture := seedIntegrationFixture(t, pool)
@@ -676,7 +646,7 @@ func TestTaskRepositoryIntegration_WithdrawnApplicationTasksAreLocked(t *testing
 	if _, err := pool.Exec(ctx, `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentee', 'withdrawn')`, applicationID, fixture.OpenTerm, fixture.UserID); err != nil {
 		t.Fatalf("insert application: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO tasks (id, application_id, program_term_id, assignee_id, status, file, application_status) VALUES ($1, $2, $3, $4, 'in_progress', 'evidence', 'pending')`, taskID, applicationID, fixture.OpenTerm, fixture.UserID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO tasks (id, application_id, program_term_id, assignee_id, status, file) VALUES ($1, $2, $3, $4, 'in_progress', 'evidence')`, taskID, applicationID, fixture.OpenTerm, fixture.UserID); err != nil {
 		t.Fatalf("insert task: %v", err)
 	}
 
@@ -762,23 +732,6 @@ func TestDirectoryIntegration_NonStringSkillsAreDropped(t *testing.T) {
 	}
 }
 
-func assertTermProjectionStatus(t *testing.T, pool *pgxpool.Pool, termID, want string) {
-	t.Helper()
-	var applicationStatus, taskStatus, indexedStatus string
-	if err := pool.QueryRow(context.Background(), `SELECT program_term_status FROM applications WHERE program_term_id = $1`, termID).Scan(&applicationStatus); err != nil {
-		t.Fatalf("read application projection: %v", err)
-	}
-	if err := pool.QueryRow(context.Background(), `SELECT program_term_status FROM tasks WHERE program_term_id = $1`, termID).Scan(&taskStatus); err != nil {
-		t.Fatalf("read task projection: %v", err)
-	}
-	if err := pool.QueryRow(context.Background(), `SELECT data->>'program_term_status' FROM index_outbox WHERE object_type = 'mentorship_task' LIMIT 1`).Scan(&indexedStatus); err != nil {
-		t.Fatalf("read task index projection: %v", err)
-	}
-	if applicationStatus != want || taskStatus != want || indexedStatus != want {
-		t.Fatalf("projection statuses = application=%q task=%q index=%q, want %q", applicationStatus, taskStatus, indexedStatus, want)
-	}
-}
-
 func TestApplicationRepositoryIntegration_ListByProgramStatusFilterAndOrder(t *testing.T) {
 	pool := integrationPool(t)
 	fixture := seedIntegrationFixture(t, pool)
@@ -813,8 +766,8 @@ func TestApplicationRepositoryIntegration_ListByProgramStatusFilterAndOrder(t *t
 			t.Fatalf("insert %s application: %v", a.status, err)
 		}
 		if a.prerequisite != "" {
-			if _, err := pool.Exec(ctx, `INSERT INTO tasks (id, application_id, program_term_id, assignee_id, status, category, application_status, program_term_status)
-				VALUES ($1, $2, $3, $4, $5, 'prerequisite', 'pending', 'open')`,
+			if _, err := pool.Exec(ctx, `INSERT INTO tasks (id, application_id, program_term_id, assignee_id, status, category)
+				VALUES ($1, $2, $3, $4, $5, 'prerequisite')`,
 				"00000000-0000-0000-0000-0000000000e"+suffix, a.id, fixture.OpenTerm, userID, a.prerequisite); err != nil {
 				t.Fatalf("insert prerequisite task: %v", err)
 			}
@@ -1141,24 +1094,16 @@ func TestApplicationRepositoryIntegration_ConcurrentApplicationsRespectPendingLi
 	}
 }
 
-// The window is re-checked under the term lock, and the application's dates come from its term.
-func TestApplicationRepositoryIntegration_CreateUsesTermWindowAndDates(t *testing.T) {
+// The window is re-checked under the term lock.
+func TestApplicationRepositoryIntegration_CreateRechecksTermWindow(t *testing.T) {
 	pool := integrationPool(t)
 	fixture := seedIntegrationFixture(t, pool)
 	ctx := domain.ContextWithIndexHeaders(context.Background(), map[string]string{"authorization": "Bearer fixture"})
 	repo := NewApplicationRepository(pool)
-	if _, err := pool.Exec(ctx, `UPDATE program_terms SET start_date_time = '2027-01-10T00:00:00Z', end_date_time = '2027-04-10T00:00:00Z' WHERE id = $1`, fixture.OpenTerm); err != nil {
-		t.Fatalf("set term dates: %v", err)
-	}
 
 	input := models.ApplicationCreateInput{ID: "00000000-0000-0000-0000-0000000000f6", UserID: fixture.UserID, Role: models.ApplicationRoleMentee, Status: models.ApplicationStatusPending}
-	a, err := repo.Create(ctx, fixture.OpenTerm, input)
-	if err != nil {
+	if _, err := repo.Create(ctx, fixture.OpenTerm, input); err != nil {
 		t.Fatalf("create: %v", err)
-	}
-	if a.StartDateTime == nil || !a.StartDateTime.Equal(time.Date(2027, 1, 10, 0, 0, 0, 0, time.UTC)) ||
-		a.EndDateTime == nil || !a.EndDateTime.Equal(time.Date(2027, 4, 10, 0, 0, 0, 0, time.UTC)) {
-		t.Fatalf("application dates %v - %v; want the term's", a.StartDateTime, a.EndDateTime)
 	}
 
 	if _, err := pool.Exec(ctx, `DELETE FROM applications WHERE id = $1`, input.ID); err != nil {

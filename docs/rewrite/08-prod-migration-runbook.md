@@ -279,7 +279,7 @@ python copy_legacy_objects.py 2>&1 | tee /work/copy.log
    VERIFY_SAMPLE_SIZE=500 python verify_migration.py 2>&1 | tee /work/verify.log
    ```
    - It samples up to 500 items from each legacy table and compares each one's fields with the imported row: identities, names, emails, LFIDs, statuses, parent links, dates and flags. It follows the importer's skip, deduplication and quarantine rules, so a row the import should have skipped counts as an error if it is present.
-   - It then runs integrity queries the schema cannot enforce: denormalised term and status copies that disagree with their parents, a task that is both live and quarantined, and more than one live application per term and user. Parent links that Postgres enforces (task to application, application to term) are rechecked too.
+   - It then runs integrity queries the schema cannot enforce: a task whose term or assignee differs from its application's, a task that is both live and quarantined, and more than one live application per term and user. Parent links that Postgres enforces (task to application, application to term) are rechecked too.
    - It must end with `Verification passed: no mismatches`. Any `MISMATCH` line is a no-go until it is explained. The log prints `VERIFY_SEED`; rerun with it to reproduce the same sample.
 5. **Object reconciliation** ([03](./03-migration-plan.md) §S3 objects, step 5 (b) and (c)). The copy's manifest says what was copied, not that it is still there and intact. Run, in the same pod, before the legacy bucket is locked:
    ```bash

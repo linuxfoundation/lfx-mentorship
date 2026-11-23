@@ -819,15 +819,6 @@ func TestProgramService_ListCatalogMentees(t *testing.T) {
 	}
 }
 
-func TestProgramService_Update_InvalidProgramTermStatus_Rejected(t *testing.T) {
-	svc := newProgramSvc(&stubProgRepo{}, &stubTermRepo{}, &stubAppRepo{})
-	bad := models.ProgramTermStatus("ajar") // not a member of the enum
-	_, err := svc.Update(context.Background(), "prog-1", models.ProgramUpdateInput{ProgramTermStatus: &bad})
-	if !errors.Is(err, domain.ErrInvalidInput) {
-		t.Errorf("expected ErrInvalidInput for unknown program_term_status, got %v", err)
-	}
-}
-
 func TestProgramService_Update_NormalizesSkills(t *testing.T) {
 	var captured models.ProgramUpdateInput
 	repo := &stubProgRepo{update: func(_ context.Context, _ string, input models.ProgramUpdateInput) (*models.Program, error) {
