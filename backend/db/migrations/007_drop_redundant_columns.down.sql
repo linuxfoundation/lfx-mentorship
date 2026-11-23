@@ -9,12 +9,18 @@ SET LOCAL search_path TO mentorship, public;
 -- values are not restored: the copies are refilled from the tables that own
 -- the data, and the legacy-only values (admin_notified, amount_raised,
 -- mentee_needs, active_users, number_of_projects) come back as defaults.
+--
+-- set_updated_on is off during each refill so the rows keep their updated_on:
+-- nothing about them changed, and the platform summary reads a graduated
+-- application's updated_on as its graduation date.
 
 ALTER TABLE applications
   ADD COLUMN IF NOT EXISTS program_term_status VARCHAR(20),
   ADD COLUMN IF NOT EXISTS start_date_time     TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS end_date_time       TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS admin_notified      BOOLEAN DEFAULT false;
+
+ALTER TABLE applications DISABLE TRIGGER set_updated_on;
 
 UPDATE applications a
 SET program_term_status = t.status,
@@ -23,9 +29,13 @@ SET program_term_status = t.status,
 FROM program_terms t
 WHERE t.id = a.program_term_id;
 
+ALTER TABLE applications ENABLE TRIGGER set_updated_on;
+
 ALTER TABLE tasks
   ADD COLUMN IF NOT EXISTS application_status  VARCHAR(20),
   ADD COLUMN IF NOT EXISTS program_term_status VARCHAR(20);
+
+ALTER TABLE tasks DISABLE TRIGGER set_updated_on;
 
 UPDATE tasks k
 SET application_status  = a.status,
@@ -33,6 +43,8 @@ SET application_status  = a.status,
 FROM applications a
 JOIN program_terms t ON t.id = a.program_term_id
 WHERE a.id = k.application_id;
+
+ALTER TABLE tasks ENABLE TRIGGER set_updated_on;
 
 -- A quarantined task has no application to refill from.
 ALTER TABLE quarantined_tasks
