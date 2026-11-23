@@ -11,14 +11,14 @@ Your mentee profile is what program mentors read first. It has to exist before y
 
 ## Before you begin
 
-- You need an [LF ID (Linux Foundation ID)](https://openprofile.dev/). Creating one is free.
+- You need an [LF account](https://openprofile.dev/). Creating one is free.
 - You must be 18 or older.
 - Have your skills, links and a short introduction ready.
 
 ## Steps
 
 1. Select **My Mentorship** in the top navigation, or go straight to [app.lfx.dev/mentorship/mentee](https://app.lfx.dev/mentorship/mentee).
-2. Sign in with your LF ID.
+2. Sign in with your LF account.
 3. Fill in the mentee registration form. It asks for your introduction, your skills, and the links a mentor would want to see.
 4. Save the profile.
 

@@ -40,6 +40,6 @@ export const PROGRAM_DONATE_UNAVAILABLE =
 export const SIGN_IN_TO_APPLY_TITLE = 'Sign in to apply';
 
 export const SIGN_IN_TO_APPLY_BODY =
-  'Applications are submitted through your LFX account. Sign in or create one, and we will take you straight to the application for this program.';
+  'Applications are submitted through your LF account. Sign in or create one, and we will take you straight to the application for this program.';
 
 export const SIGN_IN_TO_APPLY_LABEL = 'Applying to';

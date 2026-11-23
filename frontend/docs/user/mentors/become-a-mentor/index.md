@@ -11,13 +11,13 @@ A mentor profile is what Program Admins and applicants see. It has to exist befo
 
 ## Before you begin
 
-- You need an [LF ID (Linux Foundation ID)](https://openprofile.dev/).
+- You need an [LF account](https://openprofile.dev/).
 - Have your introduction, skills and project links ready — the same things a mentee reads before applying.
 
 ## Steps
 
 1. Select **Become a Mentor** in the top navigation, or go to [app.lfx.dev/mentorship/mentor](https://app.lfx.dev/mentorship/mentor).
-2. Sign in with your LF ID.
+2. Sign in with your LF account.
 3. Fill in the mentor registration form and save it.
 4. To join a program, open **Mentor Profile** → **Edit Mentor Profile** → **Select LFX Mentorship** in LFX and pick the program you want to mentor. Selecting it sends the request.
 

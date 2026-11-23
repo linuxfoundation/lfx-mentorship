@@ -11,13 +11,13 @@ A Program Admin can invite you to mentor their program by email. The invitation 
 
 ## Before you begin
 
-- The invitation email contains a one-time link. Use the link rather than navigating by hand, and open it signed in with the LF ID the email was sent to; another account is told the invitation is for a different account.
-- You need an [LF ID (Linux Foundation ID)](https://openprofile.dev/). If you do not have a mentor profile yet, you are asked to create one.
+- The invitation email contains a one-time link. Use the link rather than navigating by hand, and open it signed in with the LF account the email was sent to; another account is told the invitation is for a different account.
+- You need an [LF account](https://openprofile.dev/). If you do not have a mentor profile yet, you are asked to create one.
 
 ## Steps
 
 1. Open the invitation email and select its link. It takes you to the invitation page in LFX.
-2. Sign in with your LF ID if you are not already signed in.
+2. Sign in with your LF account if you are not already signed in.
 3. Review the program named on the page.
 4. Select **Accept** or **Decline**.
 
