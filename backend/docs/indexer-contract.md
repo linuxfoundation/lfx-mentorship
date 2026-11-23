@@ -85,7 +85,8 @@ Mentorship publishes one snapshot per application on
 | `tags` | `role:{role}`, `status:{status}` |
 
 The document contains the application ID, program-term ID, applicant user ID,
-role, status, term status, and creation/update timestamps. The application and
+role, status, attendance type, the `tasks_submitted` flag, and creation/update
+timestamps. It carries no term status or dates: those are the term's. The application and
 its parent program are resolved in the same transaction that writes the index
 outbox record. Application create, update, bulk decline, reapply, and delete
 transactions all update or delete the corresponding index record.
@@ -107,9 +108,10 @@ resource ID is the task UUID.
 | `tags` | `status:{status}`, `category:{category}`, `assignee_id:{user UUID}` |
 
 The document contains the task ID, application ID, assignee ID, name,
-description, category, `prerequisite`, status, application/term status, custom
+description, category, `prerequisite`, status, custom
 flag, `submit_file`, a `has_file` flag, due date, and creation/update
-timestamps. The submission's object key is never indexed; clients fetch the file
+timestamps. It carries no application or term status: a task's document is not
+rewritten when its application or term changes status. The submission's object key is never indexed; clients fetch the file
 from `GET /v1/tasks/{id}/file-download`. These fields cover the task rows described by the mentee, mentor,
 and admin UI contracts. Tasks created with an application, updated, deleted,
 or created as part of an application/reapply transaction are coalesced through
