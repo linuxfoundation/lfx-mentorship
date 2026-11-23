@@ -329,6 +329,36 @@ termStatusCronJob:
   failedJobsHistoryLimit: 1
   concurrencyPolicy: Forbid
 
+# ── CronJob: program-project-sync ─────────────────────────────────────────────
+# Refreshes each program's copy of its LF project's slug, name and logo from
+# lfx-v2-project-service and re-indexes the programs that changed, as legacy
+# sync-lf-project-names did monthly. Needs FGA_NATS_URL. Each run only writes
+# what differs, so a failed Job may be retried.
+projectSyncCronJob:
+  enabled: false
+  # true reports what would change without writing. Set it here, not as DRY_RUN in
+  # env: or config:, which every job reads, so program-funding-stats-sync keeps writing.
+  dryRun: false
+  # 03:20 UTC every Monday.
+  schedule: "20 3 * * 1"
+  timeZone: "Etc/UTC"
+  activeDeadlineSeconds: 900
+  backoffLimit: 1
+  image:
+    # Defaults to same repository and tag as the main API image.
+    repository: ""
+    tag: ""
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  concurrencyPolicy: Forbid
+
 # ── CronJob: prerequisite-reminder ───────────────────────────────────────────
 # Emails pending mentees the prerequisite tasks they have not submitted, on their
 # reminder days. Sends through lfx-v2-email-service, so FGA_NATS_URL and

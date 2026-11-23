@@ -34,7 +34,7 @@ flowchart TB
         NUXT["Nuxt 4 Server (BFF)<br/>public discovery · links to Self Serve to apply"]
         API["Go API (Chi)<br/>REST /v1"]
         PG[("PostgreSQL<br/>mentorship schema<br/>shared LFX v2 RDS")]
-        CRONS["CronJobs:<br/>term-status · program-funding-stats-sync · task-submission-status · prerequisite-reminder"]
+        CRONS["CronJobs:<br/>term-status · program-funding-stats-sync · task-submission-status · prerequisite-reminder · program-project-sync"]
     end
 
     SS["LFX Self Serve<br/>manage programs, applications, tasks"]
@@ -261,11 +261,12 @@ Gateway limits are the skill's, with one correction when applying them: Traefik'
 ## Kubernetes resources
 
 - **Deployments**: `mentorship-api` (Go), `mentorship-frontend` (Nuxt) — each with Service + Ingress, Helm charts in-repo, deployed via ArgoCD ([lfx-v2-argocd](https://github.com/linuxfoundation/lfx-v2-argocd)).
-- **CronJobs** (4, down from 15+ Lambda jobs):
+- **CronJobs** (5, down from 15+ Lambda jobs):
   1. `term-status` — at 00:10, 05:10, 11:10 and 17:10 UTC, as legacy `update-program-terms-active` ran: closes each open term whose end date has passed once it has no pending or accepted mentee application left. Applications are mentee-only; mentors join a program through `program_members`. Application windows need no job: they are compared to the current date on read.
   2. `program-funding-stats-sync` — hourly funding-stats cache refresh from the Ledger API.
   3. `task-submission-status` — task submission status rollups.
   4. `prerequisite-reminder` — daily at 14:30 UTC, as legacy `remind-incomplete-prerequisite-tasks` ran: emails pending mentees their unsubmitted prerequisite tasks 3 days after applying, every 7 days after that, and 3 days and 1 day before applications close.
+  5. `program-project-sync` — weekly, Mondays at 03:20 UTC; legacy `sync-lf-project-names` ran monthly. Reads each LF project a program belongs to from lfx-v2-project-service over NATS and, where it differs, refreshes the program's `lf_project_slug`, `lf_project_name` and `lf_project_logo_url` and re-indexes it. A project Project Service no longer knows is left as stored.
 - **Database**: shared LFX v2 RDS, `mentorship` schema, credentials via K8s secrets ([lfx-secrets-management](https://github.com/linuxfoundation/lfx-secrets-management)).
 - CI/CD mirrors Crowdfunding: GitHub Actions (test, lint, image build → GHCR), MegaLinter, Trivy.
 
