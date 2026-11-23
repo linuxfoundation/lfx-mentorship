@@ -738,9 +738,6 @@ func (s *ProgramService) Update(ctx context.Context, id string, input models.Pro
 	if err := validateName("name", input.Name); err != nil {
 		return nil, err
 	}
-	if input.ProgramTermStatus != nil && !input.ProgramTermStatus.IsValid() {
-		return nil, fmt.Errorf("%w: invalid program term status %q", domain.ErrInvalidInput, *input.ProgramTermStatus)
-	}
 	if err := reservedFileField("logo_url", input.LogoURL); err != nil {
 		return nil, err
 	}

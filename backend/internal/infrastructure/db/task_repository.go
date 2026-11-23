@@ -31,7 +31,7 @@ func NewTaskRepository(pool *pgxpool.Pool) *TaskRepository {
 
 const taskCols = `
 	id, application_id, program_term_id, assignee_id, owner_id,
-	name, description, category, status, application_status, program_term_status,
+	name, description, category, status,
 	custom, submit_file, file, due_date, created_by,
 	created_on, updated_on`
 
@@ -39,7 +39,7 @@ func scanTask(row pgx.Row) (*models.Task, error) {
 	var t models.Task
 	err := row.Scan(
 		&t.ID, &t.ApplicationID, &t.ProgramTermID, &t.AssigneeID, &t.OwnerID,
-		&t.Name, &t.Description, &t.Category, &t.Status, &t.ApplicationStatus, &t.ProgramTermStatus,
+		&t.Name, &t.Description, &t.Category, &t.Status,
 		&t.Custom, &t.SubmitFile, &t.File, &t.DueDate, &t.CreatedBy,
 		&t.CreatedOn, &t.UpdatedOn,
 	)
@@ -152,13 +152,8 @@ func (r *TaskRepository) Create(ctx context.Context, applicationID string, input
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// Share-lock the parent so a concurrent application update re-syncs this task after commit.
-	var applicationStatus models.ApplicationStatus
-	var termStatus models.ProgramTermStatus
-	err = tx.QueryRow(ctx, `
-		SELECT a.status, pt.status
-		FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id
-		WHERE a.id = $1 FOR SHARE OF a`, applicationID).Scan(&applicationStatus, &termStatus)
+	// Share-lock the parent so it cannot be deleted under the insert, and a missing one is not found.
+	err = tx.QueryRow(ctx, `SELECT 1 FROM applications WHERE id = $1 FOR SHARE`, applicationID).Scan(new(int))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrApplicationNotFound
 	}
@@ -169,14 +164,14 @@ func (r *TaskRepository) Create(ctx context.Context, applicationID string, input
 	const q = `
 		INSERT INTO tasks (
 			id, application_id, program_term_id, assignee_id, owner_id,
-			name, description, category, status, application_status, program_term_status, custom,
+			name, description, category, status, custom,
 			submit_file, due_date, created_by
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 		RETURNING ` + taskCols
 
 	t, err := scanTask(tx.QueryRow(ctx, q,
 		input.ID, applicationID, input.ProgramTermID, input.AssigneeID, input.OwnerID,
-		input.Name, input.Description, input.Category, input.Status, applicationStatus, termStatus, input.Custom,
+		input.Name, input.Description, input.Category, input.Status, input.Custom,
 		input.SubmitFile, input.DueDate, input.CreatedBy,
 	))
 	if err != nil {
@@ -212,29 +207,26 @@ func (r *TaskRepository) Update(ctx context.Context, id string, input models.Tas
 
 	const q = `
 		UPDATE tasks SET
-			name               = COALESCE($2,  name),
-			description        = COALESCE($3,  description),
-			category           = COALESCE($4,  category),
-			status             = COALESCE($5,  status),
-			application_status = COALESCE($6,  application_status),
-			program_term_status= COALESCE($7,  program_term_status),
-			custom             = COALESCE($8,  custom),
-			submit_file        = CASE WHEN $9 = '' THEN NULL ELSE COALESCE($9,  submit_file) END,
-			file               = COALESCE($10, file),
-			due_date           = CASE WHEN $11 = '' THEN NULL ELSE COALESCE($11, due_date) END
+			name        = COALESCE($2, name),
+			description = COALESCE($3, description),
+			category    = COALESCE($4, category),
+			status      = COALESCE($5, status),
+			custom      = COALESCE($6, custom),
+			submit_file = CASE WHEN $7 = '' THEN NULL ELSE COALESCE($7, submit_file) END,
+			file        = COALESCE($8, file),
+			due_date    = CASE WHEN $9 = '' THEN NULL ELSE COALESCE($9, due_date) END
 		WHERE id = $1
 		  -- A task that requires a file cannot be submitted without one, whether it is being
 		  -- submitted or its file requirement is being turned on.
-		  AND NOT (COALESCE($5, CASE WHEN $9::text IS NOT NULL THEN status END, '') = $12
-		           AND COALESCE($9, submit_file, '') <> ''
-		           AND COALESCE($10, file, '') = '')
+		  AND NOT (COALESCE($5, CASE WHEN $7::text IS NOT NULL THEN status END, '') = $10
+		           AND COALESCE($7, submit_file, '') <> ''
+		           AND COALESCE($8, file, '') = '')
 		  -- A transition authorized from one status must not land on a task that has since left it.
-		  AND ($13::text IS NULL OR status = $13)
+		  AND ($11::text IS NULL OR status = $11)
 		RETURNING ` + taskCols
 
 	t, err := scanTask(tx.QueryRow(ctx, q,
-		id, input.Name, input.Description, input.Category, input.Status,
-		input.ApplicationStatus, input.ProgramTermStatus, input.Custom,
+		id, input.Name, input.Description, input.Category, input.Status, input.Custom,
 		input.SubmitFile, input.File, input.DueDate, models.TaskStatusSubmitted, input.FromStatus,
 	))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -308,8 +300,7 @@ func deleteTaskInTx(ctx context.Context, tx pgx.Tx, t *models.Task) error {
 var errWithdrawnTaskLocked = fmt.Errorf("%w: a withdrawn application's tasks cannot change", domain.ErrStateLocked)
 
 // lockTaskApplication share-locks the application a task belongs to and returns
-// errWithdrawnTaskLocked when it is withdrawn. It reads the application row rather than the
-// task's denormalised application_status, and withdrawing updates that row, so a withdrawal
+// errWithdrawnTaskLocked when it is withdrawn. Withdrawing updates that row, so a withdrawal
 // either commits first and is seen here or waits until this task write commits.
 func lockTaskApplication(ctx context.Context, tx pgx.Tx, taskID string) error {
 	var status models.ApplicationStatus

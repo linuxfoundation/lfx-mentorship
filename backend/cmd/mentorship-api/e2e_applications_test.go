@@ -155,10 +155,10 @@ func TestE2EMenteeJourney(t *testing.T) {
 		mentee.call(t, http.MethodPatch, "/tasks/"+prereq.ID+"/submission", map[string]any{"status": "bogus"}).expect(http.StatusBadRequest)
 		mentor.call(t, http.MethodPatch, "/tasks/"+prereq.ID+"/review", map[string]any{}).expect(http.StatusBadRequest)
 		mentor.call(t, http.MethodPatch, "/tasks/"+prereq.ID+"/review", map[string]any{"status": "in_progress"}).expect(http.StatusBadRequest)
-		mentor.call(t, http.MethodPatch, "/tasks/"+prereq.ID+"/review", map[string]any{"application_status": "bogus"}).expect(http.StatusBadRequest)
+		// application_status is no longer a task field, so a review carrying only it has no status.
+		mentor.call(t, http.MethodPatch, "/tasks/"+prereq.ID+"/review", map[string]any{"application_status": "accepted"}).expect(http.StatusBadRequest)
 		// Nobody reviews their own task.
 		mentee.call(t, http.MethodPatch, "/tasks/"+prereq.ID+"/review", map[string]any{"status": "complete"}).expect(http.StatusForbidden)
-		mentee.call(t, http.MethodPatch, "/tasks/"+prereq.ID+"/review", map[string]any{"application_status": "pending"}).expect(http.StatusForbidden)
 		mentee.call(t, http.MethodPatch, "/tasks/"+prereq.ID+"/submission", map[string]any{"status": "complete"}).expect(http.StatusForbidden)
 		mentor.call(t, http.MethodPatch, "/tasks/00000000-0000-4000-8000-000000000000/review", map[string]any{"status": "complete"}).expect(http.StatusNotFound)
 		anonymous().call(t, http.MethodPatch, "/tasks/"+prereq.ID+"/review", map[string]any{"status": "complete"}).expect(http.StatusUnauthorized)
@@ -169,7 +169,7 @@ func TestE2EMenteeJourney(t *testing.T) {
 		uploadTaskFile(t, mentee, prereq.ID, "intro-v2.txt", []byte("plain text submission\n")).expect(http.StatusCreated)
 	})
 
-	mentor.mustJSON(t, http.MethodPatch, "/tasks/"+prereq.ID+"/review", map[string]any{"status": "complete", "application_status": "pending", "program_term_status": "open"}, http.StatusOK, &prereq)
+	mentor.mustJSON(t, http.MethodPatch, "/tasks/"+prereq.ID+"/review", map[string]any{"status": "complete"}, http.StatusOK, &prereq)
 	if prereq.Status != "complete" {
 		t.Fatalf("after review: %+v", prereq)
 	}
@@ -340,7 +340,6 @@ func TestE2EMenteeJourney(t *testing.T) {
 		}
 		mentee.call(t, http.MethodPatch, "/tasks/"+custom.ID, map[string]any{"name": "x"}).expect(http.StatusForbidden)
 		mentor.call(t, http.MethodPatch, "/tasks/"+custom.ID, map[string]any{"file": "x"}).expect(http.StatusBadRequest)
-		mentor.call(t, http.MethodPatch, "/tasks/"+custom.ID, map[string]any{"application_status": "accepted"}).expect(http.StatusBadRequest)
 		mentor.call(t, http.MethodPatch, "/tasks/"+custom.ID, map[string]any{"category": "bogus"}).expect(http.StatusBadRequest)
 		mentor.call(t, http.MethodPatch, "/tasks/"+custom.ID, map[string]any{"due_date": "soon"}).expect(http.StatusBadRequest)
 		mentor.call(t, http.MethodPatch, "/tasks/00000000-0000-4000-8000-000000000000", map[string]any{"name": "x"}).expect(http.StatusNotFound)

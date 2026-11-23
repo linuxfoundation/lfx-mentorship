@@ -123,7 +123,7 @@ Rules 7–8 are `ProgramTerm.AcceptsApplications`. The apply-target read reports
 
 ### What gets written (one transaction)
 
-- New `applications` row (`pending`), with `program_term_status`, `start_date_time` and `end_date_time` copied from the term.
+- New `applications` row (`pending`). It stores no term status or dates: those are its term's.
 - On reapply, the old `withdrawn` row is **kept as history**, not modified.
 - One `prerequisite` task per program task template: blank names skipped, `submitFile` kept only if `"required"`, `dueDate` kept only if `YYYY-MM-DD`.
 - Outbox entries for access (FGA) update, search index, and program index refresh.
@@ -161,7 +161,6 @@ stateDiagram-v2
 | Accepting a mentee refuses while they hold another mentee application `accepted` in a term that hasn't ended (per-mentee lock). Graduating elsewhere doesn't block an acceptance, as in legacy | repo L583 |
 | Moving into a blocking status (`pending`, `accepted`, `graduated`) is refused while the program is hidden | repo L597, L934 |
 | A mentor application's status never changes: a status change, self-withdrawal or `withdraw-for-mentee` on one is refused (`409`). Mentors join and leave a program only through its members | service L476, L618 |
-| Tasks' `application_status` is synced on every status change | repo L631 |
 | `withdraw-for-mentee`: a Program Admin can withdraw a `pending` or `accepted` mentee application; `declined` and `graduated` are final and refused; an already `withdrawn` one is a no-op | service L574 |
 | Bulk decline: only `pending` mentee rows in the term become `declined` | repo L1130 |
 
@@ -220,7 +219,7 @@ A review of the apply flow found 13 gaps. All 13 are closed: 12 by a code change
 | 9 | Window not re-checked inside the transaction | ✅ Fixed | Re-checked under the term lock |
 | 10 | `hold` still a valid status | ✅ Fixed | Dropped; migration 003 |
 | 11 | No cap on active applications | ✅ Kept by design | FR-031 allows concurrent applications |
-| 12 | Applicant-supplied `start_date_time` / `end_date_time` | ✅ Fixed | Copied from the term; edit route removed |
+| 12 | Applicant-supplied `start_date_time` / `end_date_time` | ✅ Fixed | Not stored on the application; edit route removed |
 | 13 | Service-side authorization disagreed with the gateway | ✅ Fixed | Off-gateway Program Admin checks |
 
 ### Details
@@ -279,7 +278,7 @@ A review of the apply flow found 13 gaps. All 13 are closed: 12 by a code change
 **Gap 9: window not re-checked under lock.**
 - **Before:** only `term.status` was re-checked inside the transaction.
 - **After:** `checkCanApply` re-checks `AcceptsApplications` under the term lock, for both create and reapply. `ReapplyWithTasks` now reads the whole term row.
-- **Tests:** `TestApplicationRepositoryIntegration_CreateUsesTermWindowAndDates`.
+- **Tests:** `TestApplicationRepositoryIntegration_CreateRechecksTermWindow`.
 
 **Gap 10: `hold` status.**
 - **Before:** `hold` was in the model, the transition map and the CHECK constraint. Spec FR-040 required it; `02-target-architecture.md` said it should be dropped.
@@ -292,8 +291,8 @@ A review of the apply flow found 13 gaps. All 13 are closed: 12 by a code change
 
 **Gap 12: applicant-supplied dates.**
 - **Before:** `start_date_time` and `end_date_time` were saved from the apply body. The applicant could also change them later through `PATCH /applications/{id}`.
-- **After:** both are copied from the term on create. They are gone from `ApplicationCreateInput` and `ApplicationUpdateInput`. `PATCH /applications/{id}` edited nothing else, so it is removed, together with its `applications-writer` Heimdall rule and its route-matrix row.
-- **Tests:** `TestApplicationRepositoryIntegration_CreateUsesTermWindowAndDates`, and e2e "the applicant cannot edit the application" (405).
+- **After:** an application stores no dates; they are its term's. They are gone from `ApplicationCreateInput` and `ApplicationUpdateInput`. `PATCH /applications/{id}` edited nothing else, so it is removed, together with its `applications-writer` Heimdall rule and its route-matrix row.
+- **Tests:** e2e "the applicant cannot edit the application" (405).
 
 **Gap 13: service-side authorization.**
 - **Before:** off the gateway, any approved mentor could change an application's status, which the gateway's `manager` relation forbids. `Delete` had no service-side check at all.

@@ -48,19 +48,17 @@ func (c TaskCategory) IsValid() bool {
 
 // Task maps to the public.tasks table.
 type Task struct {
-	ID                string             `json:"id"`
-	ApplicationID     *string            `json:"application_id,omitempty"`
-	ProgramTermID     *string            `json:"program_term_id,omitempty"`
-	AssigneeID        string             `json:"assignee_id"`
-	OwnerID           *string            `json:"owner_id,omitempty"`
-	Name              *string            `json:"name,omitempty"`
-	Description       *string            `json:"description,omitempty"`
-	Category          *TaskCategory      `json:"category,omitempty"`
-	Status            TaskStatus         `json:"status"`
-	ApplicationStatus *ApplicationStatus `json:"application_status,omitempty"` // denormalised from applications.status
-	ProgramTermStatus *ProgramTermStatus `json:"program_term_status,omitempty"`
-	Custom            bool               `json:"custom"`
-	SubmitFile        *string            `json:"submit_file,omitempty"`
+	ID            string        `json:"id"`
+	ApplicationID *string       `json:"application_id,omitempty"`
+	ProgramTermID *string       `json:"program_term_id,omitempty"`
+	AssigneeID    string        `json:"assignee_id"`
+	OwnerID       *string       `json:"owner_id,omitempty"`
+	Name          *string       `json:"name,omitempty"`
+	Description   *string       `json:"description,omitempty"`
+	Category      *TaskCategory `json:"category,omitempty"`
+	Status        TaskStatus    `json:"status"`
+	Custom        bool          `json:"custom"`
+	SubmitFile    *string       `json:"submit_file,omitempty"`
 	// File is the private object key of the submission; responses carry the download route instead.
 	File      *string   `json:"file,omitempty"`
 	DueDate   *string   `json:"due_date,omitempty"` // ISO date string
@@ -157,16 +155,14 @@ func (c PrerequisiteChanges) IsEmpty() bool {
 // TaskUpdateInput is the request body for updating a task. A nil field is left unchanged; an
 // empty SubmitFile or DueDate clears it.
 type TaskUpdateInput struct {
-	Name              *string            `json:"name,omitempty"`
-	Description       *string            `json:"description,omitempty"`
-	Category          *TaskCategory      `json:"category,omitempty"`
-	Status            *TaskStatus        `json:"status,omitempty"`
-	ApplicationStatus *ApplicationStatus `json:"application_status,omitempty"`
-	ProgramTermStatus *ProgramTermStatus `json:"program_term_status,omitempty"`
-	Custom            *bool              `json:"custom,omitempty"`
-	SubmitFile        *string            `json:"submit_file,omitempty"`
-	File              *string            `json:"file,omitempty"`
-	DueDate           *string            `json:"due_date,omitempty"`
+	Name        *string       `json:"name,omitempty"`
+	Description *string       `json:"description,omitempty"`
+	Category    *TaskCategory `json:"category,omitempty"`
+	Status      *TaskStatus   `json:"status,omitempty"`
+	Custom      *bool         `json:"custom,omitempty"`
+	SubmitFile  *string       `json:"submit_file,omitempty"`
+	File        *string       `json:"file,omitempty"`
+	DueDate     *string       `json:"due_date,omitempty"`
 	// Reason is why a review sends a submitted task back; the mentee is emailed it. Only a
 	// review that sets status to incomplete takes one. Not persisted.
 	Reason *string `json:"reason,omitempty"`

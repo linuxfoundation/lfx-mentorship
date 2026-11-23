@@ -257,9 +257,8 @@ func TestTaskService_Edit_RepositoryErrorPropagates(t *testing.T) {
 	}
 }
 
-func TestTaskService_Update_ReviewWithoutStatusRequiresNonAssigneeReviewer(t *testing.T) {
+func TestTaskService_Update_WithoutStatusRequiresNonAssigneeReviewer(t *testing.T) {
 	appID := "app-1"
-	accepted := models.ApplicationStatusAccepted
 	for actor, wantErr := range map[string]error{
 		"reviewer-1": nil,
 		"stranger-1": domain.ErrForbidden,
@@ -271,38 +270,9 @@ func TestTaskService_Update_ReviewWithoutStatusRequiresNonAssigneeReviewer(t *te
 			}}
 			appRepo, termRepo, memberRepo := reviewerRepos(appID, "reviewer-1", models.MemberTypeMentor)
 			svc := newTaskSvc(taskRepo, appRepo, termRepo, memberRepo)
-			_, err := svc.Update(context.Background(), "task-1", models.TaskUpdateInput{ApplicationStatus: &accepted, ActorID: actor})
+			_, err := svc.Update(context.Background(), "task-1", models.TaskUpdateInput{ActorID: actor})
 			if !errors.Is(err, wantErr) {
 				t.Errorf("err = %v; want %v", err, wantErr)
-			}
-		})
-	}
-}
-
-func TestTaskService_Update_AssigneeCannotSetReviewStatusesAlongsideOwnStep(t *testing.T) {
-	appID := "app-1"
-	accepted, open := models.ApplicationStatusAccepted, models.ProgramTermStatusOpen
-	for field, in := range map[string]models.TaskUpdateInput{
-		"application status":  {ApplicationStatus: &accepted},
-		"program term status": {ProgramTermStatus: &open},
-	} {
-		t.Run(field, func(t *testing.T) {
-			taskRepo := &stubTaskRepo{
-				getByID: func(_ context.Context, id string) (*models.Task, error) {
-					return &models.Task{ID: id, AssigneeID: "mentee-1", Status: models.TaskStatusIncomplete, ApplicationID: &appID}, nil
-				},
-				update: func(context.Context, string, models.TaskUpdateInput) (*models.Task, error) {
-					t.Fatal("the assignee must not write reviewer-owned statuses")
-					return nil, nil
-				},
-			}
-			appRepo, termRepo, memberRepo := reviewerRepos(appID, "reviewer-1", models.MemberTypeMentor)
-			svc := newTaskSvc(taskRepo, appRepo, termRepo, memberRepo)
-			// incomplete -> in_progress is the assignee's own step; the review field must still be refused.
-			inProgress := models.TaskStatusInProgress
-			in.Status, in.ActorID = &inProgress, "mentee-1"
-			if _, err := svc.Update(context.Background(), "task-1", in); !errors.Is(err, domain.ErrForbidden) {
-				t.Errorf("err = %v; want ErrForbidden", err)
 			}
 		})
 	}

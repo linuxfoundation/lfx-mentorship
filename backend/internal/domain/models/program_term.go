@@ -37,7 +37,6 @@ type ProgramTerm struct {
 	ProgramID            string            `json:"program_id"`
 	Name                 string            `json:"name"`
 	Status               ProgramTermStatus `json:"status"`
-	ActiveUsers          int               `json:"active_users"`
 	StartDateTime        *time.Time        `json:"start_date_time,omitempty"`
 	EndDateTime          *time.Time        `json:"end_date_time,omitempty"`
 	ApplicationStartDate *time.Time        `json:"application_start_date,omitempty"`
@@ -119,7 +118,6 @@ type ProgramTermCreateInput struct {
 	ProgramID            string            `json:"program_id"`
 	Name                 string            `json:"name"`
 	Status               ProgramTermStatus `json:"status"`
-	ActiveUsers          int               `json:"active_users"`
 	StartDateTime        *time.Time        `json:"start_date_time,omitempty"`
 	EndDateTime          *time.Time        `json:"end_date_time,omitempty"`
 	ApplicationStartDate *time.Time        `json:"application_start_date,omitempty"`
@@ -141,7 +139,6 @@ type ProgramOpenTermInput struct {
 type ProgramTermUpdateInput struct {
 	Name                 *string            `json:"name,omitempty"`
 	Status               *ProgramTermStatus `json:"status,omitempty"`
-	ActiveUsers          *int               `json:"active_users,omitempty"`
 	StartDateTime        *time.Time         `json:"start_date_time,omitempty"`
 	EndDateTime          *time.Time         `json:"end_date_time,omitempty"`
 	ApplicationStartDate *time.Time         `json:"application_start_date,omitempty"`

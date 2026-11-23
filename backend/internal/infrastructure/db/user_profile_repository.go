@@ -31,7 +31,7 @@ func NewUserProfileRepository(pool *pgxpool.Pool) *UserProfileRepository {
 // profile_links drops resumeLink on read: resumes are not a supported file class.
 const userProfileCols = `
 	id, user_id, profile_type, slug, first_name, last_name, email, phone,
-	logo_url, introduction, terms_and_conditions, number_of_projects,
+	logo_url, introduction, terms_and_conditions,
 	address, demographics, socioeconomics, skill_set, profile_links - 'resumeLink' AS profile_links,
 	created_on, updated_on`
 
@@ -40,7 +40,7 @@ func scanUserProfile(row pgx.Row) (*models.UserProfile, error) {
 	err := row.Scan(
 		&p.ID, &p.UserID, &p.ProfileType, &p.Slug, &p.FirstName, &p.LastName,
 		&p.Email, &p.Phone, &p.LogoURL, &p.Introduction, &p.TermsAndConditions,
-		&p.NumberOfProjects, &p.Address, &p.Demographics, &p.Socioeconomics,
+		&p.Address, &p.Demographics, &p.Socioeconomics,
 		&p.SkillSet, &p.ProfileLinks, &p.CreatedOn, &p.UpdatedOn,
 	)
 	if err != nil {
@@ -170,15 +170,15 @@ func (r *UserProfileRepository) Create(ctx context.Context, input models.UserPro
 	const q = `
 		INSERT INTO user_profiles (
 			id, user_id, profile_type, slug, first_name, last_name, email, phone,
-			logo_url, introduction, terms_and_conditions, number_of_projects,
+			logo_url, introduction, terms_and_conditions,
 			address, demographics, socioeconomics, skill_set, profile_links
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
 		RETURNING` + userProfileCols
 
 	p, err := scanUserProfile(tx.QueryRow(ctx, q,
 		input.ID, input.UserID, input.ProfileType, input.Slug, input.FirstName, input.LastName,
 		input.Email, input.Phone, input.LogoURL, input.Introduction, input.TermsAndConditions,
-		input.NumberOfProjects, input.Address, input.Demographics, input.Socioeconomics,
+		input.Address, input.Demographics, input.Socioeconomics,
 		input.SkillSet, input.ProfileLinks,
 	))
 	if err != nil {
@@ -232,14 +232,14 @@ func (r *UserProfileRepository) UpsertByUserAndType(ctx context.Context, input m
 		const insertQ = `
 			INSERT INTO user_profiles (
 				id, user_id, profile_type, slug, first_name, last_name, email, phone,
-				logo_url, introduction, terms_and_conditions, number_of_projects,
+				logo_url, introduction, terms_and_conditions,
 				address, demographics, socioeconomics, skill_set, profile_links
-			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
 			RETURNING` + userProfileCols
 		created, err := scanUserProfile(tx.QueryRow(ctx, insertQ,
 			input.ID, input.UserID, input.ProfileType, input.Slug, input.FirstName, input.LastName,
 			input.Email, input.Phone, input.LogoURL, input.Introduction, input.TermsAndConditions,
-			input.NumberOfProjects, input.Address, input.Demographics, input.Socioeconomics,
+			input.Address, input.Demographics, input.Socioeconomics,
 			input.SkillSet, input.ProfileLinks,
 		))
 		if err != nil {
@@ -262,18 +262,17 @@ func (r *UserProfileRepository) UpsertByUserAndType(ctx context.Context, input m
 			logo_url = $7,
 			introduction = $8,
 			terms_and_conditions = $9,
-			number_of_projects = $10,
-			address = $11,
-			demographics = $12,
-			socioeconomics = $13,
-			skill_set = $14,
-			profile_links = $15,
+			address = $10,
+			demographics = $11,
+			socioeconomics = $12,
+			skill_set = $13,
+			profile_links = $14,
 			updated_on = NOW()
 		WHERE id = $1
 		RETURNING` + userProfileCols
 	updated, err := scanUserProfile(tx.QueryRow(ctx, updateQ,
 		profiles[0].ID, input.Slug, input.FirstName, input.LastName, input.Email, input.Phone,
-		input.LogoURL, input.Introduction, input.TermsAndConditions, input.NumberOfProjects,
+		input.LogoURL, input.Introduction, input.TermsAndConditions,
 		input.Address, input.Demographics, input.Socioeconomics, input.SkillSet, input.ProfileLinks,
 	))
 	if err != nil {
@@ -303,18 +302,17 @@ func (r *UserProfileRepository) Update(ctx context.Context, id string, input mod
 			logo_url            = COALESCE($7, logo_url),
 			introduction        = COALESCE($8, introduction),
 			terms_and_conditions= COALESCE($9, terms_and_conditions),
-			number_of_projects  = COALESCE($10, number_of_projects),
-			address             = COALESCE($11, address),
-			demographics        = COALESCE($12, demographics),
-			socioeconomics      = COALESCE($13, socioeconomics),
-			skill_set           = COALESCE($14, skill_set),
-			profile_links       = COALESCE($15, profile_links)
+			address             = COALESCE($10, address),
+			demographics        = COALESCE($11, demographics),
+			socioeconomics      = COALESCE($12, socioeconomics),
+			skill_set           = COALESCE($13, skill_set),
+			profile_links       = COALESCE($14, profile_links)
 		WHERE id = $1
 		RETURNING` + userProfileCols
 
 	p, err := scanUserProfile(r.pool.QueryRow(ctx, q,
 		id, input.Slug, input.FirstName, input.LastName, input.Email, input.Phone,
-		input.LogoURL, input.Introduction, input.TermsAndConditions, input.NumberOfProjects,
+		input.LogoURL, input.Introduction, input.TermsAndConditions,
 		nilIfEmpty(input.Address), nilIfEmpty(input.Demographics), nilIfEmpty(input.Socioeconomics),
 		nilIfEmpty(input.SkillSet), nilIfEmpty(input.ProfileLinks),
 	))

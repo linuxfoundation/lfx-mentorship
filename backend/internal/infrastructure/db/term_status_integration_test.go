@@ -29,7 +29,7 @@ func insertTermEnding(t *testing.T, pool *pgxpool.Pool, id, programID, status st
 // insertMenteeApplication inserts a mentee application of the user on an open term.
 func insertMenteeApplication(t *testing.T, pool *pgxpool.Pool, id, termID, userID, status string) {
 	t.Helper()
-	if _, err := pool.Exec(context.Background(), `INSERT INTO applications (id, program_term_id, user_id, role, status, program_term_status) VALUES ($1, $2, $3, 'mentee', $4, 'open')`,
+	if _, err := pool.Exec(context.Background(), `INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES ($1, $2, $3, 'mentee', $4)`,
 		id, termID, userID, status); err != nil {
 		t.Fatalf("insert application %s: %v", id, err)
 	}
@@ -82,11 +82,6 @@ func TestProgramTermRepositoryIntegration_CloseEnded(t *testing.T) {
 			t.Errorf("term %s status = %q; want closed", id, term.Status)
 		}
 	}
-	var termStatus string
-	if err := pool.QueryRow(ctx, `SELECT program_term_status FROM applications WHERE id = $1`, graduatedApp).Scan(&termStatus); err != nil || termStatus != "closed" {
-		t.Errorf("graduated application program_term_status = %q, err = %v; want closed", termStatus, err)
-	}
-	assertFGAMarker(t, pool, "mentorship_application", graduatedApp, "update_access")
 	assertIndexAction(t, pool, "mentorship_program", f.ProgramID, "updated")
 
 	for _, id := range []string{ended, pendingMentee, acceptedMentee, notEnded, alreadyClosed, f.OpenTerm} {

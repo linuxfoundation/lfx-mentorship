@@ -105,10 +105,6 @@ func TestApplicationRepositoryIntegration_ReopenAddsMissingPrerequisites(t *test
 	if !got["Cover letter"].Custom {
 		t.Errorf("added task lost its custom flag: %+v", got["Cover letter"])
 	}
-	var stale int
-	if err := pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM tasks WHERE application_id = $1 AND application_status <> 'pending'`, withdrawn).Scan(&stale); err != nil || stale != 0 {
-		t.Fatalf("%d tasks kept the old application status (err %v)", stale, err)
-	}
 }
 
 // A withdrawn application whose applicant has applied to the term again answers 409, even when the

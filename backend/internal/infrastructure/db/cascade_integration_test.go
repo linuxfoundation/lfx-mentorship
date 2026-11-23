@@ -38,13 +38,13 @@ func seedCascadeFixture(t *testing.T, pool *pgxpool.Pool) cascadeFixture {
 		t.Fatalf("set logo: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO applications (id, program_term_id, user_id, role, status, program_term_status)
-		VALUES ($1, $2, $3, 'mentee', 'accepted', 'open')`, f.ApplicationID, f.OpenTerm, f.UserID); err != nil {
+		INSERT INTO applications (id, program_term_id, user_id, role, status)
+		VALUES ($1, $2, $3, 'mentee', 'accepted')`, f.ApplicationID, f.OpenTerm, f.UserID); err != nil {
 		t.Fatalf("insert application: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO tasks (id, application_id, program_term_id, assignee_id, status, file, application_status, program_term_status)
-		VALUES ($1, $2, $3, $4, 'submitted', $5, 'accepted', 'open')`, f.TaskID, f.ApplicationID, f.OpenTerm, f.UserID, f.TaskFile); err != nil {
+		INSERT INTO tasks (id, application_id, program_term_id, assignee_id, status, file)
+		VALUES ($1, $2, $3, $4, 'submitted', $5)`, f.TaskID, f.ApplicationID, f.OpenTerm, f.UserID, f.TaskFile); err != nil {
 		t.Fatalf("insert task: %v", err)
 	}
 	// Side effects from seeding must not be mistaken for the delete's.
@@ -162,18 +162,12 @@ func TestApplicationRepositoryIntegration_BulkDeclineByTermDeclinesOnlyPending(t
 		t.Fatalf("insert users: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO applications (id, program_term_id, user_id, role, status, program_term_status) VALUES
-		($1, $4, $6, 'mentee', 'pending', 'open'),
-		($2, $4, $7, 'mentee', 'withdrawn', 'open'),
-		($3, $5, $6, 'mentee', 'pending', 'closed'),
-		($8, $4, $7, 'mentor', 'pending', 'open')`, pendingID, withdrawnID, otherTermID, f.OpenTerm, f.ClosedTerm, secondUser, thirdUser, mentorID); err != nil {
+		INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES
+		($1, $4, $6, 'mentee', 'pending'),
+		($2, $4, $7, 'mentee', 'withdrawn'),
+		($3, $5, $6, 'mentee', 'pending'),
+		($8, $4, $7, 'mentor', 'pending')`, pendingID, withdrawnID, otherTermID, f.OpenTerm, f.ClosedTerm, secondUser, thirdUser, mentorID); err != nil {
 		t.Fatalf("insert applications: %v", err)
-	}
-	pendingTask := "00000000-0000-0000-0000-000000000614"
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO tasks (id, application_id, program_term_id, assignee_id, status, application_status, program_term_status)
-		VALUES ($1, $2, $3, $4, 'incomplete', 'pending', 'open')`, pendingTask, pendingID, f.OpenTerm, secondUser); err != nil {
-		t.Fatalf("insert task: %v", err)
 	}
 
 	declined, err := NewApplicationRepository(pool).BulkDeclineByTerm(ctx, f.OpenTerm)
@@ -195,10 +189,6 @@ func TestApplicationRepositoryIntegration_BulkDeclineByTermDeclinesOnlyPending(t
 		if err := pool.QueryRow(ctx, `SELECT status FROM applications WHERE id = $1`, id).Scan(&got); err != nil || got != want {
 			t.Errorf("application %s status = %q, err = %v; want %q", id, got, err, want)
 		}
-	}
-	var taskAppStatus string
-	if err := pool.QueryRow(ctx, `SELECT application_status FROM tasks WHERE id = $1`, pendingTask).Scan(&taskAppStatus); err != nil || taskAppStatus != "declined" {
-		t.Errorf("task application_status = %q, err = %v; want declined", taskAppStatus, err)
 	}
 	assertFGAMarker(t, pool, "mentorship_application", pendingID, "update_access")
 	if n := countRows(t, pool, `SELECT COUNT(*) FROM fga_outbox WHERE object_uid IN ($1, $2, $3, $4)`, f.ApplicationID, withdrawnID, otherTermID, mentorID); n != 0 {
@@ -243,10 +233,10 @@ func TestProgramTermRepositoryIntegration_CloseWithBulkDeclineGuards(t *testing.
 		t.Fatalf("insert users: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO applications (id, program_term_id, user_id, role, status, program_term_status) VALUES
-		($1, $4, $5, 'mentee', 'pending', 'open'),
-		($2, $4, $6, 'mentor', 'accepted', 'open'),
-		($3, $4, $5, 'mentor', 'pending', 'open')`, pendingID, acceptedMentorID, pendingMentorID, f.OpenTerm, secondUser, thirdUser); err != nil {
+		INSERT INTO applications (id, program_term_id, user_id, role, status) VALUES
+		($1, $4, $5, 'mentee', 'pending'),
+		($2, $4, $6, 'mentor', 'accepted'),
+		($3, $4, $5, 'mentor', 'pending')`, pendingID, acceptedMentorID, pendingMentorID, f.OpenTerm, secondUser, thirdUser); err != nil {
 		t.Fatalf("insert applications: %v", err)
 	}
 	term, declined, err := repo.CloseWithBulkDecline(ctx, f.OpenTerm)
@@ -256,6 +246,12 @@ func TestProgramTermRepositoryIntegration_CloseWithBulkDeclineGuards(t *testing.
 	if term.Status != models.ProgramTermStatusClosed || len(declined) != 1 || declined[0].ID != pendingID {
 		t.Fatalf("closed term status %q, declined %+v; want closed with the pending application declined", term.Status, declined)
 	}
+	// The declined application's access and search document are refreshed with its new status.
+	assertFGAMarker(t, pool, "mentorship_application", pendingID, "update_access")
+	var indexed string
+	if err := pool.QueryRow(ctx, `SELECT data->>'status' FROM index_outbox WHERE object_type = 'mentorship_application' AND object_uid = $1`, pendingID).Scan(&indexed); err != nil || indexed != "declined" {
+		t.Errorf("declined application indexed status = %q, err = %v; want declined", indexed, err)
+	}
 	for id, want := range map[string]models.ApplicationStatus{
 		acceptedMentorID: models.ApplicationStatusAccepted,
 		pendingMentorID:  models.ApplicationStatusPending,
@@ -264,10 +260,6 @@ func TestProgramTermRepositoryIntegration_CloseWithBulkDeclineGuards(t *testing.
 		if err := pool.QueryRow(ctx, `SELECT status FROM applications WHERE id = $1`, id).Scan(&got); err != nil || got != want {
 			t.Errorf("mentor application %s status = %q, err = %v; want %q", id, got, err, want)
 		}
-	}
-	var graduatedTermStatus string
-	if err := pool.QueryRow(ctx, `SELECT program_term_status FROM applications WHERE id = $1`, f.ApplicationID).Scan(&graduatedTermStatus); err != nil || graduatedTermStatus != "closed" {
-		t.Errorf("graduated application program_term_status = %q, err = %v; want closed", graduatedTermStatus, err)
 	}
 	assertIndexAction(t, pool, "mentorship_program", f.ProgramID, "updated")
 }

@@ -31,14 +31,14 @@ func NewProgramTermRepository(pool *pgxpool.Pool) *ProgramTermRepository {
 }
 
 const programTermCols = `
-	id, program_id, name, status, active_users,
+	id, program_id, name, status,
 	start_date_time, end_date_time, application_start_date, application_end_date,
 	created_on, updated_on`
 
 func scanProgramTerm(row pgx.Row) (*models.ProgramTerm, error) {
 	var t models.ProgramTerm
 	err := row.Scan(
-		&t.ID, &t.ProgramID, &t.Name, &t.Status, &t.ActiveUsers,
+		&t.ID, &t.ProgramID, &t.Name, &t.Status,
 		&t.StartDateTime, &t.EndDateTime, &t.ApplicationStartDate, &t.ApplicationEndDate,
 		&t.CreatedOn, &t.UpdatedOn,
 	)
@@ -157,7 +157,7 @@ func (r *ProgramTermRepository) ListManagementByProgram(ctx context.Context, pro
 		return nil, nil, err
 	}
 	args = append(args, limit, offset)
-	q := `SELECT pt.id, pt.program_id, pt.name, pt.status, pt.active_users,
+	q := `SELECT pt.id, pt.program_id, pt.name, pt.status,
 		pt.start_date_time, pt.end_date_time, pt.application_start_date, pt.application_end_date,
 		pt.created_on, pt.updated_on,
 		COUNT(a.id) FILTER (WHERE a.role = 'mentee' AND a.status = 'pending'), COUNT(a.id) FILTER (WHERE a.role = 'mentee' AND a.status = 'declined'),
@@ -171,7 +171,7 @@ func (r *ProgramTermRepository) ListManagementByProgram(ctx context.Context, pro
 	result := make([]*models.ProgramTermManagementRow, 0)
 	for rows.Next() {
 		var row models.ProgramTermManagementRow
-		if err := rows.Scan(&row.ID, &row.ProgramID, &row.Name, &row.Status, &row.ActiveUsers, &row.StartDateTime, &row.EndDateTime, &row.ApplicationStartDate, &row.ApplicationEndDate, &row.CreatedOn, &row.UpdatedOn, &row.Pending, &row.Declined, &row.Accepted, &row.Graduated); err != nil {
+		if err := rows.Scan(&row.ID, &row.ProgramID, &row.Name, &row.Status, &row.StartDateTime, &row.EndDateTime, &row.ApplicationStartDate, &row.ApplicationEndDate, &row.CreatedOn, &row.UpdatedOn, &row.Pending, &row.Declined, &row.Accepted, &row.Graduated); err != nil {
 			return nil, nil, err
 		}
 		result = append(result, &row)
@@ -196,13 +196,13 @@ func (r *ProgramTermRepository) Create(ctx context.Context, input models.Program
 
 	const q = `
 		INSERT INTO program_terms (
-			id, program_id, name, status, active_users,
+			id, program_id, name, status,
 			start_date_time, end_date_time, application_start_date, application_end_date
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 		RETURNING` + programTermCols
 
 	t, err := scanProgramTerm(tx.QueryRow(ctx, q,
-		input.ID, input.ProgramID, input.Name, input.Status, input.ActiveUsers,
+		input.ID, input.ProgramID, input.Name, input.Status,
 		input.StartDateTime, input.EndDateTime, input.ApplicationStartDate, input.ApplicationEndDate,
 	))
 	if err != nil {
@@ -249,16 +249,15 @@ func (r *ProgramTermRepository) Update(ctx context.Context, id string, input mod
 		UPDATE program_terms SET
 			name                   = COALESCE($2, name),
 			status                 = COALESCE($3, status),
-			active_users           = COALESCE($4, active_users),
-			start_date_time        = COALESCE($5, start_date_time),
-			end_date_time          = COALESCE($6, end_date_time),
-			application_start_date = COALESCE($7, application_start_date),
-			application_end_date   = COALESCE($8, application_end_date)
+			start_date_time        = COALESCE($4, start_date_time),
+			end_date_time          = COALESCE($5, end_date_time),
+			application_start_date = COALESCE($6, application_start_date),
+			application_end_date   = COALESCE($7, application_end_date)
 		WHERE id = $1
 		RETURNING` + programTermCols
 
 	t, err := scanProgramTerm(tx.QueryRow(ctx, q,
-		id, input.Name, input.Status, input.ActiveUsers,
+		id, input.Name, input.Status,
 		input.StartDateTime, input.EndDateTime, input.ApplicationStartDate, input.ApplicationEndDate,
 	))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -269,9 +268,6 @@ func (r *ProgramTermRepository) Update(ctx context.Context, id string, input mod
 		return nil, fmt.Errorf("update program term: %w", err)
 	}
 	if input.Status != nil {
-		if err := syncApplicationsWithTermState(ctx, tx, id, t.Status); err != nil {
-			return nil, err
-		}
 		if err := enqueueProgramIndexByID(ctx, tx, t.ProgramID); err != nil {
 			return nil, err
 		}
@@ -447,6 +443,14 @@ func (r *ProgramTermRepository) CloseWithBulkDecline(ctx context.Context, id str
 		return nil, nil, fmt.Errorf("decline pending applications rows: %w", err)
 	}
 	rows.Close()
+	for _, application := range applications {
+		if err := enqueueApplicationMarker(ctx, tx, application, "update_access"); err != nil {
+			return nil, nil, err
+		}
+		if err := enqueueApplicationIndex(ctx, tx, application, "updated"); err != nil {
+			return nil, nil, err
+		}
+	}
 
 	updated, err := closeTerm(ctx, tx, id)
 	if err != nil {
@@ -530,16 +534,12 @@ func (r *ProgramTermRepository) CloseEnded(ctx context.Context, id string, now t
 	return updated, nil
 }
 
-// closeTerm sets a locked term to closed, carries the status onto its applications and refreshes
-// its program's search document.
+// closeTerm sets a locked term to closed and refreshes its program's search document.
 func closeTerm(ctx context.Context, tx pgx.Tx, id string) (*models.ProgramTerm, error) {
 	closed := models.ProgramTermStatusClosed
 	updated, err := scanProgramTerm(tx.QueryRow(ctx, `UPDATE program_terms SET status = $2 WHERE id = $1 RETURNING`+programTermCols, id, closed))
 	if err != nil {
 		return nil, fmt.Errorf("close term: %w", err)
-	}
-	if err := syncApplicationsWithTermState(ctx, tx, id, closed); err != nil {
-		return nil, err
 	}
 	if err := enqueueProgramIndexByID(ctx, tx, updated.ProgramID); err != nil {
 		return nil, err

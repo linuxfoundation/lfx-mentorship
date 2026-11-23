@@ -176,22 +176,20 @@ func (h *TaskHandler) UpdateReview(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &input) {
 		return
 	}
-	if input.Status == nil && input.ApplicationStatus == nil && input.ProgramTermStatus == nil {
-		Error(w, fmt.Errorf("%w: review state is required", domain.ErrInvalidInput))
+	if input.Status == nil {
+		Error(w, fmt.Errorf("%w: status is required", domain.ErrInvalidInput))
 		return
 	}
 	// A review completes or resets a task; the assignee's own steps go through /submission.
-	if input.Status != nil && *input.Status != models.TaskStatusComplete && *input.Status != models.TaskStatusIncomplete {
+	if *input.Status != models.TaskStatusComplete && *input.Status != models.TaskStatusIncomplete {
 		Error(w, fmt.Errorf("%w: a review sets status to %q or %q", domain.ErrInvalidInput, models.TaskStatusComplete, models.TaskStatusIncomplete))
 		return
 	}
 	input.ActorID = principal.UserID
 	task, err := h.svc.Update(r.Context(), chi.URLParam(r, "id"), models.TaskUpdateInput{
-		Status:            input.Status,
-		ApplicationStatus: input.ApplicationStatus,
-		ProgramTermStatus: input.ProgramTermStatus,
-		Reason:            input.Reason,
-		ActorID:           input.ActorID,
+		Status:  input.Status,
+		Reason:  input.Reason,
+		ActorID: input.ActorID,
 	})
 	if err != nil {
 		Error(w, err)
@@ -242,10 +240,6 @@ func (h *TaskHandler) Update(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	var input models.TaskUpdateInput
 	if !decodeBody(w, r, &input) {
-		return
-	}
-	if input.ApplicationStatus != nil || input.ProgramTermStatus != nil {
-		Error(w, fmt.Errorf("%w: application and program term statuses are set through PATCH /v1/tasks/{id}/review", domain.ErrInvalidInput))
 		return
 	}
 	if input.File != nil {

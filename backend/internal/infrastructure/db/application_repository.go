@@ -31,15 +31,13 @@ func NewApplicationRepository(pool *pgxpool.Pool) *ApplicationRepository {
 }
 
 const applicationCols = `
-	id, program_term_id, user_id, role, status, program_term_status,
-	start_date_time, end_date_time, tasks_submitted, admin_notified, attendance_type,
+	id, program_term_id, user_id, role, status, tasks_submitted, attendance_type,
 	evaluation, reviewer_note, created_on, updated_on`
 
 func scanApplication(row pgx.Row) (*models.Application, error) {
 	var a models.Application
 	err := row.Scan(
-		&a.ID, &a.ProgramTermID, &a.UserID, &a.Role, &a.Status, &a.ProgramTermStatus,
-		&a.StartDateTime, &a.EndDateTime, &a.TasksSubmitted, &a.AdminNotified, &a.AttendanceType,
+		&a.ID, &a.ProgramTermID, &a.UserID, &a.Role, &a.Status, &a.TasksSubmitted, &a.AttendanceType,
 		&a.Evaluation, &a.ReviewerNote, &a.CreatedOn, &a.UpdatedOn,
 	)
 	if err != nil {
@@ -263,8 +261,7 @@ func (r *ApplicationRepository) ListByUser(ctx context.Context, userID string, f
 	}
 
 	args = append(args, limit, offset)
-	listQ := `SELECT a.id, a.program_term_id, a.user_id, a.role, a.status, a.program_term_status,
-		a.start_date_time, a.end_date_time, a.tasks_submitted, a.admin_notified, a.attendance_type,
+	listQ := `SELECT a.id, a.program_term_id, a.user_id, a.role, a.status, a.tasks_submitted, a.attendance_type,
 		a.evaluation, a.reviewer_note, a.created_on, a.updated_on,
 		p.id, p.name, p.slug, p.logo_url, p.lf_project_name, pt.id, pt.name, pt.status, pt.start_date_time, pt.end_date_time, pt.application_start_date, pt.application_end_date
 		FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id JOIN programs p ON p.id = pt.program_id` + where +
@@ -282,8 +279,7 @@ func (r *ApplicationRepository) ListByUser(ctx context.Context, userID string, f
 		var a models.Application
 		var program models.ApplicationProgram
 		var term models.ApplicationTerm
-		err := rows.Scan(&a.ID, &a.ProgramTermID, &a.UserID, &a.Role, &a.Status, &a.ProgramTermStatus,
-			&a.StartDateTime, &a.EndDateTime, &a.TasksSubmitted, &a.AdminNotified, &a.AttendanceType,
+		err := rows.Scan(&a.ID, &a.ProgramTermID, &a.UserID, &a.Role, &a.Status, &a.TasksSubmitted, &a.AttendanceType,
 			&a.Evaluation, &a.ReviewerNote, &a.CreatedOn, &a.UpdatedOn,
 			&program.ID, &program.Name, &program.Slug, &program.LogoURL, &program.ProjectName,
 			&term.ID, &term.Name, &term.Status, &term.StartDate, &term.EndDate, &term.ApplicationStartDate, &term.ApplicationEndDate)
@@ -530,17 +526,15 @@ func checkApplicationProgramNotHidden(ctx context.Context, tx pgx.Tx, applicatio
 }
 
 // insertApplicationWithTasks inserts a pending application with its prerequisite tasks and queues
-// its access, search, and parent program refreshes, all inside the caller's transaction. The
-// application's term status and start and end dates are copied from the term.
+// its access, search, and parent program refreshes, all inside the caller's transaction.
 func insertApplicationWithTasks(ctx context.Context, tx pgx.Tx, term *models.ProgramTerm, input models.ApplicationCreateInput, tasks []models.TaskCreateInput) (*models.Application, error) {
 	const q = `
-		INSERT INTO applications (id, program_term_id, user_id, role, status, program_term_status, start_date_time, end_date_time, attendance_type)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO applications (id, program_term_id, user_id, role, status, attendance_type)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING ` + applicationCols
 
 	a, err := scanApplication(tx.QueryRow(ctx, q,
-		input.ID, term.ID, input.UserID, input.Role, input.Status, term.Status,
-		term.StartDateTime, term.EndDateTime, input.AttendanceType,
+		input.ID, term.ID, input.UserID, input.Role, input.Status, input.AttendanceType,
 	))
 	if err != nil {
 		return nil, fmt.Errorf("create application: %w", err)
@@ -563,11 +557,11 @@ func insertApplicationWithTasks(ctx context.Context, tx pgx.Tx, term *models.Pro
 func insertApplicationTasks(ctx context.Context, tx pgx.Tx, application *models.Application, tasks []models.TaskCreateInput) error {
 	for _, task := range tasks {
 		created, err := scanTask(tx.QueryRow(ctx, `
-			INSERT INTO tasks (id, application_id, program_term_id, assignee_id, owner_id, name, description, category, status, application_status, program_term_status, custom, submit_file, due_date, created_by)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+			INSERT INTO tasks (id, application_id, program_term_id, assignee_id, owner_id, name, description, category, status, custom, submit_file, due_date, created_by)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 			RETURNING `+taskCols,
 			task.ID, application.ID, task.ProgramTermID, task.AssigneeID, task.OwnerID, task.Name, task.Description,
-			task.Category, task.Status, application.Status, application.ProgramTermStatus, task.Custom, task.SubmitFile, task.DueDate, task.CreatedBy))
+			task.Category, task.Status, task.Custom, task.SubmitFile, task.DueDate, task.CreatedBy))
 		if err != nil {
 			name := ""
 			if task.Name != nil {
@@ -703,19 +697,16 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 
 	const q = `
 		UPDATE applications SET
-			status              = COALESCE($2, status),
-			program_term_status = COALESCE($3, program_term_status),
-			tasks_submitted     = COALESCE($4, tasks_submitted),
-			admin_notified      = COALESCE($5, admin_notified),
-			attendance_type     = COALESCE($6, attendance_type),
-			evaluation          = COALESCE($7, evaluation),
-			reviewer_note       = COALESCE($8, reviewer_note)
+			status          = COALESCE($2, status),
+			tasks_submitted = COALESCE($3, tasks_submitted),
+			attendance_type = COALESCE($4, attendance_type),
+			evaluation      = COALESCE($5, evaluation),
+			reviewer_note   = COALESCE($6, reviewer_note)
 		WHERE id = $1
 		RETURNING ` + applicationCols
 
 	a, err := scanApplication(tx.QueryRow(ctx, q,
-		id, input.Status, input.ProgramTermStatus,
-		input.TasksSubmitted, input.AdminNotified, input.AttendanceType, input.Evaluation, input.ReviewerNote,
+		id, input.Status, input.TasksSubmitted, input.AttendanceType, input.Evaluation, input.ReviewerNote,
 	))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrApplicationNotFound
@@ -724,27 +715,17 @@ func (r *ApplicationRepository) Update(ctx context.Context, id string, input mod
 		span.RecordError(err)
 		return nil, fmt.Errorf("update application: %w", err)
 	}
-	// Added once the row holds its new status, so the tasks are cloned for a pending application;
-	// the sync below then brings every task's copy of the state in line.
+	// Added once the row holds its new status, so the tasks are cloned for a pending application.
 	if input.AddMissingPrerequisites && reopenProgramID != "" && a.Role == models.ApplicationRoleMentee {
 		if err := addMissingPrerequisiteTasks(ctx, tx, a, input.Prerequisites); err != nil {
 			return nil, err
 		}
-	}
-	updatedTasks, err := syncTasksWithApplicationState(ctx, tx, a)
-	if err != nil {
-		return nil, err
 	}
 	if err := enqueueApplicationMarker(ctx, tx, a, "update_access"); err != nil {
 		return nil, err
 	}
 	if err := enqueueApplicationIndex(ctx, tx, a, "updated"); err != nil {
 		return nil, err
-	}
-	for _, task := range updatedTasks {
-		if err := enqueueTaskIndex(ctx, tx, task, "updated"); err != nil {
-			return nil, fmt.Errorf("enqueue task index for application update: %w", err)
-		}
 	}
 	var programID string
 	if err := tx.QueryRow(ctx, `SELECT program_id FROM program_terms WHERE id = $1`, a.ProgramTermID).Scan(&programID); err != nil {
@@ -827,84 +808,6 @@ func markTasksSubmitted(ctx context.Context, tx pgx.Tx, id string, noneIsDone bo
 		return false, err
 	}
 	return true, nil
-}
-
-func syncTasksWithApplicationState(ctx context.Context, tx pgx.Tx, application *models.Application) ([]*models.Task, error) {
-	rows, err := tx.Query(ctx, `
-		UPDATE tasks
-		SET application_status = $2,
-		    program_term_status = $3,
-		    updated_on = NOW()
-		WHERE application_id = $1
-		RETURNING `+taskCols, application.ID, application.Status, application.ProgramTermStatus)
-	if err != nil {
-		return nil, fmt.Errorf("sync tasks for application update: %w", err)
-	}
-	defer rows.Close()
-
-	updatedTasks := make([]*models.Task, 0)
-	for rows.Next() {
-		task, scanErr := scanTask(rows)
-		if scanErr != nil {
-			return nil, fmt.Errorf("scan synced task for application update: %w", scanErr)
-		}
-		updatedTasks = append(updatedTasks, task)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate synced tasks for application update: %w", err)
-	}
-	return updatedTasks, nil
-}
-
-func syncAndEnqueueTasksWithApplicationState(ctx context.Context, tx pgx.Tx, application *models.Application) error {
-	updatedTasks, err := syncTasksWithApplicationState(ctx, tx, application)
-	if err != nil {
-		return err
-	}
-	for _, task := range updatedTasks {
-		if err := enqueueTaskIndex(ctx, tx, task, "updated"); err != nil {
-			return fmt.Errorf("enqueue task index for application update: %w", err)
-		}
-	}
-	return nil
-}
-
-func syncApplicationsWithTermState(ctx context.Context, tx pgx.Tx, termID string, termStatus models.ProgramTermStatus) error {
-	rows, err := tx.Query(ctx, `
-		UPDATE applications
-		SET program_term_status = $2, updated_on = NOW()
-		WHERE program_term_id = $1
-		RETURNING `+applicationCols, termID, termStatus)
-	if err != nil {
-		return fmt.Errorf("sync applications for term update: %w", err)
-	}
-	defer rows.Close()
-
-	applications := make([]*models.Application, 0)
-	for rows.Next() {
-		application, scanErr := scanApplication(rows)
-		if scanErr != nil {
-			return fmt.Errorf("scan application for term update: %w", scanErr)
-		}
-		applications = append(applications, application)
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate applications for term update: %w", err)
-	}
-	rows.Close()
-
-	for _, application := range applications {
-		if err := enqueueApplicationMarker(ctx, tx, application, "update_access"); err != nil {
-			return err
-		}
-		if err := enqueueApplicationIndex(ctx, tx, application, "updated"); err != nil {
-			return err
-		}
-		if err := syncAndEnqueueTasksWithApplicationState(ctx, tx, application); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // Delete removes an application.
@@ -1150,9 +1053,6 @@ func (r *ApplicationRepository) BulkDeclineByTerm(ctx context.Context, termID st
 	}
 	rows.Close()
 	for _, application := range applications {
-		if err := syncAndEnqueueTasksWithApplicationState(ctx, tx, application); err != nil {
-			return nil, fmt.Errorf("sync bulk-declined tasks: %w", err)
-		}
 		if err := enqueueApplicationMarker(ctx, tx, application, "update_access"); err != nil {
 			return nil, err
 		}

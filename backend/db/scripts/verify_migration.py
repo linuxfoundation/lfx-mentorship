@@ -71,12 +71,6 @@ INTEGRITY_CHECKS = {
         WHERE t.program_term_id IS DISTINCT FROM a.program_term_id""",
     "task assignee differs from its applicant": """
         SELECT t.id FROM tasks t JOIN applications a ON a.id = t.application_id WHERE t.assignee_id <> a.user_id""",
-    "application term status differs from its open or closed term": """
-        SELECT a.id FROM applications a JOIN program_terms pt ON pt.id = a.program_term_id
-        WHERE pt.status IN ('open', 'closed') AND a.program_term_status IS DISTINCT FROM pt.status""",
-    "task term status differs from its open or closed term": """
-        SELECT t.id FROM tasks t JOIN program_terms pt ON pt.id = t.program_term_id
-        WHERE pt.status IN ('open', 'closed') AND t.program_term_status IS DISTINCT FROM pt.status""",
     "task both live and quarantined": """
         SELECT t.id FROM tasks t JOIN quarantined_tasks q ON q.id = t.id""",
     "more than one live mentee application per term and user": """
@@ -358,7 +352,7 @@ def verify_applications(cur, mentees, term_ids, report, rng, size) -> set:
             best[(term_id, uid)] = (rank, status, item)
     for key in _sample(sorted(best), rng, size):
         _, status, item = best[key]
-        cur.execute("""SELECT status, start_date_time, end_date_time, tasks_submitted, admin_notified
+        cur.execute("""SELECT status, tasks_submitted
             FROM applications WHERE program_term_id = %s AND user_id = %s AND role = 'mentee'""", key)
         rows = [dict(zip([c.name for c in cur.description], r)) for r in cur.fetchall()]
         if not rows:
@@ -369,10 +363,7 @@ def verify_applications(cur, mentees, term_ids, report, rng, size) -> set:
             continue
         report.compare("applications", key, {
             "status": status,
-            "start_date_time": m._parse_epoch(item.get("startDateTime")),
-            "end_date_time": m._parse_epoch(item.get("endDateTime")),
             "tasks_submitted": m._as_bool(item.get("tasksSubmitted")),
-            "admin_notified": m._as_bool(item.get("adminNotified")),
         }, rows[0])
     report.sampled["applications"] = min(len(best), size)
     verify_skipped(cur, ("applications",), skipped, report, rng, size)

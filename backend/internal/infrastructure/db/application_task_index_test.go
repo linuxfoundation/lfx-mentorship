@@ -31,8 +31,6 @@ func TestNewApplicationIndexConfig(t *testing.T) {
 }
 
 func TestNewApplicationIndexDocumentIncludesLifecycleFields(t *testing.T) {
-	start := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
-	end := time.Date(2026, time.March, 1, 0, 0, 0, 0, time.UTC)
 	attendance := models.AttendanceTypePartTime
 	application := &models.Application{
 		ID:             "app-1",
@@ -40,16 +38,11 @@ func TestNewApplicationIndexDocumentIncludesLifecycleFields(t *testing.T) {
 		UserID:         "user-1",
 		Role:           models.ApplicationRoleMentee,
 		Status:         models.ApplicationStatusAccepted,
-		StartDateTime:  &start,
-		EndDateTime:    &end,
 		AttendanceType: &attendance,
 		TasksSubmitted: true,
 	}
 
 	document := NewApplicationIndexDocument(application)
-	if document.StartDateTime == nil || !document.StartDateTime.Equal(start) || document.EndDateTime == nil || !document.EndDateTime.Equal(end) {
-		t.Fatalf("lifecycle dates = %#v, want %s to %s", document, start, end)
-	}
 	if document.AttendanceType == nil || *document.AttendanceType != attendance || !document.TasksSubmitted {
 		t.Fatalf("lifecycle state = %#v, want attendance=%s tasks_submitted=true", document, attendance)
 	}

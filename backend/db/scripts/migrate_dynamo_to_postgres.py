@@ -52,9 +52,6 @@ Key notes
 - DynamoDB mentee status "approved" (and "active") maps to applications.status
   "accepted" — applications.status has no "active" value.
 - DynamoDB user-profile type for mentees maps to Postgres profile_type "mentee".
-- applications.program_term_status and tasks.program_term_status are taken from
-  the migrated term status (open|closed), not the stale legacy copy. Rows on
-  deleted terms keep the legacy value.
 - tasks.application_id is resolved post-scan by matching (program_term_id, assignee_id)
   against inserted applications. Tasks with no match are written to
   quarantined_tasks for repair; tasks.application_id is NOT NULL. A task that was
@@ -537,29 +534,11 @@ def _map_application_status(dynamo_status: str | None) -> str:
     return s if s in _VALID_APP_STATUSES else "pending"
 
 
-def _task_application_status(value: str | None) -> str | None:
-    """Map a task's denormalised legacy application status as its application's is mapped; absent stays NULL."""
-    s = (value or "").strip()
-    return _map_application_status(s) if s else None
-
-
 def _map_profile_type(dynamo_type: str | None) -> str:
     """Map DynamoDB user-profile type → user_profiles.profile_type."""
     if (dynamo_type or "").strip().lower() == "mentor":
         return "mentor"
     return "mentee"
-
-
-def _map_program_term_status(term_status: str | None, dynamo_value: str | None) -> str | None:
-    """Derive the denormalised program_term_status from the migrated term status.
-
-    The legacy copy on mentees and tasks is stale on many closed terms because
-    the legacy cron's status push often did not finish. Deleted terms keep the
-    legacy value.
-    """
-    if term_status in ("open", "closed"):
-        return term_status
-    return (dynamo_value or "").strip() or None
 
 
 # ---------------------------------------------------------------------------
@@ -707,7 +686,6 @@ def migrate_user_profiles(cur, profiles: list, known_user_ids: set, files: lo.Le
                 files.rewrite("user_profiles.logo_url", lo.LOGO, p.get("logoUrl")),
                 (p.get("introduction") or "").strip() or None,
                 _as_bool(p.get("termsAndConditions")),
-                _as_int(p.get("numberOfProjects")),
                 _to_jsonb(p.get("address")),
                 _to_jsonb(p.get("demographics")),
                 _to_jsonb(p.get("socioeconomics")),
@@ -735,10 +713,10 @@ def migrate_user_profiles(cur, profiles: list, known_user_ids: set, files: lo.Le
         """
         INSERT INTO user_profiles
           (id, user_id, profile_type, slug, first_name, last_name, email, phone,
-           logo_url, introduction, terms_and_conditions, number_of_projects,
+           logo_url, introduction, terms_and_conditions,
            address, demographics, socioeconomics, skill_set, profile_links,
            created_on, updated_on)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (id) DO UPDATE SET
           user_id              = EXCLUDED.user_id,
           profile_type         = EXCLUDED.profile_type,
@@ -750,7 +728,6 @@ def migrate_user_profiles(cur, profiles: list, known_user_ids: set, files: lo.Le
           logo_url             = EXCLUDED.logo_url,
           introduction         = EXCLUDED.introduction,
           terms_and_conditions = EXCLUDED.terms_and_conditions,
-          number_of_projects   = EXCLUDED.number_of_projects,
           address              = EXCLUDED.address,
           demographics         = EXCLUDED.demographics,
           socioeconomics       = EXCLUDED.socioeconomics,
@@ -845,10 +822,7 @@ def migrate_programs(cur, projects: list, known_user_ids: set, files: lo.LegacyF
                 (p.get("projectCIIProjectId") or "").strip() or None,
                 _as_bool(p.get("acceptApplications")),
                 _as_bool(p.get("termsAndConditions")),
-                (p.get("programTermStatus") or "").strip() or None,
                 _as_int(p.get("discoverSortRank")),
-                amount,
-                _to_jsonb(p.get("menteeNeeds")),  # Legacy apprenticeNeeds fallback is retained only for cutover imports.
                 _task_templates(p.get("taskTemplates")),
                 _parse_ts(p.get("createdOn")),
                 _parse_ts(p.get("updatedOn")),
@@ -899,10 +873,10 @@ def migrate_programs(cur, projects: list, known_user_ids: set, files: lo.LegacyF
         INSERT INTO programs
                     (id, lf_project_uid, lf_project_slug, lf_project_name, lf_project_logo_url, name, slug, status, is_paid, description, logo_url, website_url,
            repo_link, code_of_conduct, industry, color, lfid, cii_project_id,
-           accept_applications, terms_and_conditions, program_term_status,
-           discover_sort_rank, amount_raised, mentee_needs, task_templates,
+           accept_applications, terms_and_conditions,
+           discover_sort_rank, task_templates,
            created_on, updated_on)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         ON CONFLICT (id) DO UPDATE SET
                     -- An unmapped re-import keeps the existing parent: OpenFGA already holds it, and the sync cannot clear a project reference.
                     lf_project_uid     = COALESCE(EXCLUDED.lf_project_uid, programs.lf_project_uid),
@@ -926,10 +900,7 @@ def migrate_programs(cur, projects: list, known_user_ids: set, files: lo.LegacyF
           cii_project_id      = EXCLUDED.cii_project_id,
           accept_applications = EXCLUDED.accept_applications,
           terms_and_conditions = EXCLUDED.terms_and_conditions,
-          program_term_status = EXCLUDED.program_term_status,
           discover_sort_rank  = EXCLUDED.discover_sort_rank,
-          amount_raised       = EXCLUDED.amount_raised,
-          mentee_needs        = EXCLUDED.mentee_needs,
           task_templates      = EXCLUDED.task_templates,
           updated_on          = EXCLUDED.updated_on
         """,
@@ -998,7 +969,6 @@ def migrate_program_terms(cur, terms: list, known_program_ids: set) -> dict:
                 pid,
                 (t.get("name") or "").strip() or None,
                 status,
-                _as_int(t.get("activeUsers")),
                 _parse_epoch(t.get("startDateTime")),
                 _parse_epoch(t.get("endDateTime")),
                 _parse_epoch(t.get("applicationStartDate")),
@@ -1012,15 +982,14 @@ def migrate_program_terms(cur, terms: list, known_program_ids: set) -> dict:
         cur,
         """
         INSERT INTO program_terms
-          (id, program_id, name, status, active_users, start_date_time,
+          (id, program_id, name, status, start_date_time,
            end_date_time, application_start_date, application_end_date,
            created_on, updated_on)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (id) DO UPDATE SET
           program_id            = EXCLUDED.program_id,
           name                  = EXCLUDED.name,
           status                = EXCLUDED.status,
-          active_users          = EXCLUDED.active_users,
           start_date_time       = EXCLUDED.start_date_time,
           end_date_time         = EXCLUDED.end_date_time,
           application_start_date = EXCLUDED.application_start_date,
@@ -1307,11 +1276,7 @@ def migrate_mentees(
                 uid,
                 "mentee",
                 _map_application_status(dynamo_status),
-                _map_program_term_status(known_term_ids[term_id], m.get("programTermStatus")),
-                _parse_epoch(m.get("startDateTime")),
-                _parse_epoch(m.get("endDateTime")),
                 _as_bool(m.get("tasksSubmitted")),
-                _as_bool(m.get("adminNotified")),
                 None,  # attendance_type — not captured in DynamoDB
                 _parse_ts(m.get("createdOn")),
                 _parse_ts(m.get("updatedOn")),
@@ -1334,12 +1299,12 @@ def migrate_mentees(
         else:
             prev_sort = (
                 _STATUS_PRIORITY.get(prev[4], -1),
-                prev[12].timestamp() if prev[12] is not None else float("-inf"),
+                prev[8].timestamp() if prev[8] is not None else float("-inf"),
                 prev[0],
             )
             row_sort = (
                 _STATUS_PRIORITY.get(row[4], -1),
-                row[12].timestamp() if row[12] is not None else float("-inf"),
+                row[8].timestamp() if row[8] is not None else float("-inf"),
                 row[0],
             )
             if row_sort > prev_sort:
@@ -1354,8 +1319,8 @@ def migrate_mentees(
     # the other one, then on the time of this run.
     migrated_on = datetime.now(timezone.utc)
     app_rows = [
-        (existing.get(key, row[0]),) + row[1:11]
-        + (row[11] or row[12] or migrated_on, row[12] or row[11] or migrated_on)
+        (existing.get(key, row[0]),) + row[1:7]
+        + (row[7] or row[8] or migrated_on, row[8] or row[7] or migrated_on)
         for key, row in best.items()
     ]
 
@@ -1363,17 +1328,12 @@ def migrate_mentees(
         cur,
         """
         INSERT INTO applications
-          (id, program_term_id, user_id, role, status, program_term_status,
-           start_date_time, end_date_time, tasks_submitted, admin_notified,
+          (id, program_term_id, user_id, role, status, tasks_submitted,
            attendance_type, created_on, updated_on)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (id) DO UPDATE SET
           status              = EXCLUDED.status,
-          program_term_status = EXCLUDED.program_term_status,
-          start_date_time     = EXCLUDED.start_date_time,
-          end_date_time       = EXCLUDED.end_date_time,
           tasks_submitted     = EXCLUDED.tasks_submitted,
-          admin_notified      = EXCLUDED.admin_notified,
           updated_on          = EXCLUDED.updated_on
         """,
         app_rows,
@@ -1483,8 +1443,6 @@ def migrate_tasks(
             (t.get("description") or "").strip() or None,
             category,
             status,
-            _task_application_status(t.get("applicationStatus")),
-            _map_program_term_status(known_term_ids.get(resolved_term_id), t.get("programTermStatus")),
             _as_bool(t.get("custom")),
             _task_submit_file(t),
             files.rewrite("tasks.file", lo.SUBMISSION, t.get("file")),
@@ -1511,7 +1469,7 @@ def migrate_tasks(
 
     columns = (
         "id, application_id, program_term_id, assignee_id, owner_id, name, "
-        "description, category, status, application_status, program_term_status, "
+        "description, category, status, "
         "custom, submit_file, file, due_date, created_by, created_on, updated_on"
     )
     updates = ",\n          ".join(
@@ -1838,9 +1796,6 @@ def seed_derived_state(cur) -> None:
                 'user_id', a.user_id,
                 'role', a.role,
                 'status', a.status,
-                'program_term_status', a.program_term_status,
-                'start_date_time', a.start_date_time,
-                'end_date_time', a.end_date_time,
                 'attendance_type', a.attendance_type,
                 'tasks_submitted', a.tasks_submitted,
                 'created_on', a.created_on,
@@ -1897,8 +1852,6 @@ def seed_derived_state(cur) -> None:
                 'category', t.category,
                 'prerequisite', COALESCE(t.category = 'prerequisite', false),
                 'status', t.status,
-                'application_status', t.application_status,
-                'program_term_status', t.program_term_status,
                 'custom', t.custom,
                 'submit_file', t.submit_file,
                 'has_file', t.file IS NOT NULL,

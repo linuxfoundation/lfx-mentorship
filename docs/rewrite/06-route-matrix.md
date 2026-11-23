@@ -137,7 +137,7 @@ Terms are not an FGA type and the current paths expose no program UID, so all of
 | `POST /v1/applications/{uid}/tasks` | required | `mentorship_application:{uid}` | `reviewer` | **`reviewer`, not `manager`** — the application's `manager` excludes mentors, but assigning tasks is a mentor capability ([04 §decision 7](./04-authorization-model.md)) |
 | `GET /v1/applications/{uid}/tasks` | required | `mentorship_application:{uid}` | `auditor` | Admits the mentee, who must see their own tasks |
 | `GET /v1/tasks/{uid}` | required | `mentorship_task:{uid}` | `auditor` | `assignee or manager` |
-| `PATCH /v1/tasks/{uid}` | required | `mentorship_task:{uid}` | `manager` | Mentors' and admins' full edit: content, `submit_file`, and any `status` from any `status` ([lfx-mentorship#227](https://github.com/linuxfoundation/lfx-mentorship/issues/227)). **Must reject the assignee's `file` and the denormalised `application_status`/`program_term_status`**, and refuse the assignee — split per decision 6 |
+| `PATCH /v1/tasks/{uid}` | required | `mentorship_task:{uid}` | `manager` | Mentors' and admins' full edit: content, `submit_file`, and any `status` from any `status` ([lfx-mentorship#227](https://github.com/linuxfoundation/lfx-mentorship/issues/227)). **Must reject the assignee's `file`**, and refuse the assignee — split per decision 6 |
 | `PATCH /v1/tasks/{uid}/submission` | required | `mentorship_task:{uid}` | `assignee` | New route — the mentee |
 | `PATCH /v1/tasks/{uid}/review` | required | `mentorship_task:{uid}` | `manager` | New route — mentors and admins (`reviewer from mentorship_application`) |
 | `DELETE /v1/tasks/{uid}` | required | `mentorship_task:{uid}` | `manager` | — |
