@@ -37,7 +37,7 @@ You complete a final evaluation with your mentor. Graduating is recorded on your
 
 ## Do I need an account to browse?
 
-You do not need an account to browse. Programs, mentees and mentors are all public. You need an [LF ID (Linux Foundation ID)](https://openprofile.dev/) to apply, to mentor, or to administer a program.
+You do not need an account to browse. Programs, mentees and mentors are all public. You need an [LF account](https://openprofile.dev/) to apply, to mentor, or to administer a program.
 
 ## Where do I actually apply?
 

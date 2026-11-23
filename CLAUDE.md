@@ -77,6 +77,8 @@ Two further rules on status vocabulary:
 
 The one exception: `docs/rewrite/01-current-system.md` and other passages *describing the legacy system* may use the old terms where they are historically accurate. Do not rewrite history — the ban applies to anything describing the new system.
 
+**User-facing names** (UI copy, emails, user docs), as confirmed by the PM in [#lfx-mentorship-rewrite](https://linuxfoundation.slack.com/archives/C0BK7NQ3Q6Q/p1795118785403879): the sign-in account is the **LF account** and its username the **LF username** (`lfid` stays in code and the API); the shared profile is the **LFX profile**; the role profiles are the **mentee profile** and **mentor profile**, and their text is the **Introduction** (the LFX profile has its own "About Me"). Do not write "LFX account", "LF ID", "Linux Foundation ID" or "Mentorship account".
+
 ## Code Style
 
 Status, role, and category fields are **named string types with constants and an `IsValid()` method**, not plain `string` (see `internal/domain/models/`). When adding a field backed by a fixed set of values:
