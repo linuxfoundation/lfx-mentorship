@@ -242,6 +242,25 @@ def test_tasks_import_with_legacy_status_category_and_submit_file(monkeypatch):
     ]
 
 
+def test_duplicate_mentee_rows_keep_highest_status_then_newest(monkeypatch):
+    captured = []
+    monkeypatch.setattr(m.psycopg2.extras, "execute_batch", lambda cur, sql, rows, page_size=0: captured.append(rows) if "INSERT INTO applications" in sql else None)
+    cur = types.SimpleNamespace(execute=lambda *args: None, fetchall=lambda: [])
+    term, user = "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1", "b2b2b2b2-b2b2-4b2b-8b2b-b2b2b2b2b2b2"
+    # The newer accepted row has the lower id, so the id tie-break cannot stand in for the date.
+    pending, newer, older = "c3c3c3c3-c3c3-4c3c-8c3c-c3c3c3c3c3c1", "c3c3c3c3-c3c3-4c3c-8c3c-c3c3c3c3c3c2", "c3c3c3c3-c3c3-4c3c-8c3c-c3c3c3c3c3c3"
+    mentees = [
+        {"id": pending, "programTermId": term, "userId": user, "status": "pending", "updatedOn": "2025-06-01T00:00:00Z", "createdOn": "2025-01-01T00:00:00Z"},
+        {"id": newer, "programTermId": term, "userId": user, "status": "approved", "updatedOn": "2025-03-01T00:00:00Z", "tasksSubmitted": True},
+        {"id": older, "programTermId": term, "userId": user, "status": "approved", "updatedOn": "2025-02-01T00:00:00Z"},
+    ]
+    m.migrate_mentees(cur, mentees, {term: "open"}, {user})
+    # The accepted rows outrank the pending one, and the newer of them wins. Its missing
+    # created_on falls back on updated_on.
+    updated = m._parse_ts("2025-03-01T00:00:00Z")
+    assert captured[0] == [(newer, term, user, "mentee", "accepted", True, None, updated, updated)]
+
+
 def program_rows(monkeypatch, projects, resolved):
     captured = []
     monkeypatch.setattr(m.psycopg2.extras, "execute_batch", lambda cur, sql, rows, page_size=0: captured.append(rows) if "INSERT INTO programs" in sql else None)
