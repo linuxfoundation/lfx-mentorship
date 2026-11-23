@@ -4,9 +4,9 @@
 {{template "header" .}}{{template "greeting" (printf "Hi %s!" .RecipientName)}}<p><strong>{{.InviterName}}</strong> invited you to join the <strong>{{.ProgramName}}</strong> mentorship program on LFX Mentorship as a mentor. LFX Mentorship is a free platform that enables open source projects to run mentorships and get matched with mentees.</p>
 <p>To accept, follow these three steps in order.</p>
 <p><strong>Step 1: Create your LF account</strong><br>Sign up with this email address: <strong>{{.InviteeEmail}}</strong><br>The invitation only works for an LF account that uses this address.</p>
-{{template "actions_start"}}{{template "action" (action .SignUpURL "Create LF Account" "secondary")}}{{template "actions_end"}}
+{{template "actions_start"}}{{template "action" (action .SignUpURL "Create LF Account" "primary")}}{{template "actions_end"}}
 <p><strong>Step 2: Create your mentor profile</strong><br>Sign in with your new account and fill in your mentor profile. It only takes a few minutes.</p>
-{{template "actions_start"}}{{template "action" (action .ProfileURL "Create Mentor Profile" "secondary")}}{{template "actions_end"}}
+{{template "actions_start"}}{{template "action" (action .ProfileURL "Create Mentor Profile" "primary")}}{{template "actions_end"}}
 <p><strong>Step 3: Accept the invitation</strong><br>Sign in with the same account, then choose Accept or Decline. This link does not expire.</p>
 {{template "actions_start"}}{{template "action" (action .InviteURL "Respond to Invitation" "primary")}}{{template "actions_end"}}
 <p><a href="{{.ProgramURL}}" target="_blank">View the program</a></p>
