@@ -25,7 +25,6 @@ Authoritative entity reference. Schema source of truth: `backend/db/migrations/0
 | `cii_project_id` | TEXT | nullable | optional |
 | `accept_applications` | BOOLEAN | DEFAULT false | denormalised flag |
 | `terms_and_conditions` | BOOLEAN | DEFAULT false | |
-| `program_term_status` | VARCHAR(20) | nullable | denormalised summary |
 | `task_templates` | JSONB | nullable | prerequisite task template list |
 | `created_on` | TIMESTAMPTZ | DEFAULT NOW() | |
 | `updated_on` | TIMESTAMPTZ | DEFAULT NOW() | trigger-maintained |
@@ -53,7 +52,6 @@ published │ hidden ──archive──► archived
 | `program_id` | UUID | FK → programs | CASCADE delete |
 | `name` | TEXT | NOT NULL | |
 | `status` | VARCHAR(20) | NOT NULL DEFAULT `open` | `open \| closed \| deleted` |
-| `active_users` | INTEGER | DEFAULT 0 | denormalised |
 | `start_date_time` | TIMESTAMPTZ | nullable | program start |
 | `end_date_time` | TIMESTAMPTZ | nullable | program end |
 | `application_start_date` | TIMESTAMPTZ | nullable | application window open |
@@ -148,12 +146,8 @@ invited │ requested │ approved ──manual-hold──► pending
 | `user_id` | UUID | FK → users | |
 | `role` | VARCHAR(20) | NOT NULL DEFAULT `mentee` | `mentor \| mentee` |
 | `status` | VARCHAR(20) | NOT NULL DEFAULT `pending` | see lifecycle |
-| `program_term_status` | VARCHAR(20) | nullable | denormalised |
-| `start_date_time` | TIMESTAMPTZ | nullable | accepted start |
-| `end_date_time` | TIMESTAMPTZ | nullable | accepted end |
 | `attendance_type` | VARCHAR(20) | nullable | **required on accept**: `full_time \| part_time` |
 | `tasks_submitted` | BOOLEAN | DEFAULT false | set when all prerequisite tasks submitted |
-| `admin_notified` | BOOLEAN | DEFAULT false | notification sent flag |
 | `created_on` | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | orders a reapplication after its withdrawn history |
 | `updated_on` | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | |
 
@@ -195,8 +189,6 @@ not ended. A mentee application is also refused once the user has a `graduated` 
 | `description` | TEXT | nullable | |
 | `category` | VARCHAR(50) | nullable | `prerequisite \| non_prerequisite` |
 | `status` | VARCHAR(30) | NOT NULL DEFAULT `incomplete` | see lifecycle |
-| `application_status` | VARCHAR(20) | nullable | denormalised |
-| `program_term_status` | VARCHAR(20) | nullable | denormalised |
 | `custom` | BOOLEAN | DEFAULT false | |
 | `submit_file` | TEXT | nullable | template flag: `null \| 'required'` (never a file reference) |
 | `file` | TEXT | nullable | private-bucket object key of the submission |
