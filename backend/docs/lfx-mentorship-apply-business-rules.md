@@ -116,7 +116,7 @@ flowchart TD
 | 13 | That application is `withdrawn` → reapply allowed while fewer than 3 are withdrawn for that term + role | service L322 + repo L393 (under lock) | ErrIneligible |
 | 14 | Under the term lock: the term still takes applications now (rules 7–8 again) | repo `checkCanApply` L412 | ErrIneligible |
 | 15 | Under the term lock: program `status = published` | repo `checkProgramPublished` L460 | ErrIneligible |
-| 16 | Under a per-mentee lock: the applicant holds no mentee application `accepted` in a term that hasn't ended, and none `graduated` in any term | repo `checkMenteeAvailable` L433 | ErrIneligible |
+| 16 | Under a per-mentee lock: the applicant holds no mentee application `accepted` or `graduated`, in any term, ended or not | repo `checkMenteeAvailable` L433 | ErrIneligible |
 | 17 | At most one non-withdrawn application per term + user + role | DB `uq_applications_active` | 409 |
 
 Rules 7–8 are `ProgramTerm.AcceptsApplications`. The apply-target read reports `accepting_applications` as that rule AND program `published` (rule 15). The public discovery label and the catalog and platform-summary SQL (`sqlTermAcceptsApplications`) use the same window. `TestApplicationService_Create_WindowMatchesAcceptsApplications` and `TestProgramTerm_DiscoveryLabelMatchesAcceptsApplications` keep them aligned.
@@ -158,7 +158,7 @@ stateDiagram-v2
 | Withdrawal through `withdraw` / `PATCH .../status` is applicant-only. Every other status change needs a Program Admin | service L430, L449 |
 | `accepted` requires `attendance_type` (`full_time` / `part_time`) | service L454 |
 | `accepted` requires the term to still be `open` (checked under lock) | repo L578 |
-| Accepting a mentee refuses while they hold another mentee application `accepted` in a term that hasn't ended (per-mentee lock). Graduating elsewhere doesn't block an acceptance, as in legacy | repo L583 |
+| Accepting a mentee refuses while they hold another mentee application `accepted`, whether or not its term has ended (per-mentee lock). Graduating elsewhere doesn't block an acceptance, as in legacy | repo L583 |
 | Moving into a blocking status (`pending`, `accepted`, `graduated`) is refused while the program is hidden | repo L597, L934 |
 | A mentor application's status never changes: a status change, self-withdrawal or `withdraw-for-mentee` on one is refused (`409`). Mentors join and leave a program only through its members | service L476, L618 |
 | `withdraw-for-mentee`: a Program Admin can withdraw a `pending` or `accepted` mentee application; `declined` and `graduated` are final and refused; an already `withdrawn` one is a no-op | service L574 |
@@ -181,7 +181,7 @@ Notifications:
 | Missing window dates | treated as **not accepting** | treated as **not accepting** |
 | Program must be published | — | ✅ |
 | Mentee profile required | ✅ | ✅ |
-| One `accepted` mentorship per mentee (checked at apply and at accept) | ✅ (every term) | ✅ (terms that haven't ended) |
+| One `accepted` mentorship per mentee (checked at apply and at accept) | ✅ (every term) | ✅ (every term) |
 | Block if mentee `graduated` anywhere | ✅ (at apply) | ✅ (at apply) |
 | Max 3 active (`pending`+`accepted`) applications | ✅ (inconsistent) | ❌ (FR-031: no cap on concurrent `pending`) |
 | No reapply from `declined` (same term) | ✅ | ✅ |
