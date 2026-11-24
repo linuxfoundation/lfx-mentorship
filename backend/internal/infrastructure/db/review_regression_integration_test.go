@@ -877,8 +877,8 @@ func seedSecondOpenTerm(t *testing.T, pool *pgxpool.Pool) string {
 	return termID
 }
 
-// A mentee holds one accepted mentorship at a time, counting only terms that have not ended, and
-// cannot apply once graduated. As in legacy, graduating does not stop an earlier application from
+// A mentee holds one accepted mentorship at a time, even once its term has ended, and cannot
+// apply once graduated. As in legacy, graduating does not stop an earlier application from
 // being accepted.
 func TestApplicationRepositoryIntegration_MenteeHoldsOneMentorship(t *testing.T) {
 	for _, tc := range []struct {
@@ -888,7 +888,7 @@ func TestApplicationRepositoryIntegration_MenteeHoldsOneMentorship(t *testing.T)
 		acceptRefused, createRefused bool
 	}{
 		{name: "accepted in a running term", other: models.ApplicationStatusAccepted, acceptRefused: true, createRefused: true},
-		{name: "accepted in an ended term", other: models.ApplicationStatusAccepted, otherTermEnded: true},
+		{name: "accepted in an ended term", other: models.ApplicationStatusAccepted, otherTermEnded: true, acceptRefused: true, createRefused: true},
 		{name: "graduated", other: models.ApplicationStatusGraduated, createRefused: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

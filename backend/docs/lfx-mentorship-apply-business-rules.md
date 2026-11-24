@@ -208,7 +208,7 @@ A review of the apply flow found 13 gaps. All 13 are closed: 12 by a code change
 
 | # | Gap | Status | Fix |
 |---|---|---|---|
-| 1 | One accepted mentorship per mentee wasn't enforced | ✅ Fixed | Checked at apply and at accept, under a per-mentee lock; only terms that haven't ended count |
+| 1 | One accepted mentorship per mentee wasn't enforced | ✅ Fixed | Checked at apply and at accept, under a per-mentee lock; terms that have ended count too |
 | 2 | Assisted withdrawal of a `declined` application reopened reapplying | ✅ Fixed | `withdraw-for-mentee` refuses `declined` and `graduated` |
 | 3 | Graduated mentees could apply to other terms | ✅ Fixed | Blocked at apply by the same check as gap 1 |
 | 4 | No mentee profile or eligibility check at apply | ✅ Fixed | A mentee profile is required |
@@ -226,9 +226,9 @@ A review of the apply flow found 13 gaps. All 13 are closed: 12 by a code change
 
 **Gap 1: one accepted mentorship per mentee.**
 - **Before:** nothing stopped a mentee from holding several `accepted` applications. Legacy enforced it, and `00-current-authz-relations.md:78` depends on it.
-- **After:** a mentee application is refused, and so is its acceptance, while the user holds another mentee application that is `accepted` in a term that hasn't ended. The check takes a per-mentee advisory lock: two acceptances in different terms lock different term rows, so only that lock serializes them. A partial unique index was rejected, because imported legacy data may already break the rule.
+- **After:** a mentee application is refused, and so is its acceptance, while the user holds another mentee application that is `accepted`, whether or not its term has ended. The mentee stays blocked until a Program Admin resolves that application. The check takes a per-mentee advisory lock: two acceptances in different terms lock different term rows, so only that lock serializes them. A partial unique index was rejected, because imported legacy data may already break the rule.
 - **Legacy:** jobspring enforces this on apply (`backend/project/service_program_term_mentees.go:139–154`, `ProgramApply`: "Mentee can only have one accepted mentorship.") and on accept (`backend/project/repository.go:5661–5696`). Both checks count the user's `accepted` rows in every term.
-- **Difference from legacy:** only terms that haven't ended count (`end_date_time` unset or in the future). Legacy matches the exact string `accepted`. The import also maps legacy `approved`, `active` and `hold` rows to `accepted`, so counting every term would block mentees that legacy never blocked, and a stale enrollment left `accepted` after its term ended would lock its user out on day one.
+- **Difference from legacy:** legacy matches the exact string `accepted`. The import also maps legacy `approved`, `active` and `hold` rows to `accepted`, so those rows block their mentees here although legacy did not. Up to v0.1.22 only terms that hadn't ended counted, which let a mentee still `accepted` on an ended term apply elsewhere (#474).
 - **Code:** `checkMenteeAvailable`, called from `checkCanApply` (create, reapply) and from `Update` on accept (`application_repository.go`).
 - **Tests:** `TestApplicationRepositoryIntegration_MenteeHoldsOneMentorship`, `TestApplicationRepositoryIntegration_ConcurrentAcceptancesOfOneMentee`, and e2e "a mentee holds one accepted mentorship".
 

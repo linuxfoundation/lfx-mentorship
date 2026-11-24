@@ -267,7 +267,7 @@ the program_admin can manage the program's visibility and terms throughout its l
   program_admin's Mentee row view. As in legacy, a mentee holds at most one `accepted`
   mentorship at a time and cannot apply once graduated: the system MUST refuse an
   application, and an acceptance, while the mentee holds another mentee application
-  `accepted` in a term that has not ended, and MUST refuse an application once the
+  `accepted`, whether or not its term has ended, and MUST refuse an application once the
   mentee has a `graduated` one. There is no cap on concurrent `pending` applications.
 
 ### Functional Requirements — Prerequisite Task Evaluation

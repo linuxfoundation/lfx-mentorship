@@ -447,13 +447,11 @@ func checkPendingMenteeApplicationLimit(ctx context.Context, tx pgx.Tx, userID s
 }
 
 // checkMenteeAvailable refuses while the user holds another mentee application, other than
-// excludeID, that is accepted in a term that has not ended. With refuseGraduated it also refuses
-// once the user has graduated from any mentorship. Legacy jobspring applies both on apply
-// (ProgramApply) and only the first on accept; it counted accepted rows of every term, but the
-// import also maps legacy approved, active and hold rows to accepted, and a stale enrollment in
-// an ended term must not lock a mentee out. It first takes a transaction lock on the user: two
-// acceptances of the same mentee in different terms lock different term rows, so only this lock
-// serializes them.
+// excludeID, that is accepted, whether or not its term has ended: the mentee stays blocked until a
+// Program Admin resolves it. With refuseGraduated it also refuses once the user has graduated from
+// any mentorship. Legacy jobspring applies both on apply (ProgramApply) and only the first on
+// accept. It first takes a transaction lock on the user: two acceptances of the same mentee in
+// different terms lock different term rows, so only this lock serializes them.
 func checkMenteeAvailable(ctx context.Context, tx pgx.Tx, userID, excludeID string, refuseGraduated bool) error {
 	if err := lockMentee(ctx, tx, userID); err != nil {
 		return err
@@ -461,10 +459,8 @@ func checkMenteeAvailable(ctx context.Context, tx pgx.Tx, userID, excludeID stri
 	var status models.ApplicationStatus
 	err := tx.QueryRow(ctx, `
 		SELECT a.status FROM applications a
-		JOIN program_terms pt ON pt.id = a.program_term_id
 		WHERE a.user_id = $1 AND a.role = $2 AND a.id <> $3
-		  AND ((a.status = $4 AND (pt.end_date_time IS NULL OR pt.end_date_time > NOW()))
-		       OR (a.status = $5 AND $6))
+		  AND (a.status = $4 OR (a.status = $5 AND $6))
 		ORDER BY a.status = $4 DESC LIMIT 1`,
 		userID, models.ApplicationRoleMentee, excludeID, models.ApplicationStatusAccepted, models.ApplicationStatusGraduated, refuseGraduated).Scan(&status)
 	if errors.Is(err, pgx.ErrNoRows) {

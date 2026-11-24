@@ -2068,7 +2068,7 @@ Submit an application to a term.
 5. No existing non-withdrawn application for this user+term (reapplication from `declined` is permanently blocked; reapplication from `withdrawn` is allowed while the window is open).
 6. Fewer than 3 withdrawn applications for this user+term — once a user has withdrawn 3, no further application to the term is accepted.
 7. The program must be `published`.
-8. The caller holds no other mentee application `accepted` in a term that has not ended, and none `graduated` in any term.
+8. The caller holds no other mentee application `accepted` or `graduated`, in any term, ended or not.
 
 **After creation**: The program's `task_templates` JSONB array is cloned as individual `prerequisite` tasks linked to the new application. While the application is pending, later template edits reach those tasks too; see [`PATCH /v1/programs/{id}`](#patch-v1programsid-).
 
