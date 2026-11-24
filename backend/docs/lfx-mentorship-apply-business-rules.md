@@ -116,7 +116,7 @@ flowchart TD
 | 13 | That application is `withdrawn` → reapply allowed while fewer than 3 are withdrawn for that term + role | service L322 + repo L393 (under lock) | ErrIneligible |
 | 14 | Under the term lock: the term still takes applications now (rules 7–8 again) | repo `checkCanApply` L412 | ErrIneligible |
 | 15 | Under the term lock: program `status = published` | repo `checkProgramPublished` L460 | ErrIneligible |
-| 16 | Under a per-mentee lock: the applicant holds no mentee application `accepted` in a term that hasn't ended, and none `graduated` in any term | repo `checkMenteeAvailable` L433 | ErrIneligible |
+| 16 | Under a per-mentee lock: the applicant holds no mentee application `accepted` or `graduated`, in any term, ended or not | repo `checkMenteeAvailable` L433 | ErrIneligible |
 | 17 | At most one non-withdrawn application per term + user + role | DB `uq_applications_active` | 409 |
 
 Rules 7–8 are `ProgramTerm.AcceptsApplications`. The apply-target read reports `accepting_applications` as that rule AND program `published` (rule 15). The public discovery label and the catalog and platform-summary SQL (`sqlTermAcceptsApplications`) use the same window. `TestApplicationService_Create_WindowMatchesAcceptsApplications` and `TestProgramTerm_DiscoveryLabelMatchesAcceptsApplications` keep them aligned.
@@ -158,7 +158,7 @@ stateDiagram-v2
 | Withdrawal through `withdraw` / `PATCH .../status` is applicant-only. Every other status change needs a Program Admin | service L430, L449 |
 | `accepted` requires `attendance_type` (`full_time` / `part_time`) | service L454 |
 | `accepted` requires the term to still be `open` (checked under lock) | repo L578 |
-| Accepting a mentee refuses while they hold another mentee application `accepted` in a term that hasn't ended (per-mentee lock). Graduating elsewhere doesn't block an acceptance, as in legacy | repo L583 |
+| Accepting a mentee refuses while they hold another mentee application `accepted`, whether or not its term has ended (per-mentee lock). Graduating elsewhere doesn't block an acceptance, as in legacy | repo L583 |
 | Moving into a blocking status (`pending`, `accepted`, `graduated`) is refused while the program is hidden | repo L597, L934 |
 | A mentor application's status never changes: a status change, self-withdrawal or `withdraw-for-mentee` on one is refused (`409`). Mentors join and leave a program only through its members | service L476, L618 |
 | `withdraw-for-mentee`: a Program Admin can withdraw a `pending` or `accepted` mentee application; `declined` and `graduated` are final and refused; an already `withdrawn` one is a no-op | service L574 |
@@ -181,7 +181,7 @@ Notifications:
 | Missing window dates | treated as **not accepting** | treated as **not accepting** |
 | Program must be published | — | ✅ |
 | Mentee profile required | ✅ | ✅ |
-| One `accepted` mentorship per mentee (checked at apply and at accept) | ✅ (every term) | ✅ (terms that haven't ended) |
+| One `accepted` mentorship per mentee (checked at apply and at accept) | ✅ (every term) | ✅ (every term) |
 | Block if mentee `graduated` anywhere | ✅ (at apply) | ✅ (at apply) |
 | Max 3 active (`pending`+`accepted`) applications | ✅ (inconsistent) | ❌ (FR-031: no cap on concurrent `pending`) |
 | No reapply from `declined` (same term) | ✅ | ✅ |
@@ -208,7 +208,7 @@ A review of the apply flow found 13 gaps. All 13 are closed: 12 by a code change
 
 | # | Gap | Status | Fix |
 |---|---|---|---|
-| 1 | One accepted mentorship per mentee wasn't enforced | ✅ Fixed | Checked at apply and at accept, under a per-mentee lock; only terms that haven't ended count |
+| 1 | One accepted mentorship per mentee wasn't enforced | ✅ Fixed | Checked at apply and at accept, under a per-mentee lock; terms that have ended count too |
 | 2 | Assisted withdrawal of a `declined` application reopened reapplying | ✅ Fixed | `withdraw-for-mentee` refuses `declined` and `graduated` |
 | 3 | Graduated mentees could apply to other terms | ✅ Fixed | Blocked at apply by the same check as gap 1 |
 | 4 | No mentee profile or eligibility check at apply | ✅ Fixed | A mentee profile is required |
@@ -226,9 +226,9 @@ A review of the apply flow found 13 gaps. All 13 are closed: 12 by a code change
 
 **Gap 1: one accepted mentorship per mentee.**
 - **Before:** nothing stopped a mentee from holding several `accepted` applications. Legacy enforced it, and `00-current-authz-relations.md:78` depends on it.
-- **After:** a mentee application is refused, and so is its acceptance, while the user holds another mentee application that is `accepted` in a term that hasn't ended. The check takes a per-mentee advisory lock: two acceptances in different terms lock different term rows, so only that lock serializes them. A partial unique index was rejected, because imported legacy data may already break the rule.
+- **After:** a mentee application is refused, and so is its acceptance, while the user holds another mentee application that is `accepted`, whether or not its term has ended. The mentee stays blocked until a Program Admin resolves that application. The check takes a per-mentee advisory lock: two acceptances in different terms lock different term rows, so only that lock serializes them. A partial unique index was rejected, because imported legacy data may already break the rule.
 - **Legacy:** jobspring enforces this on apply (`backend/project/service_program_term_mentees.go:139–154`, `ProgramApply`: "Mentee can only have one accepted mentorship.") and on accept (`backend/project/repository.go:5661–5696`). Both checks count the user's `accepted` rows in every term.
-- **Difference from legacy:** only terms that haven't ended count (`end_date_time` unset or in the future). Legacy matches the exact string `accepted`. The import also maps legacy `approved`, `active` and `hold` rows to `accepted`, so counting every term would block mentees that legacy never blocked, and a stale enrollment left `accepted` after its term ended would lock its user out on day one.
+- **Difference from legacy:** legacy matches the exact string `accepted`. The import also maps legacy `approved`, `active` and `hold` rows to `accepted`, so those rows block their mentees here although legacy did not. Up to v0.1.22 only terms that hadn't ended counted, which let a mentee still `accepted` on an ended term apply elsewhere (#474).
 - **Code:** `checkMenteeAvailable`, called from `checkCanApply` (create, reapply) and from `Update` on accept (`application_repository.go`).
 - **Tests:** `TestApplicationRepositoryIntegration_MenteeHoldsOneMentorship`, `TestApplicationRepositoryIntegration_ConcurrentAcceptancesOfOneMentee`, and e2e "a mentee holds one accepted mentorship".
 

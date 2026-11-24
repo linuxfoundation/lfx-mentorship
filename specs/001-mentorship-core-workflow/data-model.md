@@ -166,8 +166,9 @@ today's UTC date is within `[application_start_date, application_end_date]` by U
 calendar day, both days inclusive. A term missing either date takes no applications.
 
 **One mentorship per mentee**: a mentee application is refused, and so is its
-acceptance, while the user holds another mentee application `accepted` in a term that has
-not ended. A mentee application is also refused once the user has a `graduated` one.
+acceptance, while the user holds another mentee application `accepted`, whether or not its
+term has ended: the mentee stays blocked until a Program Admin resolves that application. A
+mentee application is also refused once the user has a `graduated` one.
 
 **Re-apply**: allowed from `withdrawn` (window still open); blocked from `declined`.
 
