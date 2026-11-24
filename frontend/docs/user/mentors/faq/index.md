@@ -1,11 +1,27 @@
 ---
 title: Mentors FAQ
 description: Common questions about mentoring an LFX Mentorship program.
-tags: [faq, mentors, invitation, request, reviews]
-last_updated: 2026-10-26
+tags: [faq, mentors, invitation, request, reviews, eligibility, conflict of interest]
+last_updated: 2026-11-24
 display_order: 9
 intercom_collection: LFX Mentorship
 ---
+
+## Who can mentor?
+
+To mentor a program you must:
+
+- Be 18 or older.
+- Already take part in the project, for example as a contributor or one of its administrators.
+- Have significant experience in the subject and the skills your mentees will be developing.
+- Have no obligation, such as a contract with your employer, that stops you mentoring.
+- Have time to help your mentees regularly for the whole term.
+
+Mentors also agree to the [Standards of Excellence](../../getting-started/standards-of-excellence/).
+
+## How much time does mentoring take?
+
+There is no fixed number of hours. You need enough time to guide your mentees through the term's work, review what they submit, and take part in their evaluations.
 
 ## How do I get onto a program?
 
@@ -22,6 +38,14 @@ Yes, you can withdraw a request while it is still open. Open **Mentor Profile** 
 ## Can I mentor more than one program?
 
 Yes, you can mentor as many programs as you are accepted onto. Every program you mentor appears under **My Programs**.
+
+## Can I interview applicants?
+
+Yes. You can interview candidates as part of your review. The Program Admin makes the final decision to accept or decline.
+
+## Can I review an applicant I know personally?
+
+Do not take part in choosing an applicant you have a conflict of interest with. That includes a family member, someone in your household, a close friend or a romantic partner, and anyone else you cannot judge impartially.
 
 ## Where do I review what a mentee submitted?
 
