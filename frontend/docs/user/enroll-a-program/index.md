@@ -2,7 +2,7 @@
 title: Enroll a Program
 description: How a Program Admin enrolls a Linux Foundation project's mentorship program, and what each step of the form asks for.
 tags: [program-admin, enroll, program, review, prerequisites]
-last_updated: 2026-10-26
+last_updated: 2026-11-24
 display_order: 5
 intercom_collection: LFX Mentorship
 ---
@@ -36,7 +36,7 @@ Enrollment is a three-step form in the LFX Admin area. Gather these before you s
 
 ## After you submit
 
-1. The LFX Mentorship team reviews your enrollment. It can take up to 5 business days, but most reviews are completed within 24 hours. A program that is not approved is **rejected**.
+1. The LFX Mentorship team reviews your enrollment. It checks that the project is 100% open source, is adopted across its community, and fits the Linux Foundation's support of open source initiatives. A review can take up to 5 business days, but most are completed within 24 hours. A program that is not approved is **rejected**.
 2. Once approved, invite mentors from the **Mentors** tab.
 3. The program opens for applications, and applicants appear in your workspace.
 

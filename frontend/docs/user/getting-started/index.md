@@ -2,7 +2,7 @@
 title: Getting Started
 description: What LFX Mentorship is, who it is for, and what you need before you take part.
 tags: [getting-started, overview, lf-id, eligibility]
-last_updated: 2026-10-26
+last_updated: 2026-11-24
 display_order: 1
 intercom_collection: LFX Mentorship
 ---
@@ -37,11 +37,16 @@ Browsing programs, mentees and mentors on this site needs no account. Applying, 
 
 - You are 18 or older, or will be by the time the program starts.
 - You are eligible to work in the country you live in for the duration of the mentorship.
+- You take part as an individual, on your own behalf, and no existing obligation, such as a contract with your employer, stops you taking part.
+- You do not live in a country or region where U.S. or other applicable law prohibits taking part. You confirm this with a compliance statement when you apply.
+- You meet the program's own requirements, such as the prerequisites listed on its page.
 - You can commit consistent hours for the full term.
 - You may have up to **3 applications** open at a time.
 - You may only complete **one** LFX Mentorship program in your career.
 
 Not every program is funded. Where a stipend is offered, the amount varies by program and by your country of residence, and the program page states it before you apply.
+
+Everyone taking part, whether candidate, mentee or mentor, agrees to the [Standards of Excellence](./standards-of-excellence/).
 
 ## Key terms
 
@@ -58,4 +63,5 @@ Not every program is funded. Where a stipend is offered, the amount varies by pr
 - [Mentees](../mentees/) — become a mentee and apply to a program
 - [Mentors](../mentors/) — become a mentor or respond to an invitation
 - [Enroll a Program](../enroll-a-program/) — offer a program for your project
+- [Standards of Excellence](./standards-of-excellence/) — the behavior expected of everyone taking part
 - [Getting Started FAQ](./faq/)
