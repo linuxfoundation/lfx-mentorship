@@ -827,6 +827,11 @@ func (s *ProgramMemberService) Update(ctx context.Context, programID, id string,
 	if currentStatus == models.ProgramMemberStatusRequested && *input.Status == models.ProgramMemberStatusDeclined {
 		s.notifier.NotifyMentorDeclined(ctx, current.ProgramID, current.UserID)
 	}
+	if current.MemberType == models.MemberTypeMentor &&
+		(currentStatus == models.ProgramMemberStatusRequested || currentStatus == models.ProgramMemberStatusPending) &&
+		*input.Status == models.ProgramMemberStatusApproved {
+		s.notifier.NotifyMentorApproved(ctx, current.ProgramID, current.UserID)
+	}
 	return m, nil
 }
 
