@@ -333,6 +333,7 @@ func NewServer(ctx context.Context, cfg *Config, logger *slog.Logger) (*Server, 
 			r.Get("/programs/{id}/member-management", programMemberH.ListMentorManagement)
 
 			// Mentor invite — both the invite token and signed principal are required.
+			r.Get("/mentor-invites/{token}", mentorInviteH.GetInvite)
 			r.Post("/mentor-invites/{token}/accept", mentorInviteH.AcceptInvite)
 			r.Post("/mentor-invites/{token}/decline", mentorInviteH.DeclineInvite)
 

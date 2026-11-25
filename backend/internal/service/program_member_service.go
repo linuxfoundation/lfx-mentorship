@@ -830,6 +830,39 @@ func (s *ProgramMemberService) Update(ctx context.Context, programID, id string,
 	return m, nil
 }
 
+// GetInvite returns the program an open mentor invitation is for. It makes the
+// same checks as AcceptInvite and DeclineInvite and changes nothing: a bad or
+// answered invitation is a 400, and one that is not the caller's a 403.
+func (s *ProgramMemberService) GetInvite(ctx context.Context, token string, actor models.UserPrincipal) (*models.MentorInvite, error) {
+	ctx, span := programMemberSvcTracer.Start(ctx, "ProgramMemberService.GetInvite")
+	defer span.End()
+
+	claims, err := auth.ParseInviteToken(token, s.inviteSecret)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s", domain.ErrInvalidInput, err.Error())
+	}
+	span.SetAttributes(attribute.String("program.id", claims.ProgramID))
+
+	if claims.MemberID != "" {
+		_, err = s.openEmailInvite(ctx, claims, actor)
+	} else if actor.UserID == "" || actor.UserID != claims.UserID {
+		err = fmt.Errorf("%w: invite belongs to a different user", domain.ErrForbidden)
+	} else {
+		_, err = s.findInvitedMentor(ctx, claims.ProgramID, claims.UserID)
+	}
+	if err != nil {
+		span.RecordError(err)
+		return nil, err
+	}
+
+	prog, err := s.programRepo.GetByID(ctx, claims.ProgramID)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("get program: %w", err)
+	}
+	return &models.MentorInvite{ProgramID: prog.ID, ProgramName: prog.Name}, nil
+}
+
 // AcceptInvite validates a mentor invite token and transitions the member to
 // approved. A token for an email invitation makes the caller the mentor, once
 // the invited address is shown to belong to the caller's LF account.
