@@ -120,3 +120,10 @@ type UserPrincipal struct {
 	UserID string `json:"user_id"`
 	Email  string `json:"email"`
 }
+
+// MentorInvite is the program an open mentor invitation is for, shown to the
+// invitee before they accept or decline.
+type MentorInvite struct {
+	ProgramID   string `json:"program_id"`
+	ProgramName string `json:"program_name"`
+}

@@ -14,11 +14,12 @@ import (
 )
 
 type mentorInviteService interface {
+	GetInvite(ctx context.Context, token string, actor models.UserPrincipal) (*models.MentorInvite, error)
 	AcceptInvite(ctx context.Context, token string, actor models.UserPrincipal) (*models.ProgramMember, error)
 	DeclineInvite(ctx context.Context, token string, actor models.UserPrincipal) error
 }
 
-// MentorInviteHandler holds Chi handlers for mentor invite accept/decline.
+// MentorInviteHandler holds Chi handlers for reading and answering a mentor invite.
 type MentorInviteHandler struct {
 	svc mentorInviteService
 }
@@ -26,6 +27,27 @@ type MentorInviteHandler struct {
 // NewMentorInviteHandler creates a MentorInviteHandler.
 func NewMentorInviteHandler(svc mentorInviteService) *MentorInviteHandler {
 	return &MentorInviteHandler{svc: svc}
+}
+
+// GetInvite handles GET /v1/mentor-invites/{token} — requires JWT and invite token.
+// It names the program so the invitee knows what they are answering.
+func (h *MentorInviteHandler) GetInvite(w http.ResponseWriter, r *http.Request) {
+	principal := auth.PrincipalFromContext(r.Context())
+	if principal == nil {
+		Error(w, domain.ErrUnauthorized)
+		return
+	}
+	token := chi.URLParam(r, "token")
+	if token == "" {
+		Error(w, newInvalidInput("token is required"))
+		return
+	}
+	invite, err := h.svc.GetInvite(r.Context(), token, invitee(principal))
+	if err != nil {
+		Error(w, err)
+		return
+	}
+	JSON(w, http.StatusOK, invite)
 }
 
 // AcceptInvite handles POST /v1/mentor-invites/{token}/accept — requires JWT and invite token.

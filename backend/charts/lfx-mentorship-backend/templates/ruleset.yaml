@@ -154,6 +154,21 @@ spec:
             values:
               aud: {{ .Values.app.audience | quote }}
 
+    # Reading an invite names its program; the service makes the same token check as answering it.
+    - id: rule:lfx:lfx-mentorship-backend:mentor-invite-read
+      allow_encoded_slashes: "off"
+      match:
+        methods: [GET]
+        routes:
+          - path: /mentorship/v1/mentor-invites/:token
+      execute:
+        - authenticator: oidc
+        - authorizer: allow_all
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience | quote }}
+
     # PUT /me creates the local user from the token, so this rule runs the
     # oidc_contextualizer: without it the JWT carries no email and new users
     # are stored with none (issue #360). Only this route and the mentorship

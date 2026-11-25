@@ -5,6 +5,7 @@ package handler_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -16,12 +17,20 @@ import (
 	"github.com/linuxfoundation/lfx-v2-mentorship-service/internal/infrastructure/auth"
 )
 
-// stubMentorInviteSvc records the token and caller each answer is made with,
-// and fails every answer with err when it is set.
+// stubMentorInviteSvc records the token and caller each read or answer is made
+// with, and fails every call with err when it is set.
 type stubMentorInviteSvc struct {
 	token string
 	actor models.UserPrincipal
 	err   error
+}
+
+func (s *stubMentorInviteSvc) GetInvite(_ context.Context, token string, actor models.UserPrincipal) (*models.MentorInvite, error) {
+	s.token, s.actor = token, actor
+	if s.err != nil {
+		return nil, s.err
+	}
+	return &models.MentorInvite{ProgramID: "prog-1", ProgramName: "Open Source Mentorship"}, nil
 }
 
 func (s *stubMentorInviteSvc) AcceptInvite(_ context.Context, token string, actor models.UserPrincipal) (*models.ProgramMember, error) {
@@ -37,8 +46,9 @@ func (s *stubMentorInviteSvc) DeclineInvite(_ context.Context, token string, act
 	return s.err
 }
 
-// inviteAnswers are the two handlers that answer an invite.
+// inviteAnswers are the handlers that read or answer an invite.
 var inviteAnswers = map[string]func(*handler.MentorInviteHandler, http.ResponseWriter, *http.Request){
+	"read":    (*handler.MentorInviteHandler).GetInvite,
 	"accept":  (*handler.MentorInviteHandler).AcceptInvite,
 	"decline": (*handler.MentorInviteHandler).DeclineInvite,
 }
@@ -52,10 +62,10 @@ func inviteRequest(token, userID, username string) *http.Request {
 
 // An email invitation's address must belong to the caller's LFID, so the
 // handler must pass the principal's user ID and username through as UserID and
-// LFID on both answers.
+// LFID on the read and both answers.
 func TestMentorInviteHandler_PassesTheCallerAsInvitee(t *testing.T) {
 	want := models.UserPrincipal{UserID: "user-1", LFID: "new-mentor"}
-	wantCode := map[string]int{"accept": http.StatusOK, "decline": http.StatusNoContent}
+	wantCode := map[string]int{"read": http.StatusOK, "accept": http.StatusOK, "decline": http.StatusNoContent}
 	for name, answer := range inviteAnswers {
 		svc := &stubMentorInviteSvc{}
 		w := httptest.NewRecorder()
@@ -117,5 +127,18 @@ func TestMentorInviteHandler_MapsServiceErrors(t *testing.T) {
 				t.Errorf("%s with %v: got %d; want %d", name, tc.err, w.Code, tc.want)
 			}
 		}
+	}
+}
+
+// The read names the program the invite is for.
+func TestMentorInviteHandler_GetInviteReturnsTheProgram(t *testing.T) {
+	w := httptest.NewRecorder()
+	handler.NewMentorInviteHandler(&stubMentorInviteSvc{}).GetInvite(w, inviteRequest("tok", "user-1", "new-mentor"))
+	var got models.MentorInvite
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode body %q: %v", w.Body.String(), err)
+	}
+	if want := (models.MentorInvite{ProgramID: "prog-1", ProgramName: "Open Source Mentorship"}); got != want {
+		t.Errorf("got %+v; want %+v", got, want)
 	}
 }

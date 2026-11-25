@@ -1947,11 +1947,25 @@ from `invited` to `declined`, and emails the program's active Program Admins
 
 ## 11. Mentor Invite Tokens
 
-These endpoints are called by the LFX Self Serve page that the invite email links to (`/mentorship/mentor/invites?token=…`). Both need the signed token **and** the invitee's JWT. A user token says which program and user it was issued for, and the caller must be that user. An email invitation's token names its member row instead, and the invited address must be a verified email of the caller's LF account: auth-service's `email_to_username` must resolve it to the caller's LFID (compared without case).
+These endpoints are called by the LFX Self Serve page that the invite email links to (`/mentorship/mentor/invites?token=…`). Each needs the signed token **and** the invitee's JWT. A user token says which program and user it was issued for, and the caller must be that user. An email invitation's token names its member row instead, and the invited address must be a verified email of the caller's LF account: auth-service's `email_to_username` must resolve it to the caller's LFID (compared without case).
 
 ### Token Format
 
 `base64url(JSON {program_id, user_id}) + "." + base64url(HMAC-SHA256 signature)`, or `{program_id, member_id}` for an email invitation; exactly one of `user_id` and `member_id` is set. The signing secret is set via the `MENTOR_INVITE_SECRET` environment variable. Tokens do not expire and are not stored: one works until its member row leaves `invited`, and a row invited again makes the same link work again. Only the invited user, signed in, can use it. Rotating the secret invalidates every outstanding link. Links issued while tokens carried an `exp` claim still verify; the claim is ignored.
+
+---
+
+#### `GET /v1/mentor-invites/{token}` 🪙
+
+Names the program an open invitation is for, so the invite page can show it before the invitee answers. It makes the same token, caller and open-invitation checks as accept and changes nothing. The program is named whatever its status.
+
+**Response** `200`
+
+```json
+{ "program_id": "uuid", "program_name": "string" }
+```
+
+**Errors** `400` (invalid token, or no pending invite — including one already answered), `401` (no JWT), `403` (the token belongs to another user, or the invited address is not a verified email of the caller's LF account), `503` (auth-service is unreachable for an email invitation)
 
 ---
 
@@ -2695,6 +2709,7 @@ https://app.lfx.dev/mentorship/mentor/invites?token=<signed-token>
 
 The Self Serve invite page calls, as the signed-in mentor:
 ```
+GET  /v1/mentor-invites/{token}
 POST /v1/mentor-invites/{token}/accept
 POST /v1/mentor-invites/{token}/decline
 ```

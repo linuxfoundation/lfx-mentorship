@@ -63,6 +63,7 @@ Public collections are service-owned and reach the gateway through `allow_all` r
 | --- | --- | --- | --- | --- |
 | `POST /v1/mentor-invites/{token}/accept` | required | — | `allow_all` | **Compare the token's subject to the caller** (AQ-7). `ValidateInviteToken` returns the `userID` that `GenerateInviteToken` signed; reject unless it matches `principal`. Without this, `allow_all` lets any authenticated caller accept a known invitation |
 | `POST /v1/mentor-invites/{token}/decline` | required | — | `allow_all` | As above |
+| `GET /v1/mentor-invites/{token}` | required | — | `allow_all` | As above; it returns only the program's ID and name |
 
 These are the documented exception to "no service-side authorization decisions" ([04](./04-authorization-model.md) AQ-7). Note the **Auth** change: both routes are unauthenticated today, since the token was the whole credential. Behind Heimdall they require a token *and* the ownership check — the HMAC alone no longer suffices, because the accept must bind to a real LFID.
 
